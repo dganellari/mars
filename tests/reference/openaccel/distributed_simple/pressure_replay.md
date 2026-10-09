@@ -247,13 +247,71 @@ The comparison below uses the verified retry when its pointer exists. Its librar
 identities apply only to the new process; the old result remains unverified.
 The common residual check still decides numerical acceptance.
 
+## Separate uenvs: archive the reference dependencies once
+
+If comparison reports missing reference MPI libraries, other runtime libraries
+or build inputs, those paths may belong to the OpenAccel uenv. Run the following
+block **in the OpenAccel terminal**, with that environment active. It reads the
+existing successful replay, checks all original input and output hashes and the
+recorded per-rank loaded-library identities, then copies the executable,
+libraries and source/build inputs into a new private archive under scratch.
+Each copied file must match its recorded launch hash. No build, allocation or
+solver is launched, and saved results are not rewritten.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(cat "$scratch/simple-pressure-frozen-current.txt")
+reference="$run/reference"
+if test -f "$run/reference-retry-current.txt"; then
+  IFS= read -r reference < "$run/reference-retry-current.txt"
+fi
+archive=$(mktemp -d "$scratch/simple-replay-inputs-XXXXXX")/inputs
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" archive-inputs \
+  --capture-run "$run/capture" --replay-run "$reference" \
+  --output-dir "$archive" || status=$?
+cat "$archive/public.json"
+if test "$status" -eq 0; then
+  printf '%s\n' "$archive" > "$reference/input-archive-current.txt"
+fi
+printf 'Share only: %s\n' "$archive/public.json"
+exit "$status"
+)
+```
+
+The archive is bound to the exact replay record and capture. Comparison hashes
+the archived bytes against the original input manifest before and after residual
+evaluation; it still checks the live capture and output files. An archive from
+another replay, missing or changed archived bytes, changed results, and a public
+summary supplied in place of an archive all fail. Source dependencies need only
+be visible when archiving. The comparison labels this scope explicitly as
+`archived_dependencies_and_live_capture_inputs`; it does not claim those original
+uenv paths remain unchanged or mounted at comparison time. Without archive
+arguments, live input checks remain the default.
+
+This uses the same local manifest trust model as replay: hashes detect changes
+relative to the saved records, not coordinated forgery of records and files.
+It is not a signed execution attestation or a convergence certificate. Keep the
+whole archive private; filenames and manifests can identify the private run.
+Only its fixed `public.json` is shareable.
+
 ## MARS terminal: compare all three candidates
 
 The host checker reads only the frozen diagnostic files. Production assembly,
 solving and halo exchange remain on the GPU. Share only the final public JSON.
-The comparison also rechecks both replays' recorded inputs and outputs. Their
-recorded files must be visible from this terminal, including the reference's
-runtime libraries and build headers.
+The comparison also rechecks both replays' recorded inputs and outputs. Use the
+archive step above if the reference runtime and build inputs are not visible in
+this terminal. The block uses that archive when its pointer exists; otherwise
+both replays' original inputs must be visible. `--mars-input-archive` supports
+the same mechanism for a MARS replay archived in its own environment.
 
 ```bash
 (
@@ -267,12 +325,17 @@ reference="$run/reference"
 if test -f "$run/reference-retry-current.txt"; then
   IFS= read -r reference < "$run/reference-retry-current.txt"
 fi
+archive_args=()
+if test -f "$reference/input-archive-current.txt"; then
+  IFS= read -r archive < "$reference/input-archive-current.txt"
+  archive_args=(--reference-input-archive "$archive")
+fi
 summary=$(mktemp -d "$scratch/simple-pressure-comparison-XXXXXX")/public.json
 status=0
 python3 "$repo/scripts/simple_pressure_replay.py" compare \
   --capture-run "$run/capture" --mars-run "$run/mars" --reference-run "$reference" \
   --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
-  --output "$summary" || status=$?
+  "${archive_args[@]}" --output "$summary" || status=$?
 cat "$summary"
 printf 'Share only: %s\n' "$summary"
 exit "$status"
@@ -310,8 +373,9 @@ evaluation. File problems are never converted into numerical passes.
 For an old `replay_identity` result, fetch the updated script in one terminal
 only, then repeat the comparison block with the same capture/replays and a fresh
 summary. This is saved-data checking only: no solver launch, capture, build or
-allocation. Restore inaccessible recorded inputs if the new report identifies
-them; do not alter their hashes to bypass the check.
+allocation. If inputs belong to the other uenv, archive them in that environment
+using the step above. If they are unavailable there too, restore the exact
+recorded files; do not alter their hashes to bypass the check.
 
 ## Local verification
 

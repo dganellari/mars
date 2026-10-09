@@ -298,6 +298,186 @@ class ReplayTests(unittest.TestCase):
             record['command'] = ['launcher', str(executable), 'system', 'configuration', 'result']
         path.write_text(json.dumps(record))
 
+    def archive_fixture(self):
+        args = self.compare_arguments()
+        environment = self.root/'SECRET-uenv'; environment.mkdir()
+        deps = [environment/name for name in ('libHYPRE.so', 'libmpi.so', 'libstdc++.so.6',
+                                              'SECRET-build.hpp', 'SECRET-replay')]
+        for path in deps:
+            path.write_text('SECRET bytes for ' + path.name)
+        capture_file = self.capture.parent/'capture.json'
+        capture = json.loads(capture_file.read_text())
+        capture['reference'] = {'libraries': replay.hashes(deps[:3])}
+        capture_file.write_text(json.dumps(capture))
+        for name in ('mars', 'reference'):
+            path = self.root/name/'replay.json'
+            record = json.loads(path.read_text())
+            record['capture_sha256'] = replay.digest(capture_file)
+            record['inputs'].update(replay.hashes([capture_file]))
+            record['inputs'].update(capture['files'])
+            if name == 'reference':
+                libraries = self.root/name/'result/rank-000000.libraries'
+                libraries.write_text('{}\n{}\n'.format(*deps[:2]))
+                record['files'].update(replay.hashes([libraries]))
+                record['inputs'].update(replay.hashes(deps))
+                record['command'] = ['launcher', str(deps[-1]), str(self.capture),
+                                     str(capture_file.parent/'reference.settings'), str(self.root/name/'result')]
+            path.write_text(json.dumps(record))
+        archive = self.root/'archive'
+        archive_args = ['archive-inputs', '--capture-run', str(capture_file.parent),
+                        '--replay-run', str(self.root/'reference'), '--output-dir', str(archive)]
+        return args, archive_args, archive, environment, deps
+
+    def archive_saved(self, args, code=0):
+        before = replay.hashes(p for name in ('captured-run', 'mars', 'reference')
+                               for p in (self.root/name).rglob('*') if p.is_file())
+        with patch.object(replay.subprocess, 'run') as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(replay.main(args), code)
+            run.assert_not_called()
+        self.assertEqual(replay.hashes(Path(p) for p in before), before)
+        text = (Path(args[-1])/'public.json').read_text()
+        self.assertNotIn('SECRET', text)
+        self.assertNotIn(str(self.root), text)
+        return json.loads(text)
+
+    def test_archived_dependencies_cross_environments_without_changing_residual_verdicts(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        public = self.archive_saved(archive_args)
+        self.assertEqual(public['comparison_status'], 'input_archive_complete')
+        self.assertTrue(public['loaded_library_identity_verified'])
+        self.assertFalse(public['solver_launched'])
+        self.assertFalse(public['convergence_verified'])
+        manifest = json.loads((archive/'archive.json').read_text())
+        self.assertEqual(manifest['inputs'], replay.hashes(deps))
+        environment.rename(self.root/'unmounted')
+        with patch.object(replay.subprocess, 'run') as run:
+            failed = self.compare_saved(args)
+            run.assert_not_called()
+        self.assertEqual(failed['failed_check'], 'reference_replay_inputs')
+        args = args[:-2] + ['--reference-input-archive', str(archive), '--output', str(self.root/'archived.json')]
+        passed = self.compare_saved(args, 0)
+        self.assertEqual(passed['comparison_status'], 'completed')
+        self.assertEqual(passed['replay_evidence_checks']['reference']['inputs']['scope'],
+                         'archived_dependencies_and_live_capture_inputs')
+        self.assertTrue(passed['residual_checks']['mars']['residual_passed'])
+        self.assertTrue(passed['residual_checks']['reference']['residual_failed'])
+        self.assertFalse(passed['nonlinear_convergence_verified'])
+
+    def test_input_archive_cannot_be_created_from_invalid_evidence(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        library_output = self.root/'reference/result/rank-000000.libraries'
+        for i, case in enumerate(('missing', 'changed', 'wrong_library', 'changed_output')):
+            with self.subTest(case=case):
+                originals = {p: p.read_bytes() for p in (deps[1], library_output)}
+                if case == 'missing': deps[1].unlink()
+                elif case == 'changed': deps[1].write_text('changed')
+                else:
+                    library_output.write_text('{}\n{}\n'.format(deps[0], deps[0]))
+                    if case == 'wrong_library':
+                        path = self.root/'reference/replay.json'
+                        record = json.loads(path.read_text())
+                        record['files'].update(replay.hashes([library_output])); path.write_text(json.dumps(record))
+                destination = self.root/('archive-bad-' + str(i)); archive_args[-1] = str(destination)
+                public = self.archive_saved(archive_args, 1)
+                self.assertEqual(public['failed_check'], 'loaded_library_identity' if case == 'wrong_library'
+                                 else 'replay_outputs' if case == 'changed_output' else 'replay_inputs')
+                self.assertFalse((destination/'archive.json').exists())
+                for p, data in originals.items(): p.write_bytes(data)
+                record = json.loads((self.root/'reference/replay.json').read_text())
+                record['files'].update(replay.hashes([library_output]))
+                (self.root/'reference/replay.json').write_text(json.dumps(record))
+
+    def test_archive_binding_and_bytes_are_required(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        self.archive_saved(archive_args)
+        manifest = archive/'archive.json'; saved = manifest.read_text()
+        obj = archive/'objects'/replay.digest(deps[1]); contents = obj.read_bytes()
+        environment.rename(self.root/'unmounted')
+        for case in ('binding', 'capture', 'backend', 'omitted', 'invalid_hash', 'public_only', 'missing', 'changed'):
+            with self.subTest(case=case):
+                record = json.loads(saved)
+                if case == 'binding': record['replay_sha256'] = '0'*64
+                if case == 'capture': record['capture_sha256'] = '0'*64
+                if case == 'backend': record['backend'] = 'mars'
+                if case == 'omitted': record['inputs'].pop(str(deps[1]))
+                if case == 'invalid_hash': record['inputs'][str(deps[1])] = '../SECRET'
+                if case == 'public_only': record = json.loads((archive/'public.json').read_text())
+                manifest.write_text(json.dumps(record))
+                if case == 'missing': obj.unlink()
+                if case == 'changed': obj.write_text('changed')
+                compare_args = args[:-2] + ['--reference-input-archive', str(archive), '--output', str(self.root/(case+'.json'))]
+                with patch.object(replay.subprocess, 'run') as run:
+                    public = self.compare_saved(compare_args)
+                    run.assert_not_called()
+                self.assertEqual(public['failed_check'], 'reference_replay_inputs' if case in ('missing', 'changed')
+                                 else 'reference_input_archive')
+                obj.write_bytes(contents)
+        manifest.write_text(saved)
+
+    def test_archived_inputs_do_not_hide_changed_live_capture_or_outputs(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        self.archive_saved(archive_args)
+        environment.rename(self.root/'unmounted')
+        for i, path in enumerate((self.root/'reference/result/rank-000000.solution',
+                                  self.capture/'rank-000000.bin', self.root/'reference/replay.json')):
+            with self.subTest(path=path.name):
+                saved = path.read_bytes(); path.write_bytes(saved + b'\n')
+                compare_args = args[:-2] + ['--reference-input-archive', str(archive), '--output', str(self.root/('live-'+str(i)+'.json'))]
+                with patch.object(replay.subprocess, 'run') as run:
+                    public = self.compare_saved(compare_args)
+                    run.assert_not_called()
+                self.assertEqual(public['failed_check'], ('reference_replay_outputs', 'capture_identity', 'reference_input_archive')[i])
+                path.write_bytes(saved)
+
+    def test_input_archive_rechecks_source_after_copy(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        copy = replay.shutil.copyfileobj
+        def change(src, dst):
+            copy(src, dst)
+            Path(src.name).write_bytes(b'changed during copy')
+        with patch.object(replay.shutil, 'copyfileobj', side_effect=change):
+            public = self.archive_saved(archive_args, 1)
+        self.assertEqual(public['failed_check'], 'evidence_changed')
+        self.assertFalse((archive/'archive.json').exists())
+
+    def test_archived_object_is_rechecked_after_residual_evaluation(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        self.archive_saved(archive_args)
+        obj = archive/'objects'/replay.digest(deps[1])
+        actual_run = subprocess.run
+        def change(command, **kwargs):
+            result = actual_run(command, **kwargs)
+            if command[-1] == str(self.root/'reference/result'): obj.write_bytes(b'changed')
+            return result
+        args = args[:-2] + ['--reference-input-archive', str(archive), '--output', str(self.root/'changed-during-check.json')]
+        with patch.object(replay.subprocess, 'run', side_effect=change):
+            public = self.compare_saved(args)
+        self.assertEqual(public['failed_check'], 'reference_replay_inputs_changed')
+
+    def test_incomplete_copy_cannot_create_a_valid_archive(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        def corrupt(src, dst):
+            dst.write(b'incomplete copy')
+        with patch.object(replay.shutil, 'copyfileobj', side_effect=corrupt):
+            public = self.archive_saved(archive_args, 1)
+        self.assertEqual(public['failed_check'], 'input_archive_copy')
+        self.assertFalse((archive/'archive.json').exists())
+
+    def test_mars_archive_uses_mars_library_identity(self):
+        args, archive_args, archive, environment, deps = self.archive_fixture()
+        capture_file = self.capture.parent/'capture.json'
+        capture = json.loads(capture_file.read_text())
+        capture['libraries'] = capture['reference']['libraries']
+        capture['reference']['libraries'] = {str(deps[0]): '0'*64}
+        capture_file.write_text(json.dumps(capture))
+        record = json.loads((self.root/'reference/replay.json').read_text())
+        record.update(backend='mars', profile='captured', capture_sha256=replay.digest(capture_file))
+        record['inputs'].update(replay.hashes([capture_file]))
+        (self.root/'reference/replay.json').write_text(json.dumps(record))
+        public = self.archive_saved(archive_args)
+        self.assertEqual(public['backend'], 'mars')
+        self.assertTrue(public['loaded_library_identity_verified'])
+
     def test_compare_checks_both_environments_before_running_checker(self):
         args = self.compare_arguments()
         hypre = self.root/'libHYPRE.so'; hypre.write_text('SECRET hypre')

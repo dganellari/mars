@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from simple_snapshot_compare import digest, options, require
 from simple_public_diagnostics import DiagnosticState, SafeParser
 
 SCHEMA = 'mars-simple-pressure-replay-v1'
+ARCHIVE_SCHEMA = 'mars-pressure-replay-inputs-v1'
 CAPTURE_MARKER = '[simple-pressure-capture] complete; files are private; original rejection retained'
 ROOT = Path(__file__).resolve().parent.parent
 CPP = ROOT / 'tests/reference/openaccel/simple_performance/pressure_replay.cpp'
@@ -32,7 +34,7 @@ def verify(record):
     defaults.unchanged(record)
 
 
-def file_identity_checks(files, category):
+def file_identity_checks(files, category, replacements=None):
     issues = {name: set() for name in ('missing', 'changed', 'unreadable')}
     valid = isinstance(files, dict)
     if valid:
@@ -42,10 +44,11 @@ def file_identity_checks(files, category):
                 valid = False
                 continue
             kind = category(path)
+            source = (replacements or {}).get(path, path)
             try:
-                if not Path(path).is_file():
+                if not Path(source).is_file():
                     issues['missing'].add(kind)
-                elif digest(path) != expected:
+                elif digest(source) != expected:
                     issues['changed'].add(kind)
             except OSError:
                 issues['unreadable'].add(kind)
@@ -67,22 +70,81 @@ def replay_input_kind(path, record, capture_dir, capture):
     return 'source_or_build_input'
 
 
-def checked_replay_record(path, name, capture_dir, capture, check):
+def external_inputs(record, capture_dir, capture):
+    live = set(capture['files']) | {str(capture_dir / 'capture.json')}
+    return {p: value for p, value in record['inputs'].items() if p not in live}
+
+
+def replay_input_checks(path, record, capture_dir, capture, archive=None):
+    replacements = {}
+    if archive is not None:
+        saved = startup.read_json(archive / 'archive.json')
+        require(saved['schema'] == ARCHIVE_SCHEMA and saved['backend'] == record['backend']
+                and saved['capture_sha256'] == record['capture_sha256']
+                and saved['replay_sha256'] == digest(path / 'replay.json')
+                and saved['inputs'] == external_inputs(record, capture_dir, capture))
+        # Capture and result files stay live. Only dependencies from another
+        # environment may be supplied by an exact, hash-checked byte copy.
+        for source, value in saved['inputs'].items():
+            require(isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value))
+            replacements[source] = archive / 'objects' / value
+    checks = file_identity_checks(record['inputs'],
+        lambda p: replay_input_kind(p, record, capture_dir, capture), replacements)
+    checks['scope'] = 'archived_dependencies_and_live_capture_inputs' if archive is not None else 'live_inputs'
+    return checks
+
+
+def checked_replay_record(path, name, capture_dir, capture, check, archive=None):
     check.update(verified=False, failed_check='replay_record')
     record = startup.read_json(path / 'replay.json')
     check['failed_check'] = 'replay_binding'
     require(record['schema'] == SCHEMA and record['backend'] == name and record['exit_code'] == 0
             and record['capture_sha256'] == digest(capture_dir / 'capture.json'))
     require(record['profile'] in ('captured', 'reference') and (name != 'mars' or record['profile'] == 'captured'))
-    check['failed_check'] = 'replay_inputs'
-    check['inputs'] = file_identity_checks(record['inputs'],
-        lambda p: replay_input_kind(p, record, capture_dir, capture))
+    check['failed_check'] = 'input_archive' if archive is not None else 'replay_inputs'
+    check['inputs'] = replay_input_checks(path, record, capture_dir, capture, archive)
     check['failed_check'] = 'replay_outputs'
     check['outputs'] = file_identity_checks(record['files'], lambda p: 'replay_output')
     check['failed_check'] = 'replay_inputs' if not check['inputs']['matched'] else 'replay_outputs'
     require(check['inputs']['matched'] and check['outputs']['matched'])
     check.update(verified=True, failed_check='none')
     return record
+
+
+def archive_inputs(args, output, public):
+    public.update(solver_launched=False, convergence_verified=False, failed_check='capture_identity')
+    directory = args.capture_run.resolve(); capture = captured_record(directory)
+    path = args.replay_run.resolve()
+    public['failed_check'] = 'replay_record'
+    record_hash = digest(path / 'replay.json')
+    name = startup.read_json(path / 'replay.json')['backend']
+    require(name in ('mars', 'reference'))
+    check = public['replay_evidence_checks'] = {}
+    try:
+        record = checked_replay_record(path, name, directory, capture, check)
+    except Exception:
+        public['failed_check'] = check['failed_check']
+        raise
+    public['failed_check'] = 'loaded_library_identity'
+    expected = capture['libraries'] if name == 'mars' else capture['reference']['libraries']
+    loaded_libraries_match(path / 'result', capture['ranks'], expected, Path(record['command'][-4]), public)
+    public['failed_check'] = 'input_archive_copy'
+    inputs = external_inputs(record, directory, capture)
+    objects = output / 'objects'; objects.mkdir(mode=0o700)
+    for source, value in inputs.items():
+        target = objects / value
+        if not target.exists():
+            with Path(source).open('rb') as src, target.open('xb') as dst:
+                shutil.copyfileobj(src, dst)
+        require(digest(target) == value)
+    public['failed_check'] = 'evidence_changed'
+    require(digest(path / 'replay.json') == record_hash)
+    verify(record['inputs']); verify(record['files']); verify(capture['files'])
+    # This records reproducible bytes, not a signed attestation or a solver verdict.
+    startup.write_json(output / 'archive.json', dict(schema=ARCHIVE_SCHEMA, backend=name,
+        capture_sha256=record['capture_sha256'], replay_sha256=record_hash, inputs=inputs))
+    public.update(comparison_status='input_archive_complete', failed_check='none', backend=name,
+                  original_inputs_verified=True, archived_dependencies_verified=True)
 
 
 def marker(directory, schema):
@@ -389,13 +451,14 @@ def compare(args, public):
     checks = {}
     profiles = {}
     records = {}
+    archives = {name: getattr(args, name + '_input_archive') for name in ('mars', 'reference')}
     evidence = public['replay_evidence_checks'] = {}
     # Check both environments before launching the checker, so one missing mount
     # does not hide a second problem in the other replay.
     for name, path in (('mars', args.mars_run), ('reference', args.reference_run)):
         evidence[name] = {}
         try:
-            records[name] = checked_replay_record(path, name, directory, capture, evidence[name])
+            records[name] = checked_replay_record(path, name, directory, capture, evidence[name], archives[name])
         except Exception:
             pass
     for name in ('mars', 'reference'):
@@ -409,7 +472,7 @@ def compare(args, public):
             record = records[name]
             profiles[name] = record['profile']
             public['failed_check'] = name + '_replay_inputs'
-            verify(record['inputs'])
+            require(replay_input_checks(path, record, directory, capture, archives[name])['matched'])
             public['failed_check'] = name + '_replay_outputs'
             verify(record['files'])
         command = [str(checker), str(directory / 'system'), '-' if path is None else str(path / 'result')]
@@ -448,7 +511,7 @@ def compare(args, public):
                                                           if k != 'hypre_release' and not k.startswith('effective_'))
             checks[name]['recorded_controls_match_requested_profile'] = control_matches
             public['failed_check'] = name + '_replay_inputs_changed'
-            verify(record['inputs'])
+            require(replay_input_checks(path, record, directory, capture, archives[name])['matched'])
             public['failed_check'] = name + '_replay_outputs_changed'
             verify(record['files'])
     public.pop('failed_candidate', None)
@@ -471,7 +534,10 @@ def main(argv=None):
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
+    c.add_argument('--mars-input-archive', type=Path); c.add_argument('--reference-input-archive', type=Path)
     c.add_argument('--checker', type=Path, required=True); c.add_argument('--output', type=Path, required=True)
+    c = sub.add_parser('archive-inputs'); c.add_argument('--capture-run', type=Path, required=True)
+    c.add_argument('--replay-run', type=Path, required=True); c.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('inspect'); c.add_argument('--replay-run', type=Path, required=True)
     c.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv); os.umask(0o077)
@@ -485,12 +551,14 @@ def main(argv=None):
             else:
                 inspect_replay(args.replay_run.resolve(), public)
         else:
-            require(args.action in ('capture', 'replay'))
+            require(args.action in ('capture', 'replay', 'archive-inputs'))
             args.output_dir.mkdir(mode=0o700); directory = args.output_dir.resolve(); destination = directory / 'public.json'
             if args.action == 'capture':
                 capture(args.pair, args.executable, directory, public)
-            else:
+            elif args.action == 'replay':
                 replay(args, directory, public)
+            else:
+                archive_inputs(args, directory, public)
     except Exception:
         if args.action in ('compare', 'inspect'):
             destination = args.output
