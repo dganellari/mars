@@ -181,17 +181,7 @@ int runCavity(Options opt, int rank, int numRanks)
         if (step % opt.vtuEvery == 0 || step == opt.numSteps) write(step, t);
     }
 
-    const auto& timing = solver.timing();
-    double steps       = opt.numSteps > 1 ? opt.numSteps - 1 : 1;
-    double local[4]    = {timing.predictor, timing.viscous, timing.pressure, timing.corrector}, slowest[4];
-    MPI_Allreduce(local, slowest, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    if (rank == 0)
-        std::cout << std::fixed << std::setprecision(3) << "[timing] ranks=" << numRanks
-                  << " nodes=" << solver.globalDofs() << " ms/step: total="
-                  << (slowest[0] + slowest[1] + slowest[2] + slowest[3]) / steps
-                  << " pressure=" << slowest[2] / steps << " | pressure_it/step=" << timing.pressureIterations / steps
-                  << "\n"
-                  << std::defaultfloat;
+    solver.printTiming(opt.numSteps - 1); // step 1 (first-use allocations, BDF1) is left out
     return 0;
 }
 
