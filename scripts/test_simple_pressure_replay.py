@@ -218,15 +218,15 @@ class ReplayTests(unittest.TestCase):
                     self.assertEqual(replay.numeric_file(self.result/'rank-000000.report'), report)
                     shutil.rmtree(self.result)
 
-    def captured_record(self):
-        write_system(self.capture)
+    def captured_record(self, ranks=1):
+        write_system(self.capture, ranks)
         system = self.root/'captured-run'; system.mkdir()
         self.capture.rename(system/'system')
         self.capture = system/'system'
         files = replay.capture_inputs(self.capture)[2]
         (system/'reference.settings').write_text('method 0\nrtol 1e-10\natol 0\nmaxiter 200\n')
         files.update(replay.hashes([system/'reference.settings']))
-        record = dict(schema=replay.SCHEMA, exit_code=255, ranks=1, files=files)
+        record = dict(schema=replay.SCHEMA, exit_code=255, ranks=ranks, files=files)
         replay.startup.write_json(system/'capture.json', record)
         return system
 
@@ -336,12 +336,146 @@ class ReplayTests(unittest.TestCase):
         public = json.loads((self.result/'public.json').read_text())
         self.assertTrue(public['loaded_library_identity_verified'])
         self.assertFalse(public['convergence_verified'])
+        for failure in ('launcher_exit', 'completion_marker', 'loaded_library_identity'):
+            with self.subTest(failure=failure):
+                args[-1] = str(self.root/failure)
+                def failed_launch(command, stdout, **kwargs):
+                    result = launch(command, stdout, **kwargs)
+                    if failure == 'launcher_exit':
+                        return subprocess.CompletedProcess(command, 127)
+                    if failure == 'completion_marker':
+                        (Path(command[-1])/'complete').unlink()
+                    if failure == 'loaded_library_identity':
+                        (Path(command[-1])/'rank-000000.libraries').write_text('SECRET malformed paths\n')
+                    return result
+                with patch.object(replay.startup, 'runtime_libraries', return_value=libraries), \
+                     patch.object(replay.subprocess, 'run', side_effect=failed_launch), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(replay.main(args), 1)
+                public = json.loads((Path(args[-1])/'public.json').read_text())
+                self.assertEqual(public['failed_check'], failure)
+                self.assertNotIn('SECRET', json.dumps(public))
         # Changing a captured dependency must prevent a second launch.
         library.write_text('changed')
         args[-1] = str(self.root/'retry')
         with patch.object(replay.subprocess, 'run') as command, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(replay.main(args), 1)
             command.assert_not_called()
+
+    def inspection_fixture(self, ranks=1):
+        capture = self.captured_record(ranks)
+        library, mpi, exe = (self.root/name for name in ('libHYPRE.so', 'libmpi.so', 'reference-replay'))
+        for path in (library, mpi, exe): path.write_text('SECRET ' + path.name)
+        record = json.loads((capture/'capture.json').read_text())
+        record['reference'] = {'libraries': replay.hashes([library, mpi])}
+        (capture/'capture.json').write_text(json.dumps(record))
+        self.result.mkdir()
+        write_solution(self.result/'result', [1.+i/8. for i in range(12)], ranks)
+        for rank in range(ranks):
+            replay.rank_file(self.result/'result', rank, '.libraries').write_text('{}\n{}\n'.format(library, mpi))
+            replay.rank_file(self.result/'result', rank, '.report').write_text('SECRET private report\n')
+        launch = dict(schema=replay.SCHEMA, backend='reference', profile='reference',
+                      command=['launcher', str(exe), str(capture/'system'), str(capture/'reference.settings'), str(self.result/'result')],
+                      capture_sha256=replay.digest(capture/'capture.json'), inputs=replay.hashes([exe, library, mpi]))
+        replay.startup.write_json(self.result/'launch-start.json', launch)
+        (self.result/'run.exit').write_text('0\n')
+        (self.result/'run.log').write_text('SECRET private runtime output\n')
+        return ['inspect', '--replay-run', str(self.result), '--output', str(self.root/'inspection.json')]
+
+    def inspect_saved(self, args, expected_status=0):
+        before = replay.hashes(p for p in self.result.rglob('*') if p.is_file())
+        with patch.object(replay.subprocess, 'run') as command, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(replay.main(args), expected_status)
+            command.assert_not_called()
+        self.assertEqual(replay.hashes(p for p in self.result.rglob('*') if p.is_file()), before)
+        text = Path(args[-1]).read_text()
+        self.assertNotIn('SECRET', text)
+        self.assertNotIn(str(self.root), text)
+        return json.loads(text)
+
+    def test_saved_inspection_does_not_launch_or_claim_convergence(self):
+        public = self.inspect_saved(self.inspection_fixture(2))
+        self.assertEqual(public['comparison_status'], 'inspection_complete')
+        self.assertEqual(public['failed_check'], 'none')
+        self.assertTrue(public['loaded_library_identity_verified'])
+        self.assertTrue(public['all_report_parts_present'])
+        self.assertFalse(public['convergence_verified'])
+        self.assertFalse(public['solver_launched_by_inspection'])
+
+    def test_saved_inspection_distinguishes_failed_launch_and_loader(self):
+        args = self.inspection_fixture()
+        (self.result/'run.exit').write_text('127\n')
+        (self.result/'run.log').write_text('/SECRET/exe: error while loading shared libraries: SECRET.so: missing\n')
+        shutil.rmtree(self.result/'result')
+        public = self.inspect_saved(args)
+        self.assertEqual(public['failed_check'], 'launcher_exit')
+        self.assertEqual(public['process_exit_code'], 127)
+        self.assertTrue(public['library_load_error_seen'])
+        self.assertFalse(public['result_directory_present'])
+
+    def test_saved_inspection_identifies_application_abort_and_partial_output(self):
+        args = self.inspection_fixture(2)
+        (self.result/'run.exit').write_text('1\n')
+        (self.result/'run.log').write_text('ERROR: private pressure replay failed\n'
+                                         'application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0\n')
+        replay.rank_file(self.result/'result', 1, '.solution').unlink()
+        public = self.inspect_saved(args)
+        self.assertTrue(public['replay_error_seen'])
+        self.assertTrue(public['mpi_abort_seen'])
+        self.assertTrue(public['any_solution_parts_present'])
+        self.assertFalse(public['all_solution_parts_present'])
+        self.assertEqual(public['failed_check'], 'launcher_exit')
+
+    def test_saved_inspection_distinguishes_missing_marker(self):
+        args = self.inspection_fixture()
+        (self.result/'result/complete').unlink()
+        public = self.inspect_saved(args)
+        self.assertEqual(public['process_exit_code'], 0)
+        self.assertEqual(public['failed_check'], 'completion_marker')
+
+    def test_saved_inspection_checks_every_rank_library_identity(self):
+        args = self.inspection_fixture(2)
+        wrong = self.root/'SECRET-library'; wrong.write_text('different')
+        replay.rank_file(self.result/'result', 1, '.libraries').write_text('{}\n{}\n'.format(wrong, self.root/'libmpi.so'))
+        public = self.inspect_saved(args)
+        self.assertTrue(public['completion_marker_valid'])
+        self.assertEqual(public['failed_check'], 'loaded_library_identity')
+
+    def test_saved_inspection_rejects_changed_inputs_and_record_binding(self):
+        args = self.inspection_fixture()
+        (self.root/'reference-replay').write_text('changed')
+        public = self.inspect_saved(args)
+        self.assertEqual(public['failed_check'], 'inputs_changed')
+        launch = json.loads((self.result/'launch-start.json').read_text())
+        launch['capture_sha256'] = '0'*64
+        (self.result/'launch-start.json').write_text(json.dumps(launch))
+        args[-1] = str(self.root/'unbound.json')
+        public = self.inspect_saved(args, expected_status=1)
+        self.assertEqual(public['failed_check'], 'saved_launch_record')
+
+    def test_saved_inspection_exit_status_missing_malformed_and_signal(self):
+        args = self.inspection_fixture()
+        for text, code in ((None, None), ('SECRET', None), ('999', None), ('-15', -15), ('143', 143)):
+            with self.subTest(text=text):
+                status = self.result/'run.exit'
+                if text is None: status.unlink()
+                else: status.write_text(text)
+                args[-1] = str(self.root/'inspect-{}.json'.format(text))
+                public = self.inspect_saved(args)
+                self.assertEqual(public['process_exit_code'], code)
+                self.assertEqual(public['failed_check'], 'launcher_exit' if code is not None else 'launcher_exit_missing_or_invalid')
+
+    def test_saved_inspection_classifies_scheduler_and_never_overwrites(self):
+        args = self.inspection_fixture()
+        (self.result/'run.exit').write_text('143\n')
+        (self.result/'run.log').write_text('srun: error: SECRET node: Terminated\n'
+                                         'slurmstepd: error: *** STEP SECRET DUE TO TIME LIMIT ***\n')
+        public = self.inspect_saved(args)
+        self.assertTrue(public['scheduler_signal_seen'])
+        self.assertTrue(public['scheduler_time_limit_seen'])
+        before = Path(args[-1]).read_bytes()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(replay.main(args), 1)
+        self.assertEqual(Path(args[-1]).read_bytes(), before)
 
 
 if __name__ == '__main__':

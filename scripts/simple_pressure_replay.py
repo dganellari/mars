@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import simple_pressure_probe as probe
 import simple_pressure_settings as settings
 import simple_startup_probe as startup
 from simple_snapshot_compare import digest, options, require
-from simple_public_diagnostics import SafeParser
+from simple_public_diagnostics import DiagnosticState, SafeParser
 
 SCHEMA = 'mars-simple-pressure-replay-v1'
 CAPTURE_MARKER = '[simple-pressure-capture] complete; files are private; original rejection retained'
@@ -166,6 +167,89 @@ def captured_record(directory):
     return record
 
 
+def loaded_libraries_match(directory, ranks, expected):
+    for rank in range(ranks):
+        identity = rank_file(directory, rank, '.libraries').read_text().splitlines()
+        require(len(identity) == 2 and all(Path(path).is_absolute() for path in identity))
+        for path, kind in zip(identity, ('hypre', 'mpi')):
+            require(digest(path) in {value for name, value in expected.items()
+                                    if defaults.library_kind(name) == kind})
+
+
+def inspect_replay(directory, public):
+    public.update(comparison_status='invalid_evidence', failed_check='saved_launch_record',
+                  convergence_verified=False, solver_launched_by_inspection=False)
+    record = startup.read_json(directory / 'launch-start.json')
+    require(record['schema'] == SCHEMA and record['backend'] in ('mars', 'reference'))
+    require(record['profile'] in ('captured', 'reference'))
+    command = record['command']
+    require(isinstance(command, list) and len(command) >= 4)
+    capture_dir = Path(command[-3]).parent
+    require(Path(command[-3]).name == 'system' and Path(command[-1]).resolve() == (directory / 'result').resolve())
+    require(digest(capture_dir / 'capture.json') == record['capture_sha256'])
+    capture = startup.read_json(capture_dir / 'capture.json')
+    require(capture['schema'] == SCHEMA and type(capture['ranks']) is int and 1 <= capture['ranks'] <= 1000000)
+    ranks = capture['ranks']
+    expected = capture['libraries'] if record['backend'] == 'mars' else capture['reference']['libraries']
+    public.update(backend=record['backend'], profile=record['profile'])
+    checks = {}
+    def check(label, action):
+        try:
+            action()
+            checks[label] = True
+        except Exception:
+            checks[label] = False
+    check('launch_inputs_unchanged', lambda: verify(record['inputs']))
+    status_file = directory / 'run.exit'
+    public['exit_file_present'] = status_file.is_file()
+    public['process_exit_code'] = None
+    if status_file.is_file():
+        text = status_file.read_text().strip()
+        if re.fullmatch(r'-?[0-9]{1,3}', text) and -127 <= int(text) <= 255:
+            public['process_exit_code'] = int(text)
+    state = DiagnosticState()
+    public['log_present'] = (directory / 'run.log').is_file()
+    public['library_load_error_seen'] = False
+    public['replay_error_seen'] = False
+    if public['log_present']:
+        with (directory / 'run.log').open(errors='replace') as log:
+            for line in log:
+                state.feed(line)
+                public['library_load_error_seen'] |= any(message in line for message in (
+                    'error while loading shared libraries:', 'symbol lookup error:',
+                    'Library not loaded:', 'Symbol not found:')) or ('version ' in line and ' not found (required by ' in line)
+                public['replay_error_seen'] |= line.strip() == 'ERROR: private pressure replay failed'
+    for key in ('mpi_abort_seen', 'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen', 'scheduler_signal_seen'):
+        public[key] = key in state.failures
+    public['scheduler_messages'] = list(state.scheduler_messages)
+    result = directory / 'result'
+    public['result_directory_present'] = result.is_dir()
+    for name in ('libraries', 'solution', 'report'):
+        present = [rank_file(result, rank, '.' + name).is_file() for rank in range(ranks)]
+        public['any_' + name + '_parts_present'] = any(present)
+        public['all_' + name + '_parts_present'] = all(present)
+    public['completion_marker_present'] = (result / 'complete').is_file()
+    check('completion_marker_valid', lambda: require(marker(result, 'mars-pressure-replay-v1') == ranks))
+    check('loaded_library_identity_verified', lambda: loaded_libraries_match(result, ranks, expected))
+    public.update(checks)
+    if not checks['launch_inputs_unchanged']:
+        failure = 'inputs_changed'
+    elif public['process_exit_code'] is None:
+        failure = 'launcher_exit_missing_or_invalid'
+    elif public['process_exit_code'] != 0:
+        failure = 'launcher_exit'
+    elif not checks['completion_marker_valid']:
+        failure = 'completion_marker'
+    elif not checks['loaded_library_identity_verified']:
+        failure = 'loaded_library_identity'
+    elif not public['all_solution_parts_present'] or not public['all_report_parts_present']:
+        failure = 'replay_parts_missing'
+    else:
+        failure = 'none'
+    public.update(comparison_status='inspection_complete', failed_check=failure,
+                  scope='saved_launch_log_and_file_checks_not_residual_or_convergence')
+
+
 def replay(args, output, public):
     public['failed_check'] = 'capture_identity'
     capture_dir = args.capture_run.resolve(); record = captured_record(capture_dir)
@@ -202,13 +286,12 @@ def replay(args, output, public):
     with (output / 'run.log').open('xb') as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
     (output / 'run.exit').write_text(str(result.returncode) + '\n')
+    public['failed_check'] = 'launcher_exit'
     require(result.returncode == 0)
+    public['failed_check'] = 'completion_marker'
     require(marker(output / 'result', 'mars-pressure-replay-v1') == record['ranks'])
-    for rank in range(record['ranks']):
-        identity = rank_file(output / 'result', rank, '.libraries').read_text().splitlines()
-        require(len(identity) == 2 and all(Path(path).is_absolute() for path in identity))
-        for path, kind in zip(identity, ('hypre', 'mpi')):
-            require(digest(path) in {value for name, value in expected.items() if defaults.library_kind(name) == kind})
+    public['failed_check'] = 'loaded_library_identity'
+    loaded_libraries_match(output / 'result', record['ranks'], expected)
     public['failed_check'] = 'inputs_changed'
     verify(inputs)
     launch.update(exit_code=0, files=hashes(list((output / 'result').iterdir()) +
@@ -270,12 +353,18 @@ def main(argv=None):
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
     c.add_argument('--checker', type=Path, required=True); c.add_argument('--output', type=Path, required=True)
+    c = sub.add_parser('inspect'); c.add_argument('--replay-run', type=Path, required=True)
+    c.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv); os.umask(0o077)
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='preflight')
     destination = None
     try:
-        if args.action == 'compare':
-            compare(args, public); destination = args.output
+        if args.action in ('compare', 'inspect'):
+            destination = args.output
+            if args.action == 'compare':
+                compare(args, public)
+            else:
+                inspect_replay(args.replay_run.resolve(), public)
         else:
             require(args.action in ('capture', 'replay'))
             args.output_dir.mkdir(mode=0o700); directory = args.output_dir.resolve(); destination = directory / 'public.json'
@@ -284,7 +373,7 @@ def main(argv=None):
             else:
                 replay(args, directory, public)
     except Exception:
-        if args.action == 'compare':
+        if args.action in ('compare', 'inspect'):
             destination = args.output
         elif destination is None:
             print('ERROR: new private output directory required.', file=sys.stderr); return 1

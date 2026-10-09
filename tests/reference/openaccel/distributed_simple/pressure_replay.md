@@ -143,6 +143,43 @@ exit "$status"
 )
 ```
 
+## Inspect an existing failed replay
+
+Older summaries use `replay_launch` for both execution failures and checks after
+execution. New runs distinguish `launcher_exit`, `completion_marker` and
+`loaded_library_identity`. Do not rerun a flow capture to diagnose that label.
+
+In the same terminal environment that launched the replay, `inspect` reads its
+saved log, exit status and metadata. It checks input hashes and per-rank library
+identities and reports which output parts exist. It neither launches a program
+nor evaluates a residual. `inspection_complete` only means the inspection ran;
+`failed_check` identifies the failed check. Unknown messages and private paths,
+rank counts and solver values are never copied into its public output.
+
+For the saved reference attempt:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(cat "$scratch/simple-pressure-frozen-current.txt")
+summary=$(mktemp -d "$scratch/simple-replay-inspection-XXXXXX")/public.json
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" inspect \
+  --replay-run "$run/reference" --output "$summary" || status=$?
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+exit "$status"
+)
+```
+
 ## MARS terminal: compare all three candidates
 
 The host checker reads only the frozen diagnostic files. Production assembly,
