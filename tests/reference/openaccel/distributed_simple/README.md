@@ -19,6 +19,10 @@ The channel and duct results above used standard velocity interpolation. Neither
 those nor the geometry probes establish arbitrary-mesh or multi-node scaling.
 The [fresh startup probe](startup_probe.md) locates the first differing saved
 state when a private case still disagrees with OpenAccel.
+The opt-in [original-pressure first-step profile](pressure_profile.md) reuses
+that saved reference and applies its supported pressure controls on the GPU,
+with explicit coarsening/coarse-solve substitutions. Local configuration tests
+pass; GPU execution and private first-step parity remain pending.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared

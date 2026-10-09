@@ -10,6 +10,7 @@
 #include "backend/distributed/unstructured/solvers/mars_hypre_gmres_solver.hpp"
 #include "gate_common.hpp"
 #include "mars_segregated_simple_distributed.hpp"
+#include "../simple_performance/pressure_profile_fixture.hpp"
 #include <cuda_runtime.h>
 #include <iomanip>
 #include <string>
@@ -18,7 +19,7 @@ using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
 using Matrix=Solver::Matrix;
 using Vector=Solver::Vector;
 
-template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1,bool explicit_target=false) {
+template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1,bool explicit_target=false,int profile_mode=0) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+" "+label+": ";
     Problem p(C,ranks,o); Local l=extract(p,rank);
@@ -34,12 +35,21 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         solver.enable_true_residual_check(acceptance.absolute,acceptance.relative,true);
         solver.enable_fixed_graph_updates();
     }
+    const auto profile=pressure_profile_fixture(profile_mode==3,profile_mode==1);
+    if (profile_mode) mars::fem::pressure_settings::configure_gpu_profile(solver,profile);
     GhostExchange exchange(p,l,rank);
     for (unsigned round:{1u,2u}) {   // round 2: new values, RHS and solution; same structure
         if (round==2) { fill(p,l,rank,2,[&](int g,int c) { return p.product(g,c,2,12); }); overwrite(d.blocks,l.blocks); overwrite(d.rhs,l.rhs); }
         s.update(d.view(),b.data(),b.size());
         if (s.rows()) cudaMemset(x.data(),0,std::size_t(s.rows())*sizeof(double));
         const bool solved=solve_owned(solver,s,b,x);
+        if (profile_mode) {
+            bool matches=false;
+            solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
+                matches=pressure_profile_matches(profile,mars::fem::pressure_settings::snapshot(krylov,amg,flexible),profile_mode==1);
+            });
+            report.result(tag+"actual pressure controls and hierarchy depth",all_true(matches,comm));
+        }
         Buffer<double> local(C*std::size_t(l.nodes()),std::numeric_limits<double>::quiet_NaN());
         s.unpack(x.data(),x.size(),raw(local),local.size());
         const auto before=s.residual(halo_complete(raw(local),local.size()),b.data());   // ghosts still NaN
@@ -161,6 +171,9 @@ int main(int argc,char** argv) {
             hypre_gates<1>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"81-row l1 coarse relaxation",18);
             hypre_gates<3>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"l1 coarse block relaxation",18);
             hypre_gates<1>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"explicit pressure target, cached refresh",18,true);
+            hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile one level",18,true,1);
+            hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile multilevel",18,true,2);
+            hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile FlexGMRES",18,true,3);
             pressure_refinement_gate(MPI_COMM_WORLD,report);
             if (repetitions>0) { bench<1>(MPI_COMM_WORLD,report,repetitions); bench<3>(MPI_COMM_WORLD,report,repetitions); }
         }

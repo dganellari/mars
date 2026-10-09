@@ -39,6 +39,7 @@ struct SimpleBoundaryNames {
 struct SimpleOptions {
     std::string mesh,output,field_output="gathered";
     std::string pressure_failure_capture;
+    std::string pressure_solver_profile;
     SimpleControls controls;
     SimpleBoundaryNames boundaries;
     int iterations=2000,report=10,profile_warmup=10,snapshot_iterations=0;
@@ -63,6 +64,7 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         if (key=="--mesh") o.mesh=value;
         else if (key=="--output-prefix") o.output=value;
         else if (key=="--pressure-failure-capture") o.pressure_failure_capture=value;
+        else if (key=="--pressure-solver-profile") o.pressure_solver_profile=value;
         else if (key=="--field-output") {
             if (value!="gathered" && value!="distributed" && value!="none")
                 throw std::runtime_error("--field-output expects gathered, distributed or none");
@@ -149,6 +151,8 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         throw std::runtime_error("first-step audit requires one iteration, one snapshot interval and distributed field output without profiling");
     if (!o.pressure_failure_capture.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || o.first_step_audit))
         throw std::runtime_error("pressure failure capture requires explicit pressure targets and iterations without refinement or first-step audit");
+    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || !o.first_step_audit))
+        throw std::runtime_error("pressure profile comparison requires a first-step audit and explicit unchanged targets without refinement");
     return o;
 }
 inline const char* simple_help() {
@@ -170,6 +174,7 @@ inline const char* simple_help() {
            "    Sets pressure Krylov and both true residual targets; momentum stays unchanged.\n"
            "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
+           "  --pressure-solver-profile FILE      opt-in pressure controls; requires first-step audit and explicit tolerances\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

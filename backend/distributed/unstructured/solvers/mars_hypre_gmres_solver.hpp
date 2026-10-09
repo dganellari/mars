@@ -10,6 +10,7 @@
 #include <_hypre_parcsr_mv.h>
 #endif
 #include "mars_solver_profile.hpp"
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <thrust/gather.h>
@@ -52,6 +53,24 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+
+    // Instance controls keep a pressure comparison from changing momentum too.
+    void set_krylov_controls(bool flex, int restart, int minimum, int maximum) {
+        require_reuse(!solver_ && !A_hypre_ && restart > 0 && minimum >= 0
+            && maximum > 0 && minimum <= maximum, "invalid or late Krylov controls");
+        const int bounds[8]={int(flex),-int(flex),restart,-restart,minimum,-minimum,maximum,-maximum};
+        int global[8];
+        MPI_Allreduce(bounds,global,8,MPI_INT,MPI_MAX,comm_);
+        bool same=true;
+        for (int i=0;i<8;i+=2) same= same && global[i]==-global[i+1];
+        require_reuse(same,"Krylov controls differ between ranks");
+        useFlexGmres_=flex; kDim_=restart; minimum_iterations_=minimum; maxIter_=maximum;
+    }
+    void set_amg_controls(std::function<void(HYPRE_Solver)> configure) {
+        require_reuse(!solver_ && !A_hypre_ && precondType_==BOOMERAMG && !precondMatrix_,
+                      "AMG controls require an unprepared BoomerAMG solver");
+        amg_controls_=std::move(configure);
+    }
 
     // Use ||b-Ax||/||b|| instead of unit-dependent x/b magnitude heuristics.
     // A zero RHS uses an absolute residual. The caller must fix any nullspace.
@@ -567,6 +586,11 @@ public:
             HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
             HYPRE_BoomerAMGSetTol(precond_, 0.0);           // GMRES controls outer tol
             HYPRE_BoomerAMGSetMaxIter(precond_, 1);         // 1 V-cycle per GMRES iter
+            if (amg_controls_) {
+                bool configured=true;
+                try { amg_controls_(precond_); } catch (...) { configured=false; }
+                require_reuse(configured && HYPRE_GetError()==0,"explicit AMG controls failed");
+            }
             // Note: an earlier attempt called HYPRE_BoomerAMGSetInterpVectors
             // with the constant-of-ones to declare the near-null mode of the
             // pressure-Poisson. That call is REJECTED with HYPRE_ERROR_GENERIC
@@ -653,8 +677,8 @@ public:
         // iteration count forces GMRES to keep building the Krylov space past
         // that first deceptive cycle so a real x emerges. Env-overridable.
         {
-            int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
-            if (minIt > 0)
+            int minIt = minimum_iterations_>=0 ? minimum_iterations_ : getEnvInt("MARS_HYPRE_MINITER", 3);
+            if (minIt > 0 || minimum_iterations_>=0)
                 (useFlexGmres_ ? HYPRE_FlexGMRESSetMinIter : HYPRE_GMRESSetMinIter)(solver_, minIt);
         }
         // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
@@ -1552,6 +1576,8 @@ private:
     bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
     int  pointBlock_   = 1;      // >1: systems/point-block BoomerAMG via SetNumFunctions
     int  coarseRelaxType_ = -1;
+    int minimum_iterations_ = -1;
+    std::function<void(HYPRE_Solver)> amg_controls_;
 };
 
 } // namespace fem

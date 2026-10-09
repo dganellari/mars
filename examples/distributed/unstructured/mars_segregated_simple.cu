@@ -4,6 +4,7 @@
 #include "mars_segregated_simple_audit.hpp"
 #include "mars_segregated_pressure_capture.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp"
+#include "backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -13,6 +14,36 @@ using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
 using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
+
+fem::pressure_settings::Values read_pressure_profile(MPI_Comm comm,const SimpleOptions& o) {
+    int rank=0; MPI_Comm_rank(comm,&rank);
+    std::string text;
+    bool valid=true;
+    if (!rank && !o.pressure_solver_profile.empty()) try {
+        std::ifstream file(o.pressure_solver_profile,std::ios::binary);
+        ensure(bool(file),"cannot read private pressure profile");
+        char buffer[16385];
+        file.read(buffer,sizeof(buffer));
+        text.assign(buffer,std::size_t(file.gcount()));
+        valid=!file.bad() && !text.empty() && text.size()<=16384;
+    } catch (...) { valid=false; }
+    simple_collective(comm,valid,"cannot read private pressure profile");
+    int size=int(text.size());
+    ensure(MPI_Bcast(&size,1,MPI_INT,0,comm)==MPI_SUCCESS,"pressure profile broadcast failed");
+    simple_collective(comm,(size!=0)==!o.pressure_solver_profile.empty(),"pressure profile selection differs between ranks");
+    text.resize(size);
+    ensure(MPI_Bcast(text.data(),size,MPI_CHAR,0,comm)==MPI_SUCCESS,"pressure profile broadcast failed");
+    fem::pressure_settings::Values profile;
+    if (!size) return profile;
+    try {
+        std::istringstream input(text);
+        profile=fem::pressure_settings::read(input);
+        fem::pressure_settings::validate_gpu_profile(profile);
+        valid=profile.at("rtol")==o.pressure_rtol && profile.at("atol")==o.pressure_atol;
+    } catch (...) { valid=false; }
+    simple_collective(comm,valid,"invalid GPU pressure profile or changed pressure targets");
+    return profile;
+}
 
 void prepare_pressure_capture(Runner& run,const std::string& directory) {
     int rank=0; MPI_Comm_rank(run.comm,&rank);
@@ -58,6 +89,7 @@ void prepare_pressure_capture(Runner& run,const std::string& directory) {
 
 int execute(const SimpleOptions& o) {
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
+    const auto pressure_profile=read_pressure_profile(MPI_COMM_WORLD,o);
     simple_output_preflight(MPI_COMM_WORLD,o.output,o.field_output);
     const double setup_start=MPI_Wtime();
     int nodes=0;
@@ -72,6 +104,7 @@ int execute(const SimpleOptions& o) {
     auto runner=make_runner(); // Release root file arrays and setup scratch before iterating.
     auto& run=*runner;
     run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
+    if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile);
     run.set_pressure_refinement(o.pressure_refinement);
     prepare_pressure_capture(run,o.pressure_failure_capture);
     run.profile.configure(o.profile,o.profile_warmup);
@@ -104,6 +137,7 @@ int execute(const SimpleOptions& o) {
         if (o.pressure_tolerances)
             std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol
                      <<" pressure_acceptance=max(atol,rtol*rhs_norm); momentum targets unchanged\n";
+        if (!pressure_profile.empty()) std::cout<<"pressure_solver_profile=explicit_gpu\n";
     }
     if (o.profile) {
         char host[MPI_MAX_PROCESSOR_NAME]; int length=0,device=0;
@@ -161,8 +195,21 @@ int execute(const SimpleOptions& o) {
                 if (std::string(stage)=="momentum")
                     audit->momentum(run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data()),
                                     run.du.data(),run.velocity.data(),run.d.data());
-                else if (std::string(stage)=="raw_pressure_increment")
+                else if (std::string(stage)=="raw_pressure_increment") {
                     audit->pressure(run.graph.template view<1>(run.poisson_blocks.data(),run.poisson_rhs.data()),run.phi.data());
+                    if (!pressure_profile.empty()) {
+                        bool saved=true;
+                        try {
+                            std::ostringstream text;
+                            run.poisson_solve.solver.inspect_prepared([&](auto solver,auto amg,bool flex) {
+                                fem::pressure_settings::write(text,fem::pressure_settings::snapshot(solver,amg,flex));
+                            });
+                            frozen::Writer file(o.output+"-pressure-rank-"+std::to_string(rank)+".settings");
+                            const auto values=text.str(); file.bytes(values.data(),values.size()); file.finish();
+                        } catch (...) { saved=false; }
+                        simple_collective(run.comm,saved,"private pressure settings output failed");
+                    }
+                }
                 else if (std::string(stage)=="velocity") audit->finish(run.gp.data());
                 io_seconds+=MPI_Wtime()-io_start;
             });

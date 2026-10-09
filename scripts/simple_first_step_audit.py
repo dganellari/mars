@@ -225,7 +225,8 @@ def collect(parts, name, nodes, components):
     return result
 
 
-def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public, detail_dir=None, gradient_audit=False):
+def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public, detail_dir=None, gradient_audit=False, reference_pair=None):
+    reference_pair = pair if reference_pair is None else reference_pair
     from simple_startup_probe import read_json, write_json
     nodes = len(ids)
     expected = [pair / ('mars/flow-audit-rank{:06d}.bin'.format(rank)) for rank in range(ranks)]
@@ -266,7 +267,7 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
             ('momentum', 3, 'coupled_navier_stokes', mars['increment'], reference_increment, scales[0]),
             ('pressure', 1, 'pressure_correction', mars['phi'], phi, scales[3])):
         public['failed_check'] = 'first_step_' + stage + '_matrix'
-        matrix = ReferenceMatrix(pair / 'reference', system, c, solver_to_source)
+        matrix = ReferenceMatrix(reference_pair / 'reference', system, c, solver_to_source)
         systems[stage] = compare_system(parts, matrix, stage, mx, rx, scale)
     errors = dict(momentum_predictor=float(np.max(np.abs(mars['predictor']-predictor))/scales[0]),
                   momentum_influence=float(np.max(np.abs(mars['influence']-influence))/(length*scales[0]/scales[3])),

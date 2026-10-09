@@ -61,6 +61,14 @@ def controls(case_path, reference_dir, mesh, log):
     case = json.loads(case_path.read_text())
     require(case['format'] == 'mars-simple-deck-v1')
     prepared = options(case['arguments'])
+    mapped_prepared = dict(prepared)
+    if '--pressure-solver-profile' in mapped_prepared:
+        profile = Path(mapped_prepared.pop('--pressure-solver-profile'))
+        require(case.get('pressure_solver_profile_sha256') == digest(profile))
+        require([line.strip() for line in log if line.startswith('pressure_solver_profile=')] ==
+                ['pressure_solver_profile=explicit_gpu'])
+    else:
+        require(not any(line.startswith('pressure_solver_profile=') for line in log))
     require(mesh is None or Path(prepared['--mesh']).resolve() == mesh.resolve())
     require(prepared['--mesh-format'] == 'exodus')
     # The saved preparation hash selects the reference deck without printing its name.
@@ -73,8 +81,8 @@ def controls(case_path, reference_dir, mesh, log):
         try:
             translated, _ = translate(load_deck(deck.read_bytes()), case.get('pressure_linear_policy', 'mars'))
             reference = options(translated)
-            same = set(prepared) == set(reference) | {'--mesh', '--mesh-format', '--reference-length'}
-            same = same and all(prepared[key] == value for key, value in reference.items())
+            same = set(mapped_prepared) == set(reference) | {'--mesh', '--mesh-format', '--reference-length'}
+            same = same and all(mapped_prepared[key] == value for key, value in reference.items())
             reference_status = 'mapped_controls_match' if same else 'mapped_controls_differ'
         except Exception:
             reference_status = 'unsupported_deck'

@@ -19,6 +19,9 @@ int main() {
     check(!defaults.pressure_tolerances && defaults.pressure_rtol==1e-12 && defaults.pressure_atol==0);
     check(!defaults.pressure_refinement);
     check(defaults.pressure_failure_capture.empty());
+    check(defaults.pressure_solver_profile.empty());
+    check(parse("--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+                "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").pressure_solver_profile=="settings");
     check(parse("--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0").pressure_failure_capture=="private");
     check(parse("--pressure-refinement 1").pressure_refinement);
     check(!parse("--pressure-refinement=0").pressure_refinement);
@@ -53,6 +56,10 @@ int main() {
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
         "--pressure-failure-capture private",
+        "--pressure-solver-profile settings",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --pressure-refinement 1 "
+        "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
         "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --pressure-refinement 1",
         "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --setup-only 1",
         "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",

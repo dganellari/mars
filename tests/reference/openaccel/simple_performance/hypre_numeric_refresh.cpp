@@ -3,6 +3,19 @@
 #define private public
 #include "host_gmres.hpp"
 #undef private
+#include "pressure_profile_fixture.hpp"
+// Sequential Hypre headers use MPI aliases; the wrapper's host stubs remain active.
+#undef MPI_Comm
+#undef MPI_COMM_WORLD
+#undef MPI_INT
+#undef MPI_DOUBLE
+#undef MPI_MAX
+#undef MPI_SUM
+#undef MPI_Comm_rank
+#undef MPI_Allreduce
+#undef MPI_Barrier
+#undef MPI_Abort
+#undef MPI_Wtime
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp"
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_refinement.hpp"
 
@@ -567,11 +580,54 @@ void stagnation_correction() {
     std::cout<<"PASS: public Hypre early stop recovered against exact solution without tolerance or setup changes\n";
 }
 
+void explicit_pressure_profile() {
+    namespace settings=mars::fem::pressure_settings;
+    for (bool flex:{false,true}) for (bool one_level:{false,true}) {
+        Matrix matrix; make_graph(matrix,160);
+        std::vector<HYPRE_BigInt> map(161);
+        for (int i=0;i<160;++i) map[i]=159-i;
+        map.back()=-1;
+        // Deliberately oppose the profile; pressure must override only this instance.
+        setenv("MARS_HYPRE_FLEXGMRES",flex?"0":"1",1);
+        setenv("MARS_HYPRE_MINITER","3",1);
+        Solver pressure(0,300,1e-12),momentum(0,300,1e-12);
+        pressure.setVerbose(false); momentum.setVerbose(false);
+        const auto profile=pressure_profile_fixture(flex,one_level);
+        auto bad=profile; bad["coarserelax"]=9;
+        expect_failure([&] { settings::configure_gpu_profile(pressure,bad); });
+        bad=profile; bad["miniter"]=201;
+        expect_failure([&] { settings::configure_gpu_profile(pressure,bad); });
+        settings::configure_gpu_profile(pressure,profile);
+        pressure.enable_fixed_graph_updates();
+        for (int epoch:{0,2}) {
+            std::vector<double> b,truth,x(160,0),other(160,0);
+            fill_system(matrix,map,epoch,b,truth);
+            check(pressure.solve(matrix,b,x,0,160,0,160,map),"profile solve rejected");
+            verify(matrix,map,b,x,truth);
+            pressure.inspect_prepared([&](auto solver,auto amg,bool flexible) {
+                check(flexible==flex && pressure_profile_matches(profile,settings::snapshot(solver,amg,flexible),one_level),
+                      "pressure profile not applied after setup");
+            });
+            check(momentum.solve(matrix,b,other,0,160,0,160,map),"unmodified momentum solve rejected");
+            momentum.inspect_prepared([&](auto solver,auto amg,bool flexible) {
+                const auto actual=settings::snapshot(solver,amg,flexible);
+                check(flexible!=flex && actual.at("miniter")==3 && actual.at("maxiter")==300
+                    && actual.at("kdim")==30,"pressure controls leaked into momentum");
+            });
+        }
+        check(pressure.get_graph_build_count()==1 && pressure.get_numeric_update_count()==2,"profile cache was rebuilt");
+        expect_failure([&] { settings::configure_gpu_profile(pressure,profile); });
+    }
+    unsetenv("MARS_HYPRE_FLEXGMRES"); setenv("MARS_HYPRE_MINITER","0",1);
+    std::cout<<"PASS: pressure profiles, one/multiple levels, GMRES/FlexGMRES and cached updates\n";
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
     unsetenv("MARS_HYPRE_RESIDUAL_AUDIT");
     try {
+        explicit_pressure_profile();
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);
             setenv("MARS_HYPRE_MINITER","3",1);

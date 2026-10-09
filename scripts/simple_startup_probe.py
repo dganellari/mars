@@ -95,6 +95,11 @@ def pair_inputs(pair):
     mapped, mesh = translate(load_deck((pair / 'reference/input.i').read_bytes()),
                              case.get('pressure_linear_policy', 'mars'))
     values = options(case['arguments'])
+    if 'pressure_profile' in record:
+        profile = record['pressure_profile']
+        require(record.get('first_step_audit') is True)
+        require(profile['sha256'] == case['pressure_solver_profile_sha256'] == digest(pair / 'pressure.profile'))
+        require(values.pop('--pressure-solver-profile') == str(pair.resolve() / 'pressure.profile'))
     require(Path(mesh).resolve() == Path(record['mesh']) == Path(values['--mesh']))
     require(values == dict(options(mapped), **{'--mesh': mesh, '--mesh-format': 'exodus',
                                              '--reference-length': values['--reference-length']}))
@@ -138,6 +143,7 @@ def run_files(directory, solver):
             raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
+        files += sorted(directory.glob('flow-pressure-rank-*.settings'))
     if read_json(directory.parent / 'pair.json').get('first_step_audit', False):
         files += sorted(directory.glob('*.bin'))
     require(all(p.is_file() for p in files))
@@ -385,22 +391,35 @@ def verified_launch(pair, solver):
     return record
 
 
-def compare(pair, public, detail_dir=None, gradient_audit=False):
+def compare(pair, public, detail_dir=None, gradient_audit=False, reference_pair=None):
     import numpy as np
     from netCDF4 import Dataset
     pair = pair.resolve()
     public['failed_check'] = 'input_identity'
     inputs = pair_inputs(pair)
+    reference_pair = pair if reference_pair is None else reference_pair.resolve()
+    reference_inputs = pair_inputs(reference_pair)
+    if reference_pair != pair:
+        require(inputs.get('pressure_profile', {}).get('reference_pair') == str(reference_pair))
+        require(inputs['pressure_profile']['reference_pair_sha256'] == digest(reference_pair / 'pair.json'))
+        require(all(inputs.get(key) == reference_inputs.get(key)
+                    for key in ('steps', 'first_step_audit', 'mesh', 'mesh_sha256', 'deck_sha256')))
+        require('pressure_profile' not in reference_inputs)
     steps = inputs['steps']
     require(not gradient_audit or (steps == 1 and inputs.get('first_step_audit') is True), 'gradient_mesh')
     public['failed_check'] = 'launch_records'
     mars_record = verified_launch(pair, 'mars')
-    reference_record = verified_launch(pair, 'openaccel')
-    public['fresh_launch_records_verified'] = True
+    reference_record = verified_launch(reference_pair, 'openaccel')
+    if reference_pair == pair:
+        public['fresh_launch_records_verified'] = True
+    else:
+        public.update(reference_reused=True, saved_reference_launch_verified=True, fresh_mars_launch_verified=True,
+                      fresh_launch_records_verified=False)
+        require(mars_record['ranks'] == reference_record['ranks'])
     public['declared_zero_initialization_verified'] = True
     public['failed_check'] = 'completion_and_controls'
     mars_log = (pair / 'mars/run.log').read_text(errors='replace').splitlines()
-    reference_log = (pair / 'reference/run.log').read_text(errors='replace')
+    reference_log = (reference_pair / 'reference/run.log').read_text(errors='replace')
     endings = [COMPLETION.fullmatch(line.strip()) for line in mars_log
                if line.startswith(('CONVERGED', 'NOT CONVERGED'))]
     require(len(endings) == 1 and endings[0] and int(endings[0].group(2)) == steps
@@ -408,11 +427,11 @@ def compare(pair, public, detail_dir=None, gradient_audit=False):
     require(mars_record['exit_code'] == (0 if endings[0].group(1) == 'CONVERGED' else 2))
     headers = [HEADER.fullmatch(line.strip()) for line in mars_log if line.startswith('SIMPLE Tet4,')]
     require(len(headers) == 1 and headers[0] and int(headers[0].group(1)) == mars_record['ranks'])
-    prepared, _, matched, exact = controls(pair / 'case.json', pair / 'reference', Path(inputs['mesh']), mars_log)
+    prepared, _, matched, exact = controls(pair / 'case.json', reference_pair / 'reference', Path(inputs['mesh']), mars_log)
     require(exact and matched == 'mapped_controls_match')
     require([int(x) for x in re.findall(r'^Iter = (\d+)\s*$', reference_log, re.M)] == list(range(1, steps + 1)))
     require('Simulation is complete' in reference_log)
-    reference_paths = result_files(pair / 'reference')
+    reference_paths = result_files(reference_pair / 'reference')
     require(len(reference_paths) == reference_record['ranks'])
     with (pair / 'mars/flow-metrics.csv').open() as stream:
         metrics = list(csv.DictReader(stream))
@@ -455,7 +474,7 @@ def compare(pair, public, detail_dir=None, gradient_audit=False):
         first_differing_iteration=first, first_differing_fields=first_fields,
         field_tolerance=1e-5, pressure_gauge_shift_applied=False,
         mars_launch_sha256=digest(pair / 'mars/launch.json'),
-        reference_launch_sha256=digest(pair / 'reference/launch.json')))
+        reference_launch_sha256=digest(reference_pair / 'reference/launch.json')))
     public.update(comparison_status='completed', failed_check='none',
                   first_differing_iteration=first, first_differing_fields=first_fields,
                   **{('all_twenty_snapshots_match' if steps == STEPS else 'all_snapshots_match'): first is None})
@@ -463,8 +482,11 @@ def compare(pair, public, detail_dir=None, gradient_audit=False):
         from simple_first_step_audit import compare_first_step
         public['comparison_status'] = 'invalid_evidence'
         public['failed_check'] = 'first_step_capture'
-        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public, detail_dir, gradient_audit)
+        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public, detail_dir, gradient_audit,
+                           reference_pair=reference_pair)
         public.update(comparison_status='completed', failed_check='none')
+    require(mars_record == verified_launch(pair, 'mars') and reference_record == verified_launch(reference_pair, 'openaccel'))
+    require(inputs == pair_inputs(pair) and reference_inputs == pair_inputs(reference_pair))
 
 
 def main(argv=None):
