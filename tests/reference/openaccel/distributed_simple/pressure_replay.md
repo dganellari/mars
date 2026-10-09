@@ -125,6 +125,11 @@ environment and original application effective AMG hierarchy are not certified.
 This automated identity check requires shared Hypre and MPI libraries; static
 builds are rejected rather than silently losing the library binding.
 
+The reference probe is compiled with `-fPIC`. Without it, a function pointer can
+refer to an executable PLT stub, making `dladdr` name the executable instead of
+the shared library ([documented limitation](https://man7.org/linux/man-pages/man3/dladdr.3.html)).
+This changes library identification, not solver settings or residual acceptance.
+
 ```bash
 (
 set -euo pipefail
@@ -156,6 +161,14 @@ nor evaluates a residual. `inspection_complete` only means the inspection ran;
 `failed_check` identifies the failed check. Unknown messages and private paths,
 rank counts and solver values are never copied into its public output.
 
+`library_identity_checks` gives separate Hypre and MPI verdicts. Fixed failure
+labels distinguish a wrong hash, an executable recorded instead of a library,
+an unreadable file, a relative path, and a missing or malformed identity record.
+`executable_instead_of_library` is consistent with the PLT issue; it does not
+establish which shared library that old process actually used. The old result
+remains unverified. Neither matching `ldd` output nor an exit code of zero
+overrides the per-rank hash check.
+
 For the saved reference attempt:
 
 ```bash
@@ -180,6 +193,60 @@ exit "$status"
 )
 ```
 
+## Retry an executable-address identity failure
+
+Run this block only in the OpenAccel terminal. It first inspects the old result
+without launching anything. It retries only if the sole identity issue is an
+executable recorded instead of a library. Other failures stop with the public
+inspection report. The retry compiles the small reference replay with `-fPIC`
+and solves the already captured equation once; no MARS build, new flow capture
+or full pump run is needed. Original results remain untouched.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(cat "$scratch/simple-pressure-frozen-current.txt")
+retry=$(mktemp -d "$scratch/simple-reference-replay-XXXXXX")
+python3 "$repo/scripts/simple_pressure_replay.py" inspect \
+  --replay-run "$run/reference" --output "$retry/previous-public.json"
+cat "$retry/previous-public.json"
+python3 - "$retry/previous-public.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    report = json.load(stream)
+issues = {reason for check in report.get('library_identity_checks', {}).values()
+          for reason in check['failures']}
+if (report['failed_check'] != 'loaded_library_identity'
+        or not report['launch_inputs_unchanged']
+        or issues != {'executable_instead_of_library'}):
+    sys.exit('STOP: saved evidence does not identify the executable-address issue. Share this public JSON.')
+PY
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" replay \
+  --capture-run "$run/capture" --backend reference \
+  --build-cache "$scratch/git/OpenAccel/prgenv/CMakeCache.txt" \
+  --output-dir "$retry/reference" || status=$?
+cat "$retry/reference/public.json"
+if test "$status" -eq 0; then
+  printf '%s\n' "$retry/reference" > "$run/reference-retry-current.txt"
+fi
+printf 'Share only: %s\n' "$retry/reference/public.json"
+exit "$status"
+)
+```
+
+The comparison below uses the verified retry when its pointer exists. Its library
+identities apply only to the new process; the old result remains unverified.
+The common residual check still decides numerical acceptance.
+
 ## MARS terminal: compare all three candidates
 
 The host checker reads only the frozen diagnostic files. Production assembly,
@@ -193,13 +260,18 @@ repo="$scratch/git/mars-v010-check"
 umask 077
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
 run=$(cat "$scratch/simple-pressure-frozen-current.txt")
+reference="$run/reference"
+if test -f "$run/reference-retry-current.txt"; then
+  IFS= read -r reference < "$run/reference-retry-current.txt"
+fi
+summary=$(mktemp -d "$scratch/simple-pressure-comparison-XXXXXX")/public.json
 status=0
 python3 "$repo/scripts/simple_pressure_replay.py" compare \
-  --capture-run "$run/capture" --mars-run "$run/mars" --reference-run "$run/reference" \
+  --capture-run "$run/capture" --mars-run "$run/mars" --reference-run "$reference" \
   --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
-  --output "$run/comparison-public.json" || status=$?
-cat "$run/comparison-public.json"
-printf 'Share only: %s\n' "$run/comparison-public.json"
+  --output "$summary" || status=$?
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
 exit "$status"
 )
 ```

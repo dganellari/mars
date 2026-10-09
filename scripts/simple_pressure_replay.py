@@ -167,13 +167,38 @@ def captured_record(directory):
     return record
 
 
-def loaded_libraries_match(directory, ranks, expected):
+def loaded_library_checks(directory, ranks, expected, executable):
+    accepted = {kind: {value for name, value in expected.items() if defaults.library_kind(name) == kind}
+                for kind in ('hypre', 'mpi')}
+    failures = {kind: set() for kind in accepted}
     for rank in range(ranks):
-        identity = rank_file(directory, rank, '.libraries').read_text().splitlines()
-        require(len(identity) == 2 and all(Path(path).is_absolute() for path in identity))
+        try:
+            identity = rank_file(directory, rank, '.libraries').read_text().splitlines()
+        except (OSError, UnicodeError):
+            for issues in failures.values(): issues.add('record_unreadable')
+            continue
+        if len(identity) != 2:
+            for issues in failures.values(): issues.add('record_malformed')
+            continue
         for path, kind in zip(identity, ('hypre', 'mpi')):
-            require(digest(path) in {value for name, value in expected.items()
-                                    if defaults.library_kind(name) == kind})
+            if not Path(path).is_absolute():
+                failures[kind].add('non_absolute_path')
+                continue
+            try:
+                value = digest(path)
+                if value not in accepted[kind]:
+                    failures[kind].add('executable_instead_of_library' if Path(path).resolve() == executable.resolve()
+                                       else 'hash_mismatch')
+            except (OSError, ValueError):
+                failures[kind].add('file_unreadable')
+    return {kind: dict(matched=not issues, failures=sorted(issues)) for kind, issues in failures.items()}
+
+
+def loaded_libraries_match(directory, ranks, expected, executable, public):
+    checks = loaded_library_checks(directory, ranks, expected, executable)
+    public['library_identity_checks'] = checks
+    public['loaded_library_identity_verified'] = all(check['matched'] for check in checks.values())
+    require(public['loaded_library_identity_verified'])
 
 
 def inspect_replay(directory, public):
@@ -230,7 +255,8 @@ def inspect_replay(directory, public):
         public['all_' + name + '_parts_present'] = all(present)
     public['completion_marker_present'] = (result / 'complete').is_file()
     check('completion_marker_valid', lambda: require(marker(result, 'mars-pressure-replay-v1') == ranks))
-    check('loaded_library_identity_verified', lambda: loaded_libraries_match(result, ranks, expected))
+    check('loaded_library_identity_verified', lambda: loaded_libraries_match(
+        result, ranks, expected, Path(command[-4]), public))
     public.update(checks)
     if not checks['launch_inputs_unchanged']:
         failure = 'inputs_changed'
@@ -265,8 +291,9 @@ def replay(args, output, public):
         compiler, compile_flags, link_flags, cache_inputs = defaults.cached_toolchain(args.build_cache.resolve(), True)
         require(defaults.find_compiler(compiler) is not None)
         executable = output / 'pressure-replay'
+        # dladdr needs the shared-library address, not an executable PLT stub.
         command = [compiler, '-std=c++17', '-O2', '-I' + str(include)] + compile_flags + [
-            str(CPP), str(library)] + link_flags + ['-Wl,-rpath,' + str(library.parent), '-ldl', '-o', str(executable)]
+            str(CPP), str(library)] + link_flags + ['-fPIC', '-Wl,-rpath,' + str(library.parent), '-ldl', '-o', str(executable)]
         with (output / 'compile.log').open('xb') as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
         require(result.returncode == 0)
@@ -291,7 +318,7 @@ def replay(args, output, public):
     public['failed_check'] = 'completion_marker'
     require(marker(output / 'result', 'mars-pressure-replay-v1') == record['ranks'])
     public['failed_check'] = 'loaded_library_identity'
-    loaded_libraries_match(output / 'result', record['ranks'], expected)
+    loaded_libraries_match(output / 'result', record['ranks'], expected, executable, public)
     public['failed_check'] = 'inputs_changed'
     verify(inputs)
     launch.update(exit_code=0, files=hashes(list((output / 'result').iterdir()) +

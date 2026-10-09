@@ -381,6 +381,46 @@ class ReplayTests(unittest.TestCase):
         (self.result/'run.log').write_text('SECRET private runtime output\n')
         return ['inspect', '--replay-run', str(self.result), '--output', str(self.root/'inspection.json')]
 
+    def test_reference_build_uses_pic_and_still_rejects_executable_identity(self):
+        capture = self.captured_record()
+        library, mpi, cache = (self.root/name for name in ('libHYPRE.so', 'libmpi.so', 'CMakeCache.txt'))
+        for path in (library, mpi, cache): path.write_text('SECRET ' + path.name)
+        include = self.root/'include'; include.mkdir()
+        libraries = replay.hashes([library, mpi])
+        record = json.loads((capture/'capture.json').read_text())
+        record.update(reference={'libraries': libraries}, launcher=['launcher'])
+        (capture/'capture.json').write_text(json.dumps(record))
+        compiler = str(self.root/'compiler')
+        for wrong_identity in (False, True):
+            with self.subTest(wrong_identity=wrong_identity):
+                output = self.root/('reference-wrong' if wrong_identity else 'reference-ok')
+                def run(command, **kwargs):
+                    if command[0] == compiler:
+                        self.assertGreater(command.index('-fPIC'), command.index('-fno-pic'))
+                        Path(command[-1]).write_text('SECRET executable')
+                    else:
+                        self.assertEqual(command[-2], str(capture/'reference.settings'))
+                        write_solution(Path(command[-1]), [1.+i/8. for i in range(12)], 1)
+                        reported = command[-4] if wrong_identity else str(library)
+                        replay.rank_file(Path(command[-1]), 0, '.libraries').write_text('{}\n{}\n'.format(reported, mpi))
+                    return subprocess.CompletedProcess(command, 0)
+                with patch.object(replay.defaults, 'matching_install', return_value=(library, include)), \
+                     patch.object(replay.defaults, 'cached_toolchain', return_value=(compiler, ['-fno-pic'], [], replay.hashes([cache]))), \
+                     patch.object(replay.defaults, 'find_compiler', return_value=compiler), \
+                     patch.object(replay.startup, 'runtime_libraries', return_value=libraries), \
+                     patch.object(replay.subprocess, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
+                    code = replay.main(['replay', '--capture-run', str(capture), '--backend', 'reference',
+                                        '--build-cache', str(cache), '--output-dir', str(output)])
+                self.assertEqual(code, int(wrong_identity))
+                public = json.loads((output/'public.json').read_text())
+                self.assertEqual(public['loaded_library_identity_verified'], not wrong_identity)
+                self.assertEqual((output/'replay.json').exists(), not wrong_identity)
+                self.assertEqual(public['library_identity_checks']['hypre']['failures'],
+                                 ['executable_instead_of_library'] if wrong_identity else [])
+                self.assertFalse(public.get('convergence_verified', False))
+                self.assertNotIn('SECRET', json.dumps(public))
+                self.assertNotIn(str(self.root), json.dumps(public))
+
     def inspect_saved(self, args, expected_status=0):
         before = replay.hashes(p for p in self.result.rglob('*') if p.is_file())
         with patch.object(replay.subprocess, 'run') as command, contextlib.redirect_stdout(io.StringIO()):
@@ -439,6 +479,49 @@ class ReplayTests(unittest.TestCase):
         public = self.inspect_saved(args)
         self.assertTrue(public['completion_marker_valid'])
         self.assertEqual(public['failed_check'], 'loaded_library_identity')
+        self.assertEqual(public['library_identity_checks'], {
+            'hypre': {'matched': False, 'failures': ['hash_mismatch']},
+            'mpi': {'matched': True, 'failures': []}})
+
+    def test_saved_library_failure_reasons_are_private_and_never_accepted(self):
+        args = self.inspection_fixture(2)
+        exe = self.root/'reference-replay'
+        alias = self.root/'SECRET-alias'; alias.symlink_to(exe)
+        identity = replay.rank_file(self.result/'result', 1, '.libraries')
+        for i, (path, reason) in enumerate(((str(exe), 'executable_instead_of_library'),
+                                           (str(alias), 'executable_instead_of_library'),
+                                           ('SECRET-relative.so', 'non_absolute_path'),
+                                           (str(self.root/'SECRET-missing.so'), 'file_unreadable'),
+                                           (str(self.root/'libmpi.so'), 'hash_mismatch'))):
+            with self.subTest(reason=reason):
+                identity.write_text('{}\n{}\n'.format(path, self.root/'libmpi.so'))
+                args[-1] = str(self.root/'inspect-{}.json'.format(i))
+                public = self.inspect_saved(args)
+                self.assertEqual(public['failed_check'], 'loaded_library_identity')
+                self.assertFalse(public['loaded_library_identity_verified'])
+                self.assertEqual(public['library_identity_checks']['hypre']['failures'], [reason])
+                self.assertTrue(public['library_identity_checks']['mpi']['matched'])
+
+    def test_saved_library_records_missing_or_malformed_fail_both_identities(self):
+        args = self.inspection_fixture(2)
+        identity = replay.rank_file(self.result/'result', 1, '.libraries')
+        for text, reason in ((None, 'record_unreadable'), ('SECRET malformed\n', 'record_malformed')):
+            with self.subTest(reason=reason):
+                if text is None: identity.unlink()
+                else: identity.write_text(text)
+                args[-1] = str(self.root/('inspect-' + reason + '.json'))
+                public = self.inspect_saved(args)
+                self.assertEqual(public['failed_check'], 'loaded_library_identity')
+                self.assertEqual(public['library_identity_checks'], {
+                    kind: {'matched': False, 'failures': [reason]} for kind in ('hypre', 'mpi')})
+
+    def test_saved_library_alias_is_accepted_only_by_matching_contents(self):
+        args = self.inspection_fixture(2)
+        alias = self.root/'SECRET-alias'; alias.symlink_to(self.root/'libHYPRE.so')
+        replay.rank_file(self.result/'result', 1, '.libraries').write_text('{}\n{}\n'.format(alias, self.root/'libmpi.so'))
+        public = self.inspect_saved(args)
+        self.assertEqual(public['failed_check'], 'none')
+        self.assertTrue(public['loaded_library_identity_verified'])
 
     def test_saved_inspection_rejects_changed_inputs_and_record_binding(self):
         args = self.inspection_fixture()
