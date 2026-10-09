@@ -263,7 +263,9 @@ class ReplayTests(unittest.TestCase):
         args = self.compare_arguments()
         (self.root/'mars/result/rank-000000.solution').write_bytes(b'changed')
         with contextlib.redirect_stdout(io.StringIO()): self.assertEqual(replay.main(args), 1)
-        self.assertEqual(json.loads((self.root/'public.json').read_text())['failed_check'], 'replay_identity')
+        public = json.loads((self.root/'public.json').read_text())
+        self.assertEqual(public['failed_check'], 'mars_replay_outputs')
+        self.assertEqual(public['replay_evidence_checks']['mars']['outputs']['changed'], ['replay_output'])
 
     def test_modified_capture_rejected(self):
         args = self.compare_arguments()
@@ -279,6 +281,118 @@ class ReplayTests(unittest.TestCase):
             return result
         with patch.object(replay.subprocess, 'run', side_effect=change), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(replay.main(args), 1)
+
+    def compare_saved(self, args, code=1):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(replay.main(args), code)
+        text = Path(args[-1]).read_text()
+        self.assertNotIn('SECRET', text)
+        self.assertNotIn(str(self.root), text)
+        return json.loads(text)
+
+    def add_replay_inputs(self, name, paths, executable=None):
+        path = self.root/name/'replay.json'
+        record = json.loads(path.read_text())
+        record['inputs'].update(replay.hashes(paths))
+        if executable is not None:
+            record['command'] = ['launcher', str(executable), 'system', 'configuration', 'result']
+        path.write_text(json.dumps(record))
+
+    def test_compare_checks_both_environments_before_running_checker(self):
+        args = self.compare_arguments()
+        hypre = self.root/'libHYPRE.so'; hypre.write_text('SECRET hypre')
+        mpi = self.root/'libmpi.so'; mpi.write_text('SECRET mpi')
+        self.add_replay_inputs('mars', [hypre])
+        self.add_replay_inputs('reference', [mpi])
+        hypre.unlink(); mpi.write_text('changed')
+        with patch.object(replay.subprocess, 'run') as run:
+            public = self.compare_saved(args)
+            run.assert_not_called()
+        self.assertEqual(public['failed_candidate'], 'mars')
+        self.assertEqual(public['failed_check'], 'mars_replay_inputs')
+        evidence = public['replay_evidence_checks']
+        self.assertEqual(evidence['mars']['inputs']['missing'], ['hypre_library'])
+        self.assertEqual(evidence['reference']['inputs']['changed'], ['mpi_library'])
+        self.assertTrue(evidence['mars']['outputs']['matched'])
+        self.assertTrue(evidence['reference']['outputs']['matched'])
+        self.assertNotIn('residual_checks', public)
+
+    def test_compare_separates_changed_binary_missing_runtime_and_unreadable_build_input(self):
+        args = self.compare_arguments()
+        binary, library, source = (self.root/name for name in ('SECRET-exe', 'libstdc++.so.6', 'SECRET-source.hpp'))
+        for path in (binary, library, source): path.write_text(path.name)
+        self.add_replay_inputs('reference', [binary, library, source], binary)
+        binary.write_text('changed'); library.unlink()
+        actual_digest = replay.digest
+        def digest(path):
+            if str(path) == str(source): raise PermissionError('SECRET permission failure')
+            return actual_digest(path)
+        with patch.object(replay, 'digest', side_effect=digest), patch.object(replay.subprocess, 'run') as run:
+            public = self.compare_saved(args)
+            run.assert_not_called()
+        self.assertEqual(public['failed_check'], 'reference_replay_inputs')
+        check = public['replay_evidence_checks']['reference']['inputs']
+        self.assertEqual(check['changed'], ['executable'])
+        self.assertEqual(check['missing'], ['other_runtime_library'])
+        self.assertEqual(check['unreadable'], ['source_or_build_input'])
+        self.assertTrue(public['replay_evidence_checks']['mars']['verified'])
+
+    def test_compare_rejects_missing_record_wrong_binding_and_malformed_manifest(self):
+        args = self.compare_arguments()
+        path = self.root/'reference/replay.json'; saved = path.read_text()
+        for case in ('missing', 'binding', 'manifest'):
+            with self.subTest(case=case):
+                record = json.loads(saved)
+                if case == 'binding': record['capture_sha256'] = '0'*64
+                if case == 'manifest': record['inputs']['SECRET-relative'] = 'SECRET invalid hash'
+                if case == 'missing': path.unlink()
+                else: path.write_text(json.dumps(record))
+                args[-1] = str(self.root/(case + '.json'))
+                with patch.object(replay.subprocess, 'run') as run:
+                    public = self.compare_saved(args)
+                    run.assert_not_called()
+                expected = {'missing': 'replay_record', 'binding': 'replay_binding', 'manifest': 'replay_inputs'}[case]
+                self.assertEqual(public['failed_check'], 'reference_' + expected)
+                if case == 'manifest':
+                    self.assertFalse(public['replay_evidence_checks']['reference']['inputs']['record_valid'])
+
+    def test_compare_checker_failures_are_not_reported_as_replay_identity(self):
+        args = self.compare_arguments()
+        cases = [
+            ('launch', FileNotFoundError('SECRET loader'), 'original_checker_launch'),
+            ('permissions', PermissionError('SECRET mode'), 'original_checker_launch'),
+            ('loader', subprocess.CompletedProcess([], 127, b'', b'error while loading shared libraries: SECRET'), 'original_checker_exit'),
+            ('version', subprocess.CompletedProcess([], 1, b'', b"version `SECRET' not found (required by SECRET)"), 'original_checker_exit'),
+            ('format', subprocess.CompletedProcess([], 1, b'', b'ERROR: private pressure residual check failed\n'), 'original_checker_exit'),
+            ('signal', subprocess.CompletedProcess([], -9, b'', b'SECRET'), 'original_checker_exit'),
+            ('json', subprocess.CompletedProcess([], 0, b'SECRET malformed JSON', b''), 'original_checker_output'),
+            ('schema', subprocess.CompletedProcess([], 0, b'{"schema":"SECRET"}', b''), 'original_checker_output')]
+        for case, response, expected in cases:
+            with self.subTest(case=case):
+                args[-1] = str(self.root/(case + '.json'))
+                def run(*unused, **kwargs):
+                    if isinstance(response, Exception): raise response
+                    return response
+                with patch.object(replay.subprocess, 'run', side_effect=run):
+                    public = self.compare_saved(args)
+                self.assertEqual(public['failed_check'], expected)
+                self.assertTrue(all(check['verified'] for check in public['replay_evidence_checks'].values()))
+                if case in ('loader', 'version'):
+                    self.assertTrue(public['checker_diagnostics']['library_load_error_seen'])
+                if case == 'format':
+                    self.assertTrue(public['checker_diagnostics']['residual_check_error_seen'])
+                if case == 'signal': self.assertEqual(public['checker_diagnostics']['process_exit_code'], -9)
+                if case == 'permissions': self.assertEqual(public['checker_launch_error'], 'permission_denied')
+
+    def test_compare_distinguishes_invalid_report_from_identity(self):
+        args = self.compare_arguments()
+        report = self.root/'mars/result/rank-000000.report'
+        report.write_text('SECRET malformed\n')
+        path = self.root/'mars/replay.json'; record = json.loads(path.read_text())
+        record['files'][str(report)] = replay.digest(report)
+        path.write_text(json.dumps(record))
+        public = self.compare_saved(args)
+        self.assertEqual(public['failed_check'], 'mars_replay_report')
 
     def test_capture_retains_launch_controls_and_rejection(self):
         pair = self.root/'pair'; pair.mkdir()

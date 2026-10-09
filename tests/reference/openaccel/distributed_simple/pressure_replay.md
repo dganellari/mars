@@ -251,6 +251,9 @@ The common residual check still decides numerical acceptance.
 
 The host checker reads only the frozen diagnostic files. Production assembly,
 solving and halo exchange remain on the GPU. Share only the final public JSON.
+The comparison also rechecks both replays' recorded inputs and outputs. Their
+recorded files must be visible from this terminal, including the reference's
+runtime libraries and build headers.
 
 ```bash
 (
@@ -283,6 +286,32 @@ reproduce the failure; do not attribute that difference to OpenAccel controls.
 If both fail the common test, changing to the reference profile alone has not
 resolved the accuracy problem. An inconclusive interval requires better residual
 resolution, not tolerance relaxation.
+
+### If comparison stops before a verdict
+
+Older versions used `replay_identity` for every failure after locating the
+checker, including checker execution and report parsing. That label alone does
+not identify a stale replay or a numerical failure.
+
+The current comparison checks both replay records before running the residual
+checker. `replay_evidence_checks` distinguishes missing, changed and unreadable
+files using fixed categories: executable, capture input, Hypre library, MPI
+library, other runtime library, source/build input and replay output. No paths,
+hashes, counts or private values are exported. A missing library may be outside
+the current uenv mount; it does not establish that the library was deleted.
+
+`failed_candidate` identifies the original, MARS or reference candidate.
+`failed_check` distinguishes record/binding/input/output checks, checker launch,
+checker exit, checker output parsing and replay report parsing. Checker failures
+also report a fixed launch reason or exit code and fixed loader/error flags.
+All existing input/output hashes remain required, including checks after
+evaluation. File problems are never converted into numerical passes.
+
+For an old `replay_identity` result, fetch the updated script in one terminal
+only, then repeat the comparison block with the same capture/replays and a fresh
+summary. This is saved-data checking only: no solver launch, capture, build or
+allocation. Restore inaccessible recorded inputs if the new report identifies
+them; do not alter their hashes to bypass the check.
 
 ## Local verification
 

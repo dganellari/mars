@@ -32,6 +32,59 @@ def verify(record):
     defaults.unchanged(record)
 
 
+def file_identity_checks(files, category):
+    issues = {name: set() for name in ('missing', 'changed', 'unreadable')}
+    valid = isinstance(files, dict)
+    if valid:
+        for path, expected in files.items():
+            if (not isinstance(path, str) or not Path(path).is_absolute()
+                    or not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected)):
+                valid = False
+                continue
+            kind = category(path)
+            try:
+                if not Path(path).is_file():
+                    issues['missing'].add(kind)
+                elif digest(path) != expected:
+                    issues['changed'].add(kind)
+            except OSError:
+                issues['unreadable'].add(kind)
+    return dict(record_valid=valid, matched=valid and not any(issues.values()),
+                **{name: sorted(values) for name, values in issues.items()})
+
+
+def replay_input_kind(path, record, capture_dir, capture):
+    command = record.get('command', [])
+    if len(command) >= 4 and path == command[-4]:
+        return 'executable'
+    if path == str(capture_dir / 'capture.json') or path in capture['files']:
+        return 'capture_input'
+    kind = defaults.library_kind(path)
+    if kind is not None:
+        return kind + '_library'
+    if re.search(r'\.so(?:\.[0-9]+)*$|\.dylib$', Path(path).name):
+        return 'other_runtime_library'
+    return 'source_or_build_input'
+
+
+def checked_replay_record(path, name, capture_dir, capture, check):
+    check.update(verified=False, failed_check='replay_record')
+    record = startup.read_json(path / 'replay.json')
+    check['failed_check'] = 'replay_binding'
+    require(record['schema'] == SCHEMA and record['backend'] == name and record['exit_code'] == 0
+            and record['capture_sha256'] == digest(capture_dir / 'capture.json'))
+    require(record['profile'] in ('captured', 'reference') and (name != 'mars' or record['profile'] == 'captured'))
+    check['failed_check'] = 'replay_inputs'
+    check['inputs'] = file_identity_checks(record['inputs'],
+        lambda p: replay_input_kind(p, record, capture_dir, capture))
+    check['failed_check'] = 'replay_outputs'
+    check['outputs'] = file_identity_checks(record['files'], lambda p: 'replay_output')
+    check['failed_check'] = 'replay_inputs' if not check['inputs']['matched'] else 'replay_outputs'
+    require(check['inputs']['matched'] and check['outputs']['matched'])
+    check.update(verified=True, failed_check='none')
+    return record
+
+
 def marker(directory, schema):
     lines = (directory / 'complete').read_text().splitlines()
     require(len(lines) == 2 and lines[0] == schema and lines[1].isdigit())
@@ -331,26 +384,58 @@ def replay(args, output, public):
 def compare(args, public):
     public['failed_check'] = 'capture_identity'
     directory = args.capture_run.resolve(); capture = captured_record(directory)
+    public['failed_check'] = 'checker_executable'
     checker = args.checker.resolve(strict=True); checker_hash = digest(checker)
     checks = {}
     profiles = {}
-    public['failed_check'] = 'replay_identity'
+    records = {}
+    evidence = public['replay_evidence_checks'] = {}
+    # Check both environments before launching the checker, so one missing mount
+    # does not hide a second problem in the other replay.
+    for name, path in (('mars', args.mars_run), ('reference', args.reference_run)):
+        evidence[name] = {}
+        try:
+            records[name] = checked_replay_record(path, name, directory, capture, evidence[name])
+        except Exception:
+            pass
+    for name in ('mars', 'reference'):
+        if not evidence[name]['verified']:
+            public['failed_candidate'] = name
+            public['failed_check'] = name + '_' + evidence[name]['failed_check']
+            require(False)
     for name, path in (('original', None), ('mars', args.mars_run), ('reference', args.reference_run)):
+        public['failed_candidate'] = name
         if path is not None:
-            record = startup.read_json(path / 'replay.json')
-            require(record['schema'] == SCHEMA and record['backend'] == name and record['exit_code'] == 0
-                    and record['capture_sha256'] == digest(directory / 'capture.json'))
-            require(record['profile'] in ('captured', 'reference') and (name != 'mars' or record['profile'] == 'captured'))
+            record = records[name]
             profiles[name] = record['profile']
-            verify(record['inputs']); verify(record['files'])
+            public['failed_check'] = name + '_replay_inputs'
+            verify(record['inputs'])
+            public['failed_check'] = name + '_replay_outputs'
+            verify(record['files'])
         command = [str(checker), str(directory / 'system'), '-' if path is None else str(path / 'result')]
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        public['failed_check'] = name + '_checker_launch'
+        try:
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError as error:
+            public['checker_launch_error'] = ('not_found' if isinstance(error, FileNotFoundError) else
+                                             'permission_denied' if isinstance(error, PermissionError) else 'os_error')
+            raise
+        public['failed_check'] = name + '_checker_exit'
+        if result.returncode != 0:
+            stderr = result.stderr.decode('utf-8', errors='replace')
+            public['checker_diagnostics'] = dict(process_exit_code=result.returncode,
+                library_load_error_seen=any(message in stderr for message in (
+                    'error while loading shared libraries:', 'symbol lookup error:',
+                    'Library not loaded:', 'Symbol not found:')) or ('version ' in stderr and ' not found (required by ' in stderr),
+                residual_check_error_seen='ERROR: private pressure residual check failed' in stderr)
         require(result.returncode == 0)
+        public['failed_check'] = name + '_checker_output'
         value = json.loads(result.stdout.decode('utf-8'))
         keys = {'capture_valid', 'original_referenced_copies_equal_owners', 'finite', 'residual_passed', 'residual_failed', 'residual_inconclusive'}
         require(value['schema'] == 'mars-pressure-residual-v1' and all(type(value[key]) is bool for key in keys))
         checks[name] = {key: value[key] for key in sorted(keys)}
         if path is not None:
+            public['failed_check'] = name + '_replay_report'
             reports = [numeric_file(rank_file(path / 'result', rank, '.report')) for rank in range(capture['ranks'])]
             checks[name]['backend_fatal_error_seen'] = any(r['result_fatal_error'] != 0 for r in reports)
             checks[name]['backend_converged_flag'] = all(r['result_converged'] == 1 for r in reports)
@@ -362,8 +447,15 @@ def compare(args, public):
                 control_matches = control_matches and all(report.get(k) == v for k, v in expected.items()
                                                           if k != 'hypre_release' and not k.startswith('effective_'))
             checks[name]['recorded_controls_match_requested_profile'] = control_matches
-            verify(record['inputs']); verify(record['files'])
-    require(digest(checker) == checker_hash); verify(capture['files'])
+            public['failed_check'] = name + '_replay_inputs_changed'
+            verify(record['inputs'])
+            public['failed_check'] = name + '_replay_outputs_changed'
+            verify(record['files'])
+    public.pop('failed_candidate', None)
+    public['failed_check'] = 'checker_changed'
+    require(digest(checker) == checker_hash)
+    public['failed_check'] = 'capture_changed'
+    verify(capture['files'])
     public.update(comparison_status='completed', failed_check='none', residual_checks=checks,
                   same_frozen_system_verified=True, profiles=profiles, actual_exit_branch_verified=False,
                   original_amg_hierarchy_reused=False, nonlinear_convergence_verified=False)
