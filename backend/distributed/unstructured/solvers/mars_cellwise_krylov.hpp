@@ -99,26 +99,35 @@ precondition_kernel(const double* __restrict__ q, double* __restrict__ z,
     if constexpr (NV > 0) store_partial<NV>(acc, partial);
 }
 
+// The weight of an element-local copy in the assembled inner product. On a structured
+// block it is 1 / (number of copies), a power of two, so the weighting is exact.
+// (Unstructured meshes use CountingWeight, mars_cellwise_topology.hpp.)
+struct BlockWeight {
+    Block blk;
+    __device__ double operator()(const Node& nd) const { return weight(nd, blk); }
+};
+
+template <typename Weight>
 __global__ void __launch_bounds__(kThreads)
-wdot_kernel(const double* __restrict__ a, const double* __restrict__ b, Block blk,
+wdot_kernel(const double* __restrict__ a, const double* __restrict__ b, Block blk, Weight wt,
             double* __restrict__ partial)
 {
     double acc[1] = {0.0};
-    for_each_node(blk, [&](const Node& nd) { acc[0] += a[nd.t] * b[nd.t] * weight(nd, blk); });
+    for_each_node(blk, [&](const Node& nd) { acc[0] += a[nd.t] * b[nd.t] * wt(nd); });
     store_partial<1>(acc, partial);
 }
 
 // The weighted dot products <a, z> (AZ) and <z, z> (ZZ) of a preconditioned vector,
 // for preconditioners that cannot form them on the fly.
-template <bool AZ, bool ZZ>
+template <bool AZ, bool ZZ, typename Weight>
 __global__ void __launch_bounds__(kThreads)
-wdots_kernel(const double* __restrict__ z, const double* __restrict__ a, Block blk,
+wdots_kernel(const double* __restrict__ z, const double* __restrict__ a, Block blk, Weight wt,
              double* __restrict__ partial)
 {
     constexpr int NV = AZ + ZZ;
     double acc[NV] = {};
     for_each_node(blk, [&](const Node& nd) {
-        const double v = z[nd.t], w = weight(nd, blk);
+        const double v = z[nd.t], w = wt(nd);
         if constexpr (AZ) acc[0] += a[nd.t] * v * w;
         if constexpr (ZZ) acc[NV - 1] += v * v * w;
     });
@@ -157,11 +166,12 @@ __device__ inline void apply_step(double* __restrict__ sc, const double* v, int 
 
 // x += alpha p + omega s and r = s - omega t, plus the weighted <r, r> (the stopping
 // test) and <rh, r> (the next rho).
+template <typename Weight>
 __global__ void __launch_bounds__(kThreads)
 update_xr_kernel(double* __restrict__ x, double* __restrict__ r, const double* __restrict__ p,
                  const double* __restrict__ s, const double* __restrict__ tt,
                  const double* __restrict__ rh, const double* __restrict__ sc, Block blk,
-                 double* __restrict__ partial)
+                 Weight wt, double* __restrict__ partial)
 {
     const double alpha = sc[kAlpha], omega = sc[kOmega];
     double acc[2] = {0.0, 0.0};
@@ -170,7 +180,7 @@ update_xr_kernel(double* __restrict__ x, double* __restrict__ r, const double* _
         x[i] += alpha * p[i] + omega * s[i];
         const double ri = s[i] - omega * tt[i];
         r[i] = ri;
-        const double w = weight(nd, blk);
+        const double w = wt(nd);
         acc[0] += ri * ri * w;
         acc[1] += rh[i] * ri * w;
     });
@@ -247,9 +257,7 @@ struct Reduction {
     double* host = nullptr;   // pinned, for the totals on their way through MPI
     MPI_Comm comm;
     int ranks = 1;
-    int grid_dot, grid_xr;
-    explicit Reduction(MPI_Comm c = MPI_COMM_SELF)
-        : comm(c), grid_dot(resident_grid(wdot_kernel)), grid_xr(resident_grid(update_xr_kernel))
+    explicit Reduction(MPI_Comm c = MPI_COMM_SELF) : comm(c)
     {
         MARS_CELLWISE_MPI(MPI_Comm_size(comm, &ranks));
         int dev = 0, sms = 0;
@@ -351,13 +359,22 @@ inline void precondition(const double* d_q, double* d_z, const double* d_diag, c
     JacobiPreconditioner{d_diag, b, halo}.operator()<false, false>(d_q, d_z, nullptr, nullptr, stream);
 }
 
-// Weighted (= assembled) dot product of two continuous fields into scalar `slot`.
+// Weighted (= assembled) dot product of two continuous fields into scalar `slot`. `b`
+// is the iteration space (a block, or E x 1 x 1 elements of an unstructured mesh).
+template <typename Weight>
+void wdot(const double* d_a, const double* d_b, const Block& b, const Weight& wt, Reduction& red,
+          int slot, cudaStream_t stream = 0)
+{
+    static const int grid = resident_grid(wdot_kernel<Weight>);
+    wdot_kernel<Weight><<<grid, kThreads, 0, stream>>>(d_a, d_b, b, wt, red.partial);
+    MARS_CELLWISE_CK(cudaGetLastError());
+    red.finish<kStepStore, 1>(grid, slot, stream);
+}
+
 inline void wdot(const double* d_a, const double* d_b, const Block& b, Reduction& red, int slot,
                  cudaStream_t stream = 0)
 {
-    wdot_kernel<<<red.grid_dot, kThreads, 0, stream>>>(d_a, d_b, b, red.partial);
-    MARS_CELLWISE_CK(cudaGetLastError());
-    red.finish<kStepStore, 1>(red.grid_dot, slot, stream);
+    wdot(d_a, d_b, b, BlockWeight{b}, red, slot, stream);
 }
 
 // The square root of scalar kRR: the one value the host needs, to decide when to stop.
@@ -399,11 +416,12 @@ struct SolveResult {
 // holds the ranks that share the block. Per iteration: two operator calls, two
 // preconditioner-and-dot passes, three vector updates (one also forms the two dot
 // products the next iteration needs), and three global sums.
-template <typename Apply, typename Precond>
-SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, const double* d_rhs,
-                     double* d_x, MPI_Comm comm, double tol, int max_iterations,
+template <typename Apply, typename Precond, typename Weight>
+SolveResult bicgstab(Apply&& apply, const Precond& precond, const Weight& wt, const Block& b,
+                     const double* d_rhs, double* d_x, MPI_Comm comm, double tol, int max_iterations,
                      cudaStream_t stream = 0)
 {
+    static const int grid_xr = resident_grid(update_xr_kernel<Weight>);
     const long long n = b.values();
     const unsigned grid = (unsigned)((n + kThreads - 1) / kThreads);
     Workspace ws(n, comm);
@@ -431,9 +449,9 @@ SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, cons
         apply(ws.s, ws.q);
         blocks = precond.template operator()<true, true>(ws.q, ws.t, ws.s, red.partial, stream);
         red.finish<kStepOmega, 2>(blocks, 0, stream);
-        update_xr_kernel<<<red.grid_xr, kThreads, 0, stream>>>(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh,
-                                                               sc, b, red.partial);
-        red.finish<kStepRho, 2>(red.grid_xr, 0, stream);
+        update_xr_kernel<Weight><<<grid_xr, kThreads, 0, stream>>>(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh,
+                                                                   sc, b, wt, red.partial);
+        red.finish<kStepRho, 2>(grid_xr, 0, stream);
         MARS_CELLWISE_CK(cudaGetLastError());
         res.residual = read_norm(red, stream);
         res.history.push_back(res.residual);
@@ -441,6 +459,14 @@ SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, cons
         if (res.residual <= tol * res.residual0) break;
     }
     return res;
+}
+
+template <typename Apply, typename Precond>
+SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, const double* d_rhs,
+                     double* d_x, MPI_Comm comm, double tol, int max_iterations,
+                     cudaStream_t stream = 0)
+{
+    return bicgstab(apply, precond, BlockWeight{b}, b, d_rhs, d_x, comm, tol, max_iterations, stream);
 }
 
 }  // namespace cellwise

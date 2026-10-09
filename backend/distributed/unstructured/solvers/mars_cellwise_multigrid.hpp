@@ -334,8 +334,9 @@ public:
     {
         vcycle(0, q, z, stream);
         if constexpr (AZ || ZZ) {
-            static const int grid = resident_grid(wdots_kernel<AZ, ZZ>);
-            wdots_kernel<AZ, ZZ><<<grid, kThreads, 0, stream>>>(z, a, lv_[0].blk, partial);
+            static const int grid = resident_grid(wdots_kernel<AZ, ZZ, BlockWeight>);
+            wdots_kernel<AZ, ZZ, BlockWeight><<<grid, kThreads, 0, stream>>>(z, a, lv_[0].blk,
+                                                                              BlockWeight{lv_[0].blk}, partial);
             MARS_CELLWISE_CK(cudaGetLastError());
             return grid;
         }

@@ -20,6 +20,10 @@
 // Run:  mars_marsir_cellwise_solve --ptx <hl_full_p7_sm90.ptx> [--ne 8] [--deform 0]
 //                                  [--tol 1e-10] [--maxit 500] [--reps 10]
 //                                  [--mg] [--pre 0] [--post 3]
+// --unstructured runs the same cube through the unstructured tables
+// (solvers/mars_cellwise_topology.hpp) instead of the structured block, and --rotate
+// gives every element a random proper rotation of its local frame (one rank, Jacobi).
+// The discrete problem does not change, so the iterations must match the structured run.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -32,6 +36,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
 #include <cuda_runtime.h>
 #include <mpi.h>
@@ -55,6 +60,31 @@ constexpr int kP = 7;
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kGElem = 3 * kP * 3 * kNN;   // metric doubles per element, component-major
 
+__constant__ int c_rot[24][9];   // proper rotations of the cube; 0 is the identity
+
+__device__ unsigned long long mix(unsigned long long z)
+{
+    z += 0x9e3779b97f4a7c15ULL;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+// Rotation of element e's local frame: local corner c sits at the block corner whose
+// signs are R s_c.
+__device__ int rotation_of(long long e, bool rotate) { return rotate ? (int)(mix(e) % 24) : 0; }
+
+__device__ void corner_offset(int rot, int c, int (&b)[3])
+{
+    int cb[3];
+    cellwise::corner_bits(c, cb[0], cb[1], cb[2]);
+    for (int i = 0; i < 3; ++i) {
+        int s = 0;
+        for (int j = 0; j < 3; ++j) s += c_rot[rot][i * 3 + j] * (2 * cb[j] - 1);
+        b[i] = s > 0;
+    }
+}
+
 // Vertex (i, j, k) of the global vertex lattice of block `blk` on the unit cube,
 // deformed in place. Coarser levels see the same deformed points.
 __device__ void vertex(int i, int j, int k, const cellwise::Block& blk, double deform, double x[3])
@@ -68,21 +98,42 @@ __device__ void vertex(int i, int j, int k, const cellwise::Block& blk, double d
     x[2] += bump;
 }
 
-// The 8 corners of local element e in the order of c_hexCornerRef (sign -1 = low side).
-__device__ void element_corners(long long e, const cellwise::Block& blk, double deform,
+// The 8 corners of local element e in its own corner order (c_hexCornerRef), with the
+// element's frame rotated when `rotate`.
+__device__ void element_corners(long long e, const cellwise::Block& blk, double deform, bool rotate,
                                 double corners[8][3])
 {
     const int ez = (int)(e % blk.nz) + blk.oz;
     const int ey = (int)((e / blk.nz) % blk.ny) + blk.oy;
     const int ex = (int)(e / ((long long)blk.nz * blk.ny)) + blk.ox;
-    for (int c = 0; c < 8; ++c)
-        vertex(ex + (fem::c_hexCornerRef[c][0] > 0), ey + (fem::c_hexCornerRef[c][1] > 0),
-               ez + (fem::c_hexCornerRef[c][2] > 0), blk, deform, corners[c]);
+    const int rot = rotation_of(e, rotate);
+    for (int c = 0; c < 8; ++c) {
+        int b[3];
+        corner_offset(rot, c, b);
+        vertex(ex + b[0], ey + b[1], ez + b[2], blk, deform, corners[c]);
+    }
+}
+
+// Corner keys and local ids of the unstructured tables: lattice vertex ids.
+__global__ void mesh_kernel(cellwise::Block blk, bool rotate, unsigned long long* const* key, int* const* lid)
+{
+    const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= blk.elements()) return;
+    const int ez = (int)(e % blk.nz), ey = (int)((e / blk.nz) % blk.ny);
+    const int ex = (int)(e / ((long long)blk.nz * blk.ny));
+    const int rot = rotation_of(e, rotate);
+    for (int c = 0; c < 8; ++c) {
+        int b[3];
+        corner_offset(rot, c, b);
+        const long long v = (((long long)(ex + b[0]) * (blk.ny + 1)) + ey + b[1]) * (blk.nz + 1) + ez + b[2];
+        key[c][e] = (unsigned long long)v;
+        lid[c][e] = (int)v;
+    }
 }
 
 // One thread per metric point (e, dir, l, s, r): MARS's device metric, written in
 // the component-major layout the MARSIR kernel reads, [dir][face][comp][s][r].
-__global__ void metric_kernel(double* __restrict__ G, cellwise::Block blk, double deform)
+__global__ void metric_kernel(double* __restrict__ G, cellwise::Block blk, double deform, bool rotate)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     const long long points = 3LL * kP * kNN;
@@ -96,7 +147,7 @@ __global__ void metric_kernel(double* __restrict__ G, cellwise::Block blk, doubl
     const int l = q % kP;
     const int dir = q / kP;
     double corners[8][3];
-    element_corners(e, blk, deform, corners);
+    element_corners(e, blk, deform, rotate, corners);
     double g[3];
     fem::ho_cvfem_metric_point<kP>(corners, dir, l, s, r, g);
     double* out = G + e * kGElem + (dir * kP + l) * 3 * kNN + s * kN + r;
@@ -149,7 +200,7 @@ __global__ void diagonal_kernel(const double* __restrict__ G, double* __restrict
 
 // u = sin(pi x) sin(pi y) sin(pi z) at every element-local node, through the
 // element's trilinear map.
-__global__ void exact_kernel(double* __restrict__ u, cellwise::Block blk, double deform)
+__global__ void exact_kernel(double* __restrict__ u, cellwise::Block blk, double deform, bool rotate)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (t >= blk.values()) return;
@@ -158,7 +209,7 @@ __global__ void exact_kernel(double* __restrict__ u, cellwise::Block blk, double
     const double rf[3] = {fem::c_zeta[node / kNN], fem::c_zeta[(node / kN) % kN],
                           fem::c_zeta[node % kN]};
     double corners[8][3];
-    element_corners(e, blk, deform, corners);
+    element_corners(e, blk, deform, rotate, corners);
     double x[3] = {0.0, 0.0, 0.0};
     for (int k = 0; k < 8; ++k) {
         double w = 0.125;
@@ -215,11 +266,13 @@ int main(int argc, char** argv)
     std::string ptx_path;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
-    bool use_mg = false;
+    bool use_mg = false, unstructured = false, rotate = false;
     int pre = 0, post = 3;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
+        if (!strcmp(argv[i], "--unstructured")) { unstructured = true; --i; continue; }
+        if (!strcmp(argv[i], "--rotate")) { rotate = unstructured = true; --i; continue; }
         if (i + 1 >= argc) { error = "an option needs a value"; break; }
         if (!strcmp(argv[i], "--ptx")) ptx_path = argv[i + 1];
         else if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
@@ -233,10 +286,12 @@ int main(int argc, char** argv)
     }
     if (!error && ptx_path.empty()) error = "--ptx is required";
     if (!error && use_mg && (ne & (ne - 1))) error = "--mg needs ne to be a power of two";
+    if (!error && unstructured && use_mg) error = "--unstructured runs with Jacobi only for now";
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--unstructured] "
+                            "[--rotate]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
@@ -275,6 +330,27 @@ int main(int argc, char** argv)
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
     }
+    if (unstructured && dec.size > 1) {
+        if (rank == 0) fprintf(stderr, "--unstructured runs on one rank for now\n");
+        MPI_Finalize();
+        return 1;
+    }
+    // The 24 proper rotations of the cube (signed permutation matrices, determinant +1),
+    // identity first.
+    {
+        std::vector<int> rot;
+        const int perms[6][3] = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}};
+        for (const auto& pm : perms)
+            for (int sg = 0; sg < 8; ++sg) {
+                int M[9] = {0};
+                for (int i = 0; i < 3; ++i) M[i * 3 + pm[i]] = (sg >> i & 1) ? -1 : 1;
+                const int det = M[0] * (M[4] * M[8] - M[5] * M[7]) - M[1] * (M[3] * M[8] - M[5] * M[6]) +
+                                M[2] * (M[3] * M[7] - M[4] * M[6]);
+                if (det == 1) rot.insert(rot.end(), M, M + 9);
+            }
+        MARS_CELLWISE_CK(cudaMemcpyToSymbol(c_rot, rot.data(), rot.size() * sizeof(int)));
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
     const long long E = blk.elements(), n = blk.values();
     const long long unique = (long long)(ne * kP + 1) * (ne * kP + 1) * (ne * kP + 1);
     constexpr int threads = 256;
@@ -288,11 +364,40 @@ int main(int argc, char** argv)
     double* d_x = device_array(n);
     std::unique_ptr<cellwise::Halo> halo(dec.size > 1 ? new cellwise::Halo(dec, blk) : nullptr);
 
-    metric_kernel<<<blocks_for(E * 3LL * kP * kNN, threads), threads, 0, stream>>>(d_G, blk, deform);
+    metric_kernel<<<blocks_for(E * 3LL * kP * kNN, threads), threads, 0, stream>>>(d_G, blk, deform, rotate);
     diagonal_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_G, d_b, E);   // d_b: scratch until b = A u
-    exact_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_uex, blk, deform);
+    exact_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_uex, blk, deform, rotate);
     MARS_CELLWISE_CK(cudaGetLastError());
-    cellwise::dss(d_b, d_diag, blk, halo.get(), stream);   // assembled diagonal on every copy
+    // The unstructured tables of the same cube: corner keys = lattice vertex ids.
+    cellwise::UnstructuredTopology topo;
+    const cellwise::Block flat(E, 1, 1);   // unstructured iteration space: E elements in a row
+    if (unstructured) {
+        thrust::device_vector<unsigned long long> key[8];
+        thrust::device_vector<int> lid[8];
+        std::vector<unsigned long long*> kp(8);
+        std::vector<int*> lp(8);
+        for (int c = 0; c < 8; ++c) {
+            key[c].resize(E);
+            lid[c].resize(E);
+            kp[c] = thrust::raw_pointer_cast(key[c].data());
+            lp[c] = thrust::raw_pointer_cast(lid[c].data());
+        }
+        thrust::device_vector<unsigned long long*> d_kp(kp.begin(), kp.end());
+        thrust::device_vector<int*> d_lp(lp.begin(), lp.end());
+        mesh_kernel<<<blocks_for(E, threads), threads, 0, stream>>>(blk, rotate, thrust::raw_pointer_cast(d_kp.data()),
+                                                                    thrust::raw_pointer_cast(d_lp.data()));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
+        const std::vector<const unsigned long long*> ckp(kp.begin(), kp.end());
+        const std::vector<const int*> clp(lp.begin(), lp.end());
+        thrust::device_vector<const unsigned long long*> d_ckp(ckp.begin(), ckp.end());
+        thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
+        topo = cellwise::build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()), E);
+        cellwise::dss(d_b, d_diag, topo, stream);   // assembled diagonal on every copy
+    } else {
+        cellwise::dss(d_b, d_diag, blk, halo.get(), stream);
+    }
+    const cellwise::TopologyView tview = cellwise::view(topo);
+    const cellwise::CountingWeight counting{thrust::raw_pointer_cast(topo.counting.data())};
 
     const marsir::LaplacianPtx op(ptx_path, kP);
     auto apply = [&](const double* u, double* y) {
@@ -307,7 +412,7 @@ int main(int argc, char** argv)
     auto make_level = [&](const cellwise::Block& b) {
         double* g = device_array(b.elements() * kGElem);
         double* raw = device_array(b.values());
-        metric_kernel<<<blocks_for(b.elements() * 3LL * kP * kNN, threads), threads, 0, stream>>>(g, b, deform);
+        metric_kernel<<<blocks_for(b.elements() * 3LL * kP * kNN, threads), threads, 0, stream>>>(g, b, deform, false);
         diagonal_kernel<<<blocks_for(b.values(), threads), threads, 0, stream>>>(g, raw, b.elements());
         MARS_CELLWISE_CK(cudaGetLastError());
         return std::pair<double*, double*>(g, raw);
@@ -331,9 +436,11 @@ int main(int argc, char** argv)
 
     MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
     const cellwise::SolveResult res =
-        use_mg ? cellwise::bicgstab(apply, *mg, blk, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
-               : cellwise::bicgstab(apply, cellwise::JacobiPreconditioner{d_diag, blk, halo.get()}, blk, d_b,
-                                    d_x, MPI_COMM_WORLD, tol, max_iterations, stream);
+        unstructured ? cellwise::bicgstab(apply, cellwise::UnstructuredJacobi{tview, d_diag}, counting, flat, d_b,
+                                          d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
+        : use_mg     ? cellwise::bicgstab(apply, *mg, blk, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
+                     : cellwise::bicgstab(apply, cellwise::JacobiPreconditioner{d_diag, blk, halo.get()}, blk,
+                                          d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream);
     MARS_CELLWISE_CK(cudaEventRecord(t1, stream));
     MARS_CELLWISE_CK(cudaEventSynchronize(t1));
     float solve_ms = 0.0f;
@@ -344,15 +451,19 @@ int main(int argc, char** argv)
     {
         cellwise::Reduction red(MPI_COMM_WORLD);
         difference_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_b, d_x, d_uex, n);
-        cellwise::wdot(d_b, d_b, blk, red, cellwise::kRR, stream);
+        if (unstructured) cellwise::wdot(d_b, d_b, flat, counting, red, cellwise::kRR, stream);
+        else cellwise::wdot(d_b, d_b, blk, red, cellwise::kRR, stream);
         const double err = cellwise::read_norm(red, stream);
-        cellwise::wdot(d_uex, d_uex, blk, red, cellwise::kRR, stream);
+        if (unstructured) cellwise::wdot(d_uex, d_uex, flat, counting, red, cellwise::kRR, stream);
+        else cellwise::wdot(d_uex, d_uex, blk, red, cellwise::kRR, stream);
         rel_err = err / cellwise::read_norm(red, stream);
     }
 
     if (rank == 0) {
         printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f, %s\n",
-               kP, ne, (long long)ne * ne * ne, unique, deform, use_mg ? "multigrid V-cycle" : "DSS + Jacobi");
+               kP, ne, (long long)ne * ne * ne, unique, deform,
+               unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
+               : use_mg     ? "multigrid V-cycle" : "DSS + Jacobi");
         printf("  %d rank(s) as %d x %d x %d, %d x %d x %d elements each\n", dec.size, dec.P[0], dec.P[1],
                dec.P[2], blk.nx, blk.ny, blk.nz);
         if (use_mg) {
@@ -384,8 +495,11 @@ int main(int argc, char** argv)
     // the diagonal read in the preconditioner: what a single pass must move at least.
     const double vec_gb = n * 8.0 / 1e9;
     const float op_ms = time_ms([&] { apply(d_uex, d_b); });
-    const float dss_ms = time_ms([&] { cellwise::dss(d_b, d_x, blk, halo.get(), stream); });
-    const float pre_ms = time_ms([&] { cellwise::precondition(d_b, d_x, d_diag, blk, halo.get(), stream); });
+    const float dss_ms = unstructured ? time_ms([&] { cellwise::dss(d_b, d_x, topo, stream); })
+                                      : time_ms([&] { cellwise::dss(d_b, d_x, blk, halo.get(), stream); });
+    const float pre_ms = unstructured
+        ? time_ms([&] { cellwise::UnstructuredJacobi{tview, d_diag}.operator()<false, false>(d_b, d_x, nullptr, nullptr, stream); })
+        : time_ms([&] { cellwise::precondition(d_b, d_x, d_diag, blk, halo.get(), stream); });
     const float vc_ms = use_mg ? time_ms([&] { mg->vcycle(0, d_b, d_x, stream); }) : 0.0f;
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
     if (rank == 0) {

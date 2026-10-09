@@ -15,6 +15,7 @@
 // (orientation, canonical order) and dense local ids (grouping by radix sort).
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_layout.hpp"
 
 #include <cuda_runtime.h>
@@ -515,6 +516,107 @@ inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T
     unstructured_dss_kernel<<<(unsigned)((n + kThreads - 1) / kThreads), kThreads, 0, stream>>>(d_in, d_out, v);
     MARS_CELLWISE_CK(cudaGetLastError());
 }
+
+// Weight of a copy in the assembled inner product: 1 on the counting copy of its node
+// (the canonically first), 0 on the others, so every global node counts exactly once.
+struct CountingWeight {
+    const unsigned* counting;
+    __device__ double operator()(const Node& nd) const
+    {
+        const int x[3] = {nd.a, nd.b, nd.c};
+        int on = 0;
+        for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == kP);
+        if (on == 0) return 1.0;
+        const unsigned bits = counting[nd.e];
+        int bit;
+        if (on == 1) {   // face interior
+            int axis = 0;
+            while (x[axis] != 0 && x[axis] != kP) ++axis;
+            bit = axis * 2 + (x[axis] == kP);
+        } else if (on == 2) {   // edge interior: the axis not on the boundary varies
+            int axis = 0;
+            while (x[axis] == 0 || x[axis] == kP) ++axis;
+            int o0, o1;
+            other_axes(axis, o0, o1);
+            bit = 6 + axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP);
+        } else {
+            bit = 18 + corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP);
+        }
+        return (bits >> bit) & 1u ? 1.0 : 0.0;
+    }
+};
+
+// z = P q (DSS, zero on Dirichlet entities, divide by the assembled diagonal), every copy
+// written, and the dot products <a, z> (AZ) / <z, z> (ZZ) with each node counted once.
+template <bool AZ, bool ZZ>
+struct JacobiDotOp {
+    double* z;
+    const double* diag;
+    const double* a;
+    double acc[2] = {0.0, 0.0};
+    __device__ void count(long long i, double v)
+    {
+        if (AZ) acc[0] += a[i] * v;
+        if (ZZ) acc[AZ ? 1 : 0] += v * v;
+    }
+    __device__ void single(double s, long long i, bool dirichlet)
+    {
+        const double v = dirichlet ? 0.0 : s / diag[i];
+        z[i] = v;
+        count(i, v);
+    }
+    __device__ void pair(double s, long long x, long long y)
+    {
+        const double v = s / diag[x];   // the assembled diagonal is the same on both copies
+        z[x] = v;
+        z[y] = v;
+        count(x, v);
+    }
+    template <typename Index>
+    __device__ void star(double s, int begin, int end, const int* ent, const Index& index, bool dirichlet)
+    {
+        const long long first = index(ent[begin]);
+        const double v = dirichlet ? 0.0 : s / diag[first];
+        for (int m = begin; m < end; ++m) z[index(ent[m])] = v;
+        count(first, v);
+    }
+};
+
+template <bool AZ, bool ZZ>
+__global__ void __launch_bounds__(kThreads)
+unstructured_precondition_kernel(const double* __restrict__ q, double* __restrict__ z,
+                                 const double* __restrict__ diag, const double* __restrict__ a,
+                                 TopologyView T, double* __restrict__ partial)
+{
+    constexpr int NV = AZ + ZZ;
+    const long long n = dss_items(T);
+    const auto value = [q](long long i) { return q[i]; };
+    JacobiDotOp<AZ, ZZ> op{z, diag, a};
+    for (long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x; t < n;
+         t += (long long)gridDim.x * blockDim.x)
+        dss_item(t, T, value, op);
+    if constexpr (NV > 0) {
+        double acc[NV];
+        for (int i = 0; i < NV; ++i) acc[i] = op.acc[i];
+        store_partial<NV>(acc, partial);
+    }
+}
+
+// The Jacobi preconditioner of the Krylov solvers (same interface as
+// JacobiPreconditioner in mars_cellwise_krylov.hpp), on one rank.
+struct UnstructuredJacobi {
+    TopologyView T;
+    const double* diag;
+
+    template <bool AZ, bool ZZ>
+    int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
+    {
+        static const int grid = resident_grid(unstructured_precondition_kernel<AZ, ZZ>);
+        unstructured_precondition_kernel<AZ, ZZ><<<grid, kThreads, 0, stream>>>(q, z, diag, a, T, partial);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        return grid;
+    }
+};
 
 }  // namespace cellwise
 }  // namespace mars
