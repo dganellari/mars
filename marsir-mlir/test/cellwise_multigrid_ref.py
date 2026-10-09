@@ -27,21 +27,14 @@ import numpy as np
 import cellwise_fem as fem
 from cellwise_fem import n, n3, zeta
 
-ap = argparse.ArgumentParser()
-ap.add_argument("--ne", type=int, default=4)
-ap.add_argument("--deform", type=float, default=0.05)
-ap.add_argument("--tol", type=float, default=1e-10)
-ap.add_argument("--maxit", type=int, default=200)
-ap.add_argument("--pre", type=int, default=0)
-ap.add_argument("--post", type=int, default=3)
-args = ap.parse_args()
-
 I = [np.array([fem.lag(zeta, (z - 1) / 2)[0] for z in zeta]),
      np.array([fem.lag(zeta, (z + 1) / 2)[0] for z in zeta])]
 
 def prolong(uc, ne_c):
-    U = uc.reshape(ne_c, ne_c, ne_c, n, n, n); ne_f = 2 * ne_c
-    out = np.empty((ne_f, ne_f, ne_f, n, n, n))
+    """ne_c: coarse elements per axis, an int (cube) or a 3-tuple."""
+    c = (ne_c,) * 3 if isinstance(ne_c, int) else tuple(ne_c)
+    U = uc.reshape(c + (n, n, n))
+    out = np.empty(tuple(2 * m for m in c) + (n, n, n))
     for cx in (0, 1):
         for cy in (0, 1):
             for cz in (0, 1):
@@ -50,8 +43,9 @@ def prolong(uc, ne_c):
     return out.reshape(-1, n3)
 
 def restrict(rf, ne_c):
-    ne_f = 2 * ne_c; R = rf.reshape(ne_f, ne_f, ne_f, n, n, n)
-    out = np.zeros((ne_c, ne_c, ne_c, n, n, n))
+    c = (ne_c,) * 3 if isinstance(ne_c, int) else tuple(ne_c)
+    R = rf.reshape(tuple(2 * m for m in c) + (n, n, n))
+    out = np.zeros(c + (n, n, n))
     for cx in (0, 1):
         for cy in (0, 1):
             for cz in (0, 1):
@@ -130,35 +124,48 @@ def bicgstab(lev, P, b, tol, maxit):
             break
     return x, r0, hist
 
-rng = np.random.default_rng(3)
-f, c = fem.Level(4, 0.05), fem.Level(2, 0.05)
-uc = c.mask * c.dss(rng.standard_normal((c.E, n3))) / c.mult
-uf = prolong(uc, 2)
-cont = np.abs(f.dss(uf) / f.mult - uf).max()
-rf = rng.standard_normal((f.E, n3))
-transp = abs(np.sum(uf * rf) - np.sum(uc * restrict(rf, 2))) / abs(np.sum(uf * rf))
-f0, c0 = fem.Level(4, 0.0), fem.Level(2, 0.0)
-poly = lambda x: (x[..., 0] + 2 * x[..., 1] - x[..., 2]) ** 7 + x[..., 0] ** 3 * x[..., 2] ** 4
-repro = np.abs(prolong(poly(c0.x), 2) - poly(f0.x)).max() / np.abs(poly(f0.x)).max()
-print(f"prolongation continuity {cont:.1e}, restriction = transpose {transp:.1e}, "
-      f"degree-7 reproduction {repro:.1e}")
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ne", type=int, default=4)
+    ap.add_argument("--deform", type=float, default=0.05)
+    ap.add_argument("--tol", type=float, default=1e-10)
+    ap.add_argument("--maxit", type=int, default=200)
+    ap.add_argument("--pre", type=int, default=0)
+    ap.add_argument("--post", type=int, default=3)
+    args = ap.parse_args()
+    rng = np.random.default_rng(3)
+    f, c = fem.Level(4, 0.05), fem.Level(2, 0.05)
+    uc = c.mask * c.dss(rng.standard_normal((c.E, n3))) / c.mult
+    uf = prolong(uc, 2)
+    cont = np.abs(f.dss(uf) / f.mult - uf).max()
+    rf = rng.standard_normal((f.E, n3))
+    transp = abs(np.sum(uf * rf) - np.sum(uc * restrict(rf, 2))) / abs(np.sum(uf * rf))
+    f0, c0 = fem.Level(4, 0.0), fem.Level(2, 0.0)
+    poly = lambda x: (x[..., 0] + 2 * x[..., 1] - x[..., 2]) ** 7 + x[..., 0] ** 3 * x[..., 2] ** 4
+    repro = np.abs(prolong(poly(c0.x), 2) - poly(f0.x)).max() / np.abs(poly(f0.x)).max()
+    print(f"prolongation continuity {cont:.1e}, restriction = transpose {transp:.1e}, "
+          f"degree-7 reproduction {repro:.1e}")
 
-M = Multigrid(args.ne, args.deform, args.pre, args.post)
-lev = M.levels[0]
-r1, r2 = rng.standard_normal((lev.E, n3)), rng.standard_normal((lev.E, n3))
-z = M.vcycle(2.0 * r1 - 3.0 * r2)
-lin = np.abs(z - (2.0 * M.vcycle(r1) - 3.0 * M.vcycle(r2))).max() / np.abs(z).max()
-zc = np.abs(lev.dss(z) / lev.mult - z).max() / np.abs(z).max()
-print(f"V-cycle linear {lin:.1e}, continuous {zc:.1e}")
-print("lambda_max(P_J A) per level:", " ".join(f"{l:.4f}" for l in M.lmax))
+    M = Multigrid(args.ne, args.deform, args.pre, args.post)
+    lev = M.levels[0]
+    r1, r2 = rng.standard_normal((lev.E, n3)), rng.standard_normal((lev.E, n3))
+    z = M.vcycle(2.0 * r1 - 3.0 * r2)
+    lin = np.abs(z - (2.0 * M.vcycle(r1) - 3.0 * M.vcycle(r2))).max() / np.abs(z).max()
+    zc = np.abs(lev.dss(z) / lev.mult - z).max() / np.abs(z).max()
+    print(f"V-cycle linear {lin:.1e}, continuous {zc:.1e}")
+    print("lambda_max(P_J A) per level:", " ".join(f"{l:.4f}" for l in M.lmax))
 
-u = np.prod(np.sin(np.pi * lev.x), -1); b = lev.A(u)
-x, r0, hist = bicgstab(lev, M, b, args.tol, args.maxit)
-err = np.sqrt(lev.wdot(x - u, x - u) / lev.wdot(u, u))
-print(f"multigrid ({args.pre},{args.post}) BiCGStab, p=7, {args.ne}^3 elements, deform {args.deform:.3f}")
-print(f"  iterations {len(hist)}, ||P r0||_w = {r0:.3e}, ||P r||_w = {hist[-1]:.3e}")
-for k, h in enumerate(hist, 1):
-    print(f"  it {k:3d}  ||P r||_w = {h:.3e}")
-print(f"  ||x - u||_w / ||u||_w = {err:.3e}")
-ok = cont < 1e-12 and transp < 1e-12 and repro < 1e-12 and lin < 1e-12 and zc < 1e-12 and err < 1e-8
-print("CELL-WISE MULTIGRID REFERENCE:", "PASS" if ok else "FAIL")
+    u = np.prod(np.sin(np.pi * lev.x), -1); b = lev.A(u)
+    x, r0, hist = bicgstab(lev, M, b, args.tol, args.maxit)
+    err = np.sqrt(lev.wdot(x - u, x - u) / lev.wdot(u, u))
+    print(f"multigrid ({args.pre},{args.post}) BiCGStab, p=7, {args.ne}^3 elements, deform {args.deform:.3f}")
+    print(f"  iterations {len(hist)}, ||P r0||_w = {r0:.3e}, ||P r||_w = {hist[-1]:.3e}")
+    for k, h in enumerate(hist, 1):
+        print(f"  it {k:3d}  ||P r||_w = {h:.3e}")
+    print(f"  ||x - u||_w / ||u||_w = {err:.3e}")
+    ok = cont < 1e-12 and transp < 1e-12 and repro < 1e-12 and lin < 1e-12 and zc < 1e-12 and err < 1e-8
+    print("CELL-WISE MULTIGRID REFERENCE:", "PASS" if ok else "FAIL")
+
+
+if __name__ == "__main__":
+    main()

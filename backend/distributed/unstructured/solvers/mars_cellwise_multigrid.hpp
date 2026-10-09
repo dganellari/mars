@@ -1,28 +1,38 @@
 #pragma once
 // Geometric multigrid preconditioner on element-local vectors, after Wichrowski,
 // "Coalesced Matrix-Free Geometric Multigrid on Persistent Cell-Wise Storage"
-// (arXiv:2607.03413), here at p = 7 and for the nonsymmetric CVFEM operator.
+// (arXiv:2607.03413), here at p = 7, for the nonsymmetric CVFEM operator and on
+// several GPUs.
 //
-// Levels: the structured block coarsened 2:1 down to one element, all at p = 7, so
-// every level runs the same operator kernel with its own metric. Transfers are
-// element-local. Prolongation evaluates the coarse polynomial at the child's GLL
-// nodes. Restriction is its exact transpose, applied to the raw unassembled residual:
-// restricting an assembled residual would count shared nodes several times. Elements
-// talk only through the DSS inside the smoother. Smoother: Chebyshev on the
-// DSS-Jacobi preconditioned operator, its upper bound from a power iteration (the
-// top of that spectrum is nearly real), `pre` steps before and `post` steps after the
-// coarse correction. With pre = 0 the cycle restricts the right-hand side directly
-// and needs no residual operator call. The one-element level is solved exactly.
-// The V-cycle is a fixed linear map with continuous output, as left-preconditioned
-// BiCGStab requires. Reference: marsir-mlir/test/cellwise_multigrid_ref.py.
+// Levels: the structured block coarsened 2:1, all at p = 7, so every level runs the
+// same operator kernel with its own metric. Transfers are element-local.
+// Prolongation evaluates the coarse polynomial at the child's GLL nodes. Restriction
+// is its exact transpose, applied to the raw unassembled residual: restricting an
+// assembled residual would count shared nodes several times. Elements talk only
+// through the DSS inside the smoother. Smoother: Chebyshev on the DSS-Jacobi
+// preconditioned operator, its upper bound from a power iteration (the top of that
+// spectrum is nearly real), `pre` steps before and `post` steps after the coarse
+// correction. With pre = 0 the cycle restricts the right-hand side directly and needs
+// no residual operator call. The one-element level is solved exactly.
+//
+// On several ranks every rank coarsens its own sub-block while all its dimensions
+// stay even; the transfers need no communication because rank offsets stay even.
+// The level where a rank can no longer halve is gathered onto rank 0, which runs the
+// rest of the V-cycle on that whole (small) block as a one-rank multigrid and
+// scatters the correction back. Only rank 0 sees data from every rank. The V-cycle is
+// a fixed linear map with continuous output, as left-preconditioned BiCGStab
+// requires. References: marsir-mlir/test/cellwise_multigrid_ref.py (one rank) and
+// marsir-mlir/test/cellwise_distributed_ref.py (several).
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 
 #include <cuda_runtime.h>
+#include <mpi.h>
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -137,17 +147,20 @@ restrict_kernel(const double* __restrict__ bf, const double* __restrict__ qf,
 // One Chebyshev step on P_J A: z = P_J (b - q) with q = A x, d = c_d d + c_z z, x += d.
 // FIRST: d = c_z z, the old d is not read. ZERO_X: x = 0 and q is not used (a smoother
 // starting from zero), so z = P_J b and x = d. LAST: d is not needed again, not stored.
-template <bool FIRST, bool ZERO_X, bool LAST>
+// SHELL: the pass over elements that read ghost copies.
+template <bool FIRST, bool ZERO_X, bool LAST, bool SHELL>
 __global__ void __launch_bounds__(kThreads)
 chebyshev_kernel(const double* __restrict__ b, const double* __restrict__ q,
                  const double* __restrict__ diag, double* __restrict__ d, double* __restrict__ x,
-                 double c_d, double c_z, Block blk)
+                 double c_d, double c_z, Block blk, ElementSet set, GhostView ghost)
 {
-    for_each_node(blk, [&](const Node& nd) {
+    const auto value_b = [b](long long i) { return b[i]; };
+    const auto value_r = [b, q](long long i) { return b[i] - q[i]; };
+    for_each_node<SHELL>(blk, set, [&](const Node& nd) {
         double z = 0.0;
         if (!on_outer_boundary(nd, blk)) {
-            const double g = ZERO_X ? gather_sum(b, nd, blk)
-                                    : gather_sum_of([&](long long i) { return b[i] - q[i]; }, nd, blk);
+            const double g = ZERO_X ? gather_value<SHELL>(value_b, ghost, nd, blk)
+                                    : gather_value<SHELL>(value_r, ghost, nd, blk);
             z = g / diag[nd.t];
         }
         const double dn = FIRST ? c_z * z : c_d * d[nd.t] + c_z * z;
@@ -179,6 +192,25 @@ coarse_solve_kernel(const double* __restrict__ ainv, const double* __restrict__ 
     }
 }
 
+// Between the rank-major order of a gathered level (rank r's elements in its local
+// order, ranks in turn) and the order of the whole block. TO_WHOLE: whole = gathered.
+template <bool TO_WHOLE>
+__global__ void permute_kernel(const double* __restrict__ in, double* __restrict__ out, Block whole,
+                               Block part, int py, int pz)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= whole.values()) return;
+    const long long e = t / kN3;
+    const int l = (int)(t % kN3);
+    const int gz = (int)(e % whole.nz), gy = (int)((e / whole.nz) % whole.ny);
+    const int gx = (int)(e / ((long long)whole.nz * whole.ny));
+    const long long rank = ((long long)(gx / part.nx) * py + gy / part.ny) * pz + gz / part.nz;
+    const long long local = ((long long)(gx % part.nx) * part.ny + gy % part.ny) * part.nz + gz % part.nz;
+    const long long r = (rank * part.elements() + local) * kN3 + l;
+    if (TO_WHOLE) out[t] = in[r];
+    else out[r] = in[t];
+}
+
 // Setup helpers.
 __global__ void replicate_kernel(const double* __restrict__ src, double* __restrict__ dst,
                                  long long len, long long copies)
@@ -194,12 +226,19 @@ __global__ void interior_units_kernel(double* __restrict__ u)
         u[t] = (t % kN3) == interior_local((int)(t / kN3)) ? 1.0 : 0.0;
 }
 
-// A reproducible start vector for the power iteration, the same in the reference.
-__global__ void hash_kernel(double* __restrict__ v, long long n)
+// A reproducible start vector for the power iteration, hashed from the GLOBAL value
+// index (global element * 512 + node), so it is the same on any number of ranks and
+// in the reference.
+__global__ void hash_kernel(double* __restrict__ v, Block blk)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n)
-        v[t] = (double)(((unsigned long long)t * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
+    if (t >= blk.values()) return;
+    const long long e = t / kN3;
+    const int ez = (int)(e % blk.nz), ey = (int)((e / blk.nz) % blk.ny);
+    const int ex = (int)(e / ((long long)blk.nz * blk.ny));
+    const unsigned long long g =
+        ((((unsigned long long)(ex + blk.ox) * blk.NY + ey + blk.oy) * blk.NZ + ez + blk.oz) * kN3) + t % kN3;
+    v[t] = (double)((g * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
 }
 
 __global__ void scale_kernel(double* __restrict__ out, const double* __restrict__ in, double s,
@@ -215,53 +254,75 @@ struct MultigridLevel {
     const double* diag;   // assembled diagonal on every copy
 };
 
-// `apply(u, y, G, E)` computes y = A u on E elements with metric G. Level 0 is the
-// finest; each next level halves every block dimension; the last has one element.
-template <typename Apply>
+// `apply(u, y, G, E, stream)` computes y = A u on E elements with metric G.
+// `make_level(blk)` allocates the metric and the UNASSEMBLED diagonal of a block
+// (a rank's part or a whole block) and returns {G, diag}; the multigrid frees them.
+// `finest` belongs to the caller unless `own_finest`.
+template <typename Apply, typename MakeLevel>
 class Multigrid {
 public:
-    Multigrid(Apply apply, std::vector<MultigridLevel> levels, const double* zeta_host, int pre,
-              int post, double smoothing_range = 15.0)
-        : apply_(std::move(apply)), lv_(std::move(levels)), pre_(pre), post_(post),
-          range_(smoothing_range)
+    Multigrid(Apply apply, MakeLevel make_level, MultigridLevel finest, const Decomposition& dec,
+              const double* zeta_host, int pre, int post, cudaStream_t stream,
+              bool own_finest = false, double smoothing_range = 15.0)
+        : apply_(apply), make_(make_level), comm_(dec.comm), rank_(dec.rank), ranks_(dec.size),
+          pre_(pre), post_(post), range_(smoothing_range), stream_(stream)
     {
         if (pre_ < 0 || post_ < 0 || pre_ + post_ == 0) {
             fprintf(stderr, "multigrid: need pre, post >= 0 and at least one smoothing step\n");
             std::abort();
         }
-        for (size_t l = 0; l + 1 < lv_.size(); ++l) {
-            const Block f = lv_[l].blk, c = lv_[l + 1].blk;
-            if (c.nx * 2 != f.nx || c.ny * 2 != f.ny || c.nz * 2 != f.nz) {
-                fprintf(stderr, "multigrid: level %zu is not a 2:1 coarsening\n", l + 1);
-                std::abort();
-            }
+        for (int k = 0; k < 3; ++k) P_[k] = dec.P[k];
+        for (int i = 0; i < kN; ++i) zeta_[i] = zeta_host[i];
+        upload_child_interp();
+        if (own_finest) {
+            owned_.push_back(finest.G);
+            owned_.push_back(finest.diag);
         }
-        if (lv_.back().blk.elements() != 1) {
-            fprintf(stderr, "multigrid: the coarsest level must be one element\n");
+        // Every local dimension halves at each level. One rank goes down to one element;
+        // several ranks stop at the first level some rank cannot halve, which is the
+        // level gathered onto rank 0.
+        std::vector<Block> blocks{finest.blk};
+        while (blocks.back().halvable() && blocks.back().elements() > 1) {
+            blocks.push_back(blocks.back().coarse());
+            if (ranks_ > 1 && !(blocks.back().halvable() && blocks.back().elements() > 1)) break;
+        }
+        if (ranks_ == 1 && blocks.back().elements() != 1) {
+            fprintf(stderr, "multigrid: one rank needs ne = 2^k (coarsest level is %d x %d x %d)\n",
+                    blocks.back().nx, blocks.back().ny, blocks.back().nz);
             std::abort();
         }
-        upload_child_interp(zeta_host);
-        b_.assign(lv_.size(), nullptr);
-        x_.assign(lv_.size(), nullptr);
-        q_.assign(lv_.size(), nullptr);
-        d_.assign(lv_.size(), nullptr);
+        for (size_t l = 0; l < blocks.size(); ++l) {
+            const bool gathered_level = ranks_ > 1 && l + 1 == blocks.size();
+            halos_.emplace_back(ranks_ > 1 && !gathered_level ? new Halo(dec, blocks[l]) : nullptr);
+            if (l == 0) lv_.push_back(finest);
+            else if (gathered_level) lv_.push_back({blocks[l], nullptr, nullptr});   // rank 0 makes its own
+            else lv_.push_back(make_assembled(blocks[l], halos_[l].get()));
+        }
         for (size_t l = 0; l < lv_.size(); ++l) {
             const long long n = lv_[l].blk.values();
-            MARS_CELLWISE_CK(cudaMalloc(&q_[l], n * sizeof(double)));
-            MARS_CELLWISE_CK(cudaMalloc(&d_[l], n * sizeof(double)));
+            q_.push_back(nullptr);
+            d_.push_back(nullptr);
+            b_.push_back(nullptr);
+            x_.push_back(nullptr);
+            if (l + 1 < lv_.size()) {
+                MARS_CELLWISE_CK(cudaMalloc(&q_[l], n * sizeof(double)));
+                MARS_CELLWISE_CK(cudaMalloc(&d_[l], n * sizeof(double)));
+            }
             if (l > 0) {
                 MARS_CELLWISE_CK(cudaMalloc(&b_[l], n * sizeof(double)));
                 MARS_CELLWISE_CK(cudaMalloc(&x_[l], n * sizeof(double)));
             }
         }
-        build_coarse_inverse();
+        if (ranks_ == 1) build_coarse_inverse();
+        else setup_gather();
         for (size_t l = 0; l + 1 < lv_.size(); ++l) lmax_.push_back(power_iteration(l));
     }
     ~Multigrid()
     {
         for (auto* v : {&b_, &x_, &q_, &d_})
             for (double* p : *v) cudaFree(p);
-        cudaFree(ainv_);
+        for (const double* p : owned_) cudaFree(const_cast<double*>(p));
+        for (double* p : {ainv_, d_all_, root_b_, root_x_}) cudaFree(p);
     }
     Multigrid(const Multigrid&) = delete;
     Multigrid& operator=(const Multigrid&) = delete;
@@ -275,6 +336,7 @@ public:
         if constexpr (AZ || ZZ) {
             static const int grid = resident_grid(wdots_kernel<AZ, ZZ>);
             wdots_kernel<AZ, ZZ><<<grid, kThreads, 0, stream>>>(z, a, lv_[0].blk, partial);
+            MARS_CELLWISE_CK(cudaGetLastError());
             return grid;
         }
         return 0;
@@ -283,14 +345,15 @@ public:
     void vcycle(size_t l, const double* b, double* x, cudaStream_t stream) const
     {
         if (l + 1 == lv_.size()) {
-            coarse_solve_kernel<<<1, kThreads, 0, stream>>>(ainv_, b, x);
+            if (ranks_ > 1) gather_solve(b, x, stream);
+            else coarse_solve_kernel<<<1, kThreads, 0, stream>>>(ainv_, b, x);
             return;
         }
         const MultigridLevel& L = lv_[l];
         const unsigned fine = (unsigned)L.blk.elements(), coarse = (unsigned)lv_[l + 1].blk.elements();
         if (pre_ > 0) {
             smooth(l, b, x, true, pre_, stream);
-            apply_(x, q_[l], L.G, L.blk.elements());
+            apply_(x, q_[l], L.G, L.blk.elements(), stream);
             restrict_kernel<true><<<coarse, kThreads, 0, stream>>>(b, q_[l], b_[l + 1], L.blk);
         } else {
             restrict_kernel<false><<<coarse, kThreads, 0, stream>>>(b, nullptr, b_[l + 1], L.blk);
@@ -303,60 +366,97 @@ public:
         if (post_ > 0) smooth(l, b, x, false, post_, stream);
     }
 
-    double lambda_max(size_t l) const { return lmax_[l]; }
+    // Largest eigenvalue estimates of P_J A per smoothed level, rank 0's levels after.
+    std::vector<double> lambda_max() const
+    {
+        std::vector<double> all = lmax_;
+        if (root_) {
+            const std::vector<double> r = root_->lambda_max();
+            all.insert(all.end(), r.begin(), r.end());
+        }
+        return all;
+    }
 
 private:
+    MultigridLevel make_assembled(const Block& b, Halo* halo)
+    {
+        const std::pair<double*, double*> made = make_(b);
+        double* diag = nullptr;
+        MARS_CELLWISE_CK(cudaMalloc(&diag, b.values() * sizeof(double)));
+        dss(made.second, diag, b, halo, stream_);
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
+        cudaFree(made.second);
+        owned_.push_back(made.first);
+        owned_.push_back(diag);
+        return {b, made.first, diag};
+    }
+
     void smooth(size_t l, const double* b, double* x, bool zero_x, int steps,
                 cudaStream_t stream) const
     {
-        const MultigridLevel& L = lv_[l];
         const double lmax = 1.1 * lmax_[l], lmin = lmax / range_;
         const double theta = 0.5 * (lmax + lmin), delta = 0.5 * (lmax - lmin);
         const double sigma = theta / delta;
         double rho = 1.0 / sigma;
         const bool last = steps == 1;
         if (zero_x) {
-            if (last) launch<true, true, true>(b, nullptr, L, d_[l], x, 0.0, 1.0 / theta, stream);
-            else launch<true, true, false>(b, nullptr, L, d_[l], x, 0.0, 1.0 / theta, stream);
+            if (last) launch<true, true, true>(l, b, x, 0.0, 1.0 / theta, stream);
+            else launch<true, true, false>(l, b, x, 0.0, 1.0 / theta, stream);
         } else {
-            apply_(x, q_[l], L.G, L.blk.elements());
-            if (last) launch<true, false, true>(b, q_[l], L, d_[l], x, 0.0, 1.0 / theta, stream);
-            else launch<true, false, false>(b, q_[l], L, d_[l], x, 0.0, 1.0 / theta, stream);
+            apply_(x, q_[l], lv_[l].G, lv_[l].blk.elements(), stream);
+            if (last) launch<true, false, true>(l, b, x, 0.0, 1.0 / theta, stream);
+            else launch<true, false, false>(l, b, x, 0.0, 1.0 / theta, stream);
         }
         for (int k = 1; k < steps; ++k) {
             const double rho_new = 1.0 / (2.0 * sigma - rho);
             const double c_d = rho_new * rho, c_z = 2.0 * rho_new / delta;
-            apply_(x, q_[l], L.G, L.blk.elements());
-            if (k + 1 == steps) launch<false, false, true>(b, q_[l], L, d_[l], x, c_d, c_z, stream);
-            else launch<false, false, false>(b, q_[l], L, d_[l], x, c_d, c_z, stream);
+            apply_(x, q_[l], lv_[l].G, lv_[l].blk.elements(), stream);
+            if (k + 1 == steps) launch<false, false, true>(l, b, x, c_d, c_z, stream);
+            else launch<false, false, false>(l, b, x, c_d, c_z, stream);
             rho = rho_new;
         }
     }
 
     template <bool FIRST, bool ZERO_X, bool LAST>
-    static void launch(const double* b, const double* q, const MultigridLevel& L, double* d,
-                       double* x, double c_d, double c_z, cudaStream_t stream)
+    void launch(size_t l, const double* b, double* x, double c_d, double c_z, cudaStream_t stream) const
     {
-        static const int grid = resident_grid(chebyshev_kernel<FIRST, ZERO_X, LAST>);
-        chebyshev_kernel<FIRST, ZERO_X, LAST><<<grid, kThreads, 0, stream>>>(b, q, L.diag, d, x, c_d, c_z,
-                                                                       L.blk);
-        MARS_CELLWISE_CK(cudaGetLastError());
+        const MultigridLevel& L = lv_[l];
+        double* d = d_[l];
+        const double* q = q_[l];
+        Halo* halo = halos_[l].get();
+        run_gather_pass(halo, b, ZERO_X ? nullptr : q, stream, [&](const ElementSet& set, bool shell, int) {
+            if (shell) {
+                static const int grid = resident_grid(chebyshev_kernel<FIRST, ZERO_X, LAST, true>);
+                chebyshev_kernel<FIRST, ZERO_X, LAST, true><<<grid, kThreads, 0, stream>>>(
+                    b, q, L.diag, d, x, c_d, c_z, L.blk, set, halo->view());
+                MARS_CELLWISE_CK(cudaGetLastError());
+                return grid;
+            }
+            static const int grid = resident_grid(chebyshev_kernel<FIRST, ZERO_X, LAST, false>);
+            chebyshev_kernel<FIRST, ZERO_X, LAST, false><<<grid, kThreads, 0, stream>>>(
+                b, q, L.diag, d, x, c_d, c_z, L.blk, set, GhostView{});
+            MARS_CELLWISE_CK(cudaGetLastError());
+            return grid;
+        });
     }
 
-    void upload_child_interp(const double* zeta)
+    void upload_child_interp()
     {
         double h[2][kN][kN];
         for (int child = 0; child < 2; ++child)
             for (int i = 0; i < kN; ++i) {
-                const double x = (zeta[i] + (child ? 1.0 : -1.0)) / 2;
+                const double x = (zeta_[i] + (child ? 1.0 : -1.0)) / 2;
                 for (int j = 0; j < kN; ++j) {
                     double v = 1.0;
                     for (int m = 0; m < kN; ++m)
-                        if (m != j) v *= (x - zeta[m]) / (zeta[j] - zeta[m]);
+                        if (m != j) v *= (x - zeta_[m]) / (zeta_[j] - zeta_[m]);
                     h[child][i][j] = v;
                 }
             }
         MARS_CELLWISE_CK(cudaMemcpyToSymbol(c_child_interp, h, sizeof(h)));
+        // A pageable upload may still be in flight when the call returns, and the
+        // solver's stream does not wait for the default stream.
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
     }
 
     // The interior rows and columns of the one-element operator: all 216 interior unit
@@ -366,15 +466,17 @@ private:
     {
         const MultigridLevel& L = lv_.back();
         double *g = nullptr, *u = nullptr, *y = nullptr;
-        MARS_CELLWISE_CK(cudaMalloc(&g, (long long)kInner3 * kMetric * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMalloc(&u, (long long)kInner3 * kN3 * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMalloc(&y, (long long)kInner3 * kN3 * sizeof(double)));
         const long long gn = (long long)kInner3 * kMetric, un = (long long)kInner3 * kN3;
-        replicate_kernel<<<(unsigned)((gn + kThreads - 1) / kThreads), kThreads>>>(L.G, g, kMetric, kInner3);
-        interior_units_kernel<<<(unsigned)((un + kThreads - 1) / kThreads), kThreads>>>(u);
-        apply_(u, y, g, kInner3);
+        MARS_CELLWISE_CK(cudaMalloc(&g, gn * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMalloc(&u, un * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMalloc(&y, un * sizeof(double)));
+        replicate_kernel<<<(unsigned)((gn + kThreads - 1) / kThreads), kThreads, 0, stream_>>>(L.G, g, kMetric,
+                                                                                            kInner3);
+        interior_units_kernel<<<(unsigned)((un + kThreads - 1) / kThreads), kThreads, 0, stream_>>>(u);
+        apply_(u, y, g, kInner3, stream_);
         std::vector<double> hy(un), a((size_t)kInner3 * kInner3), inv((size_t)kInner3 * kInner3, 0.0);
-        MARS_CELLWISE_CK(cudaMemcpy(hy.data(), y, un * sizeof(double), cudaMemcpyDeviceToHost));
+        MARS_CELLWISE_CK(cudaMemcpyAsync(hy.data(), y, un * sizeof(double), cudaMemcpyDeviceToHost, stream_));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
         for (int i = 0; i < kInner3; ++i)
             for (int j = 0; j < kInner3; ++j) a[(size_t)i * kInner3 + j] = hy[(size_t)j * kN3 + interior_local(i)];
         for (int i = 0; i < kInner3; ++i) inv[(size_t)i * kInner3 + i] = 1.0;
@@ -402,43 +504,100 @@ private:
         }
         MARS_CELLWISE_CK(cudaMalloc(&ainv_, inv.size() * sizeof(double)));
         MARS_CELLWISE_CK(cudaMemcpy(ainv_, inv.data(), inv.size() * sizeof(double), cudaMemcpyHostToDevice));
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());   // see upload_child_interp
         for (double* p : {g, u, y}) cudaFree(p);
     }
 
+    // The gathered level: every rank's part travels to rank 0, which owns a one-rank
+    // multigrid of the whole block at this level (made, assembled and coarsened there).
+    // Device buffers go straight to MPI, as for the ghost exchange.
+    void setup_gather()
+    {
+        const Block part = lv_.back().blk;
+        if (rank_ != 0) return;
+        whole_ = Block(part.NX, part.NY, part.NZ);
+        const long long all = whole_.values();
+        MARS_CELLWISE_CK(cudaMalloc(&d_all_, all * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMalloc(&root_b_, all * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMalloc(&root_x_, all * sizeof(double)));
+        const Decomposition one(MPI_COMM_SELF, whole_.NX, whole_.NY, whole_.NZ);
+        const std::pair<double*, double*> made = make_(whole_);
+        double* diag = nullptr;
+        MARS_CELLWISE_CK(cudaMalloc(&diag, all * sizeof(double)));
+        dss(made.second, diag, whole_, nullptr, stream_);
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
+        cudaFree(made.second);
+        root_.reset(new Multigrid(apply_, make_, {whole_, made.first, diag}, one, zeta_, pre_, post_, stream_,
+                                  true, range_));
+    }
+
+    void gather_solve(const double* b, double* x, cudaStream_t stream) const
+    {
+        const Block part = lv_.back().blk;
+        const int n = (int)part.values();
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream));   // b complete before MPI reads it
+        MARS_CELLWISE_MPI(MPI_Gather(b, n, MPI_DOUBLE, d_all_, n, MPI_DOUBLE, 0, comm_));
+        if (rank_ == 0) {
+            const long long all = whole_.values();
+            const unsigned grid = (unsigned)((all + kThreads - 1) / kThreads);
+            permute_kernel<true><<<grid, kThreads, 0, stream>>>(d_all_, root_b_, whole_, part, P_[1], P_[2]);
+            root_->vcycle(0, root_b_, root_x_, stream);
+            permute_kernel<false><<<grid, kThreads, 0, stream>>>(root_x_, d_all_, whole_, part, P_[1], P_[2]);
+            MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
+        }
+        MARS_CELLWISE_MPI(MPI_Scatter(d_all_, n, MPI_DOUBLE, x, n, MPI_DOUBLE, 0, comm_));
+    }
+
     // Largest eigenvalue of P_J A on level l: 30 power steps from the hash vector,
-    // estimate ||w||_w / ||v||_w with v normalized each step.
+    // estimate ||w||_w / ||v||_w with v normalized each step. Fewer steps underestimate
+    // it, and Chebyshev then amplifies the modes above the bound (5 -> 29 iterations
+    // with 10 steps at 8^3, deform 0.1).
     double power_iteration(size_t l)
     {
         const MultigridLevel& L = lv_[l];
         const long long n = L.blk.values();
         const unsigned grid = (unsigned)((n + kThreads - 1) / kThreads);
+        Halo* halo = halos_[l].get();
         double* v = nullptr;
         MARS_CELLWISE_CK(cudaMalloc(&v, n * sizeof(double)));
         double* w = d_[l];
-        hash_kernel<<<grid, kThreads>>>(w, n);
-        precondition(w, v, L.diag, L.blk);
-        Reduction red;
+        hash_kernel<<<grid, kThreads, 0, stream_>>>(w, L.blk);
+        precondition(w, v, L.diag, L.blk, halo, stream_);
+        Reduction red(comm_);
         double lam = 0.0;
         for (int it = 0; it < 30; ++it) {
-            apply_(v, q_[l], L.G, L.blk.elements());
-            precondition(q_[l], w, L.diag, L.blk);
-            wdot(w, w, L.blk, red, kRR);
-            const double nw = read_norm(red, 0);
-            wdot(v, v, L.blk, red, kRR);
-            lam = nw / read_norm(red, 0);
-            scale_kernel<<<grid, kThreads>>>(v, w, 1.0 / nw, n);
+            apply_(v, q_[l], L.G, L.blk.elements(), stream_);
+            precondition(q_[l], w, L.diag, L.blk, halo, stream_);
+            wdot(w, w, L.blk, red, kRR, stream_);
+            const double nw = read_norm(red, stream_);
+            wdot(v, v, L.blk, red, kRR, stream_);
+            lam = nw / read_norm(red, stream_);
+            scale_kernel<<<grid, kThreads, 0, stream_>>>(v, w, 1.0 / nw, n);
         }
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
         cudaFree(v);
         return lam;
     }
 
     Apply apply_;
-    std::vector<MultigridLevel> lv_;
+    MakeLevel make_;
+    MPI_Comm comm_;
+    int rank_, ranks_;
+    int P_[3];
     int pre_, post_;
     double range_;
-    std::vector<double*> b_, x_, q_, d_;   // per level: right-hand side, iterate, A x, Chebyshev d
+    cudaStream_t stream_;
+    double zeta_[kN];
+    std::vector<MultigridLevel> lv_;
+    std::vector<std::unique_ptr<Halo>> halos_;   // null on one rank and on the gathered level
+    std::vector<double*> b_, x_, q_, d_;         // per level: right-hand side, iterate, A x, Chebyshev d
     std::vector<double> lmax_;
+    std::vector<const double*> owned_;           // metrics and diagonals this object made
     double* ainv_ = nullptr;
+    // The gathered level: rank 0's whole block, its rank-major copy, and its solver.
+    Block whole_;
+    double *d_all_ = nullptr, *root_b_ = nullptr, *root_x_ = nullptr;
+    std::unique_ptr<Multigrid> root_;
 };
 
 }  // namespace cellwise
