@@ -167,6 +167,60 @@ def numeric_file(path):
     return result
 
 
+def stopping_checks(reports, residual):
+    require(bool(reports))
+    integer_keys = ('method', 'maxiter', 'result_iterations', 'result_converged',
+                    'result_solve_error', 'result_global_error', 'result_fatal_error')
+    for report in reports:
+        for key in integer_keys:
+            value = report[key]
+            require(math.isfinite(value) and 0 <= value <= 2**31-1 and value == int(value))
+        require(report['method'] in (0, 1) and report['result_converged'] in (0, 1)
+                and report['result_fatal_error'] in (0, 1))
+        require(math.isfinite(report['rtol']) and 0 < report['rtol'] < 1
+                and math.isfinite(report['atol']) and report['atol'] >= 0)
+        require(not math.isfinite(report['result_reported']) or report['result_reported'] >= 0)
+    relations = {('below' if r['result_iterations'] < r['maxiter'] else
+                  'at' if r['result_iterations'] == r['maxiter'] else 'above') for r in reports}
+    relation = next(iter(relations)) if len(relations) == 1 else 'mixed'
+    # Compare exit metadata, not rank-dependent AMG hierarchy sizes.
+    keys = integer_keys + ('rtol', 'atol')
+    consistent = all(tuple(r[k] for k in keys) == tuple(reports[0][k] for k in keys) for r in reports)
+    finite = all(math.isfinite(r['result_reported']) for r in reports)
+    zero = all(r['result_iterations'] == 0 for r in reports)
+    fatal = any(r['result_fatal_error'] != 0 for r in reports)
+    if not consistent:
+        assessment = 'rank_reports_disagree'
+    elif fatal:
+        assessment = 'fatal_backend_error'
+    elif not finite:
+        assessment = 'nonfinite_reported_residual'
+    elif not residual['finite']:
+        assessment = 'nonfinite_candidate_residual'
+    elif residual['residual_passed']:
+        assessment = 'independent_residual_passed'
+    elif residual['residual_inconclusive']:
+        assessment = 'independent_residual_inconclusive'
+    else:
+        require(residual['residual_failed'])
+        assessment = ('failed_without_iterations' if zero else
+                      'failed_before_iteration_limit' if relation == 'below' else
+                      'failed_at_or_above_iteration_limit')
+    methods = {r['method'] for r in reports}
+    return dict(scope='saved_exit_metadata_not_internal_branch_trace', assessment=assessment,
+        backend='mixed' if len(methods) != 1 else 'FlexGMRES' if 1 in methods else 'GMRES',
+        exit_metadata_agrees_across_ranks=consistent, iteration_limit_relation=relation,
+        iterations_zero_on_all_ranks=zero,
+        solve_return_nonzero=any(r['result_solve_error'] != 0 for r in reports),
+        global_error_nonzero=any(r['result_global_error'] != 0 for r in reports),
+        fatal_backend_error_seen=fatal,
+        reported_relative_residual_finite=finite,
+        reported_relative_residual_below_rtol=(all(r['result_reported'] <= r['rtol'] for r in reports)
+                                               if finite else None),
+        absolute_tolerance_enabled=any(r['atol'] != 0 for r in reports),
+        convergence_claim_contradicted=(residual['residual_failed'] and any(r['result_converged'] == 1 for r in reports)))
+
+
 def capture_inputs(directory):
     ranks = marker(directory, 'mars-pressure-capture-v1')
     files = [directory / 'complete']
@@ -449,6 +503,7 @@ def compare(args, public):
     public['failed_check'] = 'checker_executable'
     checker = args.checker.resolve(strict=True); checker_hash = digest(checker)
     checks = {}
+    stopping = {}
     profiles = {}
     records = {}
     archives = {name: getattr(args, name + '_input_archive') for name in ('mars', 'reference')}
@@ -510,6 +565,8 @@ def compare(args, public):
                 control_matches = control_matches and all(report.get(k) == v for k, v in expected.items()
                                                           if k != 'hypre_release' and not k.startswith('effective_'))
             checks[name]['recorded_controls_match_requested_profile'] = control_matches
+            public['failed_check'] = name + '_replay_stopping_report'
+            stopping[name] = stopping_checks(reports, checks[name])
             public['failed_check'] = name + '_replay_inputs_changed'
             require(replay_input_checks(path, record, directory, capture, archives[name])['matched'])
             public['failed_check'] = name + '_replay_outputs_changed'
@@ -519,7 +576,7 @@ def compare(args, public):
     require(digest(checker) == checker_hash)
     public['failed_check'] = 'capture_changed'
     verify(capture['files'])
-    public.update(comparison_status='completed', failed_check='none', residual_checks=checks,
+    public.update(comparison_status='completed', failed_check='none', residual_checks=checks, stopping_checks=stopping,
                   same_frozen_system_verified=True, profiles=profiles, actual_exit_branch_verified=False,
                   original_amg_hierarchy_reused=False, nonlinear_convergence_verified=False)
 

@@ -210,6 +210,10 @@ class ReplayTests(unittest.TestCase):
                     # Reapply the recorded, post-setup control snapshot on a fresh object.
                     report = replay.numeric_file(self.result/'rank-000000.report')
                     self.assertEqual(report['result_converged'], 1)
+                    stop = self.stopping_result([report], 'passed')
+                    self.assertEqual(stop['assessment'], 'independent_residual_passed')
+                    self.assertEqual(stop['backend'], 'FlexGMRES' if method else 'GMRES')
+                    self.assertFalse(stop['solve_return_nonzero'])
                     cfg.write_text(''.join('{} {:.17g}\n'.format(k,v) for k,v in report.items() if not k.startswith('result_')))
                     shutil.rmtree(self.result)
                     p = subprocess.run([binary, str(self.capture), str(cfg), str(self.result)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -234,7 +238,8 @@ class ReplayTests(unittest.TestCase):
         path = self.root/name; path.mkdir()
         write_solution(path/'result', candidate, 1)
         (path/'result/rank-000000.report').write_text(
-            'method 0\nrtol 1e-10\natol 0\nmaxiter 200\nrelaxtype 18\ncoarserelax 18\nresult_converged 1\nresult_fatal_error 0\n')
+            'method 0\nrtol 1e-10\natol 0\nmaxiter 200\nrelaxtype 18\ncoarserelax 18\nresult_converged 1\nresult_fatal_error 0\n'
+            'result_iterations 12\nresult_solve_error 0\nresult_global_error 0\nresult_reported 1e-12\n')
         record = dict(schema=replay.SCHEMA, backend=name, profile='captured' if name=='mars' else 'reference',
                       capture_sha256=replay.digest(capture/'capture.json'), exit_code=0,
                       inputs=replay.hashes([capture/'capture.json']), files=replay.hashes(list((path/'result').iterdir())))
@@ -255,9 +260,102 @@ class ReplayTests(unittest.TestCase):
         self.assertTrue(public['residual_checks']['mars']['residual_passed'])
         self.assertTrue(public['residual_checks']['reference']['backend_converged_flag'])
         self.assertTrue(public['residual_checks']['reference']['residual_failed'])
+        self.assertEqual(public['stopping_checks']['reference']['assessment'], 'failed_before_iteration_limit')
+        self.assertTrue(public['stopping_checks']['reference']['convergence_claim_contradicted'])
         self.assertFalse(public['actual_exit_branch_verified'])
         self.assertFalse(public['original_amg_hierarchy_reused'])
         self.assertNotIn(str(self.root), json.dumps(public))
+
+    def stopping_report(self, **changes):
+        report = dict(method=0., maxiter=200., rtol=1e-10, atol=0., result_converged=1.,
+                      result_fatal_error=0., result_iterations=12., result_solve_error=0.,
+                      result_global_error=0., result_reported=1e-12)
+        report.update(changes)
+        return report
+
+    def stopping_result(self, reports, outcome='failed'):
+        residual = dict(finite=outcome != 'nonfinite', residual_passed=outcome == 'passed',
+                        residual_failed=outcome == 'failed', residual_inconclusive=outcome == 'inconclusive')
+        return replay.stopping_checks(reports, residual)
+
+    def test_stopping_summary_distinguishes_early_exit_cap_and_zero_iterations(self):
+        for ranks in (1, 2, 4):
+            for iterations, relation, assessment in ((12, 'below', 'failed_before_iteration_limit'),
+                    (200, 'at', 'failed_at_or_above_iteration_limit'),
+                    (201, 'above', 'failed_at_or_above_iteration_limit'),
+                    (0, 'below', 'failed_without_iterations')):
+                with self.subTest(ranks=ranks, iterations=iterations):
+                    report = self.stopping_report(result_iterations=iterations)
+                    public = self.stopping_result([report]*ranks)
+                    self.assertEqual(public['iteration_limit_relation'], relation)
+                    self.assertEqual(public['assessment'], assessment)
+                    self.assertEqual(public['iterations_zero_on_all_ranks'], iterations == 0)
+                    self.assertTrue(public['convergence_claim_contradicted'])
+                    self.assertTrue(public['exit_metadata_agrees_across_ranks'])
+                    self.assertNotIn('stagnation', json.dumps(public))
+                    self.assertTrue(all(type(v) in (str, bool, type(None)) for v in public.values()))
+
+    def test_stopping_summary_does_not_confuse_convergence_error_and_fatal_error(self):
+        capped = self.stopping_report(result_iterations=200, result_converged=0,
+                                     result_solve_error=256, result_global_error=256, result_reported=1e-6)
+        public = self.stopping_result([capped])
+        self.assertEqual(public['assessment'], 'failed_at_or_above_iteration_limit')
+        self.assertTrue(public['solve_return_nonzero'])
+        self.assertTrue(public['global_error_nonzero'])
+        self.assertFalse(public['fatal_backend_error_seen'])
+        self.assertFalse(public['convergence_claim_contradicted'])
+        self.assertFalse(public['reported_relative_residual_below_rtol'])
+        fatal = self.stopping_report(result_solve_error=1, result_fatal_error=1)
+        self.assertEqual(self.stopping_result([fatal])['assessment'], 'fatal_backend_error')
+
+    def test_stopping_summary_keeps_absolute_tolerance_and_true_residual_separate(self):
+        report = self.stopping_report(method=1, atol=1., result_reported=1e-4)
+        public = self.stopping_result([report], 'passed')
+        self.assertEqual(public['backend'], 'FlexGMRES')
+        self.assertTrue(public['absolute_tolerance_enabled'])
+        self.assertFalse(public['reported_relative_residual_below_rtol'])
+        self.assertEqual(public['assessment'], 'independent_residual_passed')
+        self.assertFalse(public['convergence_claim_contradicted'])
+        for outcome in ('inconclusive', 'nonfinite'):
+            with self.subTest(outcome=outcome):
+                public = self.stopping_result([report], outcome)
+                self.assertEqual(public['assessment'], 'independent_residual_inconclusive' if outcome == 'inconclusive'
+                                 else 'nonfinite_candidate_residual')
+                self.assertFalse(public['convergence_claim_contradicted'])
+
+    def test_stopping_summary_reports_nonfinite_norm_and_rank_disagreement(self):
+        for value in (float('nan'), float('inf')):
+            public = self.stopping_result([self.stopping_report(result_reported=value)])
+            self.assertEqual(public['assessment'], 'nonfinite_reported_residual')
+            self.assertFalse(public['reported_relative_residual_finite'])
+            self.assertIsNone(public['reported_relative_residual_below_rtol'])
+            json.dumps(public, allow_nan=False)
+        for changed in ({'result_iterations': 200}, {'result_converged': 0}, {'maxiter': 300}, {'method': 1}):
+            public = self.stopping_result([self.stopping_report(), self.stopping_report(**changed)])
+            self.assertFalse(public['exit_metadata_agrees_across_ranks'])
+            self.assertEqual(public['assessment'], 'rank_reports_disagree')
+        public = self.stopping_result([self.stopping_report(), self.stopping_report(result_iterations=200)])
+        self.assertEqual(public['iteration_limit_relation'], 'mixed')
+
+    def test_stopping_summary_rejects_missing_and_invalid_metadata(self):
+        for key, value in (('result_iterations', -1.), ('result_iterations', 1.5), ('maxiter', float('inf')),
+                           ('result_converged', 2.), ('method', 3.), ('result_solve_error', float('nan')),
+                           ('rtol', 0.), ('atol', -1.), ('result_reported', -1.)):
+            with self.subTest(key=key, value=value), self.assertRaises(Exception):
+                self.stopping_result([self.stopping_report(**{key: value})])
+        report = self.stopping_report(); report.pop('result_iterations')
+        with self.assertRaises(KeyError): self.stopping_result([report])
+
+    def test_compare_missing_stopping_field_fails_with_private_values_withheld(self):
+        args = self.compare_arguments()
+        path = self.root/'reference/result/rank-000000.report'
+        path.write_text(path.read_text().replace('result_iterations 12\n', ''))
+        manifest = self.root/'reference/replay.json'
+        record = json.loads(manifest.read_text()); record['files'].update(replay.hashes([path]))
+        manifest.write_text(json.dumps(record))
+        public = self.compare_saved(args)
+        self.assertEqual(public['failed_check'], 'reference_replay_stopping_report')
+        self.assertNotIn('stopping_checks', public)
 
     def test_modified_replay_output_rejected(self):
         args = self.compare_arguments()

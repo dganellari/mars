@@ -350,6 +350,72 @@ If both fail the common test, changing to the reference profile alone has not
 resolved the accuracy problem. An inconclusive interval requires better residual
 resolution, not tolerance relaxation.
 
+### Read the stopping behavior from the same saved results
+
+The completed comparison also exports `stopping_checks` for MARS and reference.
+These use the iteration counts, effective limit, method, error flags and reported
+relative residual already saved by the replay executable. No rebuild or solver
+run is needed. All numeric values remain private; only fixed labels and booleans
+are exported. Missing or malformed stopping fields fail the comparison at
+`<candidate>_replay_stopping_report`.
+
+* `iteration_limit_relation`: below, at, above, or mixed across ranks.
+* `assessment`: distinguishes a definite residual failure before the limit,
+  at/above the limit, or with zero iterations. Fatal errors, nonfinite results,
+  disagreement between ranks, passed residuals and inconclusive residuals have
+  separate labels.
+* `convergence_claim_contradicted`: at least one backend convergence flag is set,
+  but the independent bounded residual definitely fails.
+* `solve_return_nonzero` and `global_error_nonzero`: retain nonconvergence errors
+  even when `fatal_backend_error_seen` is false.
+* `reported_relative_residual_below_rtol`: compares Hypre's reported value with
+  its recorded relative tolerance only. This is not the full stopping test;
+  `absolute_tolerance_enabled` flags a potentially larger absolute allowance.
+  Independent residual acceptance remains authoritative.
+
+A failure below the limit shows that the iteration cap did not end that solve;
+it does not prove stagnation, residual drift or an unattainable tolerance. A
+failure at the limit does not guarantee that more iterations will help.
+`actual_exit_branch_verified` remains false. The original failed flow candidate
+has no replay stopping report; these labels describe the two fresh solves only.
+
+To update an existing successful comparison, run the block below in the **MARS
+terminal only**. It reuses the reference dependency archive if present. Original
+captures, replays and reports remain untouched. Share its new public JSON.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+mkdir -p "$TMPDIR"
+run=$(cat "$scratch/simple-pressure-frozen-current.txt")
+reference="$run/reference"
+if test -f "$run/reference-retry-current.txt"; then
+  IFS= read -r reference < "$run/reference-retry-current.txt"
+fi
+archive_args=()
+if test -f "$reference/input-archive-current.txt"; then
+  IFS= read -r archive < "$reference/input-archive-current.txt"
+  archive_args=(--reference-input-archive "$archive")
+fi
+summary=$(mktemp -d "$scratch/simple-pressure-stopping-XXXXXX")/public.json
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$run/capture" --mars-run "$run/mars" --reference-run "$reference" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  "${archive_args[@]}" --output "$summary" || status=$?
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+exit "$status"
+)
+```
+
 ### If comparison stops before a verdict
 
 Older versions used `replay_identity` for every failure after locating the
