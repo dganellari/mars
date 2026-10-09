@@ -2392,6 +2392,15 @@ bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, Acceler
     constexpr int tagStarHalos = 0x4d40; // below the epoch-based node-halo tags (0x4d4d + epoch and up)
     sparseExchange<KeyType>(dests, counts, key, haloKeys, tagStarHalos, MPI_COMM_WORLD);
 
+    // MARS_STAR_TRACE: per rank, the elements it pushes to node owners and the ones it receives, to tell a halo
+    // made large by star completion from one made large by the partition shape.
+    if (std::getenv("MARS_STAR_TRACE") != nullptr)
+    {
+        std::printf("[star] rank %d pushes %zu elements to %zu ranks, receives %zu\n", rank, numPush, numDests,
+                    size_t(haloKeys.size()));
+        std::fflush(stdout);
+    }
+
     long pushed = long(numPush);
     MPI_Allreduce(MPI_IN_PLACE, &pushed, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (rank == 0) { std::cout << "[halo] element stars completed: " << pushed << " elements requested" << std::endl; }
