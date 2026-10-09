@@ -69,6 +69,12 @@ struct UnstructuredTopology {
     // Per element: bit f (faces 0-5), 6 + k (edges), 18 + c (corners) set when this
     // element holds the counting copy (the canonically first) of that entity's nodes.
     thrust::device_vector<unsigned> counting;
+    // Per copy, so each copy of a node can find the others: face_nbr[e * 6 + f] is the
+    // other copy of the face (-1 if none), face_code its frame in bits 0-2, the other
+    // copy's in bits 3-5 and the Dirichlet flag in bit 6; edge_of[e * 12 + k] is the
+    // edge star (bit 31: this copy runs reversed); vert_of[e * 8 + c] the vertex star.
+    thrust::device_vector<int> face_nbr, edge_of, vert_of;
+    thrust::device_vector<unsigned char> face_code;
 
     long long pairs() const { return (long long)pair_lo.size(); }
     long long singles() const { return (long long)single_face.size(); }
@@ -178,13 +184,17 @@ __global__ void canonical_star_kernel(const int* off, int* ent, long long stars,
 __global__ void face_pairs_kernel(const int* off, const int* ent, long long faces,
                                   const unsigned long long* tuples, const unsigned long long* const* key,
                                   int* pair_slot, int* single_slot, int* pair_lo, int* pair_hi,
-                                  unsigned char* pair_code, int* single_face, int* bad)
+                                  unsigned char* pair_code, int* single_face, int* face_nbr,
+                                  unsigned char* face_code, int* bad)
 {
     const long long g = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (g >= faces) return;
     const int n = off[g + 1] - off[g];
     if (n == 1) {
-        single_face[single_slot[g]] = ent[off[g]];
+        const int c = ent[off[g]];
+        single_face[single_slot[g]] = c;
+        face_nbr[c] = -1;
+        face_code[c] = 1 << 6;   // on one rank every single face is on the physical boundary
         return;
     }
     if (n != 2) {
@@ -203,9 +213,14 @@ __global__ void face_pairs_kernel(const int* off, const int* ent, long long face
         kb[s] = key[face_corner(b % 6, s)][b / 6];
     }
     const int p = pair_slot[g];
+    const int ca = face_frame_code(ka), cb = face_frame_code(kb);
     pair_lo[p] = a;
     pair_hi[p] = b;
-    pair_code[p] = (unsigned char)(face_frame_code(ka) | face_frame_code(kb) << 3);
+    pair_code[p] = (unsigned char)(ca | cb << 3);
+    face_nbr[a] = b;
+    face_nbr[b] = a;
+    face_code[a] = (unsigned char)(ca | cb << 3);
+    face_code[b] = (unsigned char)(cb | ca << 3);
 }
 
 // Every edge and vertex of a Dirichlet face is Dirichlet; the writes all store 1.
@@ -217,17 +232,18 @@ __global__ void dirichlet_spread_kernel(const int* single_face, long long single
     if (s >= singles) return;
     const int e = single_face[s] / 6, f = single_face[s] % 6;
     for (int w = 0; w < 4; ++w) {
-        edge_dirichlet[edge_of[e * 12 + face_edge(f, w)]] = 1;
+        edge_dirichlet[edge_of[e * 12 + face_edge(f, w)] & 0x7fffffff] = 1;
         vert_dirichlet[vert_of[e * 8 + face_corner(f, w)]] = 1;
     }
 }
 
-// Entity id of every copy, from the sorted segments: of[copy] = segment.
+// Entity id of every copy, from the sorted segments: of[copy] = segment, keeping the
+// copy's reversed bit (bit 31).
 __global__ void segment_of_kernel(const int* off, const int* ent, long long segments, int* of)
 {
     const long long g = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (g >= segments) return;
-    for (int i = off[g]; i < off[g + 1]; ++i) of[ent[i] & 0x7fffffff] = (int)g;
+    for (int i = off[g]; i < off[g + 1]; ++i) of[ent[i] & 0x7fffffff] = (int)g | (ent[i] & (int)0x80000000u);
 }
 
 // The canonically first copy of every entity counts in dot products.
@@ -283,6 +299,10 @@ inline UnstructuredTopology build_topology(const unsigned long long* const* d_ke
                                            long long E)
 {
     using namespace topo_detail;
+    if (E * 12 > 0x7fffffffLL) {   // copy codes e * 12 + k are 31-bit
+        fprintf(stderr, "cell-wise topology: %lld elements on one rank, at most %lld\n", E, 0x7fffffffLL / 12);
+        std::abort();
+    }
     UnstructuredTopology T;
     T.elements = E;
     thrust::device_vector<unsigned long long> tuples(E * 8);
@@ -370,11 +390,13 @@ inline UnstructuredTopology build_topology(const unsigned long long* const* d_ke
     T.pair_hi.resize(npairs);
     T.pair_code.resize(npairs);
     T.single_face.resize(nsingles);
+    T.face_nbr.resize(E * 6);
+    T.face_code.resize(E * 6);
     thrust::device_vector<int> bad(1, 0);
     face_pairs_kernel<<<blocks(faces), kThreads>>>(raw(face_off), raw(face_ent), faces, raw(tuples), d_key,
                                                    raw(pair_slot), raw(single_slot), raw(T.pair_lo),
                                                    raw(T.pair_hi), raw(T.pair_code), raw(T.single_face),
-                                                   raw(bad));
+                                                   raw(T.face_nbr), raw(T.face_code), raw(bad));
     MARS_CELLWISE_CK(cudaGetLastError());
     if (bad[0] != 0) {
         fprintf(stderr, "cell-wise topology: %d faces shared by 3 or more elements (non-conforming mesh)\n",
@@ -384,14 +406,16 @@ inline UnstructuredTopology build_topology(const unsigned long long* const* d_ke
 
     // Dirichlet: on one rank every single face is on the physical boundary.
     T.single_dirichlet.assign(nsingles, 1);
-    thrust::device_vector<int> edge_of(E * 12), vert_of(E * 8);
-    segment_of_kernel<<<blocks(T.edges()), kThreads>>>(raw(T.edge_off), raw(T.edge_ent), T.edges(), raw(edge_of));
+    T.edge_of.resize(E * 12);
+    T.vert_of.resize(E * 8);
+    segment_of_kernel<<<blocks(T.edges()), kThreads>>>(raw(T.edge_off), raw(T.edge_ent), T.edges(),
+                                                       raw(T.edge_of));
     segment_of_kernel<<<blocks(T.vertices()), kThreads>>>(raw(T.vert_off), raw(T.vert_ent), T.vertices(),
-                                                          raw(vert_of));
+                                                          raw(T.vert_of));
     T.edge_dirichlet.assign(T.edges(), 0);
     T.vert_dirichlet.assign(T.vertices(), 0);
-    dirichlet_spread_kernel<<<blocks(nsingles), kThreads>>>(raw(T.single_face), nsingles, raw(edge_of),
-                                                            raw(vert_of), raw(T.edge_dirichlet),
+    dirichlet_spread_kernel<<<blocks(nsingles), kThreads>>>(raw(T.single_face), nsingles, raw(T.edge_of),
+                                                            raw(T.vert_of), raw(T.edge_dirichlet),
                                                             raw(T.vert_dirichlet));
 
     thrust::device_vector<unsigned char> flags(E * 26, 0);
@@ -413,6 +437,8 @@ struct TopologyView {
     const int *pair_lo, *pair_hi, *single_face, *edge_off, *edge_ent, *vert_off, *vert_ent;
     const unsigned char *pair_code, *single_dirichlet, *edge_dirichlet, *vert_dirichlet;
     const unsigned* counting;
+    const int *face_nbr, *edge_of, *vert_of;
+    const unsigned char* face_code;
 };
 
 inline TopologyView view(const UnstructuredTopology& T)
@@ -421,18 +447,21 @@ inline TopologyView view(const UnstructuredTopology& T)
     return {T.elements, T.pairs(), T.singles(), T.edges(), T.vertices(),
             raw(T.pair_lo), raw(T.pair_hi), raw(T.single_face), raw(T.edge_off), raw(T.edge_ent),
             raw(T.vert_off), raw(T.vert_ent), raw(T.pair_code), raw(T.single_dirichlet),
-            raw(T.edge_dirichlet), raw(T.vert_dirichlet), raw(T.counting)};
+            raw(T.edge_dirichlet), raw(T.vert_dirichlet), raw(T.counting),
+            raw(T.face_nbr), raw(T.edge_of), raw(T.vert_of), raw(T.face_code)};
 }
 
 constexpr int kInteriorNodes = (kN - 2) * (kN - 2) * (kN - 2);   // 216
 constexpr int kFaceNodes = (kN - 2) * (kN - 2);                  // 36 per face
 constexpr int kEdgeNodes = kN - 2;                               // 6 per edge
 
-// Work items of one DSS pass, in order: interior nodes (E * 216), face-pair nodes
+// ---- entity form: one work item per shared node, writing all its copies ------------
+// Kept only to measure against the gather form below.
+//
+// Work items of one pass, in order: interior nodes (E * 216), face-pair nodes
 // (pairs * 36), single-face nodes (singles * 36), edge nodes (edges * 6), vertices.
-// Op is called once per node with its copies: op(sum, copy0, copy1, ...) through the
-// visit functions below; it sees the sum in canonical order and every copy's value
-// index, plus whether the node is Dirichlet.
+// Op sees the sum in canonical order and every copy's value index, plus whether the
+// node is Dirichlet.
 template <typename Value, typename Op>
 __device__ inline void dss_item(long long t, const TopologyView& T, const Value& value, Op& op)
 {
@@ -509,7 +538,7 @@ struct DssOp {
 };
 
 __global__ void __launch_bounds__(kThreads)
-unstructured_dss_kernel(const double* __restrict__ in, double* __restrict__ out, TopologyView T)
+entity_dss_kernel(const double* __restrict__ in, double* __restrict__ out, TopologyView T)
 {
     const long long n = dss_items(T);
     const auto value = [in](long long i) { return in[i]; };
@@ -519,11 +548,96 @@ unstructured_dss_kernel(const double* __restrict__ in, double* __restrict__ out,
         dss_item(t, T, value, op);
 }
 
-inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, cudaStream_t stream = 0)
+inline void dss_by_entity(const double* d_in, double* d_out, const UnstructuredTopology& T, cudaStream_t stream = 0)
 {
     const TopologyView v = view(T);
     const long long n = dss_items(v);
-    unstructured_dss_kernel<<<(unsigned)((n + kThreads - 1) / kThreads), kThreads, 0, stream>>>(d_in, d_out, v);
+    entity_dss_kernel<<<(unsigned)((n + kThreads - 1) / kThreads), kThreads, 0, stream>>>(d_in, d_out, v);
+    MARS_CELLWISE_CK(cudaGetLastError());
+}
+
+// ---- gather form: every copy sums its own node ------------------------------------
+//
+// One thread per copy, element by element in the order of for_each_node, so an
+// element's values are read and written together in full memory sectors and its
+// neighbours' copies are mostly still in cache. Every copy of a node gets the same
+// bits: a face adds its two copies (addition is commutative), edges and vertices sum
+// their stars in canonical order.
+
+// The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner;
+// index is its local number (f, k or c); i, j its position on a face, i on an edge.
+struct LocalEntity {
+    int kind, index, i, j;
+};
+
+__device__ inline LocalEntity local_entity(const Node& nd)
+{
+    const int x[3] = {nd.a, nd.b, nd.c};
+    int on = 0;
+    for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == kP);
+    if (on == 0) return {0, 0, 0, 0};
+    if (on == 3) return {3, corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP), 0, 0};
+    int axis = 0, o0, o1;
+    if (on == 1) {
+        while (x[axis] != 0 && x[axis] != kP) ++axis;
+        other_axes(axis, o0, o1);
+        return {1, axis * 2 + (x[axis] == kP), x[o0], x[o1]};
+    }
+    while (x[axis] == 0 || x[axis] == kP) ++axis;   // the edge runs along the free axis
+    other_axes(axis, o0, o1);
+    return {2, axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP), x[axis], 0};
+}
+
+struct GatherSum {
+    double s;
+    bool dirichlet;
+};
+
+template <typename Value>
+__device__ inline GatherSum gather_sum(const Value& value, const TopologyView& T, const Node& nd)
+{
+    const LocalEntity le = local_entity(nd);
+    if (le.kind == 0) return {value(nd.t), false};
+    if (le.kind == 1) {
+        const int nbr = T.face_nbr[nd.e * 6 + le.index];
+        const int code = T.face_code[nd.e * 6 + le.index];
+        if (nbr < 0) return {value(nd.t), (code >> 6) != 0};
+        int I, J, i2, j2;
+        face_to_canonical(code & 7, le.i, le.j, I, J);
+        canonical_to_face((code >> 3) & 7, I, J, i2, j2);
+        return {value(nd.t) + value((long long)(nbr / 6) * kN3 + face_node(nbr % 6, i2, j2)), false};
+    }
+    double s = 0.0;
+    if (le.kind == 2) {
+        const int of = T.edge_of[nd.e * 12 + le.index];
+        const int g = of & 0x7fffffff;
+        const int tc = of < 0 ? kP - le.i : le.i;   // canonical position on the edge
+        for (int m = T.edge_off[g]; m < T.edge_off[g + 1]; ++m) {
+            const int c = T.edge_ent[m];
+            const int k = c & 0x7fffffff;
+            s += value((long long)(k / 12) * kN3 + edge_node(k % 12, c < 0 ? kP - tc : tc));
+        }
+        return {s, T.edge_dirichlet[g] != 0};
+    }
+    const int g = T.vert_of[nd.e * 8 + le.index];
+    for (int m = T.vert_off[g]; m < T.vert_off[g + 1]; ++m) {
+        const int c = T.vert_ent[m];
+        s += value((long long)(c / 8) * kN3 + corner_node(c % 8));
+    }
+    return {s, T.vert_dirichlet[g] != 0};
+}
+
+__global__ void __launch_bounds__(kThreads)
+unstructured_dss_kernel(const double* __restrict__ in, double* __restrict__ out, TopologyView T)
+{
+    const auto value = [in](long long i) { return in[i]; };
+    for_each_node(Block((int)T.elements, 1, 1), [&](const Node& nd) { out[nd.t] = gather_sum(value, T, nd).s; });
+}
+
+inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, cudaStream_t stream = 0)
+{
+    static const int grid = resident_grid(unstructured_dss_kernel);
+    unstructured_dss_kernel<<<grid, kThreads, 0, stream>>>(d_in, d_out, view(T));
     MARS_CELLWISE_CK(cudaGetLastError());
 }
 
@@ -533,65 +647,15 @@ struct CountingWeight {
     const unsigned* counting;
     __device__ double operator()(const Node& nd) const
     {
-        const int x[3] = {nd.a, nd.b, nd.c};
-        int on = 0;
-        for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == kP);
-        if (on == 0) return 1.0;
-        const unsigned bits = counting[nd.e];
-        int bit;
-        if (on == 1) {   // face interior
-            int axis = 0;
-            while (x[axis] != 0 && x[axis] != kP) ++axis;
-            bit = axis * 2 + (x[axis] == kP);
-        } else if (on == 2) {   // edge interior: the axis not on the boundary varies
-            int axis = 0;
-            while (x[axis] == 0 || x[axis] == kP) ++axis;
-            int o0, o1;
-            other_axes(axis, o0, o1);
-            bit = 6 + axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP);
-        } else {
-            bit = 18 + corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP);
-        }
-        return (bits >> bit) & 1u ? 1.0 : 0.0;
+        const LocalEntity le = local_entity(nd);
+        if (le.kind == 0) return 1.0;
+        const int bit = le.kind == 1 ? le.index : (le.kind == 2 ? 6 + le.index : 18 + le.index);
+        return (counting[nd.e] >> bit) & 1u ? 1.0 : 0.0;
     }
 };
 
-// z = P q (DSS, zero on Dirichlet entities, divide by the assembled diagonal), every copy
-// written, and the dot products <a, z> (AZ) / <z, z> (ZZ) with each node counted once.
-template <bool AZ, bool ZZ>
-struct JacobiDotOp {
-    double* z;
-    const double* diag;
-    const double* a;
-    double acc[2] = {0.0, 0.0};
-    __device__ void count(long long i, double v)
-    {
-        if (AZ) acc[0] += a[i] * v;
-        if (ZZ) acc[AZ ? 1 : 0] += v * v;
-    }
-    __device__ void single(double s, long long i, bool dirichlet)
-    {
-        const double v = dirichlet ? 0.0 : s / diag[i];
-        z[i] = v;
-        count(i, v);
-    }
-    __device__ void pair(double s, long long x, long long y)
-    {
-        const double v = s / diag[x];   // the assembled diagonal is the same on both copies
-        z[x] = v;
-        z[y] = v;
-        count(x, v);
-    }
-    template <typename Index>
-    __device__ void star(double s, int begin, int end, const int* ent, const Index& index, bool dirichlet)
-    {
-        const long long first = index(ent[begin]);
-        const double v = dirichlet ? 0.0 : s / diag[first];
-        for (int m = begin; m < end; ++m) z[index(ent[m])] = v;
-        count(first, v);
-    }
-};
-
+// z = P q: the DSS sum, zero on Dirichlet nodes, divided by the assembled diagonal
+// elsewhere; with AZ / ZZ also <a, z> and <z, z>, each node counted once.
 template <bool AZ, bool ZZ>
 __global__ void __launch_bounds__(kThreads)
 unstructured_precondition_kernel(const double* __restrict__ q, double* __restrict__ z,
@@ -599,17 +663,20 @@ unstructured_precondition_kernel(const double* __restrict__ q, double* __restric
                                  TopologyView T, double* __restrict__ partial)
 {
     constexpr int NV = AZ + ZZ;
-    const long long n = dss_items(T);
+    [[maybe_unused]] double acc[NV > 0 ? NV : 1] = {};
     const auto value = [q](long long i) { return q[i]; };
-    JacobiDotOp<AZ, ZZ> op{z, diag, a};
-    for (long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x; t < n;
-         t += (long long)gridDim.x * blockDim.x)
-        dss_item(t, T, value, op);
-    if constexpr (NV > 0) {
-        double acc[NV];
-        for (int i = 0; i < NV; ++i) acc[i] = op.acc[i];
-        store_partial<NV>(acc, partial);
-    }
+    const CountingWeight wt{T.counting};
+    for_each_node(Block((int)T.elements, 1, 1), [&](const Node& nd) {
+        const GatherSum g = gather_sum(value, T, nd);
+        const double v = g.dirichlet ? 0.0 : g.s / diag[nd.t];
+        z[nd.t] = v;
+        if constexpr (NV > 0) {
+            const double w = wt(nd);
+            if constexpr (AZ) acc[0] += a[nd.t] * v * w;
+            if constexpr (ZZ) acc[NV - 1] += v * v * w;
+        }
+    });
+    if constexpr (NV > 0) store_partial<NV>(acc, partial);
 }
 
 // The Jacobi preconditioner of the Krylov solvers (same interface as
