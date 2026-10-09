@@ -1381,8 +1381,14 @@ private:
         nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pressureFixed_.data(),
                                                         prm_.rho * invDt, divStar_.data(), rhs_.data());
         cudaCheckError();
+        // MARS_PRESSURE_GUESS: start from the last correction, which changes slowly from step to step.
+        if (pressureGuess_)
+        {
+            nsToDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), phi_.data(), x_.data());
+            cudaCheckError();
+        }
         StageClock clock;
-        pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
+        pressureIters_ = pressure_->solve(rhs_.data(), x_.data(), pressureGuess_);
         timing_.hypre += clock.lap();
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
@@ -1771,6 +1777,7 @@ private:
     Params prm_;
     size_t n_;
     int rank_;
+    const bool pressureGuess_ = std::getenv("MARS_PRESSURE_GUESS") != nullptr;
     int comps_;
     Space space_;
     HexElements<KeyType> hex_{};
