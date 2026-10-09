@@ -48,7 +48,8 @@ with a failed common residual shows false acceptance, not which branch caused it
 Keep the working MARS uenv and Python environment. The history pointer must name
 the previously prepared twenty-step pair, whose reference capture completed and
 whose MARS run reached the pressure rejection. No new deck or mesh is prepared.
-This block rebuilds the three affected targets, then reuses that pair's launcher,
+This block enables the segregated targets in the existing build and rebuilds
+them, then reuses that pair's launcher,
 controls and restored solver environment. It disables field/snapshot output and
 adds the private failure capture. It preserves the original iteration count.
 
@@ -60,6 +61,10 @@ repo="$scratch/git/mars-v010-check"
 test "$(git -C "$repo" branch --show-current)" = cstone
 git -C "$repo" fetch origin cstone
 git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+cmake -S "$repo" -B "$repo/build-hypre" \
+  -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_MPI=ON \
+  -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_HYPRE=ON \
+  -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_SEGREGATED=ON
 cmake --build "$repo/build-hypre" --parallel 4 --target \
   mars_segregated_simple mars_simple_pressure_replay mars_simple_pressure_residual_check
 python3 -c 'import numpy, netCDF4, yaml'
