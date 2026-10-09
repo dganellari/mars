@@ -13,6 +13,15 @@
 //
 // The tables are built once on the device from each element's corner keys: global keys
 // (orientation, canonical order) and dense local ids (grouping by radix sort).
+//
+// Credit: summing shared nodes by codimension (faces with a 3-bit orientation, edges
+// with a reversal bit, vertices; disjoint node sets, one writer per entity, no
+// atomics) is the face/line/vertex DSS of M. Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
+// arXiv:2607.02335 (2026), Alg. 3, which applies
+// it at the interfaces of structured macro-blocks. Here it runs at element
+// granularity on any conforming hex mesh, with tables built on the GPU from corner SFC
+// keys and a canonical summation order that makes the sums independent of the rank
+// count.
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"

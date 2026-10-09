@@ -14,6 +14,12 @@
 // bit-identical to the one-GPU DSS of the same global vector (checked in
 // marsir-mlir/test/cellwise_distributed_ref.py). Message sizes follow from the block
 // layout on both sides, so sends and receives match by construction.
+//
+// Credit: element-local storage as the solver state and the atomic-free,
+// dimensionally split DSS cascade (whose summation order the gather reproduces) are
+// from M. Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
+// arXiv:2607.02335 (2026). The one-pass gather, the rank decomposition and the ghost
+// exchange are MARS's own; the paper is single-GPU.
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 

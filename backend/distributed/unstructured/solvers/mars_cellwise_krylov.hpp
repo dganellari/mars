@@ -1,8 +1,17 @@
 #pragma once
 // Krylov solves on element-local (cell-wise) vectors: each element stores its own
-// copy of every node it touches, and no assembled vector is ever formed
-// (Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
-// internal-notes/FlexibleCG.pdf).
+// copy of every node it touches, and no assembled vector is ever formed.
+//
+// Credit: the method is from M. Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
+// arXiv:2607.02335 (2026) (a copy is in
+// internal-notes/FlexibleCG.pdf): element-local vectors as the Krylov state, the
+// operator applied without communication, DSS only inside the preconditioner, inner
+// products on element-local data, and the proof that such a solve reproduces the
+// assembled one when the preconditioner consumes the assembled residual and returns a
+// continuous field. What differs here: the paper runs flexible CG on a symmetric
+// operator; the CVFEM operator is nonsymmetric, so this is left-preconditioned
+// BiCGStab with a copy-weighted inner product (same equivalence argument), with the
+// DSS fused with Jacobi and the dots, and on several GPUs.
 //
 // The operator maps a continuous element-local field to unassembled element
 // residuals; it needs no communication. Elements talk only inside the

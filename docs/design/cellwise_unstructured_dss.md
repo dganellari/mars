@@ -5,6 +5,17 @@ Status: design, 2026-10-09. Extends the structured cell-wise solver
 mesh held in a cstone `ElementDomain`, on one or many GPUs. Executable spec:
 `marsir-mlir/test/cellwise_unstructured_ref.py`.
 
+## Credit
+
+The method comes from M. Wichrowski's two papers: "Coalesced Matrix-Free Finite
+Elements in Cell-Wise Storage" (arXiv:2607.02335) and "Coalesced Matrix-Free Geometric
+Multigrid on Persistent Cell-Wise Storage" (arXiv:2607.03413). From them: element-local
+storage as the solver state, DSS only inside the preconditioner, the equivalence with
+the assembled solve, the face/line/vertex DSS with orientation codes, and the
+cell-wise geometric multigrid. MARS adds the nonsymmetric CVFEM operator (BiCGStab),
+p = 7, element-granularity tables built on the GPU, canonical-order sums, and the
+multi-GPU exchange. The papers are single-GPU.
+
 ## What it is
 
 Vectors stay element-local: every element stores its own 8x8x8 copy of the p=7 GLL

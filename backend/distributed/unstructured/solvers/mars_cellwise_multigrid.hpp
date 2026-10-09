@@ -1,8 +1,13 @@
 #pragma once
-// Geometric multigrid preconditioner on element-local vectors, after Wichrowski,
-// "Coalesced Matrix-Free Geometric Multigrid on Persistent Cell-Wise Storage"
-// (arXiv:2607.03413), here at p = 7, for the nonsymmetric CVFEM operator and on
-// several GPUs.
+// Geometric multigrid preconditioner on element-local vectors.
+//
+// Credit: the design follows M. Wichrowski, "Coalesced Matrix-Free Geometric Multigrid on Persistent
+// Cell-Wise Storage", arXiv:2607.03413 (2026): 2:1 coarsening at fixed degree on
+// element-local storage, element-local tensor-product transfers, restriction applied
+// to the raw unassembled residual, and DSS only inside the smoother. Added here: p = 7
+// (the paper tests p <= 5), the nonsymmetric CVFEM operator, Chebyshev instead of
+// damped Jacobi smoothing, one-sided (0,3) cycles, and the multi-GPU levels with the
+// coarse level gathered onto rank 0.
 //
 // Levels: the structured block coarsened 2:1, all at p = 7, so every level runs the
 // same operator kernel with its own metric. Transfers are element-local.
