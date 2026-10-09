@@ -15,6 +15,8 @@
 // marsir-mlir/test/cellwise_distributed_ref.py). Message sizes follow from the block
 // layout on both sides, so sends and receives match by construction.
 
+#include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
+
 #include <cuda_runtime.h>
 #include <mpi.h>
 
@@ -25,7 +27,6 @@
 namespace mars {
 namespace cellwise {
 
-constexpr int kN = 8, kNN = 64, kN3 = 512;   // nodes per edge, face, element (p = 7)
 constexpr int kThreads = 256;                // threads per block of every kernel here
 
 #define MARS_CELLWISE_CK(call)                                                   \
