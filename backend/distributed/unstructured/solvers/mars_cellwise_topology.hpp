@@ -316,10 +316,11 @@ inline UnstructuredTopology build_topology(const unsigned long long* const* d_ke
         face_keys_kernel<<<blocks(E * 6), kThreads>>>(d_lid, E, raw(hi), raw(lo), raw(v));
         thrust::device_vector<int> perm(E * 6);
         thrust::sequence(thrust::device, perm.begin(), perm.end());
-        thrust::stable_sort_by_key(thrust::device, lo.begin(), lo.end(), perm.begin());
-        thrust::device_vector<unsigned long long> hi_sorted(E * 6);
-        thrust::gather(thrust::device, perm.begin(), perm.end(), hi.begin(), hi_sorted.begin());
-        thrust::stable_sort_by_key(thrust::device, hi_sorted.begin(), hi_sorted.end(), perm.begin());
+        // Sort a copy: lo and hi are gathered by perm below and must keep the original order.
+        thrust::device_vector<unsigned long long> sorted(lo);
+        thrust::stable_sort_by_key(thrust::device, sorted.begin(), sorted.end(), perm.begin());
+        thrust::gather(thrust::device, perm.begin(), perm.end(), hi.begin(), sorted.begin());
+        thrust::stable_sort_by_key(thrust::device, sorted.begin(), sorted.end(), perm.begin());
         // perm is now the face order; rebuild sorted keys and copies in that order.
         thrust::device_vector<unsigned long long> h2(E * 6), l2(E * 6);
         thrust::gather(thrust::device, perm.begin(), perm.end(), hi.begin(), h2.begin());
