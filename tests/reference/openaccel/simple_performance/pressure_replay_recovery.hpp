@@ -1,5 +1,9 @@
 #pragma once
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp"
+#ifdef __CUDACC__
+// The C header defines the stream macro; this header declares its GPU accessor.
+#include <_hypre_utilities.hpp>
+#endif
 
 namespace recovery {
 using mars::segregated::CompensatedDot;
