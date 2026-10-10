@@ -25,6 +25,10 @@
 // ranks (each with the ghost elements around its sub-block), and --rotate gives every
 // element a random proper rotation of its local frame (Jacobi only). The discrete
 // problem does not change, so the iterations must match the structured run.
+// --domain hands the same cube to an ElementDomain as an unstructured mesh (each rank
+// gives a share of the elements, the domain redistributes them by SFC) and builds the
+// tables and ghost layer from it (solvers/mars_cellwise_domain.hpp); it first checks
+// the DSS against the copy counts the geometry implies.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -37,17 +41,26 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/transform_reduce.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 using namespace mars;
@@ -116,6 +129,134 @@ __device__ void element_corners(long long e, const cellwise::Block& blk, double 
     }
 }
 
+// Where a kernel finds an element's corners: the block lattice, or corners stored per
+// element at ((e * 8 + c) * 3 + axis), as the --domain path does.
+struct LatticeCorners {
+    cellwise::Block blk;
+    double deform;
+    bool rotate;
+    __device__ void operator()(long long e, double c[8][3]) const { element_corners(e, blk, deform, rotate, c); }
+};
+
+struct StoredCorners {
+    const double* xyz;
+    __device__ void operator()(long long e, double c[8][3]) const
+    {
+        for (int k = 0; k < 8; ++k)
+            for (int d = 0; d < 3; ++d) c[k][d] = xyz[(e * 8 + k) * 3 + d];
+    }
+};
+
+// The point of the trilinear map at element-local node `node`.
+__device__ void node_position(const double c[8][3], int node, double x[3])
+{
+    const double rf[3] = {fem::c_zeta[node / kNN], fem::c_zeta[(node / kN) % kN], fem::c_zeta[node % kN]};
+    x[0] = x[1] = x[2] = 0.0;
+    for (int k = 0; k < 8; ++k) {
+        double w = 0.125;
+        for (int d = 0; d < 3; ++d) w *= 1.0 + fem::c_hexCornerRef[k][d] * rf[d];
+        for (int d = 0; d < 3; ++d) x[d] += w * c[k][d];
+    }
+}
+
+// --domain input: this rank's share [g0, g0 + count) of the cube's elements, each with
+// its own 8 nodes (the domain merges equal nodes), corners in the element's frame.
+struct Columns {
+    uint64_t* c[8];
+};
+
+__global__ void cube_mesh_kernel(cellwise::Block cube, long long g0, long long count, double deform, bool rotate,
+                                 double* __restrict__ x, double* __restrict__ y, double* __restrict__ z,
+                                 Columns conn)
+{
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    const long long g = g0 + i;
+    const int ez = (int)(g % cube.NZ), ey = (int)((g / cube.NZ) % cube.NY);
+    const int ex = (int)(g / ((long long)cube.NZ * cube.NY));
+    const int rot = rotation_of(g, rotate);
+    for (int c = 0; c < 8; ++c) {
+        int b[3];
+        corner_offset(rot, c, b);
+        double p[3];
+        vertex(ex + b[0], ey + b[1], ez + b[2], cube, deform, p);
+        x[i * 8 + c] = p[0];
+        y[i * 8 + c] = p[1];
+        z[i * 8 + c] = p[2];
+        conn.c[c][i] = (uint64_t)(i * 8 + c);
+    }
+}
+
+// The corners of the domain's local elements, from its node coordinates.
+__global__ void domain_corners_kernel(cellwise::domain_detail::Corners<uint64_t> ids, const double* __restrict__ x,
+                                      const double* __restrict__ y, const double* __restrict__ z, long long first,
+                                      long long E, double* __restrict__ xyz)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= E * 8) return;
+    const long long id = (long long)ids.key[t % 8][first + t / 8];
+    xyz[t * 3] = x[id];
+    xyz[t * 3 + 1] = y[id];
+    xyz[t * 3 + 2] = z[id];
+}
+
+// --domain check: how many copies every node has, from the geometry alone: across a
+// local face that lies on the cube's boundary there is no other element.
+__global__ void expected_copies_kernel(StoredCorners corners, long long E, double3 lo, double3 hi, double tol,
+                                       double* __restrict__ expect)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= E * kN3) return;
+    double c[8][3];
+    corners(t / kN3, c);
+    const int node = (int)(t % kN3);
+    const int x[3] = {node / kNN, (node / kN) % kN, node % kN};
+    const double l[3] = {lo.x, lo.y, lo.z}, h[3] = {hi.x, hi.y, hi.z};
+    double count = 1.0;
+    for (int k = 0; k < 3; ++k) {
+        if (x[k] != 0 && x[k] != kP) continue;
+        const int f = 2 * k + (x[k] == kP);
+        bool boundary = false;
+        for (int d = 0; d < 3 && !boundary; ++d) {
+            bool at_lo = true, at_hi = true;
+            for (int s = 0; s < 4; ++s) {
+                const double v = c[cellwise::face_corner(f, s)][d];
+                at_lo = at_lo && fabs(v - l[d]) < tol;
+                at_hi = at_hi && fabs(v - h[d]) < tol;
+            }
+            boundary = at_lo || at_hi;
+        }
+        count *= boundary ? 1.0 : 2.0;
+    }
+    expect[t] = count;
+}
+
+// 1 + x + 2y + 3z at every node: continuous, nowhere zero on the unit cube.
+__global__ void linear_field_kernel(double* __restrict__ f, long long E, StoredCorners corners)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= E * kN3) return;
+    double c[8][3], x[3];
+    corners(t / kN3, c);
+    node_position(c, (int)(t % kN3), x);
+    f[t] = 1.0 + x[0] + 2.0 * x[1] + 3.0 * x[2];
+}
+
+// Coordinate d of stored corner i (a functor: nvcc allows no device lambda inside a lambda).
+struct StoredCoordinate {
+    const double* xyz;
+    int d;
+    __host__ __device__ double operator()(long long i) const { return xyz[i * 3 + d]; }
+};
+
+// |out - scale * f| per copy (scale null: 1).
+__global__ void deviation_kernel(const double* __restrict__ out, const double* __restrict__ scale,
+                                 const double* __restrict__ f, long long n, double* __restrict__ dev)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < n) dev[t] = fabs(out[t] - (scale ? scale[t] : 1.0) * f[t]);
+}
+
 // Corner keys and local ids of the unstructured tables for the block's elements
 // elem[0 .. E) (global lattice order): global lattice vertex ids.
 __global__ void mesh_kernel(cellwise::Block blk, bool rotate, const unsigned long long* elem, long long E,
@@ -138,11 +279,12 @@ __global__ void mesh_kernel(cellwise::Block blk, bool rotate, const unsigned lon
 
 // One thread per metric point (e, dir, l, s, r): MARS's device metric, written in
 // the component-major layout the MARSIR kernel reads, [dir][face][comp][s][r].
-__global__ void metric_kernel(double* __restrict__ G, cellwise::Block blk, double deform, bool rotate)
+template <class Corners>
+__global__ void metric_kernel(double* __restrict__ G, long long E, Corners element_corners_of)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     const long long points = 3LL * kP * kNN;
-    if (t >= blk.elements() * points) return;
+    if (t >= E * points) return;
     const long long e = t / points;
     int q = (int)(t % points);
     const int r = q % kN;
@@ -152,7 +294,7 @@ __global__ void metric_kernel(double* __restrict__ G, cellwise::Block blk, doubl
     const int l = q % kP;
     const int dir = q / kP;
     double corners[8][3];
-    element_corners(e, blk, deform, rotate, corners);
+    element_corners_of(e, corners);
     double g[3];
     fem::ho_cvfem_metric_point<kP>(corners, dir, l, s, r, g);
     double* out = G + e * kGElem + (dir * kP + l) * 3 * kNN + s * kN + r;
@@ -205,22 +347,14 @@ __global__ void diagonal_kernel(const double* __restrict__ G, double* __restrict
 
 // u = sin(pi x) sin(pi y) sin(pi z) at every element-local node, through the
 // element's trilinear map.
-__global__ void exact_kernel(double* __restrict__ u, cellwise::Block blk, double deform, bool rotate)
+template <class Corners>
+__global__ void exact_kernel(double* __restrict__ u, long long E, Corners element_corners_of)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= blk.values()) return;
-    const long long e = t / kN3;
-    const int node = (int)(t % kN3);
-    const double rf[3] = {fem::c_zeta[node / kNN], fem::c_zeta[(node / kN) % kN],
-                          fem::c_zeta[node % kN]};
-    double corners[8][3];
-    element_corners(e, blk, deform, rotate, corners);
-    double x[3] = {0.0, 0.0, 0.0};
-    for (int k = 0; k < 8; ++k) {
-        double w = 0.125;
-        for (int d = 0; d < 3; ++d) w *= 1.0 + fem::c_hexCornerRef[k][d] * rf[d];
-        for (int d = 0; d < 3; ++d) x[d] += w * corners[k][d];
-    }
+    if (t >= E * kN3) return;
+    double corners[8][3], x[3];
+    element_corners_of(t / kN3, corners);
+    node_position(corners, (int)(t % kN3), x);
     u[t] = sin(kPi * x[0]) * sin(kPi * x[1]) * sin(kPi * x[2]);
 }
 
@@ -271,13 +405,14 @@ int main(int argc, char** argv)
     std::string ptx_path;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
-    bool use_mg = false, unstructured = false, rotate = false;
+    bool use_mg = false, unstructured = false, rotate = false, use_domain = false;
     int pre = 0, post = 3;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
         if (!strcmp(argv[i], "--unstructured")) { unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--rotate")) { rotate = unstructured = true; --i; continue; }
+        if (!strcmp(argv[i], "--domain")) { use_domain = unstructured = true; --i; continue; }
         if (i + 1 >= argc) { error = "an option needs a value"; break; }
         if (!strcmp(argv[i], "--ptx")) ptx_path = argv[i + 1];
         else if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
@@ -296,7 +431,7 @@ int main(int argc, char** argv)
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
                             "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--unstructured] "
-                            "[--rotate]\n", error, argv[0]);
+                            "[--rotate] [--domain]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
@@ -351,7 +486,49 @@ int main(int argc, char** argv)
         MARS_CELLWISE_CK(cudaMemcpyToSymbol(c_rot, rot.data(), rot.size() * sizeof(int)));
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
     }
-    const long long E = blk.elements(), n = blk.values();
+    // --domain: the cube as an unstructured ElementDomain mesh; its tables and the corners
+    // of this rank's elements, then the domain is no longer needed.
+    using Domain = ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu>;
+    cellwise::DomainTables dtables;
+    thrust::device_vector<double> stored;
+    long long domain_local = 0;
+    if (use_domain) {
+        const cellwise::Block cube(ne, ne, ne);
+        const long long EG = cube.elements(), g0 = EG * dec.rank / dec.size;
+        const long long count = EG * (dec.rank + 1) / dec.size - g0;
+        typename Domain::DeviceCoordsTuple coords;
+        typename Domain::DeviceConnectivityTuple conn;
+        std::get<0>(coords).resize(count * 8);
+        std::get<1>(coords).resize(count * 8);
+        std::get<2>(coords).resize(count * 8);
+        Columns cols;
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            ((std::get<I>(conn).resize(count), cols.c[I] = std::get<I>(conn).data()), ...);
+        }(std::make_index_sequence<8>{});
+        if (count > 0)
+            cube_mesh_kernel<<<blocks_for(count, 256), 256>>>(cube, g0, count, deform, rotate,
+                                                               std::get<0>(coords).data(), std::get<1>(coords).data(),
+                                                               std::get<2>(coords).data(), cols);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        Domain domain(std::move(coords), std::move(conn), dec.rank, dec.size);
+        dtables = cellwise::build_tables(domain, MPI_COMM_WORLD);
+        domain_local = (long long)domain.localElementCount();
+        stored.resize(domain_local * 24);
+        const auto& local_ids = domain.getElementToNodeConnectivity();
+        cellwise::domain_detail::Corners<uint64_t> ids;
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            ((ids.key[I] = thrust::raw_pointer_cast(std::get<I>(local_ids).data())), ...);
+        }(std::make_index_sequence<8>{});
+        if (domain_local > 0)
+            domain_corners_kernel<<<blocks_for(domain_local * 8, 256), 256>>>(
+                ids, thrust::raw_pointer_cast(domain.getNodeX().data()), thrust::raw_pointer_cast(domain.getNodeY().data()),
+                thrust::raw_pointer_cast(domain.getNodeZ().data()), dtables.first, domain_local,
+                thrust::raw_pointer_cast(stored.data()));
+        MARS_CELLWISE_CK(cudaGetLastError());
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
+    const long long E = use_domain ? domain_local : blk.elements(), n = E * kN3;
     const long long unique = (long long)(ne * kP + 1) * (ne * kP + 1) * (ne * kP + 1);
     constexpr int threads = 256;
     cudaStream_t stream;
@@ -365,15 +542,24 @@ int main(int argc, char** argv)
     std::unique_ptr<cellwise::Halo> halo(dec.size > 1 && !unstructured ? new cellwise::Halo(dec, blk) : nullptr);
     std::unique_ptr<cellwise::UnstructuredHalo> uhalo;
 
-    metric_kernel<<<blocks_for(E * 3LL * kP * kNN, threads), threads, 0, stream>>>(d_G, blk, deform, rotate);
-    diagonal_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_G, d_b, E);   // d_b: scratch until b = A u
-    exact_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_uex, blk, deform, rotate);
-    MARS_CELLWISE_CK(cudaGetLastError());
+    auto element_data = [&](auto corners) {
+        if (E == 0) return;
+        metric_kernel<<<blocks_for(E * 3LL * kP * kNN, threads), threads, 0, stream>>>(d_G, E, corners);
+        diagonal_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_G, d_b, E);   // d_b: scratch until b = A u
+        exact_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(d_uex, E, corners);
+        MARS_CELLWISE_CK(cudaGetLastError());
+    };
+    if (use_domain) element_data(StoredCorners{thrust::raw_pointer_cast(stored.data())});
+    else element_data(LatticeCorners{blk, deform, rotate});
     // The unstructured tables of the same cube: this rank's elements, then the ghost
     // elements around them; corner keys = global lattice vertex ids.
     cellwise::UnstructuredTopology topo;
     const cellwise::Block flat(E, 1, 1);   // unstructured iteration space: E elements in a row
-    if (unstructured) {
+    if (use_domain) {
+        topo = std::move(dtables.topo);
+        uhalo = std::move(dtables.halo);
+        cellwise::dss(d_b, d_diag, topo, uhalo.get(), stream);   // assembled diagonal on every copy
+    } else if (unstructured) {
         thrust::device_vector<unsigned long long> elem;
         thrust::device_vector<int> owner;
         cellwise::block_elements(dec, elem, owner);
@@ -410,6 +596,49 @@ int main(int argc, char** argv)
     const cellwise::TopologyView tview = cellwise::view(topo);
     const cellwise::CountingWeight counting{thrust::raw_pointer_cast(topo.counting.data())};
 
+    // --domain: the DSS against the copy counts the geometry implies (DSS(1)), and on a
+    // continuous field (DSS(f) = count * f).
+    bool checks_ok = true;
+    if (use_domain) {
+        auto extreme = [&](int d, bool lowest) {
+            const auto it = thrust::counting_iterator<long long>(0);
+            const StoredCoordinate coord{thrust::raw_pointer_cast(stored.data()), d};
+            double v = lowest ? thrust::transform_reduce(thrust::device, it, it + E * 8, coord, 1e300, thrust::minimum<double>())
+                              : thrust::transform_reduce(thrust::device, it, it + E * 8, coord, -1e300, thrust::maximum<double>());
+            MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPI_DOUBLE, lowest ? MPI_MIN : MPI_MAX, MPI_COMM_WORLD));
+            return v;
+        };
+        const double3 lo = make_double3(extreme(0, true), extreme(1, true), extreme(2, true));
+        const double3 hi = make_double3(extreme(0, false), extreme(1, false), extreme(2, false));
+        const double tol = 1e-9 * std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z});
+        const StoredCorners sc{thrust::raw_pointer_cast(stored.data())};
+        thrust::device_vector<double> expect(n), ones(n, 1.0), field(n), out(n), dev(n, 0.0);
+        auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
+        auto max_of = [&](thrust::device_vector<double>& v) {
+            MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
+            double m = n > 0 ? thrust::reduce(thrust::device, v.begin(), v.end(), 0.0, thrust::maximum<double>()) : 0.0;
+            MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &m, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
+            return m;
+        };
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        if (n > 0) {
+            expected_copies_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(sc, E, lo, hi, tol, raw(expect));
+            linear_field_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(raw(field), E, sc);
+        }
+        cellwise::dss(raw(ones), raw(out), topo, uhalo.get(), stream);
+        if (n > 0) deviation_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(raw(out), nullptr, raw(expect), n, raw(dev));
+        const double copies_dev = max_of(dev);
+        cellwise::dss(raw(field), raw(out), topo, uhalo.get(), stream);
+        if (n > 0) deviation_kernel<<<blocks_for(n, threads), threads, 0, stream>>>(raw(out), raw(expect), raw(field), n, raw(dev));
+        const double field_dev = max_of(dev);
+        checks_ok = copies_dev == 0.0 && field_dev < 1e-12 * 7.0;   // |f| <= 7 on the unit cube
+        long long ghosts = topo.elements - topo.local;
+        if (rank == 0)
+            printf("domain tables: rank 0 has %lld elements + %lld ghosts; DSS(1) vs copies from geometry: max |diff| "
+                   "%.1e; DSS(1 + x + 2y + 3z): max |DSS(f) - copies f| %.1e  %s\n",
+                   E, ghosts, copies_dev, field_dev, checks_ok ? "PASS" : "FAIL");
+    }
+
     const marsir::LaplacianPtx op(ptx_path, kP);
     auto apply = [&](const double* u, double* y) {
         op.apply(u, d_btil, d_dtil, d_w, d_d, d_G, y, E, stream);
@@ -423,7 +652,8 @@ int main(int argc, char** argv)
     auto make_level = [&](const cellwise::Block& b) {
         double* g = device_array(b.elements() * kGElem);
         double* raw = device_array(b.values());
-        metric_kernel<<<blocks_for(b.elements() * 3LL * kP * kNN, threads), threads, 0, stream>>>(g, b, deform, false);
+        metric_kernel<<<blocks_for(b.elements() * 3LL * kP * kNN, threads), threads, 0, stream>>>(
+            g, b.elements(), LatticeCorners{b, deform, false});
         diagonal_kernel<<<blocks_for(b.values(), threads), threads, 0, stream>>>(g, raw, b.elements());
         MARS_CELLWISE_CK(cudaGetLastError());
         return std::pair<double*, double*>(g, raw);
@@ -473,10 +703,14 @@ int main(int argc, char** argv)
     if (rank == 0) {
         printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f, %s\n",
                kP, ne, (long long)ne * ne * ne, unique, deform,
-               unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
+               use_domain   ? (rotate ? "ElementDomain tables, rotated frames, DSS + Jacobi" : "ElementDomain tables, DSS + Jacobi")
+               : unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
                : use_mg     ? "multigrid V-cycle" : "DSS + Jacobi");
-        printf("  %d rank(s) as %d x %d x %d, %d x %d x %d elements each\n", dec.size, dec.P[0], dec.P[1],
-               dec.P[2], blk.nx, blk.ny, blk.nz);
+        if (use_domain)
+            printf("  %d rank(s), the domain's SFC partition, %lld elements on rank 0\n", dec.size, E);
+        else
+            printf("  %d rank(s) as %d x %d x %d, %d x %d x %d elements each\n", dec.size, dec.P[0], dec.P[1],
+                   dec.P[2], blk.nx, blk.ny, blk.nz);
         if (use_mg) {
             printf("  multigrid (%d,%d) setup %.1f ms; lambda_max(P_J A) per level:", pre, post, setup_ms);
             for (double l : mg->lambda_max()) printf(" %.4f", l);
@@ -534,5 +768,5 @@ int main(int argc, char** argv)
         cudaFree(p);
     MARS_CELLWISE_CK(cudaStreamDestroy(stream));
     MPI_Finalize();
-    return rel_err < 1e-8 ? 0 : 1;
+    return rel_err < 1e-8 && checks_ok ? 0 : 1;
 }
