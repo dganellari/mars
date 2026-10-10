@@ -655,10 +655,12 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const Value& val
             const int src = le.kind == 1 ? le.index
                           : le.kind == 2 ? kEdgeLane + le.index
                           : le.kind == 3 ? kVertexLane + le.index : 0;
+            // Every lane must execute every shuffle: no shuffle inside a condition.
             const int n0 = __shfl_sync(0xffffffffu, d0, src);
             const int n1 = __shfl_sync(0xffffffffu, d1, src);
             const int n2 = __shfl_sync(0xffffffffu, d2, src);
-            const bool dirichlet = le.kind != 0 && __shfl_sync(0xffffffffu, dir, src) != 0;
+            const int n3 = __shfl_sync(0xffffffffu, dir, src);
+            const bool dirichlet = le.kind != 0 && n3 != 0;
             double s;
             if (le.kind == 0) {
                 s = value(nd.t);
