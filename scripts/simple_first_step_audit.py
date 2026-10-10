@@ -136,10 +136,35 @@ def residual(row, solution, scale):
     return error, rhs, float(abs(error)/denominator)
 
 
+def unscaled_row_difference(a, b, scale):
+    ac, av, ar = a
+    bc, bv, br = b
+    an, bn = float(np.max(np.abs(av))), float(np.max(np.abs(bv)))
+    common = max(an, bn)
+    keys = np.union1d(ac, bc)
+    difference = np.zeros(len(keys))
+    difference[np.searchsorted(keys, ac)] = av/common
+    difference[np.searchsorted(keys, bc)] -= bv/common
+    matrix_error = float(np.max(np.abs(difference)))
+    left, right = ar/common, br/common
+    denominator = scale+max(abs(left), abs(right))
+    require(all(math.isfinite(v) for v in (left, right, denominator)) and denominator > 0,
+            'audit_residual_arithmetic')
+    rhs_error = float(abs(left-right)/denominator)
+    # Log ratios avoid overflow when the two finite row magnitudes are far apart.
+    log_ratio = math.log(an)-math.log(bn)
+    require(all(math.isfinite(v) for v in (matrix_error, rhs_error, log_ratio)), 'audit_residual_arithmetic')
+    return matrix_error, rhs_error, log_ratio
+
+
 def compare_system(parts, reference, stage, mars_solution, reference_solution, scale):
     components = 3 if stage == 'momentum' else 1
     matrix_error = rhs_error = 0.
     norms = {name: [0., 0., 0.] for name in ('mars', 'reference', 'mars_local')}
+    if stage == 'pressure':
+        norms.update(mars_in_reference=[0., 0., 0.], reference_in_mars=[0., 0., 0.])
+    raw_matrix_error = raw_rhs_error = 0.
+    log_ratio_min, log_ratio_max = float('inf'), -float('inf')
     ghosts_equal = True
     for part in parts:
         local_solution = getattr(part, 'increment' if components == 3 else 'phi').ravel()
@@ -154,9 +179,16 @@ def compare_system(parts, reference, stage, mars_solution, reference_solution, s
                 a, b = part.row(stage, local, component), reference.row(source, component)
                 da, db = row_difference(a, b, scale)
                 matrix_error, rhs_error = max(matrix_error, da), max(rhs_error, db)
+                if stage == 'pressure':
+                    raw_a, raw_b, log_ratio = unscaled_row_difference(a, b, scale)
+                    raw_matrix_error, raw_rhs_error = max(raw_matrix_error, raw_a), max(raw_rhs_error, raw_b)
+                    log_ratio_min, log_ratio_max = min(log_ratio_min, log_ratio), max(log_ratio_max, log_ratio)
                 local_row = part.row(stage, local, component, source_order=False)
-                for name, row, solution in (('mars', a, mars_solution), ('reference', b, reference_solution),
-                                            ('mars_local', local_row, local_solution)):
+                candidates = [('mars', a, mars_solution), ('reference', b, reference_solution),
+                              ('mars_local', local_row, local_solution)]
+                if stage == 'pressure':
+                    candidates += [('mars_in_reference', b, mars_solution), ('reference_in_mars', a, reference_solution)]
+                for name, row, solution in candidates:
                     r, rhs, backward = residual(row, solution.ravel(), scale)
                     values = norms[name]
                     values[0] = math.hypot(values[0], r)
@@ -164,6 +196,9 @@ def compare_system(parts, reference, stage, mars_solution, reference_solution, s
                     values[2] = max(values[2], backward)
     result = dict(matrix_max_row_scaled=matrix_error, rhs_max_row_scaled=rhs_error,
                   mars_referenced_copies_equal_owners=ghosts_equal)
+    if stage == 'pressure':
+        result['unscaled'] = dict(matrix_max_relative=raw_matrix_error, rhs_max_relative=raw_rhs_error,
+                                  log_row_ratio_min=log_ratio_min, log_row_ratio_max=log_ratio_max)
     for name, (r, b, backward) in norms.items():
         require(all(math.isfinite(x) for x in (r, b, backward)), 'audit_residual_arithmetic')
         result[name] = dict(absolute_residual=r, rhs_norm=b, relative_residual=r/b if b else None,
@@ -211,6 +246,40 @@ def pressure_accuracy(pair, controls, system):
     details = dict(mars_rtol=mars_rtol, mars_atol=mars_atol, reference_rtol=reference_rtol,
                    reference_atol=reference_atol, limits=limits)
     return checks, details
+
+
+def pressure_common_system_checks(system, targets, increment_matches):
+    tolerance = 1e-10
+    raw = system['unscaled']
+    equivalent = system['matrix_max_row_scaled'] <= tolerance and system['rhs_max_row_scaled'] <= tolerance
+    matrix_matches = raw['matrix_max_relative'] <= tolerance
+    rhs_matches = raw['rhs_max_relative'] <= tolerance
+    unit = max(abs(raw['log_row_ratio_min']), abs(raw['log_row_ratio_max'])) <= tolerance
+    uniform = raw['log_row_ratio_max']-raw['log_row_ratio_min'] <= tolerance
+    reference_limit, mars_limit = targets['limits']['reference'], targets['limits']['runtime']
+    reference_passes = system['reference']['absolute_residual'] <= reference_limit
+    mars_in_reference = system['mars_in_reference']['absolute_residual'] <= reference_limit
+    result = dict(scope='saved_owned_rows_and_fp64_residuals_not_backend_status_or_forward_error_bound',
+                  row_scaling=('unit' if unit else 'uniform_nonunit' if uniform else 'nonuniform') if equivalent else 'not_equivalent',
+                  unscaled_matrix_matches=matrix_matches, unscaled_rhs_matches=rhs_matches,
+                  reference_solution_meets_reference_target=reference_passes,
+                  mars_solution_meets_reference_target=mars_in_reference,
+                  both_solutions_meet_reference_target=reference_passes and mars_in_reference,
+                  reference_solution_meets_mars_runtime_target=system['reference_in_mars']['absolute_residual'] <= mars_limit)
+    if not equivalent:
+        assessment = 'row_scaled_equivalence_failed'
+    elif not system['mars_referenced_copies_equal_owners']:
+        assessment = 'referenced_copies_differ'
+    elif increment_matches:
+        assessment = 'increments_match'
+    elif not reference_passes:
+        assessment = 'reference_target_not_met'
+    elif mars_in_reference:
+        assessment = 'distinct_increments_pass_common_fp64_check'
+    else:
+        assessment = 'mars_candidate_fails_reference_target'
+    result['assessment'] = assessment
+    return result
 
 
 def collect(parts, name, nodes, components):
@@ -290,6 +359,8 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
              'corrected_velocity', 'corrected_pressure')
     public['failed_check'] = 'first_step_pressure_controls'
     checks, target_details = pressure_accuracy(pair, controls, systems['pressure'])
+    public['pressure_common_system_checks'] = pressure_common_system_checks(
+        systems['pressure'], target_details, matches['pressure_increment'])
     if gradient_audit:
         public['failed_check'] = 'pressure_gradient_reconstruction'
         checks_gradient, details_gradient = gradient_reconstruction(

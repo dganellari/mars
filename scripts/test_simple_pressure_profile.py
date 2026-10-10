@@ -168,6 +168,9 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(public['comparison']['reference_reused'])
         self.assertFalse(public['comparison']['fresh_launch_records_verified'])
         self.assertTrue(all(public['comparison']['first_step_stage_matches'].values()))
+        common = public['comparison']['pressure_common_system_checks']
+        self.assertTrue(common['both_solutions_meet_reference_target'])
+        self.assertEqual(common['row_scaling'], 'nonuniform')
         self.assertFalse(public['identical_linear_solvers_verified'])
         self.assertNotIn(str(self.root),json.dumps(public))
 
