@@ -89,18 +89,37 @@ aborted with a CUDA launch failure reported during cleanup. Source inspection
 found that its single-thread fixture passed local arrays to assembly atomics.
 The matrix, RHS and boundary-balance destinations now use device allocations;
 test-only synchronization reports kernel errors before cleanup. Host operator
-checks pass on 1/2/4 ranks. The corrected GPU operator gate and remaining
-multi-rank/flow gates still need to run. Full-flow convergence and pump field
-parity remain unverified.
+checks pass on 1/2/4 ranks. The corrected GPU operator and flow gates were then
+rerun as recorded below. Full-flow convergence and pump field parity remain
+unverified.
 
 A subsequent GPU flow comparison reached the snapshots and failed one
 `blend@1` entry at 1.35e-8 against the 1e-8 field threshold. The test had used
 pressure stopping rtol 1e-12 for the reference and 1e-10 for the expanded run.
 Both now explicitly use rtol 1e-12 and atol zero; the field threshold is
-unchanged. This removes a solver-accuracy difference, but its role in that
-mismatch still needs GPU confirmation. With `--write-reference`, the expansion
+unchanged. With `--write-reference`, the expansion
 flag selects the matched pressure target while retaining ordinary arithmetic.
 The target is recorded in the reference header, so old references are rejected.
+
+The user-run `simple-expansion-matched-QsK7jp` on 2026-10-11 used revision
+`6c260ad27755d9c42e1e7bab1276f5deccadd2c8`. Its public reference log, rank logs,
+revision and executable hashes were retrieved and inspected. The retained
+pressure operator gate and three-step shifted high-resolution channel
+comparison pass on 1/2/4 GPUs on one node:
+
+| GPU ranks | Operator gate | Flow comparison | Largest printed scaled difference |
+| --- | --- | --- | --- |
+| 1 | PASS | PASS | 1.46e-12 |
+| 2 | PASS | PASS | 2.35e-12 |
+| 4 | PASS | PASS | 2.54e-12 |
+
+The field threshold remains 1e-8. The 2/4-rank matrix suites each report
+139 passed, zero failed and zero skipped, including retained-correction recovery
+with caching both enabled and disabled. The earlier one-rank matrix result was
+127 passed, zero failed and eight skipped; it was not rerun in this block.
+The previous operator crash and blend mismatch did not recur. These are public
+operator, linear-recovery and short-flow checks, not a converged pump result,
+OpenAccel field parity, multi-node validation or a performance measurement.
 
 Run this block in the **MARS terminal only**, in one tmux pane.
 It builds the production executable and runs public synthetic tests on 1/2/4
