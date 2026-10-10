@@ -1,5 +1,58 @@
 # Replay the rejected pressure equation
 
+## Inspect the completed recovery without another solve
+
+The public `simple-pressure-recovery-fuUIJf/comparison-public.json` result verifies
+both replay manifests and the common frozen system. The initial MARS candidate,
+the recovered candidate and the reference candidate all fail the independent
+residual target. Recovery exhausted its three-correction budget. In this code
+path every correction was accepted only after the original residual interval
+decreased; the summary alone does not measure how much it decreased. This result
+does not justify resuming the full-flow history or claim an unattainable target.
+
+`compare --recovery-progress` reads the saved, hash-bound `.recovery` traces on
+the user's machine. It exports fixed bands for accepted residual reductions and
+the remaining upper-bound distance to the original target. It also reports
+whether a correction hit its cap, whether all reported correction residuals
+met 0.1, and whether the final evaluation interval width is below the target.
+These are correction-boundary observations, not a Krylov iteration history.
+The independent final residual check remains the convergence decision. No raw
+norms, iteration counts, matrix data or private paths are added to public JSON.
+
+The exporter requires complete accepted-step traces (target reached or budget
+exhausted), matching rank intervals, report/trace iteration counts and the
+recorded stop reason. Malformed, incomplete or nonfinite traces fail. Exact
+binary64 rational comparisons choose bands without overflow at tiny targets.
+
+Run this **in the MARS terminal**. It does not rebuild, allocate GPUs or launch a
+solver. It rechecks the existing result with the existing CPU residual checker.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+mkdir -p "$TMPDIR"
+reference="$scratch/simple-reference-replay-URu8yA/reference"
+IFS= read -r archive < "$reference/input-archive-current.txt"
+summary=$(mktemp -d "$scratch/simple-recovery-progress-XXXXXX")/public.json
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$scratch/simple-pressure-frozen-RlGQaI/capture" \
+  --mars-run "$scratch/simple-pressure-recovery-fuUIJf/mars" \
+  --reference-run "$reference" --reference-input-archive "$archive" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  --recovery-progress --output "$summary" || status=$?
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+exit "$status"
+)
+```
+
 ## Bounded recovery on the frozen GPU system
 
 The saved GPU-profile replay and the reference-library replay both reached their

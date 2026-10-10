@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """User-local capture and replay of a rejected pressure system; only fixed summaries are public."""
 import json
+from fractions import Fraction
 import math
 import os
 from pathlib import Path
@@ -624,6 +625,60 @@ def recovery_checks(reports, requested):
                 acceptance_scope='independent_final_residual_check')
 
 
+def recovery_progress(directory, reports):
+    """Export fixed bands from fully recorded, accepted correction steps."""
+    histories, backend_checks = [], []
+    for rank, report in enumerate(reports):
+        require(report['recovery_stop'] in (0, 1))
+        rounds = int(report['recovery_rounds'])
+        lines = rank_file(directory, rank, '.recovery').read_text().splitlines()
+        require(len(lines) == 1 + 2*rounds)
+        first = lines[0].split()
+        require(len(first) == 5 and first[0] == 'initial' and first[3] == 'limit')
+        lower, upper, limit = map(float, (first[1], first[2], first[4]))
+        require(all(math.isfinite(x) for x in (lower, upper, limit)) and 0 <= lower <= upper and limit > 0)
+        bounds, iterations = [(lower, upper)], 0
+        for step in range(rounds):
+            solve, candidate = lines[1+2*step].split(), lines[2+2*step].split()
+            require(len(solve) == 12 and solve[::2] ==
+                    ['correction', 'iterations', 'return', 'global', 'converged', 'reported'])
+            number, count, returned, global_error, converged = map(int, solve[1:10:2])
+            reported = float(solve[11])
+            require(number == step+1 and 0 < count <= report['maxiter']
+                    and returned in (0, 256) and global_error in (0, 256)
+                    and converged in (0, 1) and math.isfinite(reported) and reported >= 0)
+            require(len(candidate) == 3 and candidate[0] == 'candidate')
+            lower, upper = map(float, candidate[1:])
+            require(math.isfinite(lower) and math.isfinite(upper) and 0 <= lower <= upper < bounds[-1][0])
+            bounds.append((lower, upper)); iterations += count
+            backend_checks.append((count >= report['maxiter'], reported <= 0.1))
+        require(iterations == report['recovery_iterations'])
+        require((bounds[-1][1] <= limit) == (report['recovery_stop'] == 0))
+        histories.append((bounds, limit))
+    require(histories and all(history == histories[0] for history in histories))
+    bounds, limit = histories[0]
+
+    def reduction_band(before, after):
+        for threshold, label in ((2, 'under_2x'), (10, '2_to_10x'), (100, '10_to_100x')):
+            if Fraction(before) < threshold*Fraction(after): return label
+        return 'at_least_100x'
+
+    distance_band = 'over_10000x'
+    for threshold, label in ((1, 'within_target'), (10, '1_to_10x'), (100, '10_to_100x'),
+                              (1000, '100_to_1000x'), (10000, '1000_to_10000x')):
+        if Fraction(bounds[-1][1]) <= threshold*Fraction(limit):
+            distance_band = label; break
+    return dict(scope='saved_compensated_residual_intervals_not_krylov_history_or_convergence',
+                all_rank_residual_intervals_agree=True,
+                accepted_reduction_lower_bound_bands=[reduction_band(a[0], b[1]) for a, b in zip(bounds, bounds[1:])],
+                total_reduction_lower_bound_band=reduction_band(bounds[0][0], bounds[-1][1]),
+                final_residual_upper_bound_to_target_band=distance_band,
+                final_residual_lower_bound_exceeds_target=bounds[-1][0] > limit,
+                final_evaluation_interval_width_below_target=Fraction(bounds[-1][1])-Fraction(bounds[-1][0]) < Fraction(limit),
+                any_correction_hit_iteration_cap=any(x[0] for x in backend_checks),
+                all_reported_correction_residuals_below_0_1=all(x[1] for x in backend_checks))
+
+
 def check_candidate(checker, directory, result_path, name, public):
     command = [str(checker), str(directory / 'system'), '-' if result_path is None else str(result_path)]
     public['failed_check'] = name + '_checker_launch'
@@ -705,6 +760,9 @@ def compare(args, public):
                 initial = check_candidate(checker, directory, path / 'result/initial', name + '_initial', public)
                 public.setdefault('initial_residual_checks', {})[name] = initial
                 public.setdefault('recovery_checks', {})[name] = recovery_checks(reports, record['recovery_rounds'])
+                if args.recovery_progress:
+                    public['failed_check'] = name + '_recovery_progress'
+                    public.setdefault('recovery_progress', {})[name] = recovery_progress(path / 'result', reports)
                 checks[name]['backend_flag_scope'] = 'initial_solve_before_recovery'
                 stopping[name] = stopping_checks(reports, initial)
                 stopping[name]['scope'] = 'initial_solve_before_recovery_not_final_candidate'
@@ -739,6 +797,7 @@ def main(argv=None):
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
     c.add_argument('--mars-input-archive', type=Path); c.add_argument('--reference-input-archive', type=Path)
     c.add_argument('--checker', type=Path, required=True); c.add_argument('--output', type=Path, required=True)
+    c.add_argument('--recovery-progress', action='store_true')
     c = sub.add_parser('archive-inputs'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--replay-run', type=Path, required=True); c.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('inspect'); c.add_argument('--replay-run', type=Path, required=True)

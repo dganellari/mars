@@ -870,7 +870,10 @@ class ReplayTests(unittest.TestCase):
         report['effective_relax_2'] = report.pop('relax_up')
         report_path.write_text(profile.text_profile(report))
         write_solution(path / 'result/initial', [0.]*12, 1)
-        trace = path / 'result/rank-000000.recovery'; trace.write_text('PRIVATE residuals and norms\n')
+        trace = path / 'result/rank-000000.recovery'
+        trace.write_text('initial 1 1.000001 limit 1e-10\n'
+                         'correction 1 iterations 10 return 0 global 0 converged 1 reported 1e-12\n'
+                         'candidate 1e-11 2e-11\n')
         record = json.loads((path/'replay.json').read_text())
         record.update(profile='gpu-reference', gpu_profile_source=str(source), recovery_rounds=3,
                       command=['exe', str(self.capture), str(config_path), str(path/'result')])
@@ -885,6 +888,11 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(public['stopping_checks']['mars']['scope'], 'initial_solve_before_recovery_not_final_candidate')
         self.assertTrue(public['recovery_checks']['mars']['correction_used'])
         self.assertNotIn('PRIVATE', json.dumps(public))
+        progress_args = args[:1] + ['--recovery-progress'] + args[1:]
+        progress_args[-1] = str(self.root/'progress.json')
+        progress = self.compare_saved(progress_args, 0)
+        self.assertEqual(progress['recovery_progress']['mars']['final_residual_upper_bound_to_target_band'], 'within_target')
+        self.assertNotIn('recovery_progress', public)
         # Neither an internal target flag nor successful completion certifies the final vector.
         final = path / 'result/rank-000000.solution'; final.write_bytes(bytes(final.stat().st_size))
         record['files'].update(replay.hashes([final]))
@@ -910,6 +918,66 @@ class ReplayTests(unittest.TestCase):
                 replay.recovery_checks([dict(report, **{key: value})]*4, 3)
         with self.assertRaises(ValueError):
             replay.recovery_checks([report, dict(report, recovery_stop=2)], 3)
+
+    def progress_fixture(self, ranks=2):
+        self.result.mkdir()
+        text = ('initial 1 1.000001 limit 0.000001\n'
+                'correction 1 iterations 200 return 256 global 256 converged 0 reported 0.2\n'
+                'candidate 0.05 0.0500001\n'
+                'correction 2 iterations 80 return 0 global 0 converged 1 reported 0.09\n'
+                'candidate 0.004 0.004000001\n'
+                'correction 3 iterations 90 return 0 global 0 converged 1 reported 0.08\n'
+                'candidate 0.0003 0.000300000001\n')
+        for rank in range(ranks):
+            replay.rank_file(self.result, rank, '.recovery').write_text(text)
+        return text, [dict(maxiter=200, recovery_rounds=3, recovery_iterations=370, recovery_stop=1)]*ranks
+
+    def test_saved_progress_bands_are_fixed_and_do_not_imply_convergence(self):
+        _, reports = self.progress_fixture()
+        result = replay.recovery_progress(self.result, reports)
+        self.assertEqual(result['accepted_reduction_lower_bound_bands'], ['10_to_100x']*3)
+        self.assertEqual(result['total_reduction_lower_bound_band'], 'at_least_100x')
+        self.assertEqual(result['final_residual_upper_bound_to_target_band'], '100_to_1000x')
+        self.assertTrue(result['final_residual_lower_bound_exceeds_target'])
+        self.assertTrue(result['final_evaluation_interval_width_below_target'])
+        self.assertTrue(result['any_correction_hit_iteration_cap'])
+        self.assertFalse(result['all_reported_correction_residuals_below_0_1'])
+        self.assertNotIn('residual_passed', result)
+        self.assertNotIn(str(self.root), json.dumps(result))
+        self.assertTrue(all(not isinstance(value, (float, int)) or isinstance(value, bool)
+                            for value in result.values()))
+
+    def test_progress_rejects_incomplete_invalid_or_inconsistent_traces(self):
+        text, reports = self.progress_fixture()
+        faults = [text + 'SECRET\n', '\n'.join(text.splitlines()[:-1]),
+                  text.replace('candidate 0.05', 'candidate nan'),
+                  text.replace('limit 0.000001', 'limit 0'),
+                  text.replace('candidate 0.05 0.0500001', 'candidate 2 3'),
+                  text.replace('correction 2', 'correction 1'),
+                  text.replace('iterations 80', 'iterations 81'),
+                  text.replace('return 256', 'return 4'),
+                  text.replace('reported 0.2', 'reported nan')]
+        for bad in faults:
+            with self.subTest(trace=bad[:30]), self.assertRaises(ValueError):
+                replay.rank_file(self.result, 0, '.recovery').write_text(bad)
+                replay.recovery_progress(self.result, reports)
+        replay.rank_file(self.result, 0, '.recovery').write_text(text)
+        replay.rank_file(self.result, 1, '.recovery').write_text(text.replace('0.000300000001', '0.000300000002'))
+        with self.assertRaises(ValueError):
+            replay.recovery_progress(self.result, reports)
+
+    def test_progress_rejects_claim_of_target_reached_above_target(self):
+        _, reports = self.progress_fixture()
+        with self.assertRaises(ValueError):
+            replay.recovery_progress(self.result, [dict(r, recovery_stop=0) for r in reports])
+
+    def test_progress_handles_subnormal_target_without_exposing_overflow(self):
+        text, reports = self.progress_fixture()
+        for rank in range(len(reports)):
+            replay.rank_file(self.result, rank, '.recovery').write_text(text.replace('limit 0.000001', 'limit 5e-324'))
+        result = replay.recovery_progress(self.result, reports)
+        self.assertEqual(result['final_residual_upper_bound_to_target_band'], 'over_10000x')
+        json.dumps(result, allow_nan=False)
 
     def inspection_fixture(self, ranks=1):
         capture = self.captured_record(ranks)
