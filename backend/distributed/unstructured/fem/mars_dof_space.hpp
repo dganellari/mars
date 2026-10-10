@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <iterator>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 #include <mpi.h>
@@ -97,6 +98,24 @@ struct DofIsCopy
 {
     HOST_DEVICE_FUN bool operator()(int rank) const { return rank >= 0; }
 };
+
+// Marks the slots of one corner of this rank's own elements [first, first + count).
+template<typename KeyType>
+__global__ void dofMarkUsedKernel(const KeyType* corner, size_t first, size_t count, uint8_t* used)
+{
+    size_t e = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (e < count) used[corner[first + e]] = 1;
+}
+
+// A copy that no own element touches is not a copy: rank -1, like a DOF. synced marks the slots the
+// exchanges keep current: the DOFs and the copies left.
+__global__ void dofDropUnusedKernel(const uint8_t* used, const uint8_t* isDof, size_t n, int* rank, uint8_t* synced)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    if (rank[i] >= 0 && !used[i]) rank[i] = -1;
+    synced[i] = isDof[i] || rank[i] >= 0;
+}
 
 // The slot of the DOF with key query[k] on this rank, -1 if this rank does not hold it as a DOF.
 template<typename KeyType>
@@ -203,6 +222,7 @@ public:
         : n_(domain.getNodeCount())
         , blockSize_(blockSize)
         , isDof_(n_)
+        , synced_(n_)
     {
         MPI_Comm_dup(MPI_COMM_WORLD, &comm_);
         build(domain, periodic);
@@ -234,6 +254,9 @@ public:
 
     long long numDofs() const { return numDofs_; }
     const uint8_t* isDof() const { return isDof_.data(); }
+    // The slots prolong and restrict keep current: the DOFs and the copies own elements touch. A slot
+    // that only halo elements hold is in neither and keeps whatever it had.
+    const uint8_t* isSynced() const { return synced_.data(); }
 
     // P^T A P for a matrix A over this rank's slots: the row of every copy is added into the
     // row of its DOF, on whatever rank owns it, in one exchange (row lengths, then entries),
@@ -504,6 +527,21 @@ private:
                 dofOwnerKernel<<<grid(), blockSize_>>>(dofKey.data(), isDof_.data(), n_, SingleRankOwner<KeyType>{},
                                                        ownerPtr);
         }
+        // Only the copies this rank's own elements touch: the solver loops over own elements, so a node that
+        // only halo elements hold is never read or added into. cornerstone's halo is made of whole octree
+        // leaves, several element layers deep, and exchanging all of it would multiply the halo volume.
+        thrust::device_vector<uint8_t> used(n_, 0);
+        uint8_t* usedPtr   = thrust::raw_pointer_cast(used.data());
+        const size_t first = domain.startIndex(), count = domain.localElementCount();
+        if (count > 0)
+            std::apply(
+                [&](const auto&... corner) {
+                    (dofMarkUsedKernel<KeyType><<<int((count + 255) / 256), 256>>>(corner.data(), first, count,
+                                                                                  usedPtr),
+                     ...);
+                },
+                domain.getElementToNodeConnectivity());
+        if (n_ > 0) dofDropUnusedKernel<<<grid(), blockSize_>>>(usedPtr, isDof_.data(), n_, ownerPtr, synced_.data());
         cudaCheckError();
         long long dofs = thrust::count(thrust::device, isDof_.data(), isDof_.data() + n_, uint8_t(1));
         MPI_Allreduce(&dofs, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -691,6 +729,7 @@ private:
     int blockSize_;
     MPI_Comm comm_ = MPI_COMM_NULL;
     cstone::DeviceVector<uint8_t> isDof_;
+    cstone::DeviceVector<uint8_t> synced_;
     long long numDofs_ = 0;
     cstone::DeviceVector<int> localCopy_, localDof_; // copies whose DOF is on this rank
     std::vector<int> peers_, sendOffsets_, recvOffsets_;

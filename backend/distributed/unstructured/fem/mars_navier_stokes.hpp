@@ -791,10 +791,13 @@ struct NsToInt
     __device__ int operator()(uint8_t b) const { return b; }
 };
 
+// A slot the exchanges keep current whose DOF id never arrived.
 template<typename RealType>
-struct NsNegative
+struct NsSyncedWithoutId
 {
-    __device__ bool operator()(RealType g) const { return g < 0; }
+    const uint8_t* synced;
+    const RealType* gid;
+    __device__ bool operator()(size_t i) const { return synced[i] && gid[i] < 0; }
 };
 
 template<typename RealType>
@@ -1558,7 +1561,9 @@ private:
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
         cudaCheckError();
         space_.prolong(gid_);
-        long long missing = thrust::count_if(thrust::device, gid_.data(), gid_.data() + n_, NsNegative<RealType>{});
+        long long missing = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
+                                             thrust::counting_iterator<size_t>(n_),
+                                             NsSyncedWithoutId<RealType>{space_.isSynced(), gid_.data()});
         MPI_Allreduce(MPI_IN_PLACE, &missing, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (missing > 0)
         {
