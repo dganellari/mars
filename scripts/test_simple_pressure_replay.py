@@ -855,7 +855,10 @@ class ReplayTests(unittest.TestCase):
     def test_four_correction_request_preserves_initial_failure_and_checks_final_solution(self):
         self.check_recovery_preserves_initial_failure(4)
 
-    def check_recovery_preserves_initial_failure(self, rounds):
+    def test_audited_recovery_is_automatically_included_in_comparison(self):
+        self.check_recovery_preserves_initial_failure(4, audited=True)
+
+    def check_recovery_preserves_initial_failure(self, rounds, audited=False):
         import simple_pressure_profile as profile
         import test_simple_pressure_profile as fixtures
         args = self.compare_arguments()
@@ -874,6 +877,7 @@ class ReplayTests(unittest.TestCase):
                       recovery_rounds=1, recovery_iterations=10, recovery_stop=0, recovery_controls_restored=1)
         report['effective_relax_1'] = report.pop('relax_down')
         report['effective_relax_2'] = report.pop('relax_up')
+        if audited: report.update(recovery_audit_version=1, recovery_audit_steps=1)
         report_path.write_text(profile.text_profile(report))
         write_solution(path / 'result/initial', [0.]*12, 1)
         trace = path / 'result/rank-000000.recovery'
@@ -883,6 +887,12 @@ class ReplayTests(unittest.TestCase):
         record = json.loads((path/'replay.json').read_text())
         record.update(profile='gpu-reference', gpu_profile_source=str(source), recovery_rounds=rounds,
                       command=['exe', str(self.capture), str(config_path), str(path/'result')])
+        if audited:
+            record['recovery_audit_version'] = 1
+            (path/'result/rank-000000.correction-audit').write_text(
+                'mars-pressure-correction-audit-v1\n'
+                'step 1 rhs 1 1.000001 correction 1e-11 2e-11 ideal 1e-11 2e-11 '
+                'rounding 0 1e-14 candidate 1e-11 2e-11 target 1e-10 1.000001e-10\n')
         record['inputs'].update(replay.hashes([source, config_path]))
         record['files'].update(replay.hashes([p for p in (path/'result').rglob('*') if p.is_file()]))
         (path/'replay.json').write_text(json.dumps(record))
@@ -893,6 +903,10 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(public['stopping_checks']['mars']['assessment'], 'failed_at_or_above_iteration_limit')
         self.assertEqual(public['stopping_checks']['mars']['scope'], 'initial_solve_before_recovery_not_final_candidate')
         self.assertTrue(public['recovery_checks']['mars']['correction_used'])
+        if audited:
+            self.assertEqual(public['correction_audit']['mars']['steps'][0]['assessment'], 'rounded_candidate_meets_target')
+        else:
+            self.assertNotIn('correction_audit', public)
         self.assertNotIn('PRIVATE', json.dumps(public))
         progress_args = args[:1] + ['--recovery-progress'] + args[1:]
         progress_args[-1] = str(self.root/'progress.json')
@@ -997,6 +1011,103 @@ class ReplayTests(unittest.TestCase):
         result = replay.recovery_progress(self.result, reports)
         self.assertEqual(result['final_residual_upper_bound_to_target_band'], 'over_10000x')
         json.dumps(result, allow_nan=False)
+
+    def audit_fixture(self, ranks=2):
+        self.result.mkdir()
+        trace = ('initial 1 1.01 limit 1e-6\n'
+                 'correction 1 iterations 6 return 0 global 0 converged 1 reported 0.01\n'
+                 'candidate 2e-6 2.1e-6\n')
+        audit = ('mars-pressure-correction-audit-v1\n'
+                 'step 1 rhs 1 1.01 correction 0.01 0.02 ideal 0 1e-8 '
+                 'rounding 2e-6 2.1e-6 candidate 2e-6 2.1e-6 target 1e-6 1.01e-6\n')
+        for rank in range(ranks):
+            replay.rank_file(self.result, rank, '.recovery').write_text(trace)
+            replay.rank_file(self.result, rank, '.correction-audit').write_text(audit)
+        reports = [dict(maxiter=200, recovery_rounds=1, recovery_iterations=6, recovery_stop=2,
+                        recovery_audit_version=1, recovery_audit_steps=1) for _ in range(ranks)]
+        return audit, reports
+
+    def test_correction_audit_separates_inner_error_and_update_rounding(self):
+        text, reports = self.audit_fixture()
+        def check(changed):
+            for rank in range(len(reports)):
+                replay.rank_file(self.result, rank, '.correction-audit').write_text(changed)
+            return replay.correction_audit(self.result, reports)['steps'][0]
+        step = check(text)
+        self.assertEqual(step['correction_equation'], 'passed')
+        self.assertEqual(step['assessment'], 'update_rounding_prevents_this_candidate_reaching_target')
+        step = check(text.replace('correction 0.01 0.02', 'correction 0.2 0.3').replace('ideal 0 1e-8', 'ideal 2e-6 2.1e-6'))
+        self.assertEqual(step['assessment'], 'correction_misses_inner_target')
+        step = check(text.replace('correction 0.01 0.02', 'correction 0.09 0.11').replace('ideal 0 1e-8', 'ideal 1e-6 1.01e-6'))
+        self.assertEqual(step['correction_equation'], 'inconclusive')
+        self.assertEqual(step['ideal_update'], 'inconclusive')
+        self.assertEqual(step['assessment'], 'not_isolated')
+        # Failure requires exceeding the target upper bound, not merely its lower bound.
+        step = check(text.replace('target 1e-6 1.01e-6', 'target 1e-6 3e-6'))
+        self.assertEqual(step['rounded_update'], 'inconclusive')
+        self.assertEqual(step['assessment'], 'not_isolated')
+
+    def test_correction_audit_nonfinite_bounds_are_inconclusive(self):
+        text, reports = self.audit_fixture()
+        for rank in range(len(reports)):
+            replay.rank_file(self.result, rank, '.correction-audit').write_text(
+                text.replace('correction 0.01 0.02', 'correction nan inf').replace('ideal 0 1e-8', 'ideal nan inf'))
+        result = replay.correction_audit(self.result, reports)
+        self.assertEqual(result['steps'][0]['correction_equation'], 'inconclusive')
+        self.assertEqual(result['steps'][0]['assessment'], 'not_isolated')
+        encoded = json.dumps(result, allow_nan=False)
+        self.assertNotIn(str(self.root), encoded)
+        self.assertNotIn('0.01', encoded)
+
+    def test_correction_audit_binds_trace_target_ranks_and_step_counts(self):
+        text, reports = self.audit_fixture()
+        faults = [text+'PRIVATE\n', text.replace('step 1', 'step 2'),
+                  text.replace('target 1e-6', 'target 2e-6'),
+                  text.replace('candidate 2e-6', 'candidate 3e-6'),
+                  text.replace('rhs 1 1.01', 'rhs -1 1.01'),
+                  text.replace('ideal 0 1e-8', 'ideal 0 inf'),
+                  text.replace('rounding 2e-6', 'private_name 2e-6'),
+                  text.replace('correction 0.01 0.02', 'correction 0.01 0.03')]
+        for bad in faults:
+            with self.subTest(text=bad), self.assertRaises(ValueError):
+                replay.rank_file(self.result, 0, '.correction-audit').write_text(bad)
+                replay.correction_audit(self.result, reports)
+        replay.rank_file(self.result, 0, '.correction-audit').write_text(text)
+        for key, value in (('recovery_audit_steps', 0), ('recovery_audit_version', 2), ('recovery_iterations', 7)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                replay.correction_audit(self.result, [dict(reports[0], **{key:value}), reports[1]])
+        replay.rank_file(self.result, 1, '.correction-audit').unlink()
+        with self.assertRaises(OSError): replay.correction_audit(self.result, reports)
+
+    def test_correction_audit_accepts_recorded_early_stop_without_fabricating_steps(self):
+        _, reports = self.audit_fixture()
+        for rank in range(len(reports)):
+            replay.rank_file(self.result, rank, '.recovery').write_text(
+                'initial 1 1.01 limit 1e-6\n'
+                'correction 1 iterations 0 return 0 global 0 converged 0 reported nan\n')
+            replay.rank_file(self.result, rank, '.correction-audit').write_text('mars-pressure-correction-audit-v1\n')
+            reports[rank].update(recovery_audit_steps=0, recovery_iterations=0)
+        result = replay.correction_audit(self.result, reports)
+        self.assertFalse(result['all_attempted_corrections_audited'])
+        self.assertEqual(result['steps'], [])
+        for report in reports: report['recovery_stop'] = 1
+        with self.assertRaises(ValueError): replay.correction_audit(self.result, reports)
+
+    def test_correction_audit_requires_manifest_binding_and_preserves_legacy(self):
+        text, reports = self.audit_fixture()
+        path = self.result.parent
+        for rank in range(len(reports)):
+            replay.rank_file(self.result, rank, '.report').write_text('recovery_audit_version 1\n')
+        record = dict(recovery_audit_version=1, files=replay.hashes(list(self.result.iterdir())))
+        self.assertIsNotNone(replay.checked_correction_audit(path, record, reports))
+        for file in list(record['files']):
+            changed = dict(record, files=dict(record['files'])); del changed['files'][file]
+            with self.assertRaises(ValueError): replay.checked_correction_audit(path, changed, reports)
+        with self.assertRaises(ValueError): replay.checked_correction_audit(path, dict(files=record['files']), reports)
+        with self.assertRaises(ValueError): replay.checked_correction_audit(path, record, [{}]*2)
+        self.assertIsNone(replay.checked_correction_audit(path, {}, [{}]*2))
+        replay.rank_file(self.result, 0, '.correction-audit').write_text(text+'PRIVATE\n')
+        with self.assertRaises(ValueError): replay.checked_correction_audit(path, record, reports)
 
     def inspection_fixture(self, ranks=1):
         capture = self.captured_record(ranks)
@@ -1342,6 +1453,9 @@ class GpuProfileReplayTests(unittest.TestCase):
                         self.assertEqual(report['result_iterations'], 1)
                         self.assertNotEqual(report['result_solve_error'], 0)
                         checks = replay.recovery_checks([report], rounds)
+                        audit = replay.correction_audit(result, [report])
+                        self.assertTrue(audit['all_attempted_corrections_audited'])
+                        self.assertTrue(all(step['correction_equation'] == 'failed' for step in audit['steps']))
                         self.assertTrue(checks['separate_correction_budget_verified'])
                         self.assertEqual(report['recovery_rounds'], rounds)
                         self.assertEqual(report['recovery_iterations'], rounds)
@@ -1354,6 +1468,44 @@ class GpuProfileReplayTests(unittest.TestCase):
                         self.assertEqual(checks['stop_reason'], 'bounded_target_reached' if passed
                                          else 'correction_budget_exhausted')
                         shutil.rmtree(system); shutil.rmtree(result)
+
+    def test_real_scalar_update_rounding_with_exact_rational_oracle(self):
+        binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
+        if not binaries[0]: self.skipTest('set MARS_TEST_PRESSURE_REPLAYS')
+        b = float.fromhex('0x1.8000000000001p+1')
+        system = self.root / 'scalar'
+        write_system(system, matrix=[[3.]], rhs=[b], atol=1e-17, rtol=1e-20)
+        config = self.root / 'scalar.settings'
+        config.write_text(self.profile.text_profile(dict(self.source_values, atol=1e-17, rtol=1e-20,
+                                                       maxiter=20, recovery_rounds=3)))
+        for number, binary in enumerate(binaries):
+            with self.subTest(binary=binary):
+                result = self.root / ('scalar-result-'+str(number))
+                process = subprocess.run([binary, str(system), str(config), str(result)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.assertEqual(process.returncode, 0, process.stderr.decode())
+                report = replay.numeric_file(result / 'rank-000000.report')
+                audit = replay.correction_audit(result, [report])
+                step = audit['steps'][-1]
+                self.assertEqual(step['correction_equation'], 'passed')
+                self.assertEqual(step['assessment'], 'update_rounding_prevents_this_candidate_reaching_target')
+                self.assertEqual(report['recovery_stop'], 2)
+                x, = struct.unpack('<d', (result/'rank-000000.solution').read_bytes())
+                residual = Fraction(b)-3*Fraction(x)
+                delta = float(residual/3)
+                trial = x+delta
+                low = float(Fraction(x)+Fraction(delta)-Fraction(trial))
+                self.assertEqual(Fraction(trial)+Fraction(low), Fraction(x)+Fraction(delta))
+                self.assertEqual(trial, x)
+                self.assertEqual(trial+low, trial)
+                ideal = abs(Fraction(b)-3*Fraction(trial)-3*Fraction(low))
+                rounded = abs(Fraction(b)-3*Fraction(trial))
+                self.assertLess(ideal, Fraction(1e-17))
+                self.assertGreater(rounded, Fraction(1e-17))
+                row = (result/'rank-000000.correction-audit').read_text().splitlines()[-1].split()
+                for i, exact in ((6, abs(residual-3*Fraction(delta))), (9, ideal),
+                                 (12, abs(3*Fraction(low))), (15, rounded)):
+                    self.assertLessEqual(Fraction(float(row[i])), exact)
+                    self.assertGreaterEqual(Fraction(float(row[i+1])), exact)
 
     def test_recovery_configuration_requires_explicit_request(self):
         values, output, record = self.binding()
@@ -1425,6 +1577,7 @@ class GpuProfileReplayTests(unittest.TestCase):
                     self.assertEqual(process.returncode, 0, process.stderr.decode())
                     reports = [replay.numeric_file(replay.rank_file(result, rank, '.report')) for rank in range(ranks)]
                     checks = replay.recovery_checks(reports, rounds)
+                    self.assertTrue(replay.correction_audit(result, reports)['all_rank_audit_intervals_agree'])
                     self.assertEqual(checks['stop_reason'], 'bounded_target_reached' if rtol == 1e-3
                                      else 'correction_budget_exhausted')
                     self.assertTrue(all(report['recovery_rounds'] <= rounds for report in reports))

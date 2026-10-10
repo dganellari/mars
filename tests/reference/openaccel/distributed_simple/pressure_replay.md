@@ -1,6 +1,116 @@
 # Replay the rejected pressure equation
 
-## Inspect the completed recovery without another solve
+## Distinguish correction error from rounding in the update
+
+The saved `simple-recovery4-progress-LWaMnA/public.json` reports three certified
+reduction lower bounds in `10_to_100x` and a fourth in `under_2x`. All reported
+inner residuals meet 0.1; the final independent residual still definitely fails.
+The last band bounds the certified reduction from below, not the actual
+reduction from above. It does not establish stagnation or an accuracy floor.
+
+The opt-in frozen recovery now audits each attempted update with a completed,
+nonfatal correction solve. It does not increase the four-correction budget,
+change the target, or modify production SIMPLE. The saved reference is reused.
+For the same assembled pressure equation `A x = b`, the audit evaluates:
+
+- `rhat - A delta`, using the correction RHS before it is overwritten;
+- `b - A trial - A low`, the residual of the exact sum `x + delta`;
+- `b - A trial`, the residual after storing that sum in FP64.
+
+Here `trial = RN(x + delta)`, and TwoSum retains `low` so
+`trial + low = x + delta` exactly in real arithmetic for finite supported FP64
+operations. The evaluator accumulates the high and low products separately in
+one compensated row sum; it never rounds `trial + low` first. The unknowns,
+`trial` and `low` have pressure units; all three defects have the original RHS
+units. Matrix, boundary elimination, pressure reference and ownership stay fixed.
+No PDE, discretization, quadrature or physical time term changes in this audit.
+
+The true correction residual is compared with binary64 `0.1` times a bounded RHS
+norm. Both sides of the original target `max(atol, rtol * ||b||)` are bounded.
+An ideal update passes only if its residual upper bound is at most the target
+lower bound; a rounded update fails only if its residual lower bound exceeds
+the target upper bound. Unsupported/nonfinite evaluations are inconclusive.
+This audits this particular proposed update, not the best representable solution
+or a global precision limit.
+
+`correction_audit.mars.steps` exports only fixed labels and booleans:
+
+- `correction_misses_inner_target`: the independently checked correction fails
+  its 0.1 target, regardless of Hypre's reported residual.
+- `update_rounding_prevents_this_candidate_reaching_target`: the exact sum would
+  meet the original target, but its stored FP64 value definitely does not.
+- `rounded_candidate_meets_target`: this candidate meets the bounded target.
+- `not_isolated`: these checks do not establish either cause.
+
+The independent final frozen-row checker remains the convergence authority.
+The audit may include the last rejected trial; it does not claim that trial was
+accepted. An early backend stop is recorded without inventing audit steps.
+Per-rank `.correction-audit` files contain private bounds and are bound to the
+replay manifest, report, correction trace and target. Public comparison requires
+rank agreement. Old replays remain valid without the new audit fields.
+
+Scratch vectors are allocated once per replay and stay on the GPU; the low
+component has its own persistent ghost buffer. Exchanges finish before reusing
+the send buffer. Each audited correction adds three residual evaluations,
+including a separate low-component halo, and scalar norm reductions. This is
+an opt-in diagnostic cost, not a solver performance optimization.
+
+Local validation covers real CPU Hypre 2.33 and 3.1 with ASan/UBSan, plus CPU
+Hypre 2.32 on 1/2/4 MPI ranks. A capped correction fails the independent inner
+check. A scalar `A=3`, `b=nextafter(3,+infinity)` case solves its correction
+accurately, but FP64 update rounding prevents its candidate reaching an absolute
+target of `1e-17`; exact rational arithmetic independently checks the stored
+bounds. Manifest tampering, incomplete steps, nonfinite bounds and unequal rank
+reports are covered. CUDA compilation and the actual frozen-system diagnosis
+remain user-run gates.
+
+Run this **once, only in the MARS terminal**, with its working uenv and Python
+venv. It rebuilds the replay and checker, uses the saved launcher/rank count,
+and reuses the reference without launching OpenAccel or a full flow run.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+export TMPDIR="$scratch/tmp" XDG_CACHE_HOME="$scratch/.cache"
+export PYTHONDONTWRITEBYTECODE=1 MPICH_GPU_SUPPORT_ENABLED=1
+mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+cmake --build "$repo/build-hypre" --parallel 4 --target \
+  mars_simple_pressure_replay mars_simple_pressure_residual_check
+
+capture="$scratch/simple-pressure-frozen-RlGQaI/capture"
+profile="$scratch/simple-original-pressure-1xGpr2/pair"
+reference="$scratch/simple-reference-replay-URu8yA/reference"
+IFS= read -r archive < "$reference/input-archive-current.txt"
+test -f "$archive/archive.json"
+run=$(mktemp -d "$scratch/simple-pressure-correction-audit-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" replay \
+  --capture-run "$capture" --backend mars --profile gpu-reference \
+  --gpu-profile-pair "$profile" --recovery-rounds 4 \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_replay" \
+  --output-dir "$run/mars" || status=$?
+cat "$run/mars/public.json"
+if (( status != 0 )); then exit "$status"; fi
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$capture" --mars-run "$run/mars" \
+  --reference-run "$reference" --reference-input-archive "$archive" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  --output "$run/comparison-public.json" || status=$?
+cat "$run/comparison-public.json"
+printf 'Share only: %s\n' "$run/comparison-public.json"
+exit "$status"
+)
+```
+
+## Inspect the earlier three-correction recovery without another solve
 
 The public `simple-pressure-recovery-fuUIJf/comparison-public.json` result verifies
 both replay manifests and the common frozen system. The initial MARS candidate,
@@ -53,7 +163,7 @@ exit "$status"
 )
 ```
 
-## Four-correction recovery on the frozen GPU system
+## Earlier four-correction recovery experiment
 
 The public `simple-recovery-progress-N9uuXM/public.json` report verifies that each
 of the three corrections reduced the residual by at least 10 times. None reached
@@ -62,7 +172,7 @@ times the original target. Its lower bound exceeds the target, so this remains
 a definite failure, not an inconclusive check. The evaluation interval width is
 smaller than the target; this alone does not establish an attainable error floor.
 
-This measured progress supports allowing one more correction with
+At that stage, this measured progress supported one more correction with
 `--recovery-rounds 4`. Another tenfold reduction would suffice, but repeating
 that reduction is not guaranteed. Three-correction runs remain supported and
 verifiable. Production SIMPLE and the saved reference are unchanged.

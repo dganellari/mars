@@ -597,6 +597,11 @@ def replay(args, output, public):
         if args.recovery_rounds:
             recovery_checks(reports, args.recovery_rounds)
             require(marker(output / 'result/initial', 'mars-pressure-replay-v1') == record['ranks'])
+            if any('recovery_audit_version' in report for report in reports):
+                public['failed_check'] = 'recovery_correction_audit'
+                correction_audit(output / 'result', reports)
+                launch['recovery_audit_version'] = 1
+                public['correction_audit_recorded'] = True
         public.update(recorded_gpu_pressure_settings_verified=True, captured_pressure_target_preserved=True)
     public['failed_check'] = 'inputs_changed'
     verify(inputs)
@@ -677,6 +682,90 @@ def recovery_progress(directory, reports):
                 final_evaluation_interval_width_below_target=Fraction(bounds[-1][1])-Fraction(bounds[-1][0]) < Fraction(limit),
                 any_correction_hit_iteration_cap=any(x[0] for x in backend_checks),
                 all_reported_correction_residuals_below_0_1=all(x[1] for x in backend_checks))
+
+
+def correction_audit(directory, reports):
+    """Separate correction accuracy from rounding of this proposed update."""
+    def interval(tokens):
+        lower, upper = map(float, tokens)
+        if math.isnan(lower) and upper == math.inf:
+            return None
+        require(math.isfinite(lower) and math.isfinite(upper) and 0 <= lower <= upper)
+        return Fraction(lower), Fraction(upper)
+
+    def verdict(value, target):
+        if value is None or target is None: return 'inconclusive'
+        if value[1] <= target[0]: return 'passed'
+        if value[0] > target[1]: return 'failed'
+        return 'inconclusive'
+
+    histories, public_steps = [], []
+    for rank, report in enumerate(reports):
+        require(report.get('recovery_audit_version') == 1)
+        count = report['recovery_audit_steps']
+        require(math.isfinite(count) and count == int(count) and 0 <= count <= report['recovery_rounds'])
+        lines = rank_file(directory, rank, '.correction-audit').read_text().splitlines()
+        require(lines and lines[0] == 'mars-pressure-correction-audit-v1' and len(lines) == count+1)
+        trace = [line.split() for line in rank_file(directory, rank, '.recovery').read_text().splitlines()]
+        candidates, iterations, attempts = {}, 0, 0
+        if trace:
+            require(len(trace[0]) == 5 and trace[0][0] == 'initial' and trace[0][3] == 'limit')
+            index = 1
+            while index < len(trace):
+                solve = trace[index]; index += 1; attempts += 1
+                require(len(solve) == 12 and solve[::2] ==
+                        ['correction', 'iterations', 'return', 'global', 'converged', 'reported'])
+                number, work, returned, global_error, converged = map(int, solve[1:10:2])
+                require(number == attempts and 0 <= work <= report['maxiter'] and converged in (0, 1))
+                iterations += work
+                if index < len(trace):
+                    candidate = trace[index]; index += 1
+                    require(len(candidate) == 3 and candidate[0] == 'candidate' and work > 0)
+                    require(returned in (0, 256) and global_error in (0, 256))
+                    candidates[number] = candidate[1:]
+        else:
+            require(report['recovery_stop'] == 4)
+        require(attempts == report['recovery_rounds'] and iterations == report['recovery_iterations'])
+        require(count == len(candidates))
+        if report['recovery_stop'] in (0, 1): require(count == attempts)
+        rows = [line.split() for line in lines[1:]]
+        steps, targets = [], []
+        for row, number in zip(rows, sorted(candidates)):
+            require(len(row) == 20 and row[0] == 'step' and int(row[1]) == number
+                    and row[2::3] == ['rhs', 'correction', 'ideal', 'rounding', 'candidate', 'target'])
+            require(row[15:17] == candidates[number] and float(row[18]) == float(trace[0][4]))
+            rhs, correction, ideal, rounding, candidate, target = [interval(row[i:i+2]) for i in range(3, 20, 3)]
+            require(target is not None)
+            targets.append(row[18:20])
+            inner_target = None if rhs is None else tuple(Fraction(0.1)*v for v in rhs)
+            inner, before, after = verdict(correction, inner_target), verdict(ideal, target), verdict(candidate, target)
+            rounding_prevents = before == 'passed' and after == 'failed'
+            assessment = ('update_rounding_prevents_this_candidate_reaching_target' if rounding_prevents else
+                          'correction_misses_inner_target' if inner == 'failed' else
+                          'rounded_candidate_meets_target' if after == 'passed' else 'not_isolated')
+            steps.append(dict(correction_equation=inner, ideal_update=before, rounded_update=after,
+                              rounding_action_finite=rounding is not None, assessment=assessment))
+        require(not targets or all(target == targets[0] for target in targets))
+        # Compare text tokens too, so matching unsupported bounds remain inconclusive.
+        histories.append((rows, report['recovery_audit_steps'], report['recovery_stop']))
+        if rank == 0: public_steps = steps
+    require(histories and all(history == histories[0] for history in histories))
+    return dict(scope='same_correction_with_exact_two_sum_update_not_a_global_accuracy_floor',
+                all_rank_audit_intervals_agree=True, steps=public_steps,
+                all_attempted_corrections_audited=len(public_steps) == reports[0]['recovery_rounds'],
+                original_pressure_target_preserved=True)
+
+
+def checked_correction_audit(path, record, reports):
+    versions = [report.get('recovery_audit_version') for report in reports]
+    if record.get('recovery_audit_version') is None and all(v is None for v in versions):
+        return None
+    require(record.get('recovery_audit_version') == 1 and all(v == 1 for v in versions))
+    for rank in range(len(reports)):
+        for suffix in ('.report', '.recovery', '.correction-audit'):
+            file = rank_file(path / 'result', rank, suffix)
+            require(str(file) in record['files'] and digest(file) == record['files'][str(file)])
+    return correction_audit(path / 'result', reports)
 
 
 def check_candidate(checker, directory, result_path, name, public):
@@ -760,6 +849,10 @@ def compare(args, public):
                 initial = check_candidate(checker, directory, path / 'result/initial', name + '_initial', public)
                 public.setdefault('initial_residual_checks', {})[name] = initial
                 public.setdefault('recovery_checks', {})[name] = recovery_checks(reports, record['recovery_rounds'])
+                public['failed_check'] = name + '_correction_audit'
+                audit = checked_correction_audit(path, record, reports)
+                if audit is not None:
+                    public.setdefault('correction_audit', {})[name] = audit
                 if args.recovery_progress:
                     public['failed_check'] = name + '_recovery_progress'
                     public.setdefault('recovery_progress', {})[name] = recovery_progress(path / 'result', reports)

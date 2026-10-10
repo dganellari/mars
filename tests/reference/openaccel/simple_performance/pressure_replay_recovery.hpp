@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp"
 #ifdef __CUDACC__
 // The C header defines the stream macro; this header declares its GPU accessor.
@@ -35,14 +36,32 @@ struct Add {
     const double *x,*delta; double* trial;
     REPLAY_HD void operator()(int i) const { trial[i]=CompensatedDot::add(x[i],delta[i]); }
 };
+struct AddWithRemainder {
+    const double *x,*delta; double *trial,*low;
+    REPLAY_HD void operator()(int i) const {
+        const double sum=CompensatedDot::add(x[i],delta[i]);
+        const double z=CompensatedDot::add(sum,-x[i]);
+        trial[i]=sum;
+        // TwoSum retains the part discarded by the ordinary solution update.
+        low[i]=CompensatedDot::add(CompensatedDot::add(x[i],-CompensatedDot::add(sum,-z)),
+                                  CompensatedDot::add(delta[i],-z));
+    }
+};
 struct Defect {
     const int *di,*dj,*oi,*oj;
     const double *da,*oa,*x,*ghost,*b;
     double *r,*error;
+    const double *low=nullptr,*ghost_low=nullptr;
     REPLAY_HD void operator()(int row) const {
         CompensatedDot dot;
-        for(int k=di[row];k<di[row+1];++k) dot.product(da[k],x[dj[k]]);
-        for(int k=oi[row];k<oi[row+1];++k) dot.product(oa[k],ghost[oj[k]]);
+        for(int k=di[row];k<di[row+1];++k) {
+            dot.product(da[k],x[dj[k]]);
+            if(low) dot.product(da[k],low[dj[k]]);
+        }
+        for(int k=oi[row];k<oi[row+1];++k) {
+            dot.product(oa[k],ghost[oj[k]]);
+            if(low) dot.product(oa[k],ghost_low[oj[k]]);
+        }
         dot.product(-1.,b[row]);
         r[row]=-dot.value(); error[row]=fmax(dot.error_bound(),std::sqrt(std::numeric_limits<double>::min()));
         if (r[row]!=0 && r[row]*r[row]<std::numeric_limits<double>::min())
@@ -57,7 +76,7 @@ class Residual {
     hypre_ParCSRMatrix* a_;
     hypre_ParCSRCommPkg* pkg_;
     HYPRE_MemoryLocation memory_;
-    double *send_,*ghost_;
+    double *send_,*ghost_,*ghost_low_=nullptr;
     Vector error_;
     double margin_;
 public:
@@ -81,14 +100,15 @@ public:
         margin_=(8.*double(hypre_ParCSRMatrixGlobalNumRows(a))+128.)*std::numeric_limits<double>::epsilon();
         frozen::require(margin_>0 && margin_<.01);
     }
-    ~Residual() { hypre_TFree(send_,memory_); hypre_TFree(ghost_,memory_); }
+    ~Residual() { hypre_TFree(send_,memory_); hypre_TFree(ghost_,memory_); hypre_TFree(ghost_low_,memory_); }
     Norm norm(hypre_ParVector* x) const {
         const double square=hypre_ParVectorInnerProd(x,x); checked(HYPRE_GetError());
         if(!(square>=0) || !std::isfinite(square)) return {NAN,INFINITY};
         return {std::nextafter(std::sqrt(square/(1+margin_)),0.),
                 std::nextafter(std::sqrt(square/(1-margin_)),INFINITY)};
     }
-    Norm evaluate(hypre_ParVector* x,hypre_ParVector* b,hypre_ParVector* r) {
+private:
+    void exchange(hypre_ParVector* x,double* ghost) {
         const int n=hypre_ParCSRCommPkgSendMapStart(pkg_,hypre_ParCSRCommPkgNumSends(pkg_));
 #ifdef __CUDACC__
         const int* map=hypre_ParCSRCommPkgDeviceSendMapElmts(pkg_);
@@ -99,16 +119,34 @@ public:
 #ifdef __CUDACC__
         checked(hypre_ForceSyncComputeStream());
 #endif
-        auto* exchange=hypre_ParCSRCommHandleCreate_v2(1,pkg_,memory_,send_,memory_,ghost_);
+        auto* exchange=hypre_ParCSRCommHandleCreate_v2(1,pkg_,memory_,send_,memory_,ghost);
         frozen::require(exchange); checked(hypre_ParCSRCommHandleDestroy(exchange));
+    }
+public:
+    Norm evaluate(hypre_ParVector* x,hypre_ParVector* b,hypre_ParVector* r,hypre_ParVector* low=nullptr) {
+        exchange(x,ghost_);
+        if(low) {
+            if(!ghost_low_) {
+                const int receives=hypre_CSRMatrixNumCols(hypre_ParCSRMatrixOffd(a_));
+                ghost_low_=hypre_TAlloc(double,std::max(1,receives),memory_);
+                frozen::require(ghost_low_);
+            }
+            exchange(low,ghost_low_);
+        }
         auto* d=hypre_ParCSRMatrixDiag(a_); auto* o=hypre_ParCSRMatrixOffd(a_);
         each(hypre_CSRMatrixNumRows(d),Defect{hypre_CSRMatrixI(d),hypre_CSRMatrixJ(d),
             hypre_CSRMatrixI(o),hypre_CSRMatrixJ(o),hypre_CSRMatrixData(d),hypre_CSRMatrixData(o),
-            data(x),ghost_,data(b),data(r),data(error_.p)});
+            data(x),ghost_,data(b),data(r),data(error_.p),low?data(low):nullptr,ghost_low_});
         const auto residual=norm(r),error=norm(error_.p);
         if(!residual.finite() || !error.finite()) return {NAN,INFINITY};
         return {std::max(0.,std::nextafter(residual.lower-error.upper,0.)),
                 std::nextafter(residual.upper+error.upper,INFINITY)};
+    }
+};
+struct Audit {
+    Vector low,work,zero;
+    explicit Audit(hypre_ParVector* x,HYPRE_MemoryLocation memory):low(x,memory),work(x,memory),zero(x,memory) {
+        checked(hypre_ParVectorSetConstantValues(zero.p,0.));
     }
 };
 struct SolveResult {
@@ -128,17 +166,21 @@ inline int maximum(int value,hypre_MPI_Comm comm) {
     int global=0; checked(hypre_MPI_Allreduce(&value,&global,1,HYPRE_MPI_INT,hypre_MPI_MAX,comm)); return global;
 }
 // Stop codes: target, budget, no certified progress, nonfinite, fatal backend error.
-struct Result { int rounds=0,iterations=0,stop=1; };
+struct Result { int rounds=0,iterations=0,stop=1,audit_steps=0; };
 inline Result run(hypre_ParCSRMatrix* a,hypre_ParVector* b,hypre_ParVector* x,
                   HYPRE_Solver solver,bool flex,const settings::Values& controls,HYPRE_MemoryLocation memory,
-                  int rounds,const SolveResult& initial,std::ostream& trace) {
+                  int rounds,const SolveResult& initial,std::ostream& trace,std::ostream* audit_trace=nullptr) {
     const auto comm=hypre_ParCSRMatrixComm(a);
     Result result;
+    if(audit_trace) *audit_trace<<"mars-pressure-correction-audit-v1\n"<<std::setprecision(17);
     if(maximum((initial.error|initial.global)&~HYPRE_ERROR_CONV,comm)) { result.stop=4; return result; }
     Residual evaluator(a,x,memory);
     Vector defect(x,memory),delta(x,memory),trial(x,memory);
+    std::unique_ptr<Audit> audit;
+    if(audit_trace) audit=std::make_unique<Audit>(x,memory);
     const auto rhs=evaluator.norm(b);
     const double limit=std::max(controls.at("atol"),std::nextafter(controls.at("rtol")*rhs.lower,0.));
+    const double limit_upper=std::max(controls.at("atol"),std::nextafter(controls.at("rtol")*rhs.upper,INFINITY));
     auto current=evaluator.evaluate(x,b,defect.p);
     trace<<std::setprecision(17)<<"initial "<<current.lower<<' '<<current.upper<<" limit "<<limit<<'\n';
     if(!rhs.finite() || !current.finite() || !std::isfinite(limit)) { result.stop=3; return result; }
@@ -161,9 +203,25 @@ inline Result run(hypre_ParCSRMatrix* a,hypre_ParVector* b,hypre_ParVector* x,
         if(maximum((correction.error|correction.global)&~HYPRE_ERROR_CONV,comm)) { result.stop=4; break; }
         frozen::require(iterations>=0 && iterations<=controls.at("maxiter"));
         if(iterations==0) { result.stop=2; break; }
-        each(hypre_CSRMatrixNumRows(hypre_ParCSRMatrixDiag(a)),Add{data(x),data(delta.p),data(trial.p)});
+        Norm correction_rhs{},correction_residual{},ideal{},rounding{};
+        const int local_rows=hypre_CSRMatrixNumRows(hypre_ParCSRMatrixDiag(a));
+        if(audit) {
+            // Preserve the correction RHS until its independent check is complete.
+            correction_rhs=evaluator.norm(defect.p);
+            correction_residual=evaluator.evaluate(delta.p,defect.p,audit->work.p);
+            each(local_rows,AddWithRemainder{data(x),data(delta.p),data(trial.p),data(audit->low.p)});
+            ideal=evaluator.evaluate(trial.p,b,audit->work.p,audit->low.p);
+            rounding=evaluator.evaluate(audit->low.p,audit->zero.p,audit->work.p);
+        } else each(local_rows,Add{data(x),data(delta.p),data(trial.p)});
         const auto next=evaluator.evaluate(trial.p,b,defect.p);
         trace<<"candidate "<<next.lower<<' '<<next.upper<<'\n';
+        if(audit) {
+            ++result.audit_steps;
+            *audit_trace<<"step "<<result.rounds<<" rhs "<<correction_rhs.lower<<' '<<correction_rhs.upper
+                <<" correction "<<correction_residual.lower<<' '<<correction_residual.upper
+                <<" ideal "<<ideal.lower<<' '<<ideal.upper<<" rounding "<<rounding.lower<<' '<<rounding.upper
+                <<" candidate "<<next.lower<<' '<<next.upper<<" target "<<limit<<' '<<limit_upper<<'\n';
+        }
         if(!next.finite()) { result.stop=3; break; }
         if(!(next.upper<current.lower)) { result.stop=2; break; }
         checked(hypre_ParVectorCopy(trial.p,x)); current=next;

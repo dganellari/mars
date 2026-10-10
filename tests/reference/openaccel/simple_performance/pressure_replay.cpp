@@ -157,17 +157,19 @@ int main(int argc,char** argv) {
         if(recovery_rounds) {
             checked(HYPRE_IJVectorGetValues(solution,HYPRE_Int(rows),d_ids.p,d_x.p)); d_x.output(x);
             frozen::Writer before(output/"initial"/frozen::part_name(rank,".solution")); before.array(x); before.finish();
-            std::ostringstream trace;
+            std::ostringstream trace,audit_trace;
             const auto recovered=recovery::run(reinterpret_cast<hypre_ParCSRMatrix*>(a),reinterpret_cast<hypre_ParVector*>(pb),
-                reinterpret_cast<hypre_ParVector*>(px),solver,flex,controls,memory,recovery_rounds,initial,trace);
+                reinterpret_cast<hypre_ParVector*>(px),solver,flex,controls,memory,recovery_rounds,initial,trace,&audit_trace);
             const auto restored=settings::snapshot(solver,amg,flex);
             frozen::require(restored.at("rtol")==controls.at("rtol") && restored.at("atol")==controls.at("atol")
                 && restored.at("miniter")==controls.at("miniter") && restored.at("maxiter")==controls.at("maxiter"));
             effective<<"recovery_requested_rounds "<<recovery_rounds<<"\nrecovery_rounds "<<recovered.rounds
                 <<"\nrecovery_iterations "<<recovered.iterations<<"\nrecovery_stop "<<recovered.stop
-                <<"\nrecovery_controls_restored 1\n";
+                <<"\nrecovery_controls_restored 1\nrecovery_audit_version 1\nrecovery_audit_steps "<<recovered.audit_steps<<'\n';
             frozen::Writer history(output/frozen::part_name(rank,".recovery"));
             const auto text=trace.str(); history.bytes(text.data(),text.size()); history.finish();
+            frozen::Writer audit_history(output/frozen::part_name(rank,".correction-audit"));
+            const auto audit_text=audit_trace.str(); audit_history.bytes(audit_text.data(),audit_text.size()); audit_history.finish();
         }
         checked(HYPRE_IJVectorGetValues(solution,HYPRE_Int(rows),d_ids.p,d_x.p)); d_x.output(x);
         frozen::Writer result(output/frozen::part_name(rank,".solution")); result.array(x); result.finish();
