@@ -9,6 +9,8 @@
 // star of every node it owns, and each owner then sends every star to the ranks that
 // have an element in it. A ghost needs only its id, owner rank and corner keys: the
 // operator never runs on it, and the DSS reads its shared values from the exchange.
+// The id is a hash of the sorted corner keys, the same on every rank whatever the
+// element's frame (the domain's element SFC codes repeat, e.g. under rotated frames).
 
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/mars_sfc_ownership.hpp"
@@ -53,15 +55,26 @@ Corners<KeyType> corner_keys(const Domain& d, std::index_sequence<I...>)
 }
 
 template <class KeyType>
-__global__ void local_records_kernel(Corners<KeyType> corners, const KeyType* __restrict__ codes, long long first,
-                                     long long n, int rank, KeyType* __restrict__ rec)
+__global__ void local_records_kernel(Corners<KeyType> corners, long long first, long long n, int rank,
+                                     KeyType* __restrict__ rec)
 {
     const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     KeyType* r = rec + i * kRecord;
-    r[0] = codes[first + i];
+    KeyType sorted[8];
+    for (int c = 0; c < 8; ++c) {
+        r[2 + c] = corners.key[c][first + i];
+        sorted[c] = r[2 + c];
+        for (int j = c; j > 0 && sorted[j] < sorted[j - 1]; --j) {
+            const KeyType t = sorted[j];
+            sorted[j] = sorted[j - 1];
+            sorted[j - 1] = t;
+        }
+    }
+    unsigned long long h = 0;
+    for (int c = 0; c < 8; ++c) h = halo_detail::splitmix64(h ^ (unsigned long long)sorted[c]);
+    r[0] = (KeyType)h;
     r[1] = (KeyType)rank;
-    for (int c = 0; c < 8; ++c) r[2 + c] = corners.key[c][first + i];
 }
 
 // The ranks other than `self` that own a corner of record i, each once; -1 fills.
@@ -225,7 +238,6 @@ DomainTables build_tables(const ElementDomain<HexTag, RealType, KeyType, cstone:
     thrust::device_vector<KeyType> local(L * kRecord);
     if (L > 0)
         local_records_kernel<<<blocks(L), kThreads>>>(corner_keys<KeyType>(domain, std::make_index_sequence<8>{}),
-                                                      thrust::raw_pointer_cast(domain.getElementSfcCodes().data()),
                                                       out.first, L, rank, raw(local));
     MARS_CELLWISE_CK(cudaGetLastError());
 
@@ -353,14 +365,15 @@ DomainTables build_tables(const ElementDomain<HexTag, RealType, KeyType, cstone:
     if (E > 0) unpack_records_kernel<<<blocks(E), kThreads>>>(raw(all), E, raw(d_kp), raw(gid), raw(owner));
     MARS_CELLWISE_CK(cudaGetLastError());
 
-    // The exchange orders shared nodes by element id, so ids must not repeat here.
+    // The exchange orders shared nodes by element id, so ids must not repeat here (a
+    // 64-bit hash collision among one rank's elements).
     {
         thrust::device_vector<unsigned long long> sorted(gid);
         thrust::sort(thrust::device, sorted.begin(), sorted.end());
         int repeated = E > 1 && thrust::unique(thrust::device, sorted.begin(), sorted.end()) - sorted.begin() != E;
         MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &repeated, 1, MPI_INT, MPI_MAX, comm));
         if (repeated) {
-            if (rank == 0) fprintf(stderr, "cell-wise tables: two elements share an SFC code on one rank\n");
+            if (rank == 0) fprintf(stderr, "cell-wise tables: two elements on one rank hash to the same id\n");
             MPI_Abort(comm, 1);
         }
     }
