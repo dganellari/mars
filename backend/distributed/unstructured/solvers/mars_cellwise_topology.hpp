@@ -1129,6 +1129,8 @@ struct UnstructuredJacobi {
 // (lattice order of the NX x NY x NZ block) and owner ranks of this rank's elements
 // (its sub-block of `dec`, in (x, y, z) order) followed by its ghost elements (the
 // one-element frame around the sub-block, inside the block). Returns the local count.
+// The lambdas are __host__ __device__: Thrust reads their result type on the host, and
+// with a __device__-only lambda it picks a kernel that was never compiled.
 inline long long block_elements(const Decomposition& dec, thrust::device_vector<unsigned long long>& gid,
                                 thrust::device_vector<int>& owner)
 {
@@ -1141,25 +1143,25 @@ inline long long block_elements(const Decomposition& dec, thrust::device_vector<
     const long long V = (long long)span[0] * span[1] * span[2];
     gid.resize(V);
     const auto it = thrust::counting_iterator<long long>(0);
-    thrust::transform(thrust::device, it, it + L, gid.begin(), [b] __device__(long long e) {
+    thrust::transform(thrust::device, it, it + L, gid.begin(), [b] __host__ __device__(long long e) {
         const long long z = e % b.nz + b.oz, y = (e / b.nz) % b.ny + b.oy, x = e / ((long long)b.nz * b.ny) + b.ox;
         return (unsigned long long)((x * b.NY + y) * b.NZ + z);
     });
     const int l0 = lo[0], l1 = lo[1], l2 = lo[2], s1 = span[1], s2 = span[2];
-    const auto frame_gid = [=] __device__(long long i) {
+    const auto frame_gid = [=] __host__ __device__(long long i) {
         const long long z = i % s2 + l2, y = (i / s2) % s1 + l1, x = i / ((long long)s2 * s1) + l0;
         return (unsigned long long)((x * b.NY + y) * b.NZ + z);
     };
     const long long G = thrust::copy_if(
         thrust::device, thrust::make_transform_iterator(it, frame_gid), thrust::make_transform_iterator(it + V, frame_gid),
-        gid.begin() + L, [b] __device__(unsigned long long g) {
+        gid.begin() + L, [b] __host__ __device__(unsigned long long g) {
             const long long z = g % b.NZ, y = (g / b.NZ) % b.NY, x = g / ((unsigned long long)b.NZ * b.NY);
             return x < b.ox || x >= b.ox + b.nx || y < b.oy || y >= b.oy + b.ny || z < b.oz || z >= b.oz + b.nz;
         }) - (gid.begin() + L);
     gid.resize(L + G);
     owner.resize(L + G);
     const int P1 = dec.P[1], P2 = dec.P[2];
-    thrust::transform(thrust::device, gid.begin(), gid.end(), owner.begin(), [b, P1, P2] __device__(unsigned long long g) {
+    thrust::transform(thrust::device, gid.begin(), gid.end(), owner.begin(), [b, P1, P2] __host__ __device__(unsigned long long g) {
         const int z = (int)(g % b.NZ), y = (int)((g / b.NZ) % b.NY), x = (int)(g / ((unsigned long long)b.NZ * b.NY));
         return ((x / b.nx) * P1 + y / b.ny) * P2 + z / b.nz;
     });
