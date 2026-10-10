@@ -55,6 +55,7 @@
 
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include <thrust/device_vector.h>
 #include <thrust/extrema.h>      // min_element/max_element for the global box (Gate 2)
 #include <thrust/for_each.h>     // overlap: scatter recv-ghost flags + pack on a stream
 #include <thrust/copy.h>         // overlap: copy_if to partition interior/boundary lists
@@ -64,6 +65,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -189,9 +191,87 @@ __global__ void classify_owned_elem_kernel(
     d_elemIsBoundary[le] = boundary;
 }
 
+// Exchange gate: after a forward exchange every received ghost must hold exactly the field value at its
+// own coordinates. Coordinates are decoded from the SFC key with the global box, the same on every rank.
+// Flags: 1 wrong value, 2 the value of a list neighbour (shifted lists), 3 never written (still NaN).
+template<typename RealType>
+__global__ void check_recv_ghosts_kernel(
+    const int* __restrict__ d_recvNodeIds, size_t recvTotal, const int* __restrict__ d_nodeToDof,
+    const RealType* __restrict__ d_x, const RealType* __restrict__ d_y, const RealType* __restrict__ d_z,
+    RealType cx, RealType cy, RealType cz, const RealType* __restrict__ d_u, uint8_t* __restrict__ d_flag)
+{
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= recvTotal) return;
+    auto field = [&](int n) { return cx * d_x[n] + cy * d_y[n] + cz * d_z[n]; };
+    auto same  = [](RealType a, RealType b) { return fabs((double)(a - b)) < 1e-12; };
+    const int n      = d_recvNodeIds[i];
+    const RealType v = d_u[d_nodeToDof[n]];
+    uint8_t flag     = 0;
+    if (isnan(v)) flag = 3;
+    else if (!same(v, field(n)))
+        flag = ((i > 0 && same(v, field(d_recvNodeIds[i - 1]))) ||
+                (i + 1 < recvTotal && same(v, field(d_recvNodeIds[i + 1])))) ? 2 : 1;
+    d_flag[i] = flag;
+}
+
+// Exchange gate: corners of own elements that the forward exchange left unset. Counts corner references.
+template<typename KeyType, typename RealType>
+__global__ void count_unset_corners_kernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const KeyType* c4, const KeyType* c5, const KeyType* c6, const KeyType* c7,
+    const int* __restrict__ d_nodeToDof, size_t elemBase, size_t numLocal,
+    const RealType* __restrict__ d_u, unsigned long long* __restrict__ d_unset)
+{
+    size_t le = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (le >= numLocal) return;
+    const size_t e = elemBase + le;
+    const KeyType node[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
+    for (int c = 0; c < 8; ++c)
+        if (isnan(d_u[d_nodeToDof[node[c]]])) atomicAdd(d_unset, 1ull);
+}
+
+// Star-count gate: every own element adds 1 to its corner rows; after the reverse-add an owned node of
+// the cube counts 8 elements, 4 on a face, 2 on an edge, 1 at a corner. A missing or duplicated element,
+// or a partial added to the wrong row, changes a count.
+template<typename KeyType, typename RealType>
+__global__ void count_star_kernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const KeyType* c4, const KeyType* c5, const KeyType* c6, const KeyType* c7,
+    const int* __restrict__ d_nodeToDof, size_t elemBase, size_t numLocal, RealType* __restrict__ d_count)
+{
+    size_t le = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (le >= numLocal) return;
+    const size_t e = elemBase + le;
+    const KeyType node[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
+    for (int c = 0; c < 8; ++c)
+        atomicAdd(&d_count[d_nodeToDof[node[c]]], RealType(1));
+}
+
+template<typename RealType>
+__global__ void check_star_kernel(
+    const int* __restrict__ d_nodeToDof, const RealType* __restrict__ d_x, const RealType* __restrict__ d_y,
+    const RealType* __restrict__ d_z, size_t nodeCount, int numDofs,
+    RealType bxlo, RealType bylo, RealType bzlo, RealType bxhi, RealType byhi, RealType bzhi, RealType tol,
+    const RealType* __restrict__ d_count, unsigned long long* __restrict__ d_bad, int* __restrict__ d_firstBad)
+{
+    size_t n = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (n >= nodeCount) return;
+    const int dof = d_nodeToDof[n];
+    if (dof < 0 || dof >= numDofs) return;
+    const int faces = (fabs((double)(d_x[n] - bxlo)) < tol) + (fabs((double)(d_x[n] - bxhi)) < tol) +
+                      (fabs((double)(d_y[n] - bylo)) < tol) + (fabs((double)(d_y[n] - byhi)) < tol) +
+                      (fabs((double)(d_z[n] - bzlo)) < tol) + (fabs((double)(d_z[n] - bzhi)) < tol);
+    if (d_count[dof] != RealType(8 >> faces))
+    {
+        atomicAdd(d_bad, 1ull);
+        atomicMin(d_firstBad, (int)n);
+    }
+}
+
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    mars::abortAllRanksOnUncaughtException();
     int rank = 0, numRanks = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
@@ -281,7 +361,7 @@ int main(int argc, char** argv)
             C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7),
             d_x.data(), d_y.data(), d_z.data(), d_nodeToDof.data(), startElem, numLocal,
             d_corners.data(), d_elemDof.data());
-        CK(cudaGetLastError()); cudaDeviceSynchronize();
+        CK(cudaGetLastError()); CK(cudaDeviceSynchronize());
     }
 
     // --- per-element metric, precomputed ONCE over the owned-element slice ---
@@ -289,7 +369,7 @@ int main(int argc, char** argv)
     cstone::DeviceVector<RealType> d_G(numLocal * kHoG);
     if (numLocal > 0) {
         CK((ho_cvfem_metric_perpoint_launch<RealType, 1>(d_corners.data(), d_G.data(), numLocal)));
-        cudaDeviceSynchronize();
+        CK(cudaDeviceSynchronize());
     }
 
     // ====================== the distributed matvec y = A*u ======================
@@ -504,13 +584,65 @@ int main(int argc, char** argv)
         domain.reverseExchangeNodeHaloAdd(d_out, d_nodeToDof.data());
     };
 
+    // The gates run the matvec step by step and stop at the first failing step, by name: a GPU fault is
+    // otherwise reported by whichever later call synchronizes first.
+    auto step = [&](const char* gate, const char* what, auto&& run) {
+        auto stop = [&](const char* msg) {
+            std::fprintf(stderr, "rank %d: %s, %s: %s\n", rank, gate, what, msg);
+            std::fflush(stderr);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        };
+        try { run(); }
+        catch (const std::exception& e) { stop(e.what()); }
+        if (cudaError_t e = cudaDeviceSynchronize(); e != cudaSuccess) stop(cudaGetErrorString(e));
+    };
+    auto checkedMatvec = [&](const char* gate) {
+        step(gate, "forward exchange", [&] { domain.exchangeNodeHalo(d_u, d_nodeToDof.data()); });
+        step(gate, "apply", [&] {
+            cudaMemset(d_out.data(), 0, numTotalDofs * sizeof(RealType));
+            if (numLocal > 0)
+                ho_cvfem_apply_launch<RealType, 1>(d_u.data(), d_out.data(), d_elemDof.data(),
+                                                   d_G.data(), numLocal);
+        });
+        step(gate, "reverse exchange", [&] { domain.reverseExchangeNodeHaloAdd(d_out, d_nodeToDof.data()); });
+    };
+
+    // Adds this rank's received ghosts that do not hold their owner's value to counts (wrong, shifted,
+    // unset) and prints the first peers they came from.
+    auto checkReceived = [&](const char* gate, RealType cx, RealType cy, RealType cz, unsigned long long* counts) {
+        if (numRanks == 1) return;
+        const auto& topo = domain.getNodeHaloTopology();
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+        std::vector<uint8_t> flags(recvTotal);
+        if (recvTotal > 0) {
+            cstone::DeviceVector<uint8_t> d_flag(recvTotal);
+            int blk = 256, grid = (int)((recvTotal + blk - 1) / blk);
+            check_recv_ghosts_kernel<RealType><<<grid, blk>>>(
+                thrust::raw_pointer_cast(topo.recvNodeIds_.data()), recvTotal, d_nodeToDof.data(),
+                d_x.data(), d_y.data(), d_z.data(), cx, cy, cz, d_u.data(), d_flag.data());
+            CK(cudaGetLastError());
+            CK(cudaMemcpy(flags.data(), d_flag.data(), recvTotal, cudaMemcpyDeviceToHost));
+        }
+        int printed = 0;
+        for (size_t p = 0; p < topo.peers_.size(); ++p) {
+            unsigned long long c[3] = {0, 0, 0};
+            for (int i = topo.recvOffsets_[p]; i < topo.recvOffsets_[p + 1]; ++i)
+                if (flags[i]) ++c[flags[i] - 1];
+            for (int k = 0; k < 3; ++k) counts[k] += c[k];
+            if (c[0] + c[1] + c[2] > 0 && printed++ < 4)
+                std::printf("rank %d %s: from rank %d, %d received: %llu wrong, %llu shifted, %llu unset\n", rank,
+                            gate, topo.peers_[p], int(topo.recvOffsets_[p + 1] - topo.recvOffsets_[p]), c[0], c[1],
+                            c[2]);
+        }
+    };
+
     // ====================== PARITY GATE 1: A*1 = 0 ======================
     // Constant null space of pure-Neumann diffusion. Holds on owned rows on ANY
     // rank count; this is the first proof the forward/reverse halo pair is
     // conservative for the pure matvec (it was only exercised in the NS solver).
     thrust::fill(thrust::device_pointer_cast(d_u.data()),
                  thrust::device_pointer_cast(d_u.data() + numTotalDofs), RealType(1));
-    matvec(); CK(cudaGetLastError()); cudaDeviceSynchronize();
+    checkedMatvec("A*1 gate");
     std::vector<RealType> yconst(numDofs);
     if (numDofs > 0)
         CK(cudaMemcpy(yconst.data(), d_out.data(), numDofs * sizeof(RealType), cudaMemcpyDeviceToHost));
@@ -580,19 +712,109 @@ int main(int argc, char** argv)
             RealType(0.37), RealType(-1.11), RealType(0.53), d_u.data());
         CK(cudaGetLastError()); cudaDeviceSynchronize();
     }
-    matvec(); CK(cudaGetLastError()); cudaDeviceSynchronize();
+    checkedMatvec("A*linear gate");
+    // the ghosts this matvec's forward exchange wrote, as the apply read them
+    unsigned long long locLinExchange[3] = {0, 0, 0}, gLinExchange[3] = {0, 0, 0};
+    checkReceived("A*linear gate", RealType(0.37), RealType(-1.11), RealType(0.53), locLinExchange);
+    MPI_Allreduce(locLinExchange, gLinExchange, 3, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     std::vector<RealType> ylin(numDofs);
     std::vector<uint8_t>  isInt(numDofs);
     if (numDofs > 0) {
         CK(cudaMemcpy(ylin.data(), d_out.data(), numDofs * sizeof(RealType), cudaMemcpyDeviceToHost));
         CK(cudaMemcpy(isInt.data(), d_isInterior.data(), numDofs * sizeof(uint8_t), cudaMemcpyDeviceToHost));
     }
-    double locMaxLin = 0; long long locInterior = 0;
+    double locMaxLin = 0; long long locInterior = 0, locBadRows = 0; int worstDof = -1;
     for (int i = 0; i < numDofs; ++i)
-        if (isInt[i]) { locMaxLin = std::max(locMaxLin, std::abs((double)ylin[i])); ++locInterior; }
-    double gMaxLin = 0; long long gInterior = 0;
+        if (isInt[i]) {
+            const double a = std::abs((double)ylin[i]);
+            if (a > locMaxLin) { locMaxLin = a; worstDof = i; }
+            if (a >= 1e-8) ++locBadRows;
+            ++locInterior;
+        }
+    if (locBadRows > 0) {
+        std::vector<int> h_dof(nodeCount);
+        CK(cudaMemcpy(h_dof.data(), d_nodeToDof.data(), nodeCount * sizeof(int), cudaMemcpyDeviceToHost));
+        const size_t n = std::find(h_dof.begin(), h_dof.end(), worstDof) - h_dof.begin();
+        RealType p[3];
+        CK(cudaMemcpy(&p[0], d_x.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+        CK(cudaMemcpy(&p[1], d_y.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+        CK(cudaMemcpy(&p[2], d_z.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+        std::printf("rank %d A*linear gate: %lld interior rows >= 1e-8, worst %.3e at (%.6f, %.6f, %.6f)\n", rank,
+                    locBadRows, locMaxLin, p[0], p[1], p[2]);
+    }
+    double gMaxLin = 0; long long gInterior = 0, gBadRows = 0;
     MPI_Allreduce(&locMaxLin, &gMaxLin, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&locInterior, &gInterior, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&locBadRows, &gBadRows, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    // ====================== EXCHANGE GATE: the forward exchange delivers the owners' values ======================
+    // Owned slots get a linear field, ghost slots NaN. After one forward exchange every ghost corner of an
+    // own element must be set and every received ghost must hold its owner's value. A*1 cannot see a value
+    // that lands in the wrong slot: every slot holds 1.
+    unsigned long long locExchange[4] = {0, 0, 0, 0}, gExchange[4] = {0, 0, 0, 0};  // wrong, shifted, unset, corners unset
+    {
+        int blk = 256, grid = (int)((nodeCount + blk - 1) / blk);
+        fill_linear_field_kernel<RealType><<<grid, blk>>>(
+            d_x.data(), d_y.data(), d_z.data(), d_nodeToDof.data(), nodeCount,
+            RealType(0.37), RealType(-1.11), RealType(0.53), d_u.data());
+        CK(cudaGetLastError());
+        thrust::fill(thrust::device_pointer_cast(d_u.data() + numDofs),
+                     thrust::device_pointer_cast(d_u.data() + numTotalDofs), RealType(NAN));
+    }
+    step("exchange gate", "forward exchange", [&] { domain.exchangeNodeHalo(d_u, d_nodeToDof.data()); });
+    checkReceived("exchange gate", RealType(0.37), RealType(-1.11), RealType(0.53), locExchange);
+    if (numLocal > 0) {
+        thrust::device_vector<unsigned long long> d_unset(1, 0);
+        int blk = 256, grid = (int)((numLocal + blk - 1) / blk);
+        count_unset_corners_kernel<KeyType, RealType><<<grid, blk>>>(
+            C(0), C(1), C(2), C(3), C(4), C(5), C(6), C(7), d_nodeToDof.data(), startElem, numLocal,
+            d_u.data(), thrust::raw_pointer_cast(d_unset.data()));
+        CK(cudaGetLastError());
+        locExchange[3] = d_unset[0];
+        if (locExchange[3] > 0)
+            std::printf("rank %d exchange gate: %llu own-element corners unset\n", rank, locExchange[3]);
+    }
+    MPI_Allreduce(locExchange, gExchange, 4, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    // ====================== STAR-COUNT GATE (perfect cube only) ======================
+    // Tests the element partition and the reverse-add routing without the operator: see count_star_kernel.
+    const bool perfectCube = mesh.empty() && !irr.warp && !irr.deform;
+    unsigned long long gStarBad = 0;
+    if (perfectCube) {
+        cstone::DeviceVector<RealType> d_count(numTotalDofs, 0.0);
+        thrust::device_vector<unsigned long long> d_bad(1, 0);
+        thrust::device_vector<int> d_firstBad(1, std::numeric_limits<int>::max());
+        if (numLocal > 0) {
+            int blk = 256, grid = (int)((numLocal + blk - 1) / blk);
+            count_star_kernel<KeyType, RealType><<<grid, blk>>>(
+                C(0), C(1), C(2), C(3), C(4), C(5), C(6), C(7), d_nodeToDof.data(), startElem, numLocal,
+                d_count.data());
+            CK(cudaGetLastError());
+        }
+        step("star-count gate", "reverse exchange", [&] { domain.reverseExchangeNodeHaloAdd(d_count, d_nodeToDof.data()); });
+        {
+            int blk = 256, grid = (int)((nodeCount + blk - 1) / blk);
+            check_star_kernel<RealType><<<grid, blk>>>(
+                d_nodeToDof.data(), d_x.data(), d_y.data(), d_z.data(), nodeCount, numDofs,
+                gLo[0], gLo[1], gLo[2], gHi[0], gHi[1], gHi[2], bndTol, d_count.data(),
+                thrust::raw_pointer_cast(d_bad.data()), thrust::raw_pointer_cast(d_firstBad.data()));
+            CK(cudaGetLastError());
+        }
+        unsigned long long locBad = d_bad[0];
+        if (locBad > 0) {
+            const int n = d_firstBad[0];
+            RealType p[3], count;
+            int dof;
+            CK(cudaMemcpy(&p[0], d_x.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+            CK(cudaMemcpy(&p[1], d_y.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+            CK(cudaMemcpy(&p[2], d_z.data() + n, sizeof(RealType), cudaMemcpyDeviceToHost));
+            CK(cudaMemcpy(&dof, d_nodeToDof.data() + n, sizeof(int), cudaMemcpyDeviceToHost));
+            CK(cudaMemcpy(&count, d_count.data() + dof, sizeof(RealType), cudaMemcpyDeviceToHost));
+            std::printf("rank %d star-count gate: %llu owned nodes wrong, e.g. (%.6f, %.6f, %.6f) counts %g\n",
+                        rank, locBad, p[0], p[1], p[2], count);
+        }
+        MPI_Allreduce(&locBad, &gStarBad, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    }
 
     // ====================== PARITY GATE 3: overlap == blocking ======================
     // Run BOTH paths on the SAME random u and assert max|overlap-blocking|/max|blocking|
@@ -689,7 +911,7 @@ int main(int argc, char** argv)
     thrust::copy(thrust::device_pointer_cast(d_uTime.data()),
                  thrust::device_pointer_cast(d_uTime.data() + numTotalDofs),
                  thrust::device_pointer_cast(d_u.data()));
-    matvec(); cudaDeviceSynchronize();   // warmup (build halo topology, JIT, etc.)
+    checkedMatvec("warmup");   // warmup (build halo topology, JIT, etc.)
 
     MPI_Barrier(MPI_COMM_WORLD);
     cudaEvent_t t0, t1; cudaEventCreate(&t0); cudaEventCreate(&t1);
@@ -775,10 +997,17 @@ int main(int argc, char** argv)
                minElems, maxElems,
                (maxElems > 0 && (maxElems - minElems) <= maxElems / 20) ? "balanced" : "IMBALANCED");
         printf("\n-- PARITY (partition-invariant gates) --\n");
+        printf("  exchange        : received %llu wrong, %llu shifted, %llu unset; %llu own-element corners unset   [%s]\n",
+               gExchange[0], gExchange[1], gExchange[2], gExchange[3],
+               gExchange[0] + gExchange[1] + gExchange[2] + gExchange[3] == 0 ? "PASS" : "FAIL");
+        if (perfectCube)
+            printf("  star counts     : %llu owned nodes wrong   [%s]\n", gStarBad, gStarBad == 0 ? "PASS" : "FAIL");
         printf("  A*1=0           : max|y| = %.3e   [%s]\n", gMaxConst,
                gMaxConst < 1e-9 ? "PASS" : "FAIL");
         printf("  A*linear=0 (int): max|y| = %.3e over %lld interior owned rows   [%s]\n",
                gMaxLin, gInterior, gMaxLin < 1e-8 ? "PASS" : "FAIL");
+        printf("                    %lld rows >= 1e-8; its exchange: received %llu wrong, %llu shifted\n",
+               gBadRows, gLinExchange[0], gLinExchange[1]);
         if (overlap && numRanks > 1)
             printf("  overlap==block  : rel diff = %.3e   [%s]\n", gRelDiff,
                    gRelDiff < 1e-12 ? "PASS" : "FAIL");
