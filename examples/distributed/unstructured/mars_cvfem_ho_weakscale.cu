@@ -316,7 +316,8 @@ int main(int argc, char** argv)
         typename Domain::HostConnectivityTuple h_conn{
             std::move(lconn[0]), std::move(lconn[1]), std::move(lconn[2]), std::move(lconn[3]),
             std::move(lconn[4]), std::move(lconn[5]), std::move(lconn[6]), std::move(lconn[7])};
-        domainPtr = new Domain(h_coords, h_conn, rank, numRanks, 64, false, 8u);
+        domainPtr = new Domain(h_coords, h_conn, rank, numRanks,
+                               globalBucketSize((double)ncells * (double)ncells * (double)ncells), false, 8u);
     }
     Domain& domain = *domainPtr;
 
