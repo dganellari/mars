@@ -4,7 +4,7 @@
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
 #endif
-#include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp"
+#include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_capture.hpp"
 #include <iostream>
 #include <dlfcn.h>
@@ -70,9 +70,11 @@ int main(int argc,char** argv) {
             && controls.at("rtol")<1 && controls.at("atol")>=0);
         // A reference configuration must retain the captured acceptance target.
         frozen::require(part.maximum && controls.at("rtol")==part.relative && controls.at("atol")==part.absolute);
+        const bool gpu_profile=controls.count("relax_down") || controls.count("relax_up");
+        if (gpu_profile) settings::validate_gpu_profile(controls);
 #ifdef __CUDACC__
-        frozen::require(controls.count("relaxtype") && controls.at("relaxtype")==18
-            && controls.count("coarserelax") && controls.at("coarserelax")==18);
+        frozen::require(gpu_profile || (controls.count("relaxtype") && controls.at("relaxtype")==18
+            && controls.count("coarserelax") && controls.at("coarserelax")==18));
 #endif
         if (!rank) {
             frozen::require(std::filesystem::create_directory(output));
@@ -116,7 +118,13 @@ int main(int argc,char** argv) {
         const bool flex=controls.at("method")!=0;
         HYPRE_Solver solver,amg;
         checked((flex?HYPRE_ParCSRFlexGMRESCreate:HYPRE_ParCSRGMRESCreate)(hypre_MPI_COMM_WORLD,&solver));
-        checked(HYPRE_BoomerAMGCreate(&amg)); settings::apply(controls,solver,amg,flex);
+        checked(HYPRE_BoomerAMGCreate(&amg));
+        if (gpu_profile) {
+            settings::Values krylov;
+            for (const auto* key:{"method","kdim","miniter","maxiter","rtol","atol"}) krylov[key]=controls.at(key);
+            settings::apply(krylov,solver,amg,flex);
+            settings::apply_gpu_amg_profile(controls,amg);
+        } else settings::apply(controls,solver,amg,flex);
         checked((flex?HYPRE_ParCSRFlexGMRESSetPrecond:HYPRE_ParCSRGMRESSetPrecond)(solver,HYPRE_BoomerAMGSolve,HYPRE_BoomerAMGSetup,amg));
         checked((flex?HYPRE_ParCSRFlexGMRESSetup:HYPRE_ParCSRGMRESSetup)(solver,a,pb,px));
         std::ostringstream effective; settings::write(effective,settings::snapshot(solver,amg,flex));

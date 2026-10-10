@@ -753,6 +753,102 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(replay.main(args), 1)
             command.assert_not_called()
 
+    def test_gpu_profile_replay_verifies_applied_controls_before_completion(self):
+        import simple_pressure_profile as profile
+        import test_simple_pressure_profile as fixtures
+        config = dict(family='hypre', rtol=1e-10, atol=0.,
+                      options=dict(solver=dict(type='gmres'), precond=dict(type='boomeramg')), max_iterations=200)
+        values, _ = profile.resolve(config, (0., 1e-10), fixtures.measured_defaults())
+        capture = self.captured_record()
+        pair = self.root / 'profile'; pair.mkdir()
+        source = pair / 'pressure.profile'; source.write_text(profile.text_profile(values))
+        library, mpi, exe = (self.root/name for name in ('libHYPRE.so', 'libmpi.so', 'gpu-replay'))
+        for path in (library, mpi, exe): path.write_text(path.name)
+        libraries = replay.hashes([library, mpi])
+        record = json.loads((capture/'capture.json').read_text())
+        record.update(libraries=libraries, reference={'libraries':libraries}, launcher=['launcher'])
+        (capture/'capture.json').write_text(json.dumps(record))
+        for fault in ('none', 'cycle', 'target'):
+            output = self.root / ('gpu-' + fault)
+            def launch(command, stdout, **kwargs):
+                settings = replay.numeric_file(Path(command[-2]))
+                self.assertEqual(settings, values)
+                result = Path(command[-1])
+                write_solution(result, [1.+i/8. for i in range(12)], 1)
+                (result/'rank-000000.libraries').write_text('{}\n{}\n'.format(library, mpi))
+                report = dict(values, effective_levels=3, effective_relax_3=18)
+                report['effective_relax_1'] = report.pop('relax_down')
+                report['effective_relax_2'] = report.pop('relax_up')
+                if fault == 'cycle': report['effective_relax_2'] = 18
+                if fault == 'target': report['rtol'] = 1e-4
+                (result/'rank-000000.report').write_text(profile.text_profile(report))
+                return subprocess.CompletedProcess(command, 0)
+            args = ['replay', '--capture-run', str(capture), '--backend', 'mars', '--profile', 'gpu-reference',
+                    '--gpu-profile-pair', str(pair), '--executable', str(exe), '--output-dir', str(output)]
+            with patch.object(replay, 'gpu_configuration', return_value=(values, replay.hashes([source]))), \
+                 patch.object(replay.startup, 'runtime_libraries', return_value=libraries), \
+                 patch.object(replay.subprocess, 'run', side_effect=launch), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(replay.main(args), 0 if fault == 'none' else 1)
+            public = json.loads((output/'public.json').read_text())
+            self.assertEqual(public['failed_check'], 'none' if fault == 'none' else 'gpu_profile_runtime_settings')
+            self.assertEqual((output/'replay.json').exists(), fault == 'none')
+            if fault == 'none':
+                self.assertTrue(public['captured_pressure_target_preserved'])
+                self.assertFalse(public['convergence_verified'])
+
+    def test_gpu_profile_comparison_keeps_independent_residual_verdict(self):
+        import simple_pressure_profile as profile
+        import test_simple_pressure_profile as fixtures
+        args = self.compare_arguments()
+        config = dict(family='hypre', rtol=1e-10, atol=0., max_iterations=200,
+                      options=dict(solver=dict(type='gmres'), precond=dict(type='boomeramg')))
+        values, _ = profile.resolve(config, (0., 1e-10), fixtures.measured_defaults())
+        path = self.root / 'mars'
+        source = self.root / 'pressure.profile'; source.write_text(profile.text_profile(values))
+        config_path = path / 'gpu-reference.settings'; config_path.write_text(profile.text_profile(values))
+        report_path = path / 'result/rank-000000.report'
+        report = replay.numeric_file(report_path)
+        report.update(values, effective_levels=3, effective_relax_3=18)
+        report['effective_relax_1'] = report.pop('relax_down')
+        report['effective_relax_2'] = report.pop('relax_up')
+        report_path.write_text(profile.text_profile(report))
+        record = json.loads((path/'replay.json').read_text())
+        record.update(profile='gpu-reference', gpu_profile_source=str(source),
+                      command=['exe', str(self.capture), str(config_path), str(path/'result')])
+        record['inputs'].update(replay.hashes([source, config_path]))
+        record['files'].update(replay.hashes([report_path]))
+        (path/'replay.json').write_text(json.dumps(record))
+        public = self.compare_saved(args, code=0)
+        self.assertEqual(public['profiles']['mars'], 'gpu-reference')
+        self.assertTrue(public['residual_checks']['mars']['residual_passed'])
+        self.assertTrue(public['residual_checks']['mars']['captured_pressure_target_preserved'])
+        # A backend flag cannot rescue a wrong solution on the frozen system.
+        solution = path / 'result/rank-000000.solution'
+        solution.write_bytes(bytes(solution.stat().st_size))
+        record['files'].update(replay.hashes([solution]))
+        (path/'replay.json').write_text(json.dumps(record))
+        args[-1] = str(self.root/'bad-candidate.json')
+        public = self.compare_saved(args, code=0)
+        self.assertTrue(public['residual_checks']['mars']['residual_failed'])
+        report['effective_relax_2'] = 18
+        report_path.write_text(profile.text_profile(report))
+        record['files'].update(replay.hashes([report_path]))
+        (path/'replay.json').write_text(json.dumps(record))
+        args[-1] = str(self.root/'wrong-settings.json')
+        public = self.compare_saved(args, code=1)
+        self.assertEqual(public['failed_check'], 'mars_gpu_profile_runtime_settings')
+
+    def test_gpu_profile_invalid_selection_stops_before_launch(self):
+        capture = self.captured_record()
+        for index, selection in enumerate((['--backend', 'reference', '--profile', 'gpu-reference', '--gpu-profile-pair', 'unused'],
+                                          ['--backend', 'mars', '--profile', 'gpu-reference'],
+                                          ['--backend', 'mars', '--profile', 'captured', '--gpu-profile-pair', 'unused'])):
+            output = self.root / ('selection-' + str(index))
+            with patch.object(replay.subprocess, 'run') as launch, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(replay.main(['replay', '--capture-run', str(capture), '--output-dir', str(output)] + selection), 1)
+                launch.assert_not_called()
+            self.assertEqual(json.loads((output/'public.json').read_text())['failed_check'], 'profile_selection')
+
     def inspection_fixture(self, ranks=1):
         capture = self.captured_record(ranks)
         library, mpi, exe = (self.root/name for name in ('libHYPRE.so', 'libmpi.so', 'reference-replay'))
@@ -951,6 +1047,121 @@ class ReplayTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(replay.main(args), 1)
         self.assertEqual(Path(args[-1]).read_bytes(), before)
+
+
+class GpuProfileReplayTests(unittest.TestCase):
+    def setUp(self):
+        import test_simple_pressure_profile as fixtures
+        self.fixture = fixtures.ProfileTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.finish()
+        self.root = self.fixture.root
+        self.pair = self.fixture.pair
+        self.capture = self.root / 'frozen'
+        self.capture.mkdir()
+        write_system(self.capture / 'system', 2, rtol=1e-10)
+        import simple_pressure_profile as profile
+        baseline, launches, values, _ = profile.check_inputs(self.pair)
+        self.source_values = values
+        self.profile = profile
+        explicit = replay.reference_controls(self.fixture.config, (values['atol'], values['rtol']))
+        explicit.update(atol=0., rtol=1e-10)
+        (self.capture / 'reference.settings').write_text(profile.text_profile(explicit))
+        self.record = dict(ranks=2, libraries=self.fixture.libs, reference=launches['openaccel'])
+
+    def test_verified_source_preserves_frozen_target_and_source(self):
+        before = replay.hashes(list((self.capture / 'system').iterdir()) + [self.pair / 'pressure.profile'])
+        values, inputs = replay.gpu_configuration(self.pair, self.capture, self.record)
+        self.assertEqual(values, dict(self.source_values, atol=0., rtol=1e-10))
+        replay.verify(before)
+        replay.verify(inputs)
+        self.assertIn(str(self.pair / 'mars/flow-pressure-rank-1.settings'), inputs)
+        self.assertIn(str(self.fixture.baseline / 'reference/launch.json'), inputs)
+
+    def test_wrong_rank_library_reference_or_algorithm_rejected(self):
+        import copy
+        for fault in ('ranks', 'libraries', 'reference', 'controls'):
+            with self.subTest(fault=fault):
+                record = copy.deepcopy(self.record)
+                path = self.capture / 'reference.settings'
+                saved = path.read_text()
+                if fault == 'ranks': record['ranks'] = 4
+                if fault == 'libraries': record['libraries'] = {}
+                if fault == 'reference': record['reference']['executable_sha256'] = '0'*64
+                if fault == 'controls': path.write_text(saved.replace('method 0', 'method 1'))
+                with self.assertRaises(ValueError):
+                    replay.gpu_configuration(self.pair, self.capture, record)
+                path.write_text(saved)
+
+    def binding(self):
+        values, inputs = replay.gpu_configuration(self.pair, self.capture, self.record)
+        output = self.root / 'new-replay'
+        output.mkdir()
+        config = output / 'gpu-reference.settings'
+        config.write_text(self.profile.text_profile(values))
+        inputs.update(replay.hashes([config]))
+        record = dict(backend='mars', gpu_profile_source=str(self.pair / 'pressure.profile'),
+                      inputs=inputs, command=['exe', str(self.capture / 'system'), str(config), str(output / 'result')])
+        return values, output, record
+
+    def test_configuration_bound_to_profile_and_original_target(self):
+        values, output, record = self.binding()
+        self.assertEqual(replay.checked_gpu_configuration(output, record, self.capture), values)
+        config = output / 'gpu-reference.settings'
+        for key, value in (('rtol', 1e-4), ('coarsentype', 10), ('kdim', 19)):
+            with self.subTest(key=key):
+                config.write_text(self.profile.text_profile(dict(values, **{key: value})))
+                record['inputs'].update(replay.hashes([config]))
+                with self.assertRaises(ValueError):
+                    replay.checked_gpu_configuration(output, record, self.capture)
+        config.write_text(self.profile.text_profile(values))
+        record['inputs'].update(replay.hashes([config]))
+        del record['inputs'][record['gpu_profile_source']]
+        with self.assertRaises(ValueError):
+            replay.checked_gpu_configuration(output, record, self.capture)
+
+    def test_actual_cycle_settings_required(self):
+        values = dict(self.source_values)
+        report = dict(values, effective_levels=3, effective_relax_3=18)
+        report['effective_relax_1'] = report.pop('relax_down')
+        report['effective_relax_2'] = report.pop('relax_up')
+        self.assertTrue(replay.controls_match(report, values))
+        for key in ('effective_relax_1', 'effective_relax_2', 'effective_relax_3', 'effective_levels', 'coarserelax', 'kdim', 'rtol'):
+            with self.subTest(key=key):
+                self.assertFalse(replay.controls_match(dict(report, **{key: -1}), values))
+                absent = dict(report); del absent[key]
+                self.assertFalse(replay.controls_match(absent, values))
+
+    def test_real_profile_setter_order_when_requested(self):
+        binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
+        if not binaries[0]:
+            self.skipTest('set MARS_TEST_PRESSURE_REPLAYS to locally built replay executables')
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not checker:
+            checker = str(self.root / 'checker')
+            subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-O2', '-ffp-contract=off',
+                            str(replay.CPP.with_name('pressure_residual_check.cpp')), '-o', checker], check=True)
+        system = self.root / 'one-rank'
+        n = 128
+        matrix = [[2.01 if i == j else -1. if abs(i-j) == 1 else 0. for j in range(n)] for i in range(n)]
+        write_system(system, matrix=matrix, rtol=1e-10)
+        config = self.root / 'gpu.settings'
+        for binary in binaries:
+            for method in (0, 1):
+                for levels in (1, 25):
+                    with self.subTest(binary=binary, method=method, levels=levels):
+                        values = dict(self.source_values, method=method, maxlevels=levels, rtol=1e-10, atol=0., maxiter=200)
+                        config.write_text(self.profile.text_profile(values))
+                        result = self.root / 'actual-result'
+                        process = subprocess.run([binary, str(system), str(config), str(result)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        self.assertEqual(process.returncode, 0, process.stderr.decode())
+                        report = replay.numeric_file(result / 'rank-000000.report')
+                        self.assertTrue(replay.controls_match(report, values))
+                        self.assertEqual(report['effective_levels'] == 1, levels == 1)
+                        check = subprocess.run([checker, str(system), str(result)], check=True, stdout=subprocess.PIPE)
+                        self.assertTrue(json.loads(check.stdout)['residual_passed'])
+                        shutil.rmtree(result)
 
 
 if __name__ == '__main__':

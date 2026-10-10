@@ -1,5 +1,96 @@
 # Replay the rejected pressure equation
 
+## Replay the failing system with the verified GPU profile
+
+The original-pressure first-step comparison found matching unscaled pressure
+matrix/RHS and distinct increments that both meet the reference target. Earlier
+tighter first-step results improved field agreement, but the tighter history
+failed a pressure solve. This experiment applies the verified GPU-compatible
+profile to that saved failure; it does not launch another flow run.
+
+`--profile gpu-reference --gpu-profile-pair PAIR` verifies the saved profile,
+its first-step runtime settings, baseline/reference identity and library hashes.
+It copies the profile's algorithm controls into a new settings file and replaces
+only its rtol/atol with the frozen system's captured target. The original profile,
+failure capture and reference replay remain unchanged. Rank count, MARS libraries
+and the reference's explicit algorithm controls must match the capture.
+
+For the frozen pressure equation A p' = b, p' remains in pressure units. The CSR,
+RHS, ownership and zero initial guess are unchanged. Acceptance remains
+max(atol, rtol ||b||), evaluated by the independent compensated residual checker
+with its evaluation bound. The replay uses the production profile setter order,
+including cycle-specific smoothers, and checks actual settings after AMG setup.
+AMG builds a fresh hierarchy; this is not a replay of the original hierarchy or
+an identical CPU/GPU solver. Native GPU SpMV stays selected. No correction solves
+or relaxed acceptance thresholds are added.
+
+Run this **once in the MARS terminal**, with its working uenv/Python environment.
+It rebuilds only the replay and checker, reuses the captured launcher, and compares
+against the archived reference replay. No new OpenAccel job is needed. Keep the
+source profile pair available for later identity checks, even if runtime
+libraries have been archived. All detailed files remain private on scratch.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+cmake -S "$repo" -B "$repo/build-hypre" \
+  -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_MPI=ON \
+  -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_HYPRE=ON \
+  -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_SEGREGATED=ON
+cmake --build "$repo/build-hypre" --parallel 4 --target \
+  mars_simple_pressure_replay mars_simple_pressure_residual_check
+
+capture="$scratch/simple-pressure-frozen-RlGQaI/capture"
+profile="$scratch/simple-original-pressure-1xGpr2/pair"
+reference="$scratch/simple-reference-replay-URu8yA/reference"
+IFS= read -r archive < "$reference/input-archive-current.txt"
+test -f "$archive/archive.json"
+run=$(mktemp -d "$scratch/simple-pressure-gpu-profile-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" replay \
+  --capture-run "$capture" --backend mars --profile gpu-reference \
+  --gpu-profile-pair "$profile" \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_replay" \
+  --output-dir "$run/mars" || status=$?
+cat "$run/mars/public.json"
+if (( status != 0 )); then exit "$status"; fi
+
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$capture" --mars-run "$run/mars" \
+  --reference-run "$reference" --reference-input-archive "$archive" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  --output "$run/comparison-public.json" || status=$?
+cat "$run/comparison-public.json"
+printf 'Share only: %s\n' "$run/comparison-public.json"
+exit "$status"
+)
+```
+
+`replay_complete` verifies execution and applied settings, not convergence.
+In the comparison, inspect `residual_checks.mars.residual_passed` and
+`stopping_checks.mars`: a failed or inconclusive independent check does not pass
+because Hypre reports convergence. The old reference can remain a recorded
+failure. A new MARS pass justifies a tighter-history test; it does not establish
+first-step field parity or nonlinear pump convergence. If it still fails, retain
+this frozen comparison for further solver analysis rather than repeat a long run.
+
+Local validation covers synthetic profile provenance, target preservation,
+wrong cycle settings, independent rejection of bad solutions, and real CPU
+Hypre 2.33/3.1 GMRES/FlexGMRES with one and multiple AMG levels. CPU profile tests
+exercise configuration and residual checks; CUDA compilation and execution remain
+a user-run gate.
+
+
 This is an opt-in diagnostic, not a new pressure algorithm. It freezes the first
 rejected pressure equation `A phi = b` before the existing error stops SIMPLE.
 It saves owned CSR rows, the local-to-global solver map, RHS, halo-complete

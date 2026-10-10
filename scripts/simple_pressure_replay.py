@@ -23,6 +23,7 @@ CAPTURE_MARKER = '[simple-pressure-capture] complete; files are private; origina
 ROOT = Path(__file__).resolve().parent.parent
 CPP = ROOT / 'tests/reference/openaccel/simple_performance/pressure_replay.cpp'
 HEADERS = [ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp',
+           ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp',
            ROOT / 'backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_capture.hpp']
 
 
@@ -100,7 +101,12 @@ def checked_replay_record(path, name, capture_dir, capture, check, archive=None)
     check['failed_check'] = 'replay_binding'
     require(record['schema'] == SCHEMA and record['backend'] == name and record['exit_code'] == 0
             and record['capture_sha256'] == digest(capture_dir / 'capture.json'))
-    require(record['profile'] in ('captured', 'reference') and (name != 'mars' or record['profile'] == 'captured'))
+    require(record['profile'] in ('captured', 'reference', 'gpu-reference')
+            and (name != 'mars' or record['profile'] in ('captured', 'gpu-reference'))
+            and (name != 'reference' or record['profile'] != 'gpu-reference'))
+    if record['profile'] == 'gpu-reference':
+        check['failed_check'] = 'gpu_profile_binding'
+        checked_gpu_configuration(path, record, capture_dir)
     check['failed_check'] = 'input_archive' if archive is not None else 'replay_inputs'
     check['inputs'] = replay_input_checks(path, record, capture_dir, capture, archive)
     check['failed_check'] = 'replay_outputs'
@@ -336,6 +342,63 @@ def captured_record(directory):
     return record
 
 
+def gpu_configuration(pair, capture_dir, capture):
+    import simple_pressure_profile as profile
+    pair = pair.resolve()
+    baseline, launches, values, identity = profile.check_inputs(pair)
+    current = profile.check_launch(pair, baseline, launches['mars'], identity)
+    profile.check_runtime(pair, current['ranks'], values)
+    require(current['ranks'] == capture['ranks'] and current['libraries'] == capture['libraries'])
+    require(all(launches['openaccel'][key] == capture['reference'][key]
+                for key in ('executable_sha256', 'libraries')))
+    config, _ = settings.saved_configuration(baseline)
+    explicit = reference_controls(config, (values['atol'], values['rtol']))
+    saved = numeric_file(capture_dir / 'reference.settings')
+    without_target = lambda v: {k: x for k, x in v.items() if k not in ('rtol', 'atol')}
+    require(without_target(explicit) == without_target(saved))
+    # The profile supplies the algorithm; the frozen system keeps its own target.
+    _, target, _ = capture_inputs(capture_dir / 'system')
+    values = dict(values, atol=target[0], rtol=target[1])
+    profile.validate(values)
+    paths = [pair / name for name in ('pair.json', 'case.json', 'pressure.profile', 'reference/input.i')]
+    paths += [pair / 'defaults' / name for name in profile.DEFAULT_FILES]
+    paths += [baseline / name for name in ('pair.json', 'case.json')]
+    for directory, launch in ((pair / 'mars', current), (baseline / 'mars', launches['mars']),
+                              (baseline / 'reference', launches['openaccel'])):
+        paths += [directory / name for name in ('launch.json', 'launch-start.json')]
+        paths += [directory / name for name in launch['files']]
+    return values, hashes(paths)
+
+
+def checked_gpu_configuration(path, record, capture_dir):
+    import simple_pressure_profile as profile
+    source = Path(record['gpu_profile_source'])
+    configuration = path / 'gpu-reference.settings'
+    require(record['backend'] == 'mars' and record['command'][-2] == str(configuration))
+    for file in (source, configuration):
+        require(str(file) in record['inputs'] and digest(file) == record['inputs'][str(file)])
+    values = numeric_file(source)
+    profile.validate(values)
+    _, target, _ = capture_inputs(capture_dir / 'system')
+    values.update(atol=target[0], rtol=target[1])
+    require(numeric_file(configuration) == values)
+    profile.validate(values)
+    return values
+
+
+def controls_match(report, expected):
+    expected = {k: v for k, v in expected.items() if not k.startswith('effective_')}
+    if 'relax_down' in expected or 'relax_up' in expected:
+        expected['effective_relax_3'] = expected['coarserelax']
+        levels = report.get('effective_levels', 0)
+        if not math.isfinite(levels) or levels != int(levels) or not 1 <= levels <= expected['maxlevels']:
+            return False
+    for key, cycle in (('relax_down', 1), ('relax_up', 2)):
+        if key in expected:
+            expected['effective_relax_' + str(cycle)] = expected.pop(key)
+    return all(report.get(k) == v for k, v in expected.items() if k != 'hypre_release')
+
+
 def loaded_library_checks(directory, ranks, expected, executable):
     accepted = {kind: {value for name, value in expected.items() if defaults.library_kind(name) == kind}
                 for kind in ('hypre', 'mpi')}
@@ -375,7 +438,7 @@ def inspect_replay(directory, public):
                   convergence_verified=False, solver_launched_by_inspection=False)
     record = startup.read_json(directory / 'launch-start.json')
     require(record['schema'] == SCHEMA and record['backend'] in ('mars', 'reference'))
-    require(record['profile'] in ('captured', 'reference'))
+    require(record['profile'] in ('captured', 'reference', 'gpu-reference'))
     command = record['command']
     require(isinstance(command, list) and len(command) >= 4)
     capture_dir = Path(command[-3]).parent
@@ -394,6 +457,8 @@ def inspect_replay(directory, public):
         except Exception:
             checks[label] = False
     check('launch_inputs_unchanged', lambda: verify(record['inputs']))
+    if record['profile'] == 'gpu-reference':
+        check('gpu_profile_binding_verified', lambda: checked_gpu_configuration(directory, record, capture_dir))
     status_file = directory / 'run.exit'
     public['exit_file_present'] = status_file.is_file()
     public['process_exit_code'] = None
@@ -429,6 +494,8 @@ def inspect_replay(directory, public):
     public.update(checks)
     if not checks['launch_inputs_unchanged']:
         failure = 'inputs_changed'
+    elif checks.get('gpu_profile_binding_verified') is False:
+        failure = 'gpu_profile_binding'
     elif public['process_exit_code'] is None:
         failure = 'launcher_exit_missing_or_invalid'
     elif public['process_exit_code'] != 0:
@@ -449,7 +516,19 @@ def replay(args, output, public):
     public['failed_check'] = 'capture_identity'
     capture_dir = args.capture_run.resolve(); record = captured_record(capture_dir)
     profile = args.profile or ('reference' if args.backend == 'reference' else 'captured')
-    require(not (args.backend == 'mars' and profile != 'captured'))
+    public['failed_check'] = 'profile_selection'
+    require((profile in ('captured', 'gpu-reference') if args.backend == 'mars' else profile in ('captured', 'reference'))
+            and (args.gpu_profile_pair is not None) == (profile == 'gpu-reference'))
+    profile_inputs = {}
+    if profile == 'gpu-reference':
+        import simple_pressure_profile as gpu_profile
+        public['failed_check'] = 'gpu_profile_identity'
+        values, profile_inputs = gpu_configuration(args.gpu_profile_pair, capture_dir, record)
+        configuration = output / 'gpu-reference.settings'
+        configuration.write_text(gpu_profile.text_profile(values))
+        profile_inputs.update(hashes([configuration]))
+    else:
+        configuration = capture_dir / ('reference.settings' if profile == 'reference' else 'system')
     expected = record['libraries'] if args.backend == 'mars' else record['reference']['libraries']
     public['failed_check'] = 'runtime_libraries'
     defaults.unchanged(expected)
@@ -473,10 +552,13 @@ def replay(args, output, public):
     libraries = startup.runtime_libraries(executable)
     defaults.probe_dependencies(libraries, expected, True)
     inputs.update(hashes([executable, capture_dir / 'capture.json'])); inputs.update(libraries); inputs.update(record['files'])
-    configuration = capture_dir / ('reference.settings' if profile == 'reference' else 'system')
+    inputs.update(profile_inputs)
     command = record['launcher'] + [str(executable), str(capture_dir / 'system'), str(configuration), str(output / 'result')]
     launch = dict(schema=SCHEMA, backend=args.backend, profile=profile, command=command, inputs=inputs,
                   environment=probe.solver_environment(os.environ), capture_sha256=digest(capture_dir / 'capture.json'))
+    if profile == 'gpu-reference':
+        launch['gpu_profile_source'] = str(args.gpu_profile_pair.resolve() / 'pressure.profile')
+        checked_gpu_configuration(output, launch, capture_dir)
     startup.write_json(output / 'launch-start.json', launch)
     public['failed_check'] = 'replay_launch'
     with (output / 'run.log').open('xb') as log:
@@ -488,6 +570,11 @@ def replay(args, output, public):
     require(marker(output / 'result', 'mars-pressure-replay-v1') == record['ranks'])
     public['failed_check'] = 'loaded_library_identity'
     loaded_libraries_match(output / 'result', record['ranks'], expected, executable, public)
+    if profile == 'gpu-reference':
+        public['failed_check'] = 'gpu_profile_runtime_settings'
+        reports = [numeric_file(rank_file(output / 'result', rank, '.report')) for rank in range(record['ranks'])]
+        require(all(controls_match(report, values) for report in reports))
+        public.update(recorded_gpu_pressure_settings_verified=True, captured_pressure_target_preserved=True)
     public['failed_check'] = 'inputs_changed'
     verify(inputs)
     launch.update(exit_code=0, files=hashes(list((output / 'result').iterdir()) +
@@ -559,12 +646,15 @@ def compare(args, public):
             checks[name]['backend_converged_flag'] = all(r['result_converged'] == 1 for r in reports)
             control_matches = True
             for rank, report in enumerate(reports):
-                config = (rank_file(directory / 'system', rank, '.settings') if record['profile'] == 'captured'
-                          else directory / 'reference.settings')
+                config = (rank_file(directory / 'system', rank, '.settings') if record['profile'] == 'captured' else
+                          path / 'gpu-reference.settings' if record['profile'] == 'gpu-reference' else directory / 'reference.settings')
                 expected = numeric_file(config)
-                control_matches = control_matches and all(report.get(k) == v for k, v in expected.items()
-                                                          if k != 'hypre_release' and not k.startswith('effective_'))
+                control_matches = control_matches and controls_match(report, expected)
             checks[name]['recorded_controls_match_requested_profile'] = control_matches
+            if record['profile'] == 'gpu-reference':
+                public['failed_check'] = name + '_gpu_profile_runtime_settings'
+                require(control_matches)
+                checks[name]['captured_pressure_target_preserved'] = True
             public['failed_check'] = name + '_replay_stopping_report'
             stopping[name] = stopping_checks(reports, checks[name])
             public['failed_check'] = name + '_replay_inputs_changed'
@@ -587,7 +677,9 @@ def main(argv=None):
     c = sub.add_parser('capture'); c.add_argument('--pair', type=Path, required=True); c.add_argument('--executable', type=Path, required=True)
     c.add_argument('--output-dir', type=Path, required=True)
     r = sub.add_parser('replay'); r.add_argument('--capture-run', type=Path, required=True)
-    r.add_argument('--backend', choices=('mars', 'reference'), required=True); r.add_argument('--profile', choices=('captured', 'reference'))
+    r.add_argument('--backend', choices=('mars', 'reference'), required=True)
+    r.add_argument('--profile', choices=('captured', 'reference', 'gpu-reference'))
+    r.add_argument('--gpu-profile-pair', type=Path)
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
