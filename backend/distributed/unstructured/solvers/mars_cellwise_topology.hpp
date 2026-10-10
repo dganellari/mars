@@ -49,6 +49,12 @@ namespace cellwise {
 
 // ---- tables ----------------------------------------------------------------------------
 
+// Entity bits of an element's 32-bit masks (counting copies, Dirichlet entities): face f
+// at bit f, edge k at kEdgeBit + k, corner c at kVertexBit + c, interior nodes at
+// kInteriorBit. The gather kernel loads each entity's descriptor on the lane with the
+// same number, so one ballot gives the Dirichlet mask.
+constexpr int kEdgeBit = 8, kVertexBit = 20, kInteriorBit = 31;
+
 // One rank's tables over its local elements. Copies are coded as e * 6 + f (faces),
 // e * 12 + k (edges) or e * 8 + c (corners). Ranges are in canonical order throughout.
 struct UnstructuredTopology {
@@ -66,8 +72,8 @@ struct UnstructuredTopology {
     // Vertex stars.
     thrust::device_vector<int> vert_off, vert_ent;
     thrust::device_vector<unsigned char> vert_dirichlet;
-    // Per element: bit f (faces 0-5), 6 + k (edges), 18 + c (corners) set when this
-    // element holds the counting copy (the canonically first) of that entity's nodes.
+    // Per element: the entity bits of the entities whose counting copy (the canonically
+    // first) this element holds; kInteriorBit is always set.
     thrust::device_vector<unsigned> counting;
     // Per copy, so each copy of a node can find the others: face_nbr[e * 6 + f] is the
     // other copy of the face (-1 if none), face_code its frame in bits 0-2, the other
@@ -254,21 +260,25 @@ __global__ void counting_kernel(const int* pair_lo, long long pairs, const int* 
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     long long i = t;
-    if (i < pairs) { const int c = pair_lo[i]; flags[(c / 6) * 26 + c % 6] = 1; return; }
+    if (i < pairs) { const int c = pair_lo[i]; flags[(c / 6) * 32 + c % 6] = 1; return; }
     i -= pairs;
-    if (i < singles) { const int c = single_face[i]; flags[(c / 6) * 26 + c % 6] = 1; return; }
+    if (i < singles) { const int c = single_face[i]; flags[(c / 6) * 32 + c % 6] = 1; return; }
     i -= singles;
-    if (i < edges) { const int c = edge_ent[edge_off[i]] & 0x7fffffff; flags[(c / 12) * 26 + 6 + c % 12] = 1; return; }
+    if (i < edges) {
+        const int c = edge_ent[edge_off[i]] & 0x7fffffff;
+        flags[(c / 12) * 32 + kEdgeBit + c % 12] = 1;
+        return;
+    }
     i -= edges;
-    if (i < vertices) { const int c = vert_ent[vert_off[i]]; flags[(c / 8) * 26 + 18 + c % 8] = 1; }
+    if (i < vertices) { const int c = vert_ent[vert_off[i]]; flags[(c / 8) * 32 + kVertexBit + c % 8] = 1; }
 }
 
 __global__ void pack_counting_kernel(const unsigned char* flags, long long E, unsigned* bits)
 {
     const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (e >= E) return;
-    unsigned b = 0;
-    for (int i = 0; i < 26; ++i) b |= (unsigned)flags[e * 26 + i] << i;
+    unsigned b = 1u << kInteriorBit;
+    for (int i = 0; i < kInteriorBit; ++i) b |= (unsigned)flags[e * 32 + i] << i;
     bits[e] = b;
 }
 
@@ -418,7 +428,7 @@ inline UnstructuredTopology build_topology(const unsigned long long* const* d_ke
                                                             raw(T.vert_of), raw(T.edge_dirichlet),
                                                             raw(T.vert_dirichlet));
 
-    thrust::device_vector<unsigned char> flags(E * 26, 0);
+    thrust::device_vector<unsigned char> flags(E * 32, 0);
     counting_kernel<<<blocks(npairs + nsingles + T.edges() + T.vertices()), kThreads>>>(
         raw(T.pair_lo), npairs, raw(T.single_face), nsingles, raw(T.edge_off), raw(T.edge_ent), T.edges(),
         raw(T.vert_off), raw(T.vert_ent), T.vertices(), raw(flags));
@@ -556,42 +566,77 @@ inline void dss_by_entity(const double* d_in, double* d_out, const UnstructuredT
     MARS_CELLWISE_CK(cudaGetLastError());
 }
 
-// The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner;
-// index is its local number (f, k or c); i, j its position on a face, i on an edge.
+// The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner,
+// and its local number (f, k or c).
 struct LocalEntity {
-    int kind, index, i, j;
+    int kind, index;
 };
 
-__device__ inline LocalEntity local_entity(const Node& nd)
+__device__ inline LocalEntity local_entity(int a, int b, int c)
 {
-    const int x[3] = {nd.a, nd.b, nd.c};
+    const int x[3] = {a, b, c};
     int on = 0;
     for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == kP);
-    if (on == 0) return {0, 0, 0, 0};
-    if (on == 3) return {3, corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP), 0, 0};
+    if (on == 0) return {0, 0};
+    if (on == 3) return {3, corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP)};
     int axis = 0, o0, o1;
     if (on == 1) {
         while (x[axis] != 0 && x[axis] != kP) ++axis;
-        other_axes(axis, o0, o1);
-        return {1, axis * 2 + (x[axis] == kP), x[o0], x[o1]};
+        return {1, axis * 2 + (x[axis] == kP)};
     }
     while (x[axis] == 0 || x[axis] == kP) ++axis;   // the edge runs along the free axis
     other_axes(axis, o0, o1);
-    return {2, axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP), x[axis], 0};
+    return {2, axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP)};
+}
+
+__device__ inline int entity_bit(const LocalEntity& le)
+{
+    if (le.kind == 0) return kInteriorBit;
+    return (le.kind == 1 ? 0 : (le.kind == 2 ? kEdgeBit : kVertexBit)) + le.index;
 }
 
 // ---- gather form: every copy sums its own node ------------------------------------
 //
 // One warp per element, elements in grid-stride order: the elements in flight form a
-// contiguous window, so on an SFC-ordered mesh the neighbours' copies are read while
-// they are still in L2. Each lane reads and writes its copies once, in full memory
-// sectors. The element's descriptors are loaded once, by lanes 0-5 (faces), 8-19
-// (edges) and 20-27 (vertices), and reach the other lanes by shuffle, so a copy waits
-// for one descriptor load and its star entries, not a chain of table loads.
+// contiguous window, so on an SFC-ordered mesh the neighbours' copies are still in L2
+// when they are read. A warp stages its element's 512 values in shared memory with one
+// coalesced load, adds the other copy of every face node (one loop), sums the edge and
+// vertex stars (a second loop), then writes all 512 results with one coalesced store.
+// Interior nodes need no work. Each loop runs one kind of node, so lanes do not wait on
+// each other's paths, and the reference-hex index arithmetic comes from tables built
+// once per thread block.
 // Every copy of a node gets the same bits: a face adds its two copies (addition is
 // commutative), edges and vertices sum their stars in canonical order.
 
-constexpr int kEdgeLane = 8, kVertexLane = 20;
+struct HexTables {
+    unsigned short face_l[6 * kFaceNodes];   // local node of face f at position q = (i - 1) * 6 + j - 1
+    unsigned char face_map[64 * kFaceNodes];  // frame codes (own | other << 3), own q -> the other's q
+    unsigned short edge_l[12 * kN];           // local node of edge k at position t
+    unsigned short corner_l[8];
+    unsigned char bit[kN3];                   // entity bit of every local node
+};
+
+__device__ inline void build_hex_tables(HexTables& h)
+{
+    for (int i = threadIdx.x; i < 64 * kFaceNodes; i += blockDim.x) {
+        const int q = i % kFaceNodes, code = i / kFaceNodes;
+        int I, J, i2, j2;
+        face_to_canonical(code & 7, 1 + q / 6, 1 + q % 6, I, J);
+        canonical_to_face(code >> 3, I, J, i2, j2);
+        h.face_map[i] = (unsigned char)((i2 - 1) * 6 + j2 - 1);
+    }
+    for (int i = threadIdx.x; i < 6 * kFaceNodes; i += blockDim.x)
+        h.face_l[i] = (unsigned short)face_node(i / kFaceNodes, 1 + (i % kFaceNodes) / 6, 1 + i % 6);
+    for (int i = threadIdx.x; i < 12 * kN; i += blockDim.x) h.edge_l[i] = (unsigned short)edge_node(i / kN, i % kN);
+    if (threadIdx.x < 8) h.corner_l[threadIdx.x] = (unsigned short)corner_node(threadIdx.x);
+    for (int l = threadIdx.x; l < kN3; l += blockDim.x)
+        h.bit[l] = (unsigned char)entity_bit(local_entity(l / kNN, (l / kN) % kN, l % kN));
+    __syncthreads();
+}
+
+// One pad slot per row of 8 spreads the strided nodes of a face over the shared-memory banks.
+constexpr int kStage = kN3 + kN3 / kN;
+__device__ inline int stage_slot(int l) { return l + l / kN; }
 
 // Sum of value over star entries [begin, end) in order; entries are loaded four at a
 // time so their value loads overlap.
@@ -614,77 +659,86 @@ __device__ inline double star_sum(const Value& value, const int* __restrict__ en
     return s;
 }
 
-// visit(t, s, dirichlet, counted) for every local copy t: s is the sum over all copies
-// of its node, counted marks the counting copy.
+// visit(t, s, dirichlet, counted) for every local copy t, in coalesced order: s is the
+// sum over all copies of its node, counted marks the counting copy. Called by every
+// thread of the block (it synchronises the block once, to build the tables).
 template <typename Value, typename Visit>
 __device__ inline void for_each_copy_sum(const TopologyView& T, const Value& value, Visit&& visit)
 {
+    constexpr unsigned kAll = 0xffffffffu;
+    constexpr int kFaceSlots = 6 * kFaceNodes, kEdgeSlots = 12 * kEdgeNodes, kStarSlots = kEdgeSlots + 8;
+    __shared__ HexTables h;
+    __shared__ double stage_all[kThreads / 32][kStage];
+    build_hex_tables(h);
     const int lane = threadIdx.x & 31;
+    double* stage = stage_all[threadIdx.x >> 5];
     const long long warps = ((long long)gridDim.x * blockDim.x) >> 5;
     for (long long e = ((long long)blockIdx.x * blockDim.x + threadIdx.x) >> 5; e < T.elements; e += warps) {
-        // Face lanes: d0 = other copy, d1 = frame codes. Edge lanes: d0 = edge_of entry,
-        // [d1, d2) = star. Vertex lanes: [d1, d2) = star.
+        // The descriptor of the entity with bit b sits on lane b. Face lanes: d0 = other
+        // copy, d1 = frame codes. Edge lanes: d0 = edge_of entry, [d1, d2) = star.
+        // Vertex lanes: [d1, d2) = star.
         int d0 = 0, d1 = 0, d2 = 0, dir = 0;
         if (lane < 6) {
             d0 = T.face_nbr[e * 6 + lane];
             d1 = T.face_code[e * 6 + lane];
             dir = d1 >> 6;
-        } else if (lane >= kEdgeLane && lane < kEdgeLane + 12) {
-            d0 = T.edge_of[e * 12 + lane - kEdgeLane];
+        } else if (lane >= kEdgeBit && lane < kEdgeBit + 12) {
+            d0 = T.edge_of[e * 12 + lane - kEdgeBit];
             const int g = d0 & 0x7fffffff;
             d1 = T.edge_off[g];
             d2 = T.edge_off[g + 1];
             dir = T.edge_dirichlet[g];
-        } else if (lane >= kVertexLane && lane < kVertexLane + 8) {
-            const int g = T.vert_of[e * 8 + lane - kVertexLane];
+        } else if (lane >= kVertexBit && lane < kVertexBit + 8) {
+            const int g = T.vert_of[e * 8 + lane - kVertexBit];
             d1 = T.vert_off[g];
             d2 = T.vert_off[g + 1];
             dir = T.vert_dirichlet[g];
         }
+        const unsigned dirichlet = __ballot_sync(kAll, dir != 0);
         const unsigned counting = T.counting[e];
-#pragma unroll 4
-        for (int i = 0; i < kN3 / 32; ++i) {
-            const int l = i * 32 + lane;
-            Node nd;
-            nd.e = e;
-            nd.t = e * kN3 + l;
-            nd.a = l / kNN;
-            nd.b = (l / kN) % kN;
-            nd.c = l % kN;
-            const LocalEntity le = local_entity(nd);
-            const int src = le.kind == 1 ? le.index
-                          : le.kind == 2 ? kEdgeLane + le.index
-                          : le.kind == 3 ? kVertexLane + le.index : 0;
-            // Every lane must execute every shuffle: no shuffle inside a condition.
-            const int n0 = __shfl_sync(0xffffffffu, d0, src);
-            const int n1 = __shfl_sync(0xffffffffu, d1, src);
-            const int n2 = __shfl_sync(0xffffffffu, d2, src);
-            const int n3 = __shfl_sync(0xffffffffu, dir, src);
-            const bool dirichlet = le.kind != 0 && n3 != 0;
-            double s;
-            if (le.kind == 0) {
-                s = value(nd.t);
-            } else if (le.kind == 1) {
-                s = value(nd.t);
-                if (n0 >= 0) {
-                    int I, J, i2, j2;
-                    face_to_canonical(n1 & 7, le.i, le.j, I, J);
-                    canonical_to_face((n1 >> 3) & 7, I, J, i2, j2);
-                    s += value((long long)(n0 / 6) * kN3 + face_node(n0 % 6, i2, j2));
-                }
-            } else if (le.kind == 2) {
-                const int tc = n0 < 0 ? kP - le.i : le.i;   // canonical position on the edge
-                s = star_sum(value, T.edge_ent, n1, n2, [tc](int c) {
-                    const int k = c & 0x7fffffff;
-                    return (long long)(k / 12) * kN3 + edge_node(k % 12, c < 0 ? kP - tc : tc);
-                });
-            } else {
-                s = star_sum(value, T.vert_ent, n1, n2,
-                             [](int c) { return (long long)(c / 8) * kN3 + corner_node(c % 8); });
+        const long long base = e * kN3;
+#pragma unroll
+        for (int it = 0; it < kN3 / 32; ++it) stage[stage_slot(it * 32 + lane)] = value(base + it * 32 + lane);
+        __syncwarp();
+        // Shuffles stay outside conditions: every lane must execute each of them.
+#pragma unroll
+        for (int p0 = 0; p0 < kFaceSlots; p0 += 32) {
+            const int p = p0 + lane;
+            const int f = p < kFaceSlots ? p / kFaceNodes : 0;
+            const int nbr = __shfl_sync(kAll, d0, f);
+            const int code = __shfl_sync(kAll, d1, f);
+            if (p < kFaceSlots && nbr >= 0) {
+                const int q = h.face_map[(code & 63) * kFaceNodes + p - f * kFaceNodes];
+                stage[stage_slot(h.face_l[p])] += value((long long)(nbr / 6) * kN3 + h.face_l[(nbr % 6) * kFaceNodes + q]);
             }
-            const int bit = le.kind == 1 ? le.index : (le.kind == 2 ? 6 + le.index : 18 + le.index);
-            visit(nd.t, s, dirichlet, le.kind == 0 || ((counting >> bit) & 1u));
         }
+        for (int p0 = 0; p0 < kStarSlots; p0 += 32) {
+            const int p = p0 + lane;
+            const int k = p < kEdgeSlots ? p / kEdgeNodes : 0;
+            const int src = p < kEdgeSlots ? kEdgeBit + k : (p < kStarSlots ? kVertexBit + p - kEdgeSlots : 0);
+            const int n0 = __shfl_sync(kAll, d0, src);
+            const int n1 = __shfl_sync(kAll, d1, src);
+            const int n2 = __shfl_sync(kAll, d2, src);
+            if (p < kEdgeSlots) {
+                const int t = 1 + p - k * kEdgeNodes;
+                const int tc = n0 < 0 ? kP - t : t;   // canonical position on the edge
+                stage[stage_slot(h.edge_l[k * kN + t])] = star_sum(value, T.edge_ent, n1, n2, [&](int c) {
+                    const int m = c & 0x7fffffff;
+                    return (long long)(m / 12) * kN3 + h.edge_l[(m % 12) * kN + (c < 0 ? kP - tc : tc)];
+                });
+            } else if (p < kStarSlots) {
+                stage[stage_slot(h.corner_l[p - kEdgeSlots])] = star_sum(
+                    value, T.vert_ent, n1, n2, [&](int c) { return (long long)(c / 8) * kN3 + h.corner_l[c % 8]; });
+            }
+        }
+        __syncwarp();
+#pragma unroll
+        for (int it = 0; it < kN3 / 32; ++it) {
+            const int l = it * 32 + lane;
+            const int bit = h.bit[l];
+            visit(base + l, stage[stage_slot(l)], ((dirichlet >> bit) & 1u) != 0, ((counting >> bit) & 1u) != 0);
+        }
+        __syncwarp();   // the next element reuses the stage
     }
 }
 
@@ -708,10 +762,7 @@ struct CountingWeight {
     const unsigned* counting;
     __device__ double operator()(const Node& nd) const
     {
-        const LocalEntity le = local_entity(nd);
-        if (le.kind == 0) return 1.0;
-        const int bit = le.kind == 1 ? le.index : (le.kind == 2 ? 6 + le.index : 18 + le.index);
-        return (counting[nd.e] >> bit) & 1u ? 1.0 : 0.0;
+        return (counting[nd.e] >> entity_bit(local_entity(nd.a, nd.b, nd.c))) & 1u ? 1.0 : 0.0;
     }
 };
 
