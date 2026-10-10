@@ -1,5 +1,6 @@
 #include "channel.hpp"
 #include "mars_segregated_simple_expansion.hpp"
+#include <cstdlib>
 #include <iostream>
 #ifdef __CUDACC__
 #define MARS_EXPANSION_TEST_HD __host__ __device__
@@ -11,6 +12,19 @@ using namespace mars::segregated::runtime;
 using namespace dsimple_gate;
 
 void check(bool ok,const char* what) { if(!ok) throw std::runtime_error(what); }
+void finish_stage(const char* stage) {
+#ifdef MARS_REPLAY_CUDA
+    const auto status=cudaDeviceSynchronize();
+    if(status!=cudaSuccess) {
+        // Report the kernel error before Thrust cleanup touches the failed context.
+        std::cerr<<stage<<": "<<cudaGetErrorString(status)<<std::endl;
+        MPI_Abort(MPI_COMM_WORLD,1);
+        std::abort();
+    }
+#else
+    (void)stage;
+#endif
+}
 struct HiddenField {
     SimpleMesh mesh; double *high,*low; bool constant;
     MARS_EXPANSION_TEST_HD void operator()(int n) const {
@@ -19,7 +33,12 @@ struct HiddenField {
 };
 struct ExpandedActionTest {
     int* failed;
+    // Assembly uses atomics, whose destinations cannot be thread-local arrays.
+    double *matrix_values,*rhs,*balance;
     MARS_EXPANSION_TEST_HD void operator()(int) const {
+        for(int i=0;i<9;++i) matrix_values[i]=0;
+        for(int i=0;i<3;++i) rhs[i]=i==0?1:0;
+        for(int i=0;i<4;++i) balance[i]=0;
         const auto p=PressureValue{0x1p60,.25}+PressureValue{0,.125}*.3;
         const auto change=p-PressureValue{0x1p60,.25};
         bool ok=p.high==0x1p60 && fabs(change.rounded()-.0375)<4e-17;
@@ -46,7 +65,7 @@ struct ExpandedActionTest {
         SimpleState state{}; state.velocity=velocity; state.influence=influence;
         ExpandedVelocityUpdate{state,gradient,gradient_low}(0);
         ok=ok && velocity[0]==-0x1p-54;
-        double volume[1]={1},div[1]={0},factor[1]={0},pressure_low[1]={0},matrix_values[9]{},rhs[3]={1,0,0};
+        double volume[1]={1},div[1]={0},factor[1]={0},pressure_low[1]={0};
         int offsets[2]={0,1},columns[1]={0};
         state.volume=volume; state.mass_divergence=div; state.boundary_factor=factor; state.error=failed;
         state.pressure_gradient=gradient; state.pressure_gradient_low=gradient_low; state.pressure_low=pressure_low;
@@ -57,9 +76,10 @@ struct ExpandedActionTest {
         int n0[1]={0},n1[1]={1},n2[1]={2},n3[1]={3},flags[3]={1,1,1};
         double cx[4]={0,1,0,0},cy[4]={0,0,1,0},cz[4]={0,0,0,1};
         const double xyz[12]={0,0,0,1,0,0,0,1,0,0,0,1};
-        TetGeometry<double> geometry; ok=ok && tet_geometry(xyz,geometry);
+        TetGeometry<double> geometry;
+        if(!tet_geometry(xyz,geometry)) { *failed=1; return; }
         SimpleFace face{0,0,1}; SimpleMesh mesh{4,1,1,{n0,n1,n2,n3},cx,cy,cz,&face,&geometry};
-        double u[12],d[12]{},pg[12]{},pfield[4]={10,10,10,10},plow[4]{},trace[3]={11,9,10},tl[3]={0x1p-54,0,0},flux[3]{},balance[4]{};
+        double u[12],d[12]{},pg[12]{},pfield[4]={10,10,10,10},plow[4]{},trace[3]={11,9,10},tl[3]={0x1p-54,0,0},flux[3]{};
         double area[3]; tet_boundary_area(geometry,0,area);
         for(int k=0;k<4;++k) for(int j=0;j<3;++j) u[3*k+j]=area[j];
         SimpleState outlet{}; outlet.velocity=u; outlet.pressure=pfield; outlet.pressure_low=plow;
@@ -88,14 +108,20 @@ int main(int argc,char** argv) {
         run.state.pressure_low=low.data(); run.state.pressure_gradient_low=grad_low.data(); run.state.trace_low=trace_low.data();
         run.state.old_pressure_low=old_low.data();
         PressureIncidence cells(run.mesh,false),faces(run.mesh,true);
-        launch(1,ExpandedActionTest{run.error.data()}); run.check("pair arithmetic or pressure flux action failed");
+        Array<double> action_storage(16);
+        finish_stage("expanded test setup");
+        launch(1,ExpandedActionTest{run.error.data(),action_storage.data(),action_storage.data()+9,action_storage.data()+12});
+        finish_stage("expanded pressure actions");
+        run.check("pair arithmetic or pressure flux action failed");
         launch(run.n,HiddenField{run.mesh,run.pressure.data(),low.data(),true});
         launch(run.n,ExpandedGradient{run.mesh,cells.offsets.data(),cells.entries.data(),run.pressure.data(),low.data(),run.volume.data(),grad.data(),grad_low.data(),run.error.data()});
+        finish_stage("constant pressure gradient");
         for(double v:grad.host()) check(v==0,"constant pressure gradient nonzero");
         launch(run.n,HiddenField{run.mesh,run.pressure.data(),low.data(),false});
         launch(run.n,ExpandedGradient{run.mesh,cells.offsets.data(),cells.entries.data(),run.pressure.data(),low.data(),run.volume.data(),grad.data(),grad_low.data(),run.error.data()});
         // The ordinary operator on the small field is an independent linearity oracle.
         gradient<1>(run.mesh,run.state,low.data(),run.sum,run.pg.data());
+        finish_stage("affine pressure gradients");
         auto g=grad.host(),gl=grad_low.host(),reference=run.pg.host();
         for(int i=0;i<3*run.n;++i) check(std::abs(g[i]+gl[i]-reference[i])<1e-15,"hidden field gradient lost");
         std::vector<int> owned; for(int i=rank;i<run.b;i+=ranks) owned.push_back(i);
@@ -105,6 +131,7 @@ int main(int argc,char** argv) {
         check(mean.high==0x1p60 && std::abs(mean.low-(.25+.125-.03125))<1e-12,"paired outlet mean lost");
         launch(run.b,ExpandedTrace{run.mesh,run.state,run.controls,mean});
         launch(run.n,ExpandedOutletPressure{run.mesh,run.state,faces.offsets.data(),faces.entries.data(),run.outlet_area.data(),run.outlet_pressure.data(),outlet_low.data()});
+        finish_stage("expanded outlet pressure");
         auto trace=run.trace.host(),tl=trace_low.host(),small=low.host();
         for(int i=0;i<run.b;++i) if(input.faces[i].kind==1) for(int j=0;j<3;++j) {
             const auto f=input.faces[i]; const int n=input.nodes[tet_face_node(f.ordinal,j)][f.element];
@@ -114,6 +141,7 @@ int main(int argc,char** argv) {
         run.old_pressure.copy_from(run.pressure); old_low.copy_from(low);
         Array<double> increment(run.n),increment_low(std::vector<double>(run.n,.125));
         for(int step=0;step<2;++step) launch(run.n,ExpandedPressureUpdate{run.pressure.data(),low.data(),increment.data(),increment_low.data(),.3});
+        finish_stage("repeated pressure updates");
         const auto sums=reduce_sums(run.n,SimpleNodeSums{run.state,run.momentum.rhs.data(),run.old_velocity.data(),run.old_pressure.data()});
         check(std::abs(sums.pressure_change2/sums.volume-.075*.075)<1e-16,"pressure change ignores low history");
         run.check("expanded kernels failed");

@@ -83,8 +83,17 @@ and owned-row/ghost residual rejection. Three-step public-channel runs on
 high-resolution configurations. Real CPU Hypre replay regressions exercise the
 shared recovery implementation, including a rational rounding oracle.
 
-CUDA compilation, these GPU gates, full-flow convergence and pump field parity
-remain pending. Run this block in the **MARS terminal only**, in one tmux pane.
+The first user-run GPU check on 2026-10-10 passed the one-rank matrix/recovery
+gate: 127 passed, zero failed, eight skipped. The following operator gate
+aborted with a CUDA launch failure reported during cleanup. Source inspection
+found that its single-thread fixture passed local arrays to assembly atomics.
+The matrix, RHS and boundary-balance destinations now use device allocations;
+test-only synchronization reports kernel errors before cleanup. Host operator
+checks pass on 1/2/4 ranks. The corrected GPU operator gate and remaining
+multi-rank/flow gates still need to run. Full-flow convergence and pump field
+parity remain unverified.
+
+Run this block in the **MARS terminal only**, in one tmux pane.
 It builds the production executable and runs public synthetic tests on 1/2/4
 GPUs. No OpenAccel environment, Python modules or private geometry are needed.
 The matrix gate must produce a nonzero retained low component and verify that
