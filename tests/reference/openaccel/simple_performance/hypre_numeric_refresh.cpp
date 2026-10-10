@@ -4,6 +4,7 @@
 #include "host_gmres.hpp"
 #undef private
 #include "pressure_profile_fixture.hpp"
+#include "../distributed_matrix/gate_problem.hpp"
 // Sequential Hypre headers use MPI aliases; the wrapper's host stubs remain active.
 #undef MPI_Comm
 #undef MPI_COMM_WORLD
@@ -580,12 +581,44 @@ void stagnation_correction() {
     std::cout<<"PASS: public Hypre early stop recovered against exact solution without tolerance or setup changes\n";
 }
 
+void fill_profile_system(const dmatrix_gate::Problem& problem,Matrix& matrix,unsigned seed,
+                         std::vector<double>& rhs,std::vector<double>& truth) {
+    matrix.column_count=problem.nodes+1;
+    matrix.offsets={0}; matrix.columns.clear(); matrix.values.clear();
+    rhs.resize(problem.nodes); truth.resize(problem.nodes);
+    int all_weak=0;
+    for (int row=0;row<problem.nodes;++row) {
+        const int g=problem.solver_to_global[row];
+        double row_sum=0,diag=0;
+        for (int u:problem.neighbors[g]) {
+            const double value=problem.value(g,u,0,0,seed);
+            matrix.columns.push_back(problem.nodes-1-problem.solver_node[u]);
+            matrix.values.push_back(value);
+            row_sum+=value;
+            if (u==g) diag=value;
+            else if (problem.options.diffusion) {
+                check(value<0 && value==problem.value(u,g,0,0,seed),"diffusion coupling is not symmetric negative");
+            }
+        }
+        matrix.offsets.push_back(matrix.columns.size());
+        if (problem.options.diffusion) check(diag>0 && row_sum>0,"diffusion matrix lost strict diagonal dominance");
+        all_weak+=std::abs(row_sum)>.9*std::abs(diag);
+        rhs[row]=problem.product(g,0,seed,10+seed);
+        truth[row]=problem.solution(g,0,10+seed);
+    }
+    check(all_weak==(problem.options.diffusion?0:problem.nodes),"fixture strength-filter expectation changed");
+}
+
 void explicit_pressure_profile() {
     namespace settings=mars::fem::pressure_settings;
-    for (bool flex:{false,true}) for (bool one_level:{false,true}) {
-        Matrix matrix; make_graph(matrix,160);
-        std::vector<HYPRE_BigInt> map(161);
-        for (int i=0;i<160;++i) map[i]=159-i;
+    // Also retain the old all-weak fixture: maxlevels alone cannot force coarsening.
+    for (bool diffusion:{false,true}) for (bool flex:{false,true}) for (bool one_level:{false,true}) {
+        dmatrix_gate::Options options; options.diffusion=diffusion;
+        dmatrix_gate::Problem problem(1,1,options);
+        const int n=problem.nodes;
+        Matrix matrix;
+        std::vector<HYPRE_BigInt> map(n+1);
+        for (int i=0;i<n;++i) map[i]=n-1-i;
         map.back()=-1;
         // Deliberately oppose the profile; pressure must override only this instance.
         setenv("MARS_HYPRE_FLEXGMRES",flex?"0":"1",1);
@@ -599,16 +632,39 @@ void explicit_pressure_profile() {
         expect_failure([&] { settings::configure_gpu_profile(pressure,bad); });
         settings::configure_gpu_profile(pressure,profile);
         pressure.enable_fixed_graph_updates();
-        for (int epoch:{0,2}) {
-            std::vector<double> b,truth,x(160,0),other(160,0);
-            fill_system(matrix,map,epoch,b,truth);
-            check(pressure.solve(matrix,b,x,0,160,0,160,map),"profile solve rejected");
+        for (unsigned seed:{1u,2u}) {
+            std::vector<double> b,truth,x(n,0),other(n,0);
+            fill_profile_system(problem,matrix,seed,b,truth);
+            check(pressure.solve(matrix,b,x,0,n,0,n,map),"profile solve rejected");
             verify(matrix,map,b,x,truth);
             pressure.inspect_prepared([&](auto solver,auto amg,bool flexible) {
-                check(flexible==flex && pressure_profile_matches(profile,settings::snapshot(solver,amg,flexible),one_level),
-                      "pressure profile not applied after setup");
+                const auto actual=settings::snapshot(solver,amg,flexible);
+                std::ostringstream detail;
+                check(flexible==flex && pressure_profile_controls_match(profile,actual,detail),"pressure profile not applied after setup");
+                check(pressure_profile_levels_match(actual,one_level || !diffusion),"pressure profile hierarchy depth incorrect");
+                std::cout<<"profile diffusion="<<diffusion<<" flexible="<<flex<<" maxlevels="<<profile.at("maxlevels")
+                         <<" round="<<seed<<" actual_levels="<<actual.at("effective_levels")<<'\n';
+                if (diffusion && !flex && !one_level && seed==1) {
+                    for (const auto& [key,value]:profile) {
+                        const auto name=key=="relax_down"?"effective_relax_1":key=="relax_up"?"effective_relax_2":key;
+                        auto changed=actual; changed[name]=value+1;
+                        std::ostringstream mismatch;
+                        check(!pressure_profile_controls_match(profile,changed,mismatch)
+                              && mismatch.str().find(name)!=std::string::npos,"changed setting escaped the profile check");
+                    }
+                    for (const auto* key:{"effective_relax_3","kdim"}) {
+                        auto missing=actual; missing.erase(key);
+                        std::ostringstream mismatch;
+                        check(!pressure_profile_controls_match(profile,missing,mismatch),"missing setting escaped the profile check");
+                    }
+                    auto collapsed=actual; collapsed["effective_levels"]=1;
+                    check(pressure_profile_controls_match(profile,collapsed,detail)
+                          && !pressure_profile_levels_match(collapsed,false),"collapsed hierarchy was confused with controls");
+                    collapsed.erase("effective_levels");
+                    check(!pressure_profile_levels_match(collapsed,false),"missing hierarchy depth passed");
+                }
             });
-            check(momentum.solve(matrix,b,other,0,160,0,160,map),"unmodified momentum solve rejected");
+            check(momentum.solve(matrix,b,other,0,n,0,n,map),"unmodified momentum solve rejected");
             momentum.inspect_prepared([&](auto solver,auto amg,bool flexible) {
                 const auto actual=settings::snapshot(solver,amg,flexible);
                 check(flexible!=flex && actual.at("miniter")==3 && actual.at("maxiter")==300

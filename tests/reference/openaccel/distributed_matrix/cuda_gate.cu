@@ -22,6 +22,7 @@ using Vector=Solver::Vector;
 template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1,bool explicit_target=false,int profile_mode=0) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+" "+label+": ";
+    if (profile_mode) o.diffusion=true;
     Problem p(C,ranks,o); Local l=extract(p,rank);
     fill(p,l,rank,1,[&](int g,int c) { return p.product(g,c,1,11); });
     Device<C,HYPRE_BigInt> d(l);
@@ -44,11 +45,20 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         if (s.rows()) cudaMemset(x.data(),0,std::size_t(s.rows())*sizeof(double));
         const bool solved=solve_owned(solver,s,b,x);
         if (profile_mode) {
-            bool matches=false;
+            bool controls_match=false,levels_match=false;
+            std::ostringstream control_detail,level_detail;
             solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
-                matches=pressure_profile_matches(profile,mars::fem::pressure_settings::snapshot(krylov,amg,flexible),profile_mode==1);
+                const auto actual=mars::fem::pressure_settings::snapshot(krylov,amg,flexible);
+                controls_match=pressure_profile_controls_match(profile,actual,control_detail);
+                levels_match=pressure_profile_levels_match(actual,profile_mode==1);
+                level_detail<<"round="<<round<<" expected="<<(profile_mode==1?"1":">1")
+                            <<" actual="<<actual.at("effective_levels");
             });
-            report.result(tag+"actual pressure controls and hierarchy depth",all_true(matches,comm));
+            // Synthetic settings are public; print the failing rank's values as well.
+            if (!controls_match) std::cerr<<"rank "<<rank<<" "<<tag<<control_detail.str()<<'\n';
+            if (!levels_match) std::cerr<<"rank "<<rank<<" "<<tag<<level_detail.str()<<'\n';
+            report.result(tag+"actual pressure controls",all_true(controls_match,comm));
+            report.result(tag+"hierarchy depth",all_true(levels_match,comm),level_detail.str());
         }
         Buffer<double> local(C*std::size_t(l.nodes()),std::numeric_limits<double>::quiet_NaN());
         s.unpack(x.data(),x.size(),raw(local),local.size());

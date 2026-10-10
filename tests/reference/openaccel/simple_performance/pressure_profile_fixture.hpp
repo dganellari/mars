@@ -11,12 +11,29 @@ inline mars::fem::pressure_settings::Values pressure_profile_fixture(bool flex=f
         {"relax_down",13},{"relax_up",14},{"sweeps_1",1},{"sweeps_2",1},{"sweeps_3",1}};
 }
 
-inline bool pressure_profile_matches(const mars::fem::pressure_settings::Values& expected,
-                                    const mars::fem::pressure_settings::Values& actual,bool one_level) {
+inline bool pressure_profile_controls_match(const mars::fem::pressure_settings::Values& expected,
+                                           const mars::fem::pressure_settings::Values& actual,
+                                           std::ostream& detail) {
+    bool matches=true;
+    auto compare=[&](const std::string& name,double value) {
+        const auto found=actual.find(name);
+        if (found!=actual.end() && found->second==value) return;
+        matches=false;
+        detail<<name<<" expected="<<value<<" actual=";
+        if (found==actual.end()) detail<<"missing";
+        else detail<<found->second;
+        detail<<"; ";
+    };
     for (const auto& [key,value]:expected) {
         const auto name=key=="relax_down"?"effective_relax_1":key=="relax_up"?"effective_relax_2":key;
-        if (actual.at(name)!=value) return false;
+        compare(name,value);
     }
-    return actual.at("effective_relax_3")==expected.at("coarserelax")
-        && (one_level?actual.at("effective_levels")==1:actual.at("effective_levels")>1);
+    compare("effective_relax_3",expected.at("coarserelax"));
+    return matches;
+}
+
+inline bool pressure_profile_levels_match(const mars::fem::pressure_settings::Values& actual,bool one_level) {
+    const auto found=actual.find("effective_levels");
+    if (found==actual.end() || !std::isfinite(found->second) || found->second!=std::floor(found->second)) return false;
+    return one_level?found->second==1:found->second>1;
 }

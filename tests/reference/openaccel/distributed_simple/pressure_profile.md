@@ -69,6 +69,23 @@ and the successful `PrkNXY` defaults probe. It does not launch OpenAccel.
 The public gates exercise one-level/multilevel hierarchies, GMRES/FlexGMRES,
 two numerical updates and the exchanged independent residual.
 
+The pressure-profile cases use a seven-point diffusion operator on a synthetic
+6 by 5 by 4 grid, with zero exterior Dirichlet values and a positive reaction.
+For spacing one, the diagonal is `2*(wx+wy+wz)+0.125` and axial neighbors have
+coefficients `-wx`, `-wy`, `-wz`. Positive axis weights change between updates.
+The known solution, shuffled source IDs and uneven ownership are shared with
+the CPU regression. Requested controls and actual hierarchy depth are checked
+separately; the multilevel cases still require more than one level.
+
+The initial GPU gate reported four combined settings/depth failures while its
+linear solves passed. Its reused random matrix was unsuitable for multilevel
+coverage: all 120 rows in both updates satisfy Hypre's all-weak row test at
+`maxrowsum=0.9`. Local CPU Hypre 2.33.0 reproduces a single level with the requested
+relaxation values intact. Hypre's GPU strength kernel applies the same condition.
+The old combined output did not identify individual mismatched settings; the
+corrected gate prints these and the measured depth. Solver controls, tolerances
+and acceptance tests are unchanged.
+
 ```bash
 (
 set -euo pipefail
@@ -137,7 +154,9 @@ The CPU/GPU library versions, ordering and two AMG substitutions remain differen
 Synthetic Python tests exercise original-target preservation, generic/cycle
 setter ordering, explicit settings, saved defaults identity, reference reuse,
 tampered inputs, missing/ignored actual controls and environment isolation.
-The real CPU Hypre wrapper regression exercises GMRES/FlexGMRES with one and
-multiple levels, a fresh momentum instance and two cached pressure updates under
-ASan/UBSan. These checks validate configuration and lifecycle, not CUDA execution
-or performance. Run the public GPU gates above before the private comparison.
+The real CPU Hypre wrapper regression uses the same public matrix generator as
+the GPU gate. It retains the old random case to check legitimate one-level
+collapse and exercises diffusion with one and multiple levels, GMRES/FlexGMRES,
+a fresh momentum instance and two cached pressure updates under ASan/UBSan.
+These checks validate configuration and lifecycle, not CUDA execution or
+performance. Run the public GPU gates above before the private comparison.

@@ -31,6 +31,8 @@ int main(int argc,char** argv) {
         report.result("fault names decode",describe(0)=="none" && describe(capacity|nonfinite)=="capacity; nonfinite owned value or RHS");
         run_gates<1,HostCsr,std::int64_t>(MPI_COMM_WORLD,report);
         run_gates<3,HostCsr,std::int64_t>(MPI_COMM_WORLD,report);
+        Options diffusion; diffusion.diffusion=true;
+        run_gates<1,HostCsr,std::int64_t>(MPI_COMM_WORLD,report,diffusion);
     } catch (const std::exception& e) {
         std::cerr<<"rank "<<report.rank<<" unexpected exception: "<<e.what()<<std::endl; ++report.failures;
     }
