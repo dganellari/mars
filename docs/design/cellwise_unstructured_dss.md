@@ -118,32 +118,39 @@ is not used: it groups on the host and drops the 4th face corner.
 
 ## Several ranks
 
-Each rank holds only its local elements' copies. Copies on other ranks arrive by a
-**single-phase exchange of raw copies**: every rank sends its copies of each shared
-node to every other rank that holds the node, and all ranks then sum all copies in the
-canonical order. Results are bit-identical to one GPU, as in the structured version.
-(The alternative, per-rank partial sums combined in rank order, sends fewer values at
-edges and vertices but gives up identity with one GPU. The surface is dominated by
-faces, which have one copy per side either way.)
+Each rank's tables cover its own elements and, after them, **ghost elements**: every
+element of another rank that shares a vertex with one of its own (one element layer;
+cstone's star-completed halo is the same set). All copies of every shared node are then
+in the tables, so finding a node's holders needs no communication, the canonical order
+and the counting copy come out the same on every rank, and the DSS is bit-identical to
+one rank.
 
-- **Holder discovery** (setup): each rank sends (entity key, its rank, the identities of
-  its copies) for every entity on a rank boundary to a rendezvous rank,
-  `SfcNodeOwner(min corner key)` (`mars_sfc_ownership.hpp`), over the NBX
-  `sparseExchange`. The rendezvous rank returns every holder's full list. This does not
-  depend on the node-halo peer list, which can miss co-holders under SFC ownership,
-  and needs no node owner (HoHalo needs `MARS_OWNERSHIP=vote`, DofSpace needs SFC
-  ownership).
-- **Lists**: per peer, the copies to send in canonical order; on receipt they fill
-  ghost slots that `face_nbr` and the star tables reference at their canonical
-  positions. Counts follow from the shared entity sets, so sends and receives match by
-  construction.
-- **Exchange**: persistent device buffers, a duplicated communicator, GPU-aware
-  Isend/Irecv. Elements with no ghost copies run while the messages travel; the rest
-  run after the wait.
-- **Counting copy**: the first copy in canonical order may be remote, in which case no
-  local copy counts that node.
+- **Ghost data**: a ghost element needs its corner keys (for the tables) and, at each
+  DSS, the values of its shared nodes. These go into per-ghost blocks of 512 values
+  (about 10% extra memory at 64^3 elements per rank), of which only the shared nodes
+  are filled.
+- **Lists** (setup, on the device): a local face whose other copy is a ghost sends its
+  36 nodes to the ghost's owner and receives the ghost's; a star holding local and ghost
+  copies receives every ghost copy and sends every local copy once to each rank that
+  owns a ghost copy. Both sides sort these nodes by (peer, element id, local node), so
+  the messages carry values only. At setup one all-to-all checks the counts and one
+  exchange of hashed keys checks the order.
+- **Exchange**: pack into one device buffer, GPU-aware Isend/Irecv per peer on a
+  duplicated communicator, unpack into the ghost blocks. Elements that read no ghost
+  copy (none of their vertex stars holds a ghost) run while the messages travel; the
+  rest run after the wait.
+- **Counting copy**: the first copy in canonical order may be a ghost, and then no local
+  copy counts that node; every node is counted exactly once over all ranks.
+- **Dirichlet**: a local element's face with no other copy among local and ghost
+  elements is on the physical boundary. A ghost element's face that contains a local
+  vertex always has its other copy present, so ghost faces never mark a shared edge or
+  vertex by mistake.
 
-HoHalo and the `elemDof` scatter/gather stay useful as setup-time oracles.
+Code: `UnstructuredHalo` in `mars_cellwise_topology.hpp`; `block_elements` gives a
+structured sub-block and its ghost frame for tests. Measured on GH200 (rotated frames):
+the DSS on 4 and 8 ranks (32^3 elements) is bit-identical to one domain, and the Jacobi
+solve at ne = 8, deform 0.05 takes 151 iterations on one rank and 153 on 4 and 8, with
+the same residual history to 4 digits.
 
 ## Multigrid on unstructured meshes
 
@@ -165,9 +172,9 @@ HoHalo and the `elemDof` scatter/gather stay useful as setup-time oracles.
    bit-identical to one domain.
 2. GPU, one rank: DSS(1) = valence, DSS of a continuous field = valence x field,
    continuity, and on an unrotated cube the same values as the structured DSS.
-3. GPU, several ranks: bit-identical to one rank.
+3. GPU, several ranks: bit-identical to one rank (done, 4 and 8 ranks).
 4. Solver: Jacobi BiCGStab on a rotated cube with the same iteration count as the
-   structured solver.
+   structured solver (done: 62 at ne = 3, 151 at ne = 8 on one rank).
 
 ## Open risks
 
