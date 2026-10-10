@@ -556,14 +556,6 @@ inline void dss_by_entity(const double* d_in, double* d_out, const UnstructuredT
     MARS_CELLWISE_CK(cudaGetLastError());
 }
 
-// ---- gather form: every copy sums its own node ------------------------------------
-//
-// One thread per copy, element by element in the order of for_each_node, so an
-// element's values are read and written together in full memory sectors and its
-// neighbours' copies are mostly still in cache. Every copy of a node gets the same
-// bits: a face adds its two copies (addition is commutative), edges and vertices sum
-// their stars in canonical order.
-
 // The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner;
 // index is its local number (f, k or c); i, j its position on a face, i on an edge.
 struct LocalEntity {
@@ -588,50 +580,117 @@ __device__ inline LocalEntity local_entity(const Node& nd)
     return {2, axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP), x[axis], 0};
 }
 
-struct GatherSum {
-    double s;
-    bool dirichlet;
-};
+// ---- gather form: every copy sums its own node ------------------------------------
+//
+// One warp per element, elements in grid-stride order: the elements in flight form a
+// contiguous window, so on an SFC-ordered mesh the neighbours' copies are read while
+// they are still in L2. Each lane reads and writes its copies once, in full memory
+// sectors. The element's descriptors are loaded once, by lanes 0-5 (faces), 8-19
+// (edges) and 20-27 (vertices), and reach the other lanes by shuffle, so a copy waits
+// for one descriptor load and its star entries, not a chain of table loads.
+// Every copy of a node gets the same bits: a face adds its two copies (addition is
+// commutative), edges and vertices sum their stars in canonical order.
 
-template <typename Value>
-__device__ inline GatherSum gather_sum(const Value& value, const TopologyView& T, const Node& nd)
+constexpr int kEdgeLane = 8, kVertexLane = 20;
+
+// Sum of value over star entries [begin, end) in order; entries are loaded four at a
+// time so their value loads overlap.
+template <typename Value, typename Index>
+__device__ inline double star_sum(const Value& value, const int* __restrict__ ent, int begin, int end,
+                                  const Index& index)
 {
-    const LocalEntity le = local_entity(nd);
-    if (le.kind == 0) return {value(nd.t), false};
-    if (le.kind == 1) {
-        const int nbr = T.face_nbr[nd.e * 6 + le.index];
-        const int code = T.face_code[nd.e * 6 + le.index];
-        if (nbr < 0) return {value(nd.t), (code >> 6) != 0};
-        int I, J, i2, j2;
-        face_to_canonical(code & 7, le.i, le.j, I, J);
-        canonical_to_face((code >> 3) & 7, I, J, i2, j2);
-        return {value(nd.t) + value((long long)(nbr / 6) * kN3 + face_node(nbr % 6, i2, j2)), false};
-    }
     double s = 0.0;
-    if (le.kind == 2) {
-        const int of = T.edge_of[nd.e * 12 + le.index];
-        const int g = of & 0x7fffffff;
-        const int tc = of < 0 ? kP - le.i : le.i;   // canonical position on the edge
-        for (int m = T.edge_off[g]; m < T.edge_off[g + 1]; ++m) {
-            const int c = T.edge_ent[m];
-            const int k = c & 0x7fffffff;
-            s += value((long long)(k / 12) * kN3 + edge_node(k % 12, c < 0 ? kP - tc : tc));
+    for (int m = begin; m < end; m += 4) {
+        long long idx[4];
+#pragma unroll
+        for (int j = 0; j < 4; ++j) idx[j] = m + j < end ? index(ent[m + j]) : 0;
+        double v[4];
+#pragma unroll
+        for (int j = 0; j < 4; ++j) v[j] = m + j < end ? value(idx[j]) : 0.0;
+#pragma unroll
+        for (int j = 0; j < 4; ++j)
+            if (m + j < end) s += v[j];
+    }
+    return s;
+}
+
+// visit(t, s, dirichlet, counted) for every local copy t: s is the sum over all copies
+// of its node, counted marks the counting copy.
+template <typename Value, typename Visit>
+__device__ inline void for_each_copy_sum(const TopologyView& T, const Value& value, Visit&& visit)
+{
+    const int lane = threadIdx.x & 31;
+    const long long warps = ((long long)gridDim.x * blockDim.x) >> 5;
+    for (long long e = ((long long)blockIdx.x * blockDim.x + threadIdx.x) >> 5; e < T.elements; e += warps) {
+        // Face lanes: d0 = other copy, d1 = frame codes. Edge lanes: d0 = edge_of entry,
+        // [d1, d2) = star. Vertex lanes: [d1, d2) = star.
+        int d0 = 0, d1 = 0, d2 = 0, dir = 0;
+        if (lane < 6) {
+            d0 = T.face_nbr[e * 6 + lane];
+            d1 = T.face_code[e * 6 + lane];
+            dir = d1 >> 6;
+        } else if (lane >= kEdgeLane && lane < kEdgeLane + 12) {
+            d0 = T.edge_of[e * 12 + lane - kEdgeLane];
+            const int g = d0 & 0x7fffffff;
+            d1 = T.edge_off[g];
+            d2 = T.edge_off[g + 1];
+            dir = T.edge_dirichlet[g];
+        } else if (lane >= kVertexLane && lane < kVertexLane + 8) {
+            const int g = T.vert_of[e * 8 + lane - kVertexLane];
+            d1 = T.vert_off[g];
+            d2 = T.vert_off[g + 1];
+            dir = T.vert_dirichlet[g];
         }
-        return {s, T.edge_dirichlet[g] != 0};
+        const unsigned counting = T.counting[e];
+#pragma unroll 4
+        for (int i = 0; i < kN3 / 32; ++i) {
+            const int l = i * 32 + lane;
+            Node nd;
+            nd.e = e;
+            nd.t = e * kN3 + l;
+            nd.a = l / kNN;
+            nd.b = (l / kN) % kN;
+            nd.c = l % kN;
+            const LocalEntity le = local_entity(nd);
+            const int src = le.kind == 1 ? le.index
+                          : le.kind == 2 ? kEdgeLane + le.index
+                          : le.kind == 3 ? kVertexLane + le.index : 0;
+            const int n0 = __shfl_sync(0xffffffffu, d0, src);
+            const int n1 = __shfl_sync(0xffffffffu, d1, src);
+            const int n2 = __shfl_sync(0xffffffffu, d2, src);
+            const bool dirichlet = le.kind != 0 && __shfl_sync(0xffffffffu, dir, src) != 0;
+            double s;
+            if (le.kind == 0) {
+                s = value(nd.t);
+            } else if (le.kind == 1) {
+                s = value(nd.t);
+                if (n0 >= 0) {
+                    int I, J, i2, j2;
+                    face_to_canonical(n1 & 7, le.i, le.j, I, J);
+                    canonical_to_face((n1 >> 3) & 7, I, J, i2, j2);
+                    s += value((long long)(n0 / 6) * kN3 + face_node(n0 % 6, i2, j2));
+                }
+            } else if (le.kind == 2) {
+                const int tc = n0 < 0 ? kP - le.i : le.i;   // canonical position on the edge
+                s = star_sum(value, T.edge_ent, n1, n2, [tc](int c) {
+                    const int k = c & 0x7fffffff;
+                    return (long long)(k / 12) * kN3 + edge_node(k % 12, c < 0 ? kP - tc : tc);
+                });
+            } else {
+                s = star_sum(value, T.vert_ent, n1, n2,
+                             [](int c) { return (long long)(c / 8) * kN3 + corner_node(c % 8); });
+            }
+            const int bit = le.kind == 1 ? le.index : (le.kind == 2 ? 6 + le.index : 18 + le.index);
+            visit(nd.t, s, dirichlet, le.kind == 0 || ((counting >> bit) & 1u));
+        }
     }
-    const int g = T.vert_of[nd.e * 8 + le.index];
-    for (int m = T.vert_off[g]; m < T.vert_off[g + 1]; ++m) {
-        const int c = T.vert_ent[m];
-        s += value((long long)(c / 8) * kN3 + corner_node(c % 8));
-    }
-    return {s, T.vert_dirichlet[g] != 0};
 }
 
 __global__ void __launch_bounds__(kThreads)
 unstructured_dss_kernel(const double* __restrict__ in, double* __restrict__ out, TopologyView T)
 {
     const auto value = [in](long long i) { return in[i]; };
-    for_each_node(Block((int)T.elements, 1, 1), [&](const Node& nd) { out[nd.t] = gather_sum(value, T, nd).s; });
+    for_each_copy_sum(T, value, [&](long long t, double s, bool, bool) { out[t] = s; });
 }
 
 inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, cudaStream_t stream = 0)
@@ -665,14 +724,12 @@ unstructured_precondition_kernel(const double* __restrict__ q, double* __restric
     constexpr int NV = AZ + ZZ;
     [[maybe_unused]] double acc[NV > 0 ? NV : 1] = {};
     const auto value = [q](long long i) { return q[i]; };
-    const CountingWeight wt{T.counting};
-    for_each_node(Block((int)T.elements, 1, 1), [&](const Node& nd) {
-        const GatherSum g = gather_sum(value, T, nd);
-        const double v = g.dirichlet ? 0.0 : g.s / diag[nd.t];
-        z[nd.t] = v;
+    for_each_copy_sum(T, value, [&](long long t, double s, bool dirichlet, bool counted) {
+        const double v = dirichlet ? 0.0 : s / diag[t];
+        z[t] = v;
         if constexpr (NV > 0) {
-            const double w = wt(nd);
-            if constexpr (AZ) acc[0] += a[nd.t] * v * w;
+            const double w = counted ? 1.0 : 0.0;
+            if constexpr (AZ) acc[0] += a[t] * v * w;
             if constexpr (ZZ) acc[NV - 1] += v * v * w;
         }
     });
