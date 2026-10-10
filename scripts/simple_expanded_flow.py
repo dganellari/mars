@@ -8,7 +8,7 @@ import sys
 import run_simple_diagnostics as diagnostics
 import simple_pressure_replay as replay
 import simple_pressure_profile as profile
-from simple_public_diagnostics import SafeParser
+from simple_public_diagnostics import SafeParser, summarize
 from simple_snapshot_compare import options, require
 
 SCHEMA = 'mars-simple-expanded-flow-v1'
@@ -90,6 +90,13 @@ def run(capture_dir, profile_pair, executable, output, public):
     public['failed_check'] = 'inputs_changed'
     replay.verify(record['inputs'])
     public['inputs_unchanged'] = True
+    record.update(exit_code=code, outputs=replay.hashes(
+        [output / name for name in ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')]))
+    replay.startup.write_json(output / 'launch.json', record)
+    return completion(record, output, code, public)
+
+
+def completion(record, output, code, public):
     public['failed_check'] = 'completion'
     status = public['diagnostics']['run_status']
     completions = re.findall(r'^(CONVERGED|NOT CONVERGED: iteration limit) iterations=(\d+) ranks=(\d+)\b',
@@ -102,22 +109,43 @@ def run(capture_dir, profile_pair, executable, output, public):
              and int(steps) == record['steps']) or
             (code == 0 and status == 'converged' and label == 'CONVERGED'
              and 0 < int(steps) <= record['steps']))
-    record.update(exit_code=code, outputs=replay.hashes(
-        [output / name for name in ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')]))
-    replay.startup.write_json(output / 'launch.json', record)
     public.update(short_run_completed=valid, nonlinear_convergence_reported=status == 'converged',
                   comparison_status='completed' if valid else 'run_failed',
                   failed_check='none' if valid else 'completion')
     return 0 if valid else 1
 
 
+def inspect_run(directory, public):
+    public['failed_check'] = 'saved_launch'
+    record = replay.startup.read_json(directory / 'launch.json')
+    require(record['schema'] == SCHEMA and record['steps'] == replay.startup.STEPS
+            and record['pressure_target_preserved'] and record['saved_gpu_profile_verified'])
+    public['failed_check'] = 'saved_inputs_or_outputs'
+    required = {str((directory / name).resolve()) for name in
+                ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')}
+    require(required <= set(record['outputs']))
+    replay.verify(record['inputs']); replay.verify(record['outputs'])
+    start = replay.startup.read_json(directory / 'launch-start.json')
+    require(start == {key: value for key, value in record.items() if key not in ('exit_code', 'outputs')})
+    code = int((directory / 'run.exit').read_text().strip())
+    require(code == record['exit_code'])
+    with (directory / 'run.log').open(errors='replace') as log:
+        public['diagnostics'] = summarize(log, str(code))
+    public.update(inputs_unchanged=True, saved_outputs_verified=True, solver_launched=False)
+    return completion(record, directory, code, public)
+
+
 def main(argv=None):
     parser = SafeParser(description=__doc__)
-    parser.add_argument('--capture-run', type=Path, required=True)
-    parser.add_argument('--gpu-profile-pair', type=Path, required=True)
-    parser.add_argument('--executable', type=Path, required=True)
+    parser.add_argument('--capture-run', type=Path)
+    parser.add_argument('--gpu-profile-pair', type=Path)
+    parser.add_argument('--executable', type=Path)
+    parser.add_argument('--inspect-run', type=Path)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args(argv)
+    launch_args = (args.capture_run, args.gpu_profile_pair, args.executable)
+    if (args.inspect_run and any(launch_args)) or (not args.inspect_run and not all(launch_args)):
+        parser.error('Choose inspection or launch arguments')
     old_umask = os.umask(0o077)
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='output_directory',
                   short_run_completed=False, nonlinear_convergence_reported=False,
@@ -130,8 +158,11 @@ def main(argv=None):
         print('ERROR: a fresh private output directory is required.', file=sys.stderr)
         return 1
     try:
-        code = run(args.capture_run.resolve(), args.gpu_profile_pair.resolve(),
-                   args.executable.resolve(), output, public)
+        if args.inspect_run:
+            code = inspect_run(args.inspect_run.resolve(), public)
+        else:
+            code = run(args.capture_run.resolve(), args.gpu_profile_pair.resolve(),
+                       args.executable.resolve(), output, public)
     except KeyboardInterrupt:
         public.update(comparison_status='interrupted', failed_check='interrupted')
         code = 130

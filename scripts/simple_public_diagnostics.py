@@ -270,6 +270,9 @@ class DiagnosticState:
         self.pressure_refinement_seen = False
         self.pressure_refinement_accepted = False
         self.pressure_refinement_invalid = False
+        self.pressure_expansion_seen = False
+        self.pressure_expansion_accepted = False
+        self.pressure_expansion_invalid = False
 
     def feed(self, line):
         line = line.strip()
@@ -284,6 +287,15 @@ class DiagnosticState:
                         self.scheduler_messages.append(label)
         if line.startswith('[HypreGMRES] rejected:'):
             self.pending_hypre_rejection = True
+        if line.startswith('[simple-pressure-expansion]'):
+            self.pressure_expansion_seen = True
+            match = re.fullmatch(r'\[simple-pressure-expansion\] rounds=([1-4]) '
+                                 r'correction_iterations=([1-9][0-9]*) hypre_passed=1 mars_passed=1', line)
+            if not match or self.completions or self.headers != 1:
+                self.pressure_expansion_invalid = True
+            else:
+                self.pressure_expansion_accepted = True
+                self.pending_hypre_rejection = False
         if line.startswith('[simple-pressure-refinement]'):
             self.pressure_refinement_seen = True
             match = re.fullmatch(r'\[simple-pressure-refinement\] iteration=([1-9][0-9]*) '
@@ -343,7 +355,8 @@ def summarize_state(state, exit_text, reference_deck):
     hypre = records['[HypreGMRES] rejected:']
     spmv = records['[hypre-spmv]']
     refinement_invalid = state.pressure_refinement_invalid or (state.pressure_refinement_seen and state.headers != 1)
-    if simple or state.pending_hypre_rejection or failures or refinement_invalid:
+    expansion_invalid = state.pressure_expansion_invalid or (state.pressure_expansion_seen and state.headers != 1)
+    if simple or state.pending_hypre_rejection or failures or refinement_invalid or expansion_invalid:
         # A successful correction clears only preceding candidate rejections;
         # terminal errors, later rejections and concatenated runs still fail.
         status = 'failed'
@@ -358,6 +371,9 @@ def summarize_state(state, exit_text, reference_deck):
         'pressure_refinement_seen': state.pressure_refinement_seen,
         'pressure_refinement_accepted': state.pressure_refinement_accepted,
         'pressure_refinement_invalid': refinement_invalid,
+        'pressure_expansion_seen': state.pressure_expansion_seen,
+        'pressure_expansion_accepted': state.pressure_expansion_accepted,
+        'pressure_expansion_invalid': expansion_invalid,
         'linear_stage': consensus(simple, lambda r: enum_value(r, 'stage', ('momentum', 'pressure')), 'unknown'),
         'backend': consensus(hypre, lambda r: enum_value(r, 'backend', ('GMRES', 'FlexGMRES')), 'unknown'),
         'solver_accepted': consensus(simple, lambda r: flag(r, 'solver_accepted')),

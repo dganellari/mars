@@ -229,3 +229,37 @@ printf 'Share only: %s\n' "$run/flow/public.json"
 exit "$status"
 )
 ```
+
+### Recheck an existing short run
+
+The initial short-flow reporter did not recognize `[simple-pressure-expansion]`
+recovery messages. It could therefore label a completed run as failed because an
+intermediate Hypre candidate had been rejected. The reporter now clears preceding
+candidate rejections only when the retained-pressure message reports both
+`hypre_passed=1` and `mars_passed=1`. Invalid recovery messages, later rejections,
+terminal errors and concatenated runs still fail. Historical rejected-candidate
+flags remain visible separately from the final run status.
+
+Inspection verifies the recorded inputs and output hashes, reparses the existing
+log and checks the completion against the saved rank count and iteration budget.
+It writes a fresh public report without overwriting the original evidence or
+launching a solver. Run in the MARS terminal; no rebuild or GPU allocation:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only origin/cstone
+umask 077
+run=$(mktemp -d "$scratch/simple-expanded-inspection-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_expanded_flow.py" \
+  --inspect-run "$scratch/simple-expanded-flow-UTrmI1/flow" \
+  --output-dir "$run/check" || status=$?
+if test -f "$run/check/public.json"; then cat "$run/check/public.json"; fi
+printf 'Share only: %s\n' "$run/check/public.json"
+exit "$status"
+)
+```

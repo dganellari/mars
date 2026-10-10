@@ -106,6 +106,39 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o700)
                 self.assertEqual(stat.S_IMODE((output / 'public.json').stat().st_mode), 0o600)
 
+    def test_inspect_existing_recovery_without_launch(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name); saved = root / 'saved'; saved.mkdir()
+            log = ('SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar\n'
+                   '[HypreGMRES] rejected: backend=GMRES\n'
+                   '[simple-pressure-expansion] rounds=2 correction_iterations=10 hypre_passed=1 mars_passed=1\n'
+                   'NOT CONVERGED: iteration limit iterations=20 ranks=4 exchange_rounds=81\nSECRET')
+            (saved / 'run.log').write_text(log)
+            (saved / 'run.exit').write_text('2\n')
+            (saved / 'diagnostics.json').write_text('{"run_status":"failed"}')
+            dependency = root / 'dependency'; dependency.write_text('unchanged')
+            start = dict(schema=flow.SCHEMA, steps=20, ranks=4, pressure_target_preserved=True,
+                         saved_gpu_profile_verified=True, inputs=flow.replay.hashes([dependency]))
+            flow.replay.startup.write_json(saved / 'launch-start.json', start)
+            record = dict(start, exit_code=2, outputs=flow.replay.hashes(list(saved.iterdir())))
+            flow.replay.startup.write_json(saved / 'launch.json', record)
+            before = flow.replay.hashes(list(saved.iterdir()))
+            with mock.patch.object(flow.diagnostics, 'capture') as launch:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = flow.main(['--inspect-run', str(saved), '--output-dir', str(root / 'inspection')])
+                launch.assert_not_called()
+            result = json.loads((root / 'inspection/public.json').read_text())
+            self.assertEqual(code, 0)
+            self.assertTrue(result['short_run_completed'])
+            self.assertFalse(result['nonlinear_convergence_reported'])
+            self.assertFalse(result['solver_launched'])
+            self.assertNotIn('SECRET', json.dumps(result))
+            self.assertEqual(before, flow.replay.hashes(list(saved.iterdir())))
+            for changed in (saved / 'run.log', dependency):
+                old = changed.read_text(); changed.write_text(old + 'changed')
+                with self.assertRaises(Exception): flow.inspect_run(saved, {})
+                changed.write_text(old)
+
 
 class PreparationTests(unittest.TestCase):
     def setUp(self):

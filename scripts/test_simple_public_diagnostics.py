@@ -229,6 +229,33 @@ class PublicDiagnosticsTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertEqual(summarize(case, '0')['run_status'], 'failed')
 
+    def test_expansion_clears_only_recovered_candidates(self):
+        header = 'SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar\n'
+        recovery = '[simple-pressure-expansion] rounds=4 correction_iterations=80 hypre_passed=1 mars_passed=1\n'
+        done = 'NOT CONVERGED: iteration limit iterations=20 ranks=4 exchange_rounds=81\n'
+        prefix = header + HYPRE + '\n'
+        result = summarize(prefix + recovery + done, '2')
+        self.assertEqual(result['run_status'], 'iteration_limit')
+        self.assertTrue(result['pressure_expansion_accepted'])
+        self.assertTrue(result['hypre_rejection_present'])
+        self.assertFalse(result['unrecovered_hypre_rejection_present'])
+        cases = [prefix + recovery + HYPRE + '\n' + done,
+                 prefix + recovery + SIMPLE + '\n' + done,
+                 prefix + recovery + 'ERROR: expanded pressure residual failed\n' + done,
+                 recovery + done, prefix + done + recovery,
+                 prefix + header + recovery + done,
+                 prefix + recovery + done + header]
+        for old, new in (('rounds=4', 'rounds=0'), ('rounds=4', 'rounds=5'),
+                         ('correction_iterations=80', 'correction_iterations=0'),
+                         ('hypre_passed=1', 'hypre_passed=0'), ('mars_passed=1', 'mars_passed=0')):
+            cases.append(prefix + recovery.replace(old, new) + done)
+        cases.append(prefix + recovery.rstrip() + ' SECRET\n' + done)
+        for text in cases:
+            with self.subTest(text=text):
+                result = summarize(text, '2')
+                self.assertEqual(result['run_status'], 'failed')
+                self.assertNotIn('SECRET', json.dumps(result))
+
     def test_application_failures_without_linear_rejection(self):
         cases = {
             'outlet_anchor_or_moment_error_seen': 'all outlet faces closed: no open pressure anchor or nonfinite outlet moments',
