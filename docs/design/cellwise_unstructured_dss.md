@@ -27,7 +27,7 @@ gets the sum of all its copies.
 The structured version finds copies by index arithmetic. Here they come from compact
 tables, built once on the device from the elements' corner SFC keys.
 
-## Shared entities and the one-writer rule
+## Shared entities
 
 A p=7 hex has 216 interior nodes (never shared), 6 x 36 face-interior nodes, 12 x 6
 edge-interior nodes and 8 corners. The shared node sets of faces, edges and vertices
@@ -39,12 +39,12 @@ are disjoint, so each can be handled by its own kind of work item, in any order:
   valence (3, 4, 5, 6, ...).
 - **Vertex star**: every (element, local corner) holding the vertex.
 
-One work item per entity node reads all copies, sums them in the **canonical order**,
-and writes the sum to every copy. This is the paper's face/line/vertex scheme
-(Wichrowski, arXiv 2607.02335, Alg 3) at element granularity, with no macro-blocks, so
-its "one representative per block" rule does not arise. Each value is read once and
-written once (512 reads per element, against about 1000 for the per-copy gather the
-structured version uses), and nothing is atomic.
+Every copy sums all copies of its node in the **canonical order** and keeps the sum: a
+face node adds its two copies (addition is commutative, so their order does not
+matter), an edge or vertex node sums its star in canonical order. This is the paper's
+face/line/vertex decomposition (Wichrowski, arXiv 2607.02335, Alg 3) at element
+granularity, with no macro-blocks. All copies of a node get the same bits and nothing
+is atomic.
 
 **Canonical order**: copies sorted by their element's global identity, the sorted
 tuple of its 8 corner SFC keys (compared lexicographically, at setup only). It does not
@@ -58,20 +58,43 @@ from the lower to the higher corner key.
 
 ## Kernels
 
-All DSS consumers run as one launch whose thread blocks are split over work ranges:
-interior nodes (element-blocked), face pairs, boundary faces, edges, vertices. Each
-range applies the same fused operation to the gathered sum s of a node:
+One warp per element, elements in grid-stride order, so the elements in flight form a
+contiguous window and, on an SFC-ordered mesh, the neighbours' copies are still in L2
+when they are read. Per element:
 
-- `dss`: every copy = s.
-- Jacobi preconditioner: z = 0 on Dirichlet entities, else s / diag, written to every
-  copy, plus the dot products the Krylov step needs.
-- Chebyshev step: s = sum of (b - Ax) over the copies, z = s / diag, d and x updated at
-  every copy.
+1. Stage the 512 values in shared memory with one coalesced load.
+2. Faces: one loop adds the other copy to each of the 216 face nodes, through a
+   64 x 36 orientation table (frame codes of both copies, position on the face).
+3. Stars: one loop sums the stars of the 72 edge nodes and 8 corners.
+4. One coalesced store writes all 512 results through the consumer.
 
-Dot products count each global node once: exactly one copy per node is the
-**counting copy** (the first in canonical order). It is marked by 26 bits per element
-(6 faces, 12 edges, 8 corners; interior nodes always count). Entity ranges contribute
-their s once. The weights stay exact, which the structured path got from powers of two.
+Interior nodes need no work. Each loop handles one kind of node, so the lanes of a warp
+follow one path, and the reference-hex index arithmetic comes from tables built once
+per thread block. The element's descriptors are loaded once, each on the lane whose
+number is the entity's bit (faces 0-5, edges 8-19, corners 20-27), and shuffled to the
+lanes that need them; one ballot gives the Dirichlet mask.
+
+Consumers: `dss` (every copy = s); the Jacobi preconditioner (z = 0 on Dirichlet nodes,
+else s / diag, plus the dot products of the Krylov step); later the Chebyshev step.
+
+Dot products count each global node once: exactly one copy per node is the **counting
+copy** (the first in canonical order). Each element has a 32-bit counting mask in the
+same bit layout, with bit 31 (interior nodes) always set. The weights stay exact, which
+the structured path got from powers of two.
+
+Measured on one GH200, 64^3 elements (90.5 M unique nodes), ncu:
+
+| kernel | time | DRAM read / write |
+|---|---|---|
+| this one, plain cube | 1.25 ms | 1.25 / 1.06 GB |
+| this one, rotated frames | 1.34 ms | 1.78 / 1.06 GB |
+| structured gather (cascade order) | 2.20 ms | 1.67 / 1.06 GB |
+| one work item per shared node, writing all its copies (removed) | 2.9 ms | 4.4 / 2.15 GB |
+| one warp per element in node order, no staging (removed) | 4.1 ms | 1.46 / 1.06 GB |
+
+The one-writer form writes every memory sector twice, in parts, each time from a
+different pass; the node-order warp form was bound by instructions (2.25e9 warp
+instructions against 0.27e9 here), because every warp mixed all four kinds of node.
 
 ## Building the tables (device, setup only)
 
@@ -111,11 +134,11 @@ faces, which have one copy per side either way.)
   and needs no node owner (HoHalo needs `MARS_OWNERSHIP=vote`, DofSpace needs SFC
   ownership).
 - **Lists**: per peer, the copies to send in canonical order; on receipt they fill
-  ghost slots that the star and face-pair tables reference at their canonical
+  ghost slots that `face_nbr` and the star tables reference at their canonical
   positions. Counts follow from the shared entity sets, so sends and receives match by
   construction.
 - **Exchange**: persistent device buffers, a duplicated communicator, GPU-aware
-  Isend/Irecv. Work items with no ghost copies run while the messages travel; the rest
+  Isend/Irecv. Elements with no ghost copies run while the messages travel; the rest
   run after the wait.
 - **Counting copy**: the first copy in canonical order may be remote, in which case no
   local copy counts that node.
@@ -151,6 +174,6 @@ HoHalo and the `elemDof` scatter/gather stay useful as setup-time oracles.
 - Geometry storage: the p=7 metric is 32 KB per element (8x the values). The 1B-element
   target needs geometry recomputed from the corners inside the operator.
 - Coordinates are SFC-quantized unless `storeOriginalCoords=true`.
-- Face kernels read the second copy through an orientation permutation, so they
-  coalesce worse than the structured cascade. To be measured against the structured
-  path on the same cube (the paper measured 0.73x at p=7, A100).
+- Rotated frames read 1.4x the DRAM of the plain cube (1.78 against 1.25 GB): the other
+  copy of a face is read through the orientation map. Real meshes have such frames
+  everywhere.

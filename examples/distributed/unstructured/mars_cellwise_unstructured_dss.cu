@@ -10,10 +10,8 @@
 //      depends only on (element, global node), and the summation order only on the
 //      elements' corner keys, so the local frames must not matter;
 //   4. on the plain cube it agrees with the structured DSS of mars_cellwise_layout.hpp
-//      (to rounding: the structured version sums in the cascade order);
-//   5. the gather form (every copy sums its own node) gives the same bits as the
-//      entity form (one work item per node writes all its copies).
-// Then times both unstructured forms against the structured DSS.
+//      (to rounding: the structured version sums in the cascade order).
+// Then times the unstructured DSS against the structured one.
 //
 // Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20]
 
@@ -137,12 +135,6 @@ __global__ void rotated_vs_plain_kernel(const double* rot, const double* plain, 
     if (rot[t] != plain[(t / kN3) * kN3 + plain_local[t]]) atomicAdd(bitdiff, 1);
 }
 
-__global__ void bits_differ_kernel(const double* a, const double* b, long long n, int* count)
-{
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n && __double_as_longlong(a[t]) != __double_as_longlong(b[t])) atomicAdd(count, 1);
-}
-
 __global__ void abs_diff_kernel(const double* a, const double* b, long long n, double* d)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -218,15 +210,14 @@ int main(int argc, char** argv)
     Mesh plain, rotated;
     build(plain, ne, false);
     build(rotated, ne, true);
-    const TopologyView tv = view(rotated.topo);
+    const UnstructuredTopology& tr = rotated.topo;
     printf("unstructured cell-wise DSS, %d^3 elements, %lld unique nodes\n", ne, NG * NG * NG);
-    printf("  tables: %lld face pairs, %lld single faces, %lld edges, %lld vertices\n", tv.pairs, tv.singles,
-           tv.edges, tv.vertices);
+    printf("  tables: %lld face pairs, %lld single faces, %lld edges, %lld vertices\n", tr.face_pairs,
+           tr.single_faces, tr.edges(), tr.vertices());
 
     bool ok = true;
-    thrust::device_vector<double> in(n), out_plain(n), out_rot(n), out_entity(n), acc(NG * NG * NG),
-        g(NG * NG * NG), err(n);
-    thrust::device_vector<int> bitdiff(1), formdiff(1);
+    thrust::device_vector<double> in(n), out_plain(n), out_rot(n), acc(NG * NG * NG), g(NG * NG * NG), err(n);
+    thrust::device_vector<int> bitdiff(1);
     for (int pass = 0; pass < 2; ++pass) {
         Mesh& m = pass ? rotated : plain;
         thrust::device_vector<double>& out = pass ? out_rot : out_plain;
@@ -237,15 +228,12 @@ int main(int argc, char** argv)
         scatter_any_kernel<<<grid_of(n), kThreads>>>(raw(out), raw(m.gid), n, raw(g));
         bitdiff[0] = 0;
         compare_kernel<<<grid_of(n), kThreads>>>(raw(out), raw(m.gid), raw(acc), raw(g), n, raw(err), raw(bitdiff));
-        dss_by_entity(raw(in), raw(out_entity), m.topo);
-        formdiff[0] = 0;
-        bits_differ_kernel<<<grid_of(n), kThreads>>>(raw(out), raw(out_entity), n, raw(formdiff));
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
         const double e = *thrust::max_element(err.begin(), err.end());
-        const int bd = bitdiff[0], fd = formdiff[0];
-        printf("  %s: vs scatter-add %.1e, copies differing from each other %d, gather vs entity form %d\n",
-               pass ? "rotated" : "plain  ", e, bd, fd);
-        ok &= e < 1e-13 && bd == 0 && fd == 0;
+        const int bd = bitdiff[0];
+        printf("  %s: vs scatter-add %.1e, copies differing from each other %d\n", pass ? "rotated" : "plain  ",
+               e, bd);
+        ok &= e < 1e-13 && bd == 0;
     }
     bitdiff[0] = 0;
     rotated_vs_plain_kernel<<<grid_of(n), kThreads>>>(raw(out_rot), raw(out_plain), raw(rotated.plain_local), n,
@@ -281,16 +269,12 @@ int main(int argc, char** argv)
     const float ms_struct = time_ms([&] { cellwise::dss(raw(in), raw(out_struct), Block(ne, ne, ne), nullptr); });
     const float ms_plain = time_ms([&] { dss(raw(in), raw(out_plain), plain.topo); });
     const float ms_rot = time_ms([&] { dss(raw(in), raw(out_rot), rotated.topo); });
-    const float ms_plain_e = time_ms([&] { dss_by_entity(raw(in), raw(out_plain), plain.topo); });
-    const float ms_rot_e = time_ms([&] { dss_by_entity(raw(in), raw(out_rot), rotated.topo); });
     auto row = [&](const char* name, float ms) {
         printf("  %-28s %8.3f ms  %6.2f GDoF/s  %5.2f TB/s\n", name, ms, unique / ms / 1e6, gb / ms);
     };
     row("structured gather", ms_struct);
-    row("unstructured gather, plain", ms_plain);
-    row("unstructured gather, rotated", ms_rot);
-    row("unstructured entity, plain", ms_plain_e);
-    row("unstructured entity, rotated", ms_rot_e);
+    row("unstructured, plain", ms_plain);
+    row("unstructured, rotated", ms_rot);
     printf("UNSTRUCTURED DSS: %s\n", ok ? "PASS" : "FAIL");
     MPI_Finalize();
     return ok ? 0 : 1;
