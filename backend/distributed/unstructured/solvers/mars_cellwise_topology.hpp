@@ -693,6 +693,29 @@ unstructured_precondition_kernel(const double* __restrict__ q, const double* __r
     if constexpr (NV > 0) store_partial<NV>(acc, partial);
 }
 
+// u = 0 on every local copy of a Dirichlet node: a homogeneous Dirichlet condition on an
+// element-local vector (e.g. a manufactured solution on quantized coordinates).
+__global__ void zero_dirichlet_kernel(double* __restrict__ u, TopologyView T)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= T.local * kN3) return;
+    const long long e = t / kN3;
+    const int l = (int)(t % kN3);
+    const LocalEntity le = local_entity(l / kNN, (l / kN) % kN, l % kN);
+    bool dirichlet = false;
+    if (le.kind == 1) dirichlet = (T.face_code[e * 6 + le.index] >> 6) != 0;
+    else if (le.kind == 2) dirichlet = T.edge_dirichlet[T.edge_of[e * 12 + le.index] & 0x7fffffff] != 0;
+    else if (le.kind == 3) dirichlet = T.vert_dirichlet[T.vert_of[e * 8 + le.index]] != 0;
+    if (dirichlet) u[t] = 0.0;
+}
+
+inline void zero_dirichlet(double* d_u, const UnstructuredTopology& T, cudaStream_t stream = 0)
+{
+    const long long n = T.local * kN3;
+    if (n > 0) zero_dirichlet_kernel<<<topo_detail::blocks(n), kThreads, 0, stream>>>(d_u, view(T));
+    MARS_CELLWISE_CK(cudaGetLastError());
+}
+
 // ---- several ranks ---------------------------------------------------------------------
 //
 // Each rank's tables cover its own elements and, after them, ghost elements: every

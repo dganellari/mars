@@ -558,6 +558,9 @@ int main(int argc, char** argv)
     if (use_domain) {
         topo = std::move(dtables.topo);
         uhalo = std::move(dtables.halo);
+        // The domain's coordinates are SFC-quantized, so u is only about 1e-7 on the
+        // boundary; the discrete solution is u exactly once u is zero there.
+        cellwise::zero_dirichlet(d_uex, topo, stream);
         cellwise::dss(d_b, d_diag, topo, uhalo.get(), stream);   // assembled diagonal on every copy
     } else if (unstructured) {
         thrust::device_vector<unsigned long long> elem;
