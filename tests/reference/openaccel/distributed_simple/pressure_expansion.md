@@ -173,3 +173,59 @@ done
 printf 'Public gates passed. Results: %s\n' "$run"
 )
 ```
+
+## Saved short private flow
+
+After the public gates above pass, `scripts/simple_expanded_flow.py` launches the
+saved twenty-step case with retained pressure. It preserves the captured pressure
+target, case controls, rank count and launcher, including GPU/NUMA binding. It
+uses the previously verified GPU pressure profile, disables snapshots and field
+output, and leaves the original capture unchanged. This exercises the production
+flow path beyond the frozen linear system; it does not compare OpenAccel fields.
+
+The script checks saved input hashes, profile provenance and current runtime
+libraries before launching, then checks the inputs again after the run. Rebuilding
+the MARS executable is allowed and its new hash is recorded. Only recorded,
+restorable solver environment overrides are applied to the child process;
+unknown changes stop preparation. Logs and launch records stay in a private
+output directory. Share only `flow/public.json`.
+
+`short_run_completed: true` means the saved iteration budget completed, or the
+solver reported convergence earlier. An expected solver exit 2 at the exact
+iteration limit is a successful short experiment; the adapter returns 0 in that
+case. `nonlinear_convergence_reported` records the solver's report separately.
+Neither result establishes OpenAccel parity or validates a converged pump flow.
+The profile check verifies the saved profile and generated input, not an audit of
+settings inside the new solver process. Library checks are launch preflight checks.
+
+Run this single block in the **MARS terminal**, with the MARS runtime and Python
+dependencies active. No OpenAccel launch or repeat of the public gates is needed.
+The script supplies the saved complete `srun` command; do not wrap it in another
+`srun`.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+python3 -c 'import numpy, netCDF4, yaml'
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only origin/cstone
+cmake --build "$repo/build-hypre" --parallel 4 --target mars_segregated_simple
+run=$(mktemp -d "$scratch/simple-expanded-flow-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_expanded_flow.py" \
+  --capture-run "$scratch/simple-pressure-frozen-RlGQaI/capture" \
+  --gpu-profile-pair "$scratch/simple-original-pressure-1xGpr2/pair" \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_segregated_simple" \
+  --output-dir "$run/flow" || status=$?
+if test -f "$run/flow/public.json"; then cat "$run/flow/public.json"; fi
+printf 'Share only: %s\n' "$run/flow/public.json"
+exit "$status"
+)
+```

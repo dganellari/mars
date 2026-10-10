@@ -41,7 +41,7 @@ def stop(child):
             child.wait()
 
 
-def capture(command, log_path, exit_path, output_path):
+def capture(command, log_path, exit_path, output_path, environment=None):
     paths = [Path(p).resolve() for p in (log_path, exit_path, output_path)]
     if len(set(paths)) != 3:
         raise ValueError('Capture paths must differ')
@@ -58,7 +58,8 @@ def capture(command, log_path, exit_path, output_path):
         code, capture_status = 1, 'failed'
         try:
             child = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     env=environment)
             for raw in iter(child.stdout.readline, b''):
                 log.write(raw)
                 log.flush()
