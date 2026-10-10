@@ -1,5 +1,110 @@
 # Replay the rejected pressure equation
 
+## Bounded recovery on the frozen GPU system
+
+The saved GPU-profile replay and the reference-library replay both reached their
+iteration caps without passing the frozen equation's residual target. That does
+not establish an unattainable target or a particular internal stagnation branch.
+The next experiment adds `--recovery-rounds 3` to the GPU-profile replay only.
+Production SIMPLE and the saved reference are unchanged.
+
+For the same pressure-correction equation `A p' = b`, form the compensated defect
+`r = b - A p'`, solve `A delta = r` from zero, and try `p' + delta`. Both unknowns
+have pressure units. Boundary elimination, pressure reference, matrix, RHS,
+partition and the original acceptance target are unchanged. This changes how
+the linear system is solved; it is not an identical OpenAccel iteration path.
+
+There are at most three additional solves, each with the original iteration cap,
+relative tolerance 0.1, absolute tolerance zero and minimum iterations zero.
+The initial solve has its own original budget. The same Krylov object and AMG
+hierarchy are reused without another setup. This costs at most four times the
+original Krylov iteration budget; it does not promise a speedup. A capped
+correction can be used if the original residual decreases. Nonfinite values,
+fatal backend errors and failure to establish a decrease stop recovery. Original
+Krylov controls are restored afterward.
+
+The CUDA path computes defects, updates and norms on device and uses Hypre's
+device communication map. Recovery explicitly enables GPU-aware MPI; the runtime
+must support device buffers. Only scalar reductions/control and diagnostic file
+I/O use host data. The initial candidate is saved under `result/initial`; private
+per-rank `.recovery` files record bounds and correction exit metadata. The initial
+`result_*` backend fields retain their original meaning and are labelled as such
+in public comparisons. The new files are covered by the output manifest.
+
+The internal decrease test includes compensated row-error bounds and a
+conservative FP64 norm-reduction margin. It rejects subnormal nonzero RHS squares
+and stops if residual squares underflow; it does not certify those scales. With
+zero RHS and zero absolute tolerance, the evaluation bound can leave an exact
+zero candidate inconclusive. The independent checker of the original captured
+rows is the final authority, regardless of the internal stopping reason.
+
+Run this **once in the MARS terminal**. It uses the saved rank count and launcher;
+no new OpenAccel run or full-flow run is launched. Detailed output stays private.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+export TMPDIR="$scratch/tmp" XDG_CACHE_HOME="$scratch/.cache"
+export PYTHONDONTWRITEBYTECODE=1 MPICH_GPU_SUPPORT_ENABLED=1
+mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+cmake -S "$repo" -B "$repo/build-hypre" \
+  -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_MPI=ON \
+  -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_HYPRE=ON \
+  -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_SEGREGATED=ON
+cmake --build "$repo/build-hypre" --parallel 4 --target \
+  mars_simple_pressure_replay mars_simple_pressure_residual_check
+
+capture="$scratch/simple-pressure-frozen-RlGQaI/capture"
+profile="$scratch/simple-original-pressure-1xGpr2/pair"
+reference="$scratch/simple-reference-replay-URu8yA/reference"
+IFS= read -r archive < "$reference/input-archive-current.txt"
+test -f "$archive/archive.json"
+run=$(mktemp -d "$scratch/simple-pressure-recovery-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" replay \
+  --capture-run "$capture" --backend mars --profile gpu-reference \
+  --gpu-profile-pair "$profile" --recovery-rounds 3 \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_replay" \
+  --output-dir "$run/mars" || status=$?
+cat "$run/mars/public.json"
+if (( status != 0 )); then exit "$status"; fi
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$capture" --mars-run "$run/mars" \
+  --reference-run "$reference" --reference-input-archive "$archive" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  --output "$run/comparison-public.json" || status=$?
+cat "$run/comparison-public.json"
+printf 'Share only: %s\n' "$run/comparison-public.json"
+exit "$status"
+)
+```
+
+Success requires `residual_checks.mars.residual_passed=true`. The comparison also
+reports `initial_residual_checks.mars` and `recovery_checks.mars`, so improvement
+cannot erase the original failure. `stopping_checks.mars` describes the initial
+solve, not the corrected candidate. `replay_complete` alone is not convergence.
+If the final independent check fails or is inconclusive, do not resume the long
+flow history. A pass permits evaluating this recovery in SIMPLE; it does not
+establish pump convergence or OpenAccel field parity.
+
+Local checks cover recovery after a capped solve, budget exhaustion at a stricter
+target, already-converged, zero-RHS and inconsistent systems, original/final
+metadata separation and tampered evidence. Real CPU Hypre 2.33/3.1 builds run
+under ASan/UBSan. CPU MPI Hypre 2.32 exercises 1/2/4 ranks with separate owned rows
+and exchanged off-rank values. These do not replace the CUDA build/run above.
+The optional local test executables are selected with
+`MARS_TEST_PRESSURE_REPLAYS` (colon-separated), `MARS_TEST_PRESSURE_MPI_REPLAY`
+and `MARS_TEST_PRESSURE_CHECKER`; run `scripts/test_simple_pressure_replay.py`
+with `PYTHONPATH=scripts`. `MPIEXEC` selects the local MPI launcher.
+
 ## Replay the failing system with the verified GPU profile
 
 The original-pressure first-step comparison found matching unscaled pressure

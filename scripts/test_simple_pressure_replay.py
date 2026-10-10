@@ -849,6 +849,68 @@ class ReplayTests(unittest.TestCase):
                 launch.assert_not_called()
             self.assertEqual(json.loads((output/'public.json').read_text())['failed_check'], 'profile_selection')
 
+    def test_recovery_preserves_initial_failure_and_checks_final_solution(self):
+        import simple_pressure_profile as profile
+        import test_simple_pressure_profile as fixtures
+        args = self.compare_arguments()
+        config = dict(family='hypre', rtol=1e-10, atol=0., max_iterations=200,
+                      options=dict(solver=dict(type='gmres'), precond=dict(type='boomeramg')))
+        values, _ = profile.resolve(config, (0., 1e-10), fixtures.measured_defaults())
+        path = self.root / 'mars'
+        source = self.root / 'pressure.profile'; source.write_text(profile.text_profile(values))
+        config_path = path / 'gpu-reference.settings'
+        config_path.write_text(profile.text_profile(dict(values, recovery_rounds=3)))
+        report_path = path / 'result/rank-000000.report'
+        report = replay.numeric_file(report_path)
+        report.update(values, effective_levels=3, effective_relax_3=18,
+                      result_iterations=200, result_solve_error=256, result_global_error=256,
+                      result_converged=0, result_reported=1e-4, recovery_requested_rounds=3,
+                      recovery_rounds=1, recovery_iterations=10, recovery_stop=0, recovery_controls_restored=1)
+        report['effective_relax_1'] = report.pop('relax_down')
+        report['effective_relax_2'] = report.pop('relax_up')
+        report_path.write_text(profile.text_profile(report))
+        write_solution(path / 'result/initial', [0.]*12, 1)
+        trace = path / 'result/rank-000000.recovery'; trace.write_text('PRIVATE residuals and norms\n')
+        record = json.loads((path/'replay.json').read_text())
+        record.update(profile='gpu-reference', gpu_profile_source=str(source), recovery_rounds=3,
+                      command=['exe', str(self.capture), str(config_path), str(path/'result')])
+        record['inputs'].update(replay.hashes([source, config_path]))
+        record['files'].update(replay.hashes([p for p in (path/'result').rglob('*') if p.is_file()]))
+        (path/'replay.json').write_text(json.dumps(record))
+        public = self.compare_saved(args, 0)
+        self.assertTrue(public['initial_residual_checks']['mars']['residual_failed'])
+        self.assertTrue(public['residual_checks']['mars']['residual_passed'])
+        self.assertFalse(public['residual_checks']['mars']['backend_converged_flag'])
+        self.assertEqual(public['stopping_checks']['mars']['assessment'], 'failed_at_or_above_iteration_limit')
+        self.assertEqual(public['stopping_checks']['mars']['scope'], 'initial_solve_before_recovery_not_final_candidate')
+        self.assertTrue(public['recovery_checks']['mars']['correction_used'])
+        self.assertNotIn('PRIVATE', json.dumps(public))
+        # Neither an internal target flag nor successful completion certifies the final vector.
+        final = path / 'result/rank-000000.solution'; final.write_bytes(bytes(final.stat().st_size))
+        record['files'].update(replay.hashes([final]))
+        (path/'replay.json').write_text(json.dumps(record))
+        args[-1] = str(self.root/'failed-recovery.json')
+        self.assertTrue(self.compare_saved(args, 0)['residual_checks']['mars']['residual_failed'])
+        # The initial candidate and correction trace must be bound to the launch record.
+        for key in (str(trace), str(path/'result/initial/rank-000000.solution')):
+            digest = record['files'].pop(key)
+            (path/'replay.json').write_text(json.dumps(record))
+            args[-1] = str(self.root/('unbound-'+Path(key).name+'.json'))
+            self.assertEqual(self.compare_saved(args)['failed_check'], 'mars_replay_outputs')
+            record['files'][key] = digest
+
+    def test_recovery_budget_and_collective_metadata(self):
+        report = dict(maxiter=7, recovery_requested_rounds=3, recovery_rounds=3,
+                      recovery_iterations=21, recovery_stop=1, recovery_controls_restored=1)
+        self.assertEqual(replay.recovery_checks([report]*4, 3)['stop_reason'], 'correction_budget_exhausted')
+        for key, value in (('recovery_iterations', 22), ('recovery_rounds', 4),
+                           ('recovery_rounds', 2), ('recovery_stop', 5),
+                           ('recovery_controls_restored', 0), ('recovery_iterations', float('nan'))):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                replay.recovery_checks([dict(report, **{key: value})]*4, 3)
+        with self.assertRaises(ValueError):
+            replay.recovery_checks([report, dict(report, recovery_stop=2)], 3)
+
     def inspection_fixture(self, ranks=1):
         capture = self.captured_record(ranks)
         library, mpi, exe = (self.root/name for name in ('libHYPRE.so', 'libmpi.so', 'reference-replay'))
@@ -1162,6 +1224,121 @@ class GpuProfileReplayTests(unittest.TestCase):
                         check = subprocess.run([checker, str(system), str(result)], check=True, stdout=subprocess.PIPE)
                         self.assertTrue(json.loads(check.stdout)['residual_passed'])
                         shutil.rmtree(result)
+
+    def test_real_capped_recovery_when_requested(self):
+        binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
+        if not binaries[0]:
+            self.skipTest('set MARS_TEST_PRESSURE_REPLAYS to locally built replay executables')
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not checker:
+            self.skipTest('set MARS_TEST_PRESSURE_CHECKER to the independent checker')
+        n = 64
+        matrix = [[2.01 if i == j else -1. if abs(i-j) == 1 else 0. for j in range(n)] for i in range(n)]
+        for binary in binaries:
+            for method in (0, 1):
+                for rtol in (1e-3, 1e-12):
+                    with self.subTest(binary=binary, method=method, rtol=rtol):
+                        system = self.root / 'recovery-system'
+                        write_system(system, matrix=matrix, rtol=rtol)
+                        values = dict(self.source_values, method=method, rtol=rtol, atol=0.,
+                                      maxiter=1, recovery_rounds=3)
+                        config = self.root / 'recovery.settings'
+                        config.write_text(self.profile.text_profile(values))
+                        before = replay.hashes(list(system.iterdir()) + [config])
+                        result = self.root / 'recovered'
+                        process = subprocess.run([binary, str(system), str(config), str(result)],
+                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        self.assertEqual(process.returncode, 0, process.stderr.decode())
+                        replay.verify(before)
+                        report = replay.numeric_file(result / 'rank-000000.report')
+                        self.assertTrue(replay.controls_match(report, values))
+                        self.assertEqual(report['result_iterations'], 1)
+                        self.assertNotEqual(report['result_solve_error'], 0)
+                        checks = replay.recovery_checks([report], 3)
+                        self.assertTrue(checks['separate_correction_budget_verified'])
+                        self.assertEqual(report['recovery_rounds'], 3)
+                        self.assertEqual(report['recovery_iterations'], 3)
+                        initial = json.loads(subprocess.check_output([checker, str(system), str(result/'initial')]))
+                        final = json.loads(subprocess.check_output([checker, str(system), str(result)]))
+                        self.assertTrue(initial['residual_failed'])
+                        self.assertEqual(final['residual_passed'], rtol == 1e-3)
+                        self.assertEqual(final['residual_failed'], rtol == 1e-12)
+                        self.assertEqual(checks['stop_reason'], 'bounded_target_reached' if rtol == 1e-3
+                                         else 'correction_budget_exhausted')
+                        shutil.rmtree(system); shutil.rmtree(result)
+
+    def test_recovery_configuration_requires_explicit_request(self):
+        values, output, record = self.binding()
+        config = output / 'gpu-reference.settings'
+        config.write_text(self.profile.text_profile(dict(values, recovery_rounds=3)))
+        record['inputs'].update(replay.hashes([config]))
+        with self.assertRaises(ValueError):
+            replay.checked_gpu_configuration(output, record, self.capture)
+
+        record['recovery_rounds'] = 3
+        self.assertEqual(replay.checked_gpu_configuration(output, record, self.capture), values)
+        record['recovery_rounds'] = 4
+        with self.assertRaises(ValueError):
+            replay.checked_gpu_configuration(output, record, self.capture)
+
+    def test_real_recovery_zero_and_singular_systems_when_requested(self):
+        binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not binaries[0] or not checker:
+            self.skipTest('set replay and independent checker test executables')
+        for binary in binaries:
+            for name, matrix, rhs, atol in (
+                    ('already_passed', [[1., 0.], [0., 1.]], [1., 2.], 0.),
+                    ('zero_with_absolute_target', [[1., 0.], [0., 1.]], [0., 0.], 1e-12),
+                    ('zero_target_inconclusive', [[1., 0.], [0., 1.]], [0., 0.], 0.),
+                    ('inconsistent', [[1., -1.], [-1., 1.]], [1., 1.], 0.)):
+                with self.subTest(binary=binary, case=name):
+                    system = self.root / 'edge-system'
+                    write_system(system, matrix=matrix, rhs=rhs, rtol=1e-10, atol=atol)
+                    config = self.root / 'edge.settings'
+                    values = dict(self.source_values, maxiter=8, maxlevels=1, rtol=1e-10,
+                                  atol=atol, recovery_rounds=3)
+                    config.write_text(self.profile.text_profile(values))
+                    result = self.root / 'edge-result'
+                    process = subprocess.run([binary, str(system), str(config), str(result)],
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    self.assertEqual(process.returncode, 0, process.stderr.decode())
+                    report = replay.numeric_file(result/'rank-000000.report')
+                    replay.recovery_checks([report], 3)
+                    final = json.loads(subprocess.check_output([checker, str(system), str(result)]))
+                    self.assertEqual(final['residual_passed'], name in ('already_passed', 'zero_with_absolute_target'))
+                    if name != 'inconsistent':
+                        self.assertEqual(report['recovery_rounds'], 0)
+                    shutil.rmtree(system); shutil.rmtree(result)
+
+    def test_real_recovery_mpi_when_requested(self):
+        binary = os.environ.get('MARS_TEST_PRESSURE_MPI_REPLAY')
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not binary or not checker:
+            self.skipTest('set MARS_TEST_PRESSURE_MPI_REPLAY and MARS_TEST_PRESSURE_CHECKER')
+        launcher = os.environ.get('MPIEXEC', 'mpiexec')
+        n = 64
+        matrix = [[2.01 if i == j else -1. if abs(i-j) == 1 else 0. for j in range(n)] for i in range(n)]
+        for ranks in (1, 2, 4):
+            for rtol in (1e-3, 1e-12):
+                with self.subTest(ranks=ranks, rtol=rtol):
+                    system = self.root / 'mpi-system'
+                    write_system(system, ranks, matrix=matrix, rtol=rtol)
+                    values = dict(self.source_values, maxiter=1, rtol=rtol, atol=0., recovery_rounds=3)
+                    config = self.root / 'mpi.settings'; config.write_text(self.profile.text_profile(values))
+                    result = self.root / 'mpi-result'
+                    process = subprocess.run([launcher, '-n', str(ranks), binary, str(system), str(config), str(result)],
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                    self.assertEqual(process.returncode, 0, process.stderr.decode())
+                    reports = [replay.numeric_file(replay.rank_file(result, rank, '.report')) for rank in range(ranks)]
+                    replay.recovery_checks(reports, 3)
+                    self.assertTrue(all(replay.controls_match(report, values) for report in reports))
+                    initial = json.loads(subprocess.check_output([checker, str(system), str(result/'initial')]))
+                    final = json.loads(subprocess.check_output([checker, str(system), str(result)]))
+                    self.assertTrue(initial['residual_failed'])
+                    self.assertEqual(final['residual_passed'], rtol == 1e-3)
+                    self.assertEqual(final['residual_failed'], rtol == 1e-12)
+                    shutil.rmtree(system); shutil.rmtree(result)
 
 
 if __name__ == '__main__':

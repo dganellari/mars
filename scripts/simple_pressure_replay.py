@@ -22,7 +22,9 @@ ARCHIVE_SCHEMA = 'mars-pressure-replay-inputs-v1'
 CAPTURE_MARKER = '[simple-pressure-capture] complete; files are private; original rejection retained'
 ROOT = Path(__file__).resolve().parent.parent
 CPP = ROOT / 'tests/reference/openaccel/simple_performance/pressure_replay.cpp'
-HEADERS = [ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp',
+HEADERS = [CPP.with_name('pressure_replay_recovery.hpp'),
+           ROOT / 'backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp',
+           ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp',
            ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp',
            ROOT / 'backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_capture.hpp']
 
@@ -104,12 +106,20 @@ def checked_replay_record(path, name, capture_dir, capture, check, archive=None)
     require(record['profile'] in ('captured', 'reference', 'gpu-reference')
             and (name != 'mars' or record['profile'] in ('captured', 'gpu-reference'))
             and (name != 'reference' or record['profile'] != 'gpu-reference'))
+    require(record.get('recovery_rounds', 0) in (0, 3)
+            and (not record.get('recovery_rounds') or record['profile'] == 'gpu-reference'))
     if record['profile'] == 'gpu-reference':
         check['failed_check'] = 'gpu_profile_binding'
         checked_gpu_configuration(path, record, capture_dir)
     check['failed_check'] = 'input_archive' if archive is not None else 'replay_inputs'
     check['inputs'] = replay_input_checks(path, record, capture_dir, capture, archive)
     check['failed_check'] = 'replay_outputs'
+    if record.get('recovery_rounds'):
+        required = [path / 'result/initial/complete']
+        for rank in range(capture['ranks']):
+            required += [rank_file(path / 'result/initial', rank, '.solution'),
+                         rank_file(path / 'result', rank, '.recovery')]
+        require(all(str(file) in record['files'] for file in required))
     check['outputs'] = file_identity_checks(record['files'], lambda p: 'replay_output')
     check['failed_check'] = 'replay_inputs' if not check['inputs']['matched'] else 'replay_outputs'
     require(check['inputs']['matched'] and check['outputs']['matched'])
@@ -381,7 +391,10 @@ def checked_gpu_configuration(path, record, capture_dir):
     profile.validate(values)
     _, target, _ = capture_inputs(capture_dir / 'system')
     values.update(atol=target[0], rtol=target[1])
-    require(numeric_file(configuration) == values)
+    requested = record.get('recovery_rounds', 0)
+    require(requested in (0, 3))
+    expected = dict(values, recovery_rounds=requested) if requested else values
+    require(numeric_file(configuration) == expected)
     profile.validate(values)
     return values
 
@@ -393,6 +406,8 @@ def controls_match(report, expected):
         levels = report.get('effective_levels', 0)
         if not math.isfinite(levels) or levels != int(levels) or not 1 <= levels <= expected['maxlevels']:
             return False
+    if 'recovery_rounds' in expected:
+        expected['recovery_requested_rounds'] = expected.pop('recovery_rounds')
     for key, cycle in (('relax_down', 1), ('relax_up', 2)):
         if key in expected:
             expected['effective_relax_' + str(cycle)] = expected.pop(key)
@@ -518,14 +533,16 @@ def replay(args, output, public):
     profile = args.profile or ('reference' if args.backend == 'reference' else 'captured')
     public['failed_check'] = 'profile_selection'
     require((profile in ('captured', 'gpu-reference') if args.backend == 'mars' else profile in ('captured', 'reference'))
-            and (args.gpu_profile_pair is not None) == (profile == 'gpu-reference'))
+            and (args.gpu_profile_pair is not None) == (profile == 'gpu-reference')
+            and (not args.recovery_rounds or profile == 'gpu-reference'))
     profile_inputs = {}
     if profile == 'gpu-reference':
         import simple_pressure_profile as gpu_profile
         public['failed_check'] = 'gpu_profile_identity'
         values, profile_inputs = gpu_configuration(args.gpu_profile_pair, capture_dir, record)
         configuration = output / 'gpu-reference.settings'
-        configuration.write_text(gpu_profile.text_profile(values))
+        configuration.write_text(gpu_profile.text_profile(dict(values, recovery_rounds=args.recovery_rounds)
+                                                         if args.recovery_rounds else values))
         profile_inputs.update(hashes([configuration]))
     else:
         configuration = capture_dir / ('reference.settings' if profile == 'reference' else 'system')
@@ -558,6 +575,8 @@ def replay(args, output, public):
                   environment=probe.solver_environment(os.environ), capture_sha256=digest(capture_dir / 'capture.json'))
     if profile == 'gpu-reference':
         launch['gpu_profile_source'] = str(args.gpu_profile_pair.resolve() / 'pressure.profile')
+        if args.recovery_rounds:
+            launch['recovery_rounds'] = args.recovery_rounds
         checked_gpu_configuration(output, launch, capture_dir)
     startup.write_json(output / 'launch-start.json', launch)
     public['failed_check'] = 'replay_launch'
@@ -573,15 +592,61 @@ def replay(args, output, public):
     if profile == 'gpu-reference':
         public['failed_check'] = 'gpu_profile_runtime_settings'
         reports = [numeric_file(rank_file(output / 'result', rank, '.report')) for rank in range(record['ranks'])]
-        require(all(controls_match(report, values) for report in reports))
+        require(all(controls_match(report, numeric_file(configuration)) for report in reports))
+        if args.recovery_rounds:
+            recovery_checks(reports, args.recovery_rounds)
+            require(marker(output / 'result/initial', 'mars-pressure-replay-v1') == record['ranks'])
         public.update(recorded_gpu_pressure_settings_verified=True, captured_pressure_target_preserved=True)
     public['failed_check'] = 'inputs_changed'
     verify(inputs)
-    launch.update(exit_code=0, files=hashes(list((output / 'result').iterdir()) +
+    launch.update(exit_code=0, files=hashes([p for p in (output / 'result').rglob('*') if p.is_file()] +
                   [output / 'run.exit', output / 'run.log', output / 'launch-start.json']))
     startup.write_json(output / 'replay.json', launch)
     public.update(comparison_status='replay_complete', failed_check='none', loaded_library_identity_verified=True,
                   backend=args.backend, profile=profile, convergence_verified=False)
+
+
+def recovery_checks(reports, requested):
+    require(requested == 3 and reports)
+    keys = ('recovery_requested_rounds', 'recovery_rounds', 'recovery_iterations', 'recovery_stop', 'recovery_controls_restored')
+    for report in reports:
+        require(all(math.isfinite(report[k]) and report[k] == int(report[k]) for k in keys))
+        require(report['recovery_requested_rounds'] == requested and 0 <= report['recovery_rounds'] <= requested
+                and 0 <= report['recovery_iterations'] <= report['recovery_rounds'] * report['maxiter']
+                and report['recovery_stop'] in range(5) and report['recovery_controls_restored'] == 1)
+        require(report['recovery_stop'] != 1 or report['recovery_rounds'] == requested)
+    require(all(tuple(r[k] for k in keys) == tuple(reports[0][k] for k in keys) for r in reports))
+    first = reports[0]
+    reason = ('bounded_target_reached', 'correction_budget_exhausted', 'no_certified_residual_decrease',
+              'nonfinite_residual_or_bound', 'fatal_backend_error')[int(first['recovery_stop'])]
+    return dict(stop_reason=reason, correction_used=first['recovery_rounds'] > 0,
+                separate_correction_budget_verified=True, original_controls_restored=True,
+                acceptance_scope='independent_final_residual_check')
+
+
+def check_candidate(checker, directory, result_path, name, public):
+    command = [str(checker), str(directory / 'system'), '-' if result_path is None else str(result_path)]
+    public['failed_check'] = name + '_checker_launch'
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        public['checker_launch_error'] = ('not_found' if isinstance(error, FileNotFoundError) else
+                                         'permission_denied' if isinstance(error, PermissionError) else 'os_error')
+        raise
+    public['failed_check'] = name + '_checker_exit'
+    if result.returncode != 0:
+        stderr = result.stderr.decode('utf-8', errors='replace')
+        public['checker_diagnostics'] = dict(process_exit_code=result.returncode,
+            library_load_error_seen=any(message in stderr for message in (
+                'error while loading shared libraries:', 'symbol lookup error:',
+                'Library not loaded:', 'Symbol not found:')) or ('version ' in stderr and ' not found (required by ' in stderr),
+            residual_check_error_seen='ERROR: private pressure residual check failed' in stderr)
+    require(result.returncode == 0)
+    public['failed_check'] = name + '_checker_output'
+    value = json.loads(result.stdout.decode('utf-8'))
+    keys = {'capture_valid', 'original_referenced_copies_equal_owners', 'finite', 'residual_passed', 'residual_failed', 'residual_inconclusive'}
+    require(value['schema'] == 'mars-pressure-residual-v1' and all(type(value[key]) is bool for key in keys))
+    return {key: value[key] for key in sorted(keys)}
 
 
 def compare(args, public):
@@ -617,28 +682,7 @@ def compare(args, public):
             require(replay_input_checks(path, record, directory, capture, archives[name])['matched'])
             public['failed_check'] = name + '_replay_outputs'
             verify(record['files'])
-        command = [str(checker), str(directory / 'system'), '-' if path is None else str(path / 'result')]
-        public['failed_check'] = name + '_checker_launch'
-        try:
-            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except OSError as error:
-            public['checker_launch_error'] = ('not_found' if isinstance(error, FileNotFoundError) else
-                                             'permission_denied' if isinstance(error, PermissionError) else 'os_error')
-            raise
-        public['failed_check'] = name + '_checker_exit'
-        if result.returncode != 0:
-            stderr = result.stderr.decode('utf-8', errors='replace')
-            public['checker_diagnostics'] = dict(process_exit_code=result.returncode,
-                library_load_error_seen=any(message in stderr for message in (
-                    'error while loading shared libraries:', 'symbol lookup error:',
-                    'Library not loaded:', 'Symbol not found:')) or ('version ' in stderr and ' not found (required by ' in stderr),
-                residual_check_error_seen='ERROR: private pressure residual check failed' in stderr)
-        require(result.returncode == 0)
-        public['failed_check'] = name + '_checker_output'
-        value = json.loads(result.stdout.decode('utf-8'))
-        keys = {'capture_valid', 'original_referenced_copies_equal_owners', 'finite', 'residual_passed', 'residual_failed', 'residual_inconclusive'}
-        require(value['schema'] == 'mars-pressure-residual-v1' and all(type(value[key]) is bool for key in keys))
-        checks[name] = {key: value[key] for key in sorted(keys)}
+        checks[name] = check_candidate(checker, directory, None if path is None else path / 'result', name, public)
         if path is not None:
             public['failed_check'] = name + '_replay_report'
             reports = [numeric_file(rank_file(path / 'result', rank, '.report')) for rank in range(capture['ranks'])]
@@ -656,7 +700,16 @@ def compare(args, public):
                 require(control_matches)
                 checks[name]['captured_pressure_target_preserved'] = True
             public['failed_check'] = name + '_replay_stopping_report'
-            stopping[name] = stopping_checks(reports, checks[name])
+            if record.get('recovery_rounds'):
+                require(marker(path / 'result/initial', 'mars-pressure-replay-v1') == capture['ranks'])
+                initial = check_candidate(checker, directory, path / 'result/initial', name + '_initial', public)
+                public.setdefault('initial_residual_checks', {})[name] = initial
+                public.setdefault('recovery_checks', {})[name] = recovery_checks(reports, record['recovery_rounds'])
+                checks[name]['backend_flag_scope'] = 'initial_solve_before_recovery'
+                stopping[name] = stopping_checks(reports, initial)
+                stopping[name]['scope'] = 'initial_solve_before_recovery_not_final_candidate'
+            else:
+                stopping[name] = stopping_checks(reports, checks[name])
             public['failed_check'] = name + '_replay_inputs_changed'
             require(replay_input_checks(path, record, directory, capture, archives[name])['matched'])
             public['failed_check'] = name + '_replay_outputs_changed'
@@ -680,6 +733,7 @@ def main(argv=None):
     r.add_argument('--backend', choices=('mars', 'reference'), required=True)
     r.add_argument('--profile', choices=('captured', 'reference', 'gpu-reference'))
     r.add_argument('--gpu-profile-pair', type=Path)
+    r.add_argument('--recovery-rounds', type=int, choices=(0, 3), default=0)
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
