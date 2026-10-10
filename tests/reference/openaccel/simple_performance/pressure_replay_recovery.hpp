@@ -149,6 +149,11 @@ struct Audit {
         checked(hypre_ParVectorSetConstantValues(zero.p,0.));
     }
 };
+struct Expansion {
+    Vector high,low;
+    int step=0;
+    Expansion(hypre_ParVector* x,HYPRE_MemoryLocation memory):high(x,memory),low(x,memory) {}
+};
 struct SolveResult {
     int error=0,global=0,iterations=0,converged=0;
     double relative=0;
@@ -169,9 +174,11 @@ inline int maximum(int value,hypre_MPI_Comm comm) {
 struct Result { int rounds=0,iterations=0,stop=1,audit_steps=0; };
 inline Result run(hypre_ParCSRMatrix* a,hypre_ParVector* b,hypre_ParVector* x,
                   HYPRE_Solver solver,bool flex,const settings::Values& controls,HYPRE_MemoryLocation memory,
-                  int rounds,const SolveResult& initial,std::ostream& trace,std::ostream* audit_trace=nullptr) {
+                  int rounds,const SolveResult& initial,std::ostream& trace,std::ostream* audit_trace=nullptr,
+                  Expansion* expansion=nullptr) {
     const auto comm=hypre_ParCSRMatrixComm(a);
     Result result;
+    frozen::require(!expansion || audit_trace);
     if(audit_trace) *audit_trace<<"mars-pressure-correction-audit-v1\n"<<std::setprecision(17);
     if(maximum((initial.error|initial.global)&~HYPRE_ERROR_CONV,comm)) { result.stop=4; return result; }
     Residual evaluator(a,x,memory);
@@ -226,6 +233,12 @@ inline Result run(hypre_ParCSRMatrix* a,hypre_ParVector* b,hypre_ParVector* x,
         if(!(next.upper<current.lower)) { result.stop=2; break; }
         checked(hypre_ParVectorCopy(trial.p,x)); current=next;
         if(current.upper<=limit) { result.stop=0; break; }
+    }
+    if(expansion && result.audit_steps) {
+        // Keep the last audited trial, even if ordinary rounded acceptance rejected it.
+        checked(hypre_ParVectorCopy(trial.p,expansion->high.p));
+        checked(hypre_ParVectorCopy(audit->low.p,expansion->low.p));
+        expansion->step=result.audit_steps;
     }
     checked((flex?HYPRE_ParCSRFlexGMRESSetTol:HYPRE_ParCSRGMRESSetTol)(solver,controls.at("rtol")));
     checked((flex?HYPRE_ParCSRFlexGMRESSetAbsoluteTol:HYPRE_ParCSRGMRESSetAbsoluteTol)(solver,controls.at("atol")));

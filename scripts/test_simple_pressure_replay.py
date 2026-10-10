@@ -55,6 +55,15 @@ def write_solution(directory, solution, ranks):
     (directory/'complete').write_text('mars-pressure-replay-v1\n{}\n'.format(ranks))
 
 
+def write_expansion(directory, high, low, ranks):
+    directory.mkdir()
+    for rank in range(ranks):
+        first, last = len(high)*rank//ranks, len(high)*(rank+1)//ranks
+        for suffix, values in (('.high', high), ('.low', low)):
+            replay.rank_file(directory, rank, suffix).write_bytes(struct.pack('<{}d'.format(last-first), *values[first:last]))
+    (directory/'complete').write_text('mars-pressure-expansion-v1\n{}\n'.format(ranks))
+
+
 class ReplayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -95,6 +104,48 @@ class ReplayTests(unittest.TestCase):
                 self.assertTrue(result['residual_passed'])
                 self.assertTrue(result['original_referenced_copies_equal_owners'])
                 shutil.rmtree(self.capture); shutil.rmtree(self.result)
+
+    def test_expansion_checker_keeps_low_parts_and_off_rank_couplings(self):
+        b = float.fromhex('0x1.8000000000001p+1')
+        exact = Fraction(b)/3
+        high = float(exact); low = float(exact-Fraction(high))
+        self.assertEqual(high+low, high)
+        self.assertLess(abs(Fraction(b)-3*(Fraction(high)+Fraction(low))), Fraction(1e-17))
+        self.assertGreater(abs(Fraction(b)-3*Fraction(high)), Fraction(1e-17))
+        n = 12
+        matrix = [[(4. if i in (0,n-1) else 5.) if i == j else -1. if abs(i-j)==1 else 0.
+                   for j in range(n)] for i in range(n)]
+        for ranks in (1, 2, 4):
+            with self.subTest(ranks=ranks):
+                write_system(self.capture, ranks, matrix=matrix, rhs=[b]*n, atol=1e-17, rtol=1e-20)
+                write_solution(self.result, [high]*n, ranks)
+                self.assertTrue(self.check(self.result)['residual_failed'])
+                expanded = self.root/'expanded'
+                write_expansion(expanded, [high]*n, [low]*n, ranks)
+                command = [str(self.checker), str(self.capture), str(expanded), '--expansion']
+                result = json.loads(subprocess.check_output(command))
+                self.assertTrue(result['residual_passed'])
+                self.assertEqual(result['representation'], 'fp64_two_sum_expansion')
+                self.assertTrue(result['original_referenced_copies_equal_owners'])
+                for fault in ('zero', 'nan', 'missing', 'truncated'):
+                    file = replay.rank_file(expanded, ranks-1, '.low'); saved = file.read_bytes()
+                    if fault == 'missing': file.unlink()
+                    elif fault == 'truncated': file.write_bytes(saved[:-1])
+                    else:
+                        values = [0. if fault == 'zero' else float('nan')]*(n//ranks)
+                        file.write_bytes(struct.pack('<{}d'.format(len(values)), *values))
+                    process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if fault in ('missing', 'truncated'): self.assertNotEqual(process.returncode, 0)
+                    else:
+                        verdict = json.loads(process.stdout)
+                        self.assertFalse(verdict['residual_passed'])
+                        self.assertEqual(verdict['finite'], fault != 'nan')
+                    file.write_bytes(saved)
+                for wrong in ([str(self.checker), str(self.capture), str(expanded)],
+                              [str(self.checker), str(self.capture), str(self.result), '--expansion'],
+                              [str(self.checker), str(self.capture), '-', '--expansion']):
+                    self.assertNotEqual(subprocess.run(wrong, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode, 0)
+                shutil.rmtree(self.capture); shutil.rmtree(self.result); shutil.rmtree(expanded)
 
     def test_stale_referenced_ghost_detected(self):
         write_system(self.capture, 2)
@@ -858,7 +909,10 @@ class ReplayTests(unittest.TestCase):
     def test_audited_recovery_is_automatically_included_in_comparison(self):
         self.check_recovery_preserves_initial_failure(4, audited=True)
 
-    def check_recovery_preserves_initial_failure(self, rounds, audited=False):
+    def test_expansion_comparison_keeps_ordinary_failure_separate(self):
+        self.check_recovery_preserves_initial_failure(4, audited=True, retained=True)
+
+    def check_recovery_preserves_initial_failure(self, rounds, audited=False, retained=False):
         import simple_pressure_profile as profile
         import test_simple_pressure_profile as fixtures
         args = self.compare_arguments()
@@ -868,7 +922,9 @@ class ReplayTests(unittest.TestCase):
         path = self.root / 'mars'
         source = self.root / 'pressure.profile'; source.write_text(profile.text_profile(values))
         config_path = path / 'gpu-reference.settings'
-        config_path.write_text(profile.text_profile(dict(values, recovery_rounds=rounds)))
+        configured = dict(values, recovery_rounds=rounds)
+        if retained: configured['retain_update_expansion'] = 1
+        config_path.write_text(profile.text_profile(configured))
         report_path = path / 'result/rank-000000.report'
         report = replay.numeric_file(report_path)
         report.update(values, effective_levels=3, effective_relax_3=18,
@@ -878,6 +934,7 @@ class ReplayTests(unittest.TestCase):
         report['effective_relax_1'] = report.pop('relax_down')
         report['effective_relax_2'] = report.pop('relax_up')
         if audited: report.update(recovery_audit_version=1, recovery_audit_steps=1)
+        if retained: report.update(expansion_requested=1, expansion_version=1, expansion_step=1)
         report_path.write_text(profile.text_profile(report))
         write_solution(path / 'result/initial', [0.]*12, 1)
         trace = path / 'result/rank-000000.recovery'
@@ -893,6 +950,9 @@ class ReplayTests(unittest.TestCase):
                 'mars-pressure-correction-audit-v1\n'
                 'step 1 rhs 1 1.000001 correction 1e-11 2e-11 ideal 1e-11 2e-11 '
                 'rounding 0 1e-14 candidate 1e-11 2e-11 target 1e-10 1.000001e-10\n')
+        if retained:
+            record.update(retain_update_expansion=True, expansion_version=1)
+            write_expansion(path/'result/expansion', [1.+i/8. for i in range(12)], [0.]*12, 1)
         record['inputs'].update(replay.hashes([source, config_path]))
         record['files'].update(replay.hashes([p for p in (path/'result').rglob('*') if p.is_file()]))
         (path/'replay.json').write_text(json.dumps(record))
@@ -907,6 +967,11 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(public['correction_audit']['mars']['steps'][0]['assessment'], 'rounded_candidate_meets_target')
         else:
             self.assertNotIn('correction_audit', public)
+        if retained:
+            self.assertTrue(public['expansion_residual_checks']['mars']['residual_passed'])
+            self.assertTrue(public['expansion_candidates']['mars']['audited_step_binding_verified'])
+        else:
+            self.assertNotIn('expansion_residual_checks', public)
         self.assertNotIn('PRIVATE', json.dumps(public))
         progress_args = args[:1] + ['--recovery-progress'] + args[1:]
         progress_args[-1] = str(self.root/'progress.json')
@@ -918,7 +983,16 @@ class ReplayTests(unittest.TestCase):
         record['files'].update(replay.hashes([final]))
         (path/'replay.json').write_text(json.dumps(record))
         args[-1] = str(self.root/'failed-recovery.json')
-        self.assertTrue(self.compare_saved(args, 0)['residual_checks']['mars']['residual_failed'])
+        failed = self.compare_saved(args, 0)
+        self.assertTrue(failed['residual_checks']['mars']['residual_failed'])
+        if retained:
+            self.assertTrue(failed['expansion_residual_checks']['mars']['residual_passed'])
+            low = path/'result/expansion/rank-000000.low'
+            saved_hash = record['files'].pop(str(low))
+            (path/'replay.json').write_text(json.dumps(record))
+            args[-1] = str(self.root/'unbound-expansion-low.json')
+            self.assertEqual(self.compare_saved(args)['failed_check'], 'mars_expansion_evidence')
+            record['files'][str(low)] = saved_hash
         # The initial candidate and correction trace must be bound to the launch record.
         for key in (str(trace), str(path/'result/initial/rank-000000.solution')):
             digest = record['files'].pop(key)
@@ -1108,6 +1182,46 @@ class ReplayTests(unittest.TestCase):
         self.assertIsNone(replay.checked_correction_audit(path, {}, [{}]*2))
         replay.rank_file(self.result, 0, '.correction-audit').write_text(text+'PRIVATE\n')
         with self.assertRaises(ValueError): replay.checked_correction_audit(path, record, reports)
+
+    def test_expansion_binding_requires_request_matching_steps_and_both_parts(self):
+        _, reports = self.audit_fixture()
+        for rank, report in enumerate(reports):
+            report.update(expansion_requested=1, expansion_version=1, expansion_step=1)
+            replay.rank_file(self.result, rank, '.report').write_text('expansion_requested 1\n')
+        write_expansion(self.result/'expansion', [1., 2.], [0., 0.], 2)
+        record = dict(retain_update_expansion=True, expansion_version=1, recovery_rounds=3,
+                      recovery_audit_version=1, files=replay.hashes([file for file in self.result.rglob('*') if file.is_file()]))
+        check = replay.checked_expansion(self.result.parent, record, reports)
+        self.assertTrue(check['candidate_available'])
+        self.assertEqual(check['selection'], 'last_completed_audited_trial')
+        for key, value in (('expansion_step', 0), ('expansion_step', 2), ('expansion_step', 0.5),
+                           ('expansion_requested', 0), ('expansion_version', 2)):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                replay.checked_expansion(self.result.parent, record, [dict(reports[0], **{key:value}), reports[1]])
+        for changed in (dict(record, retain_update_expansion=False), dict(record, expansion_version=2)):
+            with self.assertRaises(ValueError): replay.checked_expansion(self.result.parent, changed, reports)
+        for suffix in ('.high', '.low'):
+            file = replay.rank_file(self.result/'expansion', 1, suffix)
+            saved = file.read_bytes(); file.write_bytes(bytes(len(saved)+1))
+            with self.assertRaises(ValueError): replay.checked_expansion(self.result.parent, record, reports)
+            file.write_bytes(saved)
+            changed = dict(record, files=dict(record['files'])); del changed['files'][str(file)]
+            with self.assertRaises(ValueError): replay.checked_expansion(self.result.parent, changed, reports)
+
+    def test_expansion_unavailable_does_not_fabricate_a_candidate(self):
+        self.result.mkdir()
+        report = dict(expansion_requested=1, expansion_version=1, expansion_step=0,
+                      recovery_audit_steps=0, recovery_audit_version=1, recovery_rounds=0,
+                      recovery_stop=4, recovery_iterations=0, maxiter=20)
+        for suffix, text in (('.report', 'expansion_step 0\n'), ('.recovery', ''),
+                             ('.correction-audit', 'mars-pressure-correction-audit-v1\n')):
+            replay.rank_file(self.result, 0, suffix).write_text(text)
+        record = dict(retain_update_expansion=True, expansion_version=1, recovery_rounds=3,
+                      recovery_audit_version=1, files=replay.hashes(list(self.result.iterdir())))
+        result = replay.checked_expansion(self.result.parent, record, [report])
+        self.assertFalse(result['candidate_available'])
+        (self.result/'expansion').mkdir()
+        with self.assertRaises(ValueError): replay.checked_expansion(self.result.parent, record, [report])
 
     def inspection_fixture(self, ranks=1):
         capture = self.captured_record(ranks)
@@ -1477,7 +1591,7 @@ class GpuProfileReplayTests(unittest.TestCase):
         write_system(system, matrix=[[3.]], rhs=[b], atol=1e-17, rtol=1e-20)
         config = self.root / 'scalar.settings'
         config.write_text(self.profile.text_profile(dict(self.source_values, atol=1e-17, rtol=1e-20,
-                                                       maxiter=20, recovery_rounds=3)))
+                                                       maxiter=20, recovery_rounds=3, retain_update_expansion=1)))
         for number, binary in enumerate(binaries):
             with self.subTest(binary=binary):
                 result = self.root / ('scalar-result-'+str(number))
@@ -1501,11 +1615,33 @@ class GpuProfileReplayTests(unittest.TestCase):
                 rounded = abs(Fraction(b)-3*Fraction(trial))
                 self.assertLess(ideal, Fraction(1e-17))
                 self.assertGreater(rounded, Fraction(1e-17))
+                retained_high, = struct.unpack('<d', (result/'expansion/rank-000000.high').read_bytes())
+                retained_low, = struct.unpack('<d', (result/'expansion/rank-000000.low').read_bytes())
+                self.assertEqual(retained_high, trial)
+                self.assertEqual(retained_low, low)
+                self.assertEqual(report['expansion_step'], report['recovery_audit_steps'])
+                checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+                if checker:
+                    ordinary = json.loads(subprocess.check_output([checker, str(system), str(result)]))
+                    expanded = json.loads(subprocess.check_output([checker, str(system), str(result/'expansion'), '--expansion']))
+                    self.assertTrue(ordinary['residual_failed'])
+                    self.assertTrue(expanded['residual_passed'])
                 row = (result/'rank-000000.correction-audit').read_text().splitlines()[-1].split()
                 for i, exact in ((6, abs(residual-3*Fraction(delta))), (9, ideal),
                                  (12, abs(3*Fraction(low))), (15, rounded)):
                     self.assertLessEqual(Fraction(float(row[i])), exact)
                     self.assertGreaterEqual(Fraction(float(row[i+1])), exact)
+
+    def test_expansion_configuration_requires_explicit_request(self):
+        values, output, record = self.binding()
+        config = output/'gpu-reference.settings'
+        config.write_text(self.profile.text_profile(dict(values, recovery_rounds=4, retain_update_expansion=1)))
+        record['inputs'].update(replay.hashes([config])); record['recovery_rounds'] = 4
+        with self.assertRaises(ValueError): replay.checked_gpu_configuration(output, record, self.capture)
+        record.update(retain_update_expansion=True, expansion_version=1)
+        self.assertEqual(replay.checked_gpu_configuration(output, record, self.capture), values)
+        record['recovery_rounds'] = 0
+        with self.assertRaises(ValueError): replay.checked_gpu_configuration(output, record, self.capture)
 
     def test_recovery_configuration_requires_explicit_request(self):
         values, output, record = self.binding()
@@ -1540,7 +1676,7 @@ class GpuProfileReplayTests(unittest.TestCase):
                     write_system(system, matrix=matrix, rhs=rhs, rtol=1e-10, atol=atol)
                     config = self.root / 'edge.settings'
                     values = dict(self.source_values, maxiter=8, maxlevels=1, rtol=1e-10,
-                                  atol=atol, recovery_rounds=3)
+                                  atol=atol, recovery_rounds=3, retain_update_expansion=1)
                     config.write_text(self.profile.text_profile(values))
                     result = self.root / 'edge-result'
                     process = subprocess.run([binary, str(system), str(config), str(result)],
@@ -1552,6 +1688,8 @@ class GpuProfileReplayTests(unittest.TestCase):
                     self.assertEqual(final['residual_passed'], name in ('already_passed', 'zero_with_absolute_target'))
                     if name != 'inconsistent':
                         self.assertEqual(report['recovery_rounds'], 0)
+                        self.assertEqual(report['expansion_step'], 0)
+                        self.assertFalse((result/'expansion').exists())
                     shutil.rmtree(system); shutil.rmtree(result)
 
     def test_real_recovery_mpi_when_requested(self):
@@ -1569,7 +1707,7 @@ class GpuProfileReplayTests(unittest.TestCase):
                     case.mkdir()
                     system = case / 'system'
                     write_system(system, ranks, matrix=matrix, rtol=rtol)
-                    values = dict(self.source_values, maxiter=1, rtol=rtol, atol=0., recovery_rounds=rounds)
+                    values = dict(self.source_values, maxiter=1, rtol=rtol, atol=0., recovery_rounds=rounds, retain_update_expansion=1)
                     config = case / 'settings'; config.write_text(self.profile.text_profile(values))
                     result = case / 'result'
                     process = subprocess.run([launcher, '-n', str(ranks), binary, str(system), str(config), str(result)],
@@ -1590,6 +1728,10 @@ class GpuProfileReplayTests(unittest.TestCase):
                     passed = rtol == 1e-3
                     self.assertEqual(final['residual_passed'], passed)
                     self.assertEqual(final['residual_failed'], not passed)
+                    expanded = json.loads(subprocess.check_output([checker, str(system), str(result/'expansion'), '--expansion']))
+                    self.assertEqual(expanded['residual_passed'], passed)
+                    self.assertEqual(expanded['residual_failed'], not passed)
+                    self.assertTrue(all(report['expansion_step'] == report['recovery_audit_steps'] for report in reports))
                     shutil.rmtree(system); shutil.rmtree(result)
 
 

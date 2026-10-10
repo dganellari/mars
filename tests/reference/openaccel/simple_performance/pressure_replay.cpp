@@ -7,6 +7,7 @@
 #include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_capture.hpp"
 #include <iostream>
+#include <utility>
 #include <dlfcn.h>
 
 namespace frozen=mars::segregated::frozen;
@@ -71,6 +72,12 @@ int main(int argc,char** argv) {
         controls.erase("recovery_rounds");
         frozen::require(recovery_requested==0 || recovery_requested==3 || recovery_requested==4);
         const int recovery_rounds=int(recovery_requested);
+        const double retain_requested=controls.count("retain_update_expansion")?controls.at("retain_update_expansion"):0;
+        controls.erase("retain_update_expansion");
+        frozen::require(retain_requested==0 || (retain_requested==1 && recovery_rounds));
+        const bool retain_expansion=retain_requested==1;
+        const int maximum_expansion=recovery::maximum(int(retain_expansion),hypre_MPI_COMM_WORLD);
+        frozen::require(recovery::maximum(maximum_expansion!=int(retain_expansion),hypre_MPI_COMM_WORLD)==0);
         const int maximum_recovery=recovery::maximum(recovery_rounds,hypre_MPI_COMM_WORLD);
         frozen::require(recovery::maximum(recovery_rounds!=maximum_recovery,hypre_MPI_COMM_WORLD)==0);
         frozen::require(controls.count("method") && (controls.at("method")==0 || controls.at("method")==1));
@@ -151,6 +158,8 @@ int main(int argc,char** argv) {
         checked((flex?HYPRE_ParCSRFlexGMRESSetup:HYPRE_ParCSRGMRESSetup)(solver,a,pb,px));
         std::ostringstream effective; settings::write(effective,settings::snapshot(solver,amg,flex));
         const auto initial=recovery::solve(solver,flex,a,pb,px);
+        std::unique_ptr<recovery::Expansion> expansion;
+        if(retain_expansion) expansion=std::make_unique<recovery::Expansion>(reinterpret_cast<hypre_ParVector*>(px),memory);
         effective<<std::setprecision(17)<<"result_solve_error "<<initial.error<<"\nresult_global_error "<<initial.global
             <<"\nresult_fatal_error "<<bool((initial.error|initial.global)&~HYPRE_ERROR_CONV)
             <<"\nresult_iterations "<<initial.iterations<<"\nresult_converged "<<initial.converged<<"\nresult_reported "<<initial.relative<<'\n';
@@ -159,7 +168,7 @@ int main(int argc,char** argv) {
             frozen::Writer before(output/"initial"/frozen::part_name(rank,".solution")); before.array(x); before.finish();
             std::ostringstream trace,audit_trace;
             const auto recovered=recovery::run(reinterpret_cast<hypre_ParCSRMatrix*>(a),reinterpret_cast<hypre_ParVector*>(pb),
-                reinterpret_cast<hypre_ParVector*>(px),solver,flex,controls,memory,recovery_rounds,initial,trace,&audit_trace);
+                reinterpret_cast<hypre_ParVector*>(px),solver,flex,controls,memory,recovery_rounds,initial,trace,&audit_trace,expansion.get());
             const auto restored=settings::snapshot(solver,amg,flex);
             frozen::require(restored.at("rtol")==controls.at("rtol") && restored.at("atol")==controls.at("atol")
                 && restored.at("miniter")==controls.at("miniter") && restored.at("maxiter")==controls.at("maxiter"));
@@ -171,6 +180,29 @@ int main(int argc,char** argv) {
             frozen::Writer audit_history(output/frozen::part_name(rank,".correction-audit"));
             const auto audit_text=audit_trace.str(); audit_history.bytes(audit_text.data(),audit_text.size()); audit_history.finish();
         }
+        if(expansion) {
+            const int step=recovery::maximum(expansion->step,hypre_MPI_COMM_WORLD);
+            frozen::require(recovery::maximum(step!=expansion->step,hypre_MPI_COMM_WORLD)==0);
+            effective<<"expansion_requested 1\nexpansion_version 1\nexpansion_step "<<step<<'\n';
+            if(step) {
+                if(!rank) frozen::require(std::filesystem::create_directory(output/"expansion"));
+                checked(hypre_MPI_Barrier(hypre_MPI_COMM_WORLD));
+#ifdef __CUDACC__
+                checked(hypre_ForceSyncComputeStream());
+#endif
+                // Explicit private output requires these two owned-vector host copies.
+                for(const auto& component:{std::make_pair(expansion->high.p,".high"),std::make_pair(expansion->low.p,".low")}) {
+                    std::vector<double> host(rows);
+#ifdef __CUDACC__
+                    frozen::require(cudaMemcpy(host.data(),recovery::data(component.first),rows*sizeof(double),cudaMemcpyDeviceToHost)==cudaSuccess);
+#else
+                    std::copy_n(recovery::data(component.first),rows,host.data());
+#endif
+                    frozen::Writer file(output/"expansion"/frozen::part_name(rank,component.second));
+                    file.array(host); file.finish();
+                }
+            }
+        }
         checked(HYPRE_IJVectorGetValues(solution,HYPRE_Int(rows),d_ids.p,d_x.p)); d_x.output(x);
         frozen::Writer result(output/frozen::part_name(rank,".solution")); result.array(x); result.finish();
         frozen::Writer info(output/frozen::part_name(rank,".report")); const auto text=effective.str(); info.bytes(text.data(),text.size()); info.finish();
@@ -180,6 +212,10 @@ int main(int argc,char** argv) {
         if (!rank) {
             const std::string text="mars-pressure-replay-v1\n"+std::to_string(ranks)+"\n";
             if(recovery_rounds) { frozen::Writer done(output/"initial"/"complete"); done.bytes(text.data(),text.size()); done.finish(); }
+            if(expansion && expansion->step) {
+                const std::string expanded="mars-pressure-expansion-v1\n"+std::to_string(ranks)+"\n";
+                frozen::Writer done(output/"expansion"/"complete"); done.bytes(expanded.data(),expanded.size()); done.finish();
+            }
             frozen::Writer done(output/"complete"); done.bytes(text.data(),text.size()); done.finish();
         }
         }

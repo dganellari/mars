@@ -109,6 +109,8 @@ def checked_replay_record(path, name, capture_dir, capture, check, archive=None)
             and (name != 'reference' or record['profile'] != 'gpu-reference'))
     require(record.get('recovery_rounds', 0) in (0, 3, 4)
             and (not record.get('recovery_rounds') or record['profile'] == 'gpu-reference'))
+    require(type(record.get('retain_update_expansion', False)) is bool
+            and (not record.get('retain_update_expansion') or record.get('recovery_rounds')))
     if record['profile'] == 'gpu-reference':
         check['failed_check'] = 'gpu_profile_binding'
         checked_gpu_configuration(path, record, capture_dir)
@@ -395,6 +397,9 @@ def checked_gpu_configuration(path, record, capture_dir):
     requested = record.get('recovery_rounds', 0)
     require(requested in (0, 3, 4))
     expected = dict(values, recovery_rounds=requested) if requested else values
+    if record.get('retain_update_expansion'):
+        require(requested and record.get('expansion_version') == 1)
+        expected = dict(expected, retain_update_expansion=1)
     require(numeric_file(configuration) == expected)
     profile.validate(values)
     return values
@@ -407,6 +412,8 @@ def controls_match(report, expected):
         levels = report.get('effective_levels', 0)
         if not math.isfinite(levels) or levels != int(levels) or not 1 <= levels <= expected['maxlevels']:
             return False
+    if 'retain_update_expansion' in expected:
+        expected['expansion_requested'] = expected.pop('retain_update_expansion')
     if 'recovery_rounds' in expected:
         expected['recovery_requested_rounds'] = expected.pop('recovery_rounds')
     for key, cycle in (('relax_down', 1), ('relax_up', 2)):
@@ -535,15 +542,18 @@ def replay(args, output, public):
     public['failed_check'] = 'profile_selection'
     require((profile in ('captured', 'gpu-reference') if args.backend == 'mars' else profile in ('captured', 'reference'))
             and (args.gpu_profile_pair is not None) == (profile == 'gpu-reference')
-            and (not args.recovery_rounds or profile == 'gpu-reference'))
+            and (not args.recovery_rounds or profile == 'gpu-reference')
+            and (not args.retain_update_expansion or args.recovery_rounds))
     profile_inputs = {}
     if profile == 'gpu-reference':
         import simple_pressure_profile as gpu_profile
         public['failed_check'] = 'gpu_profile_identity'
         values, profile_inputs = gpu_configuration(args.gpu_profile_pair, capture_dir, record)
         configuration = output / 'gpu-reference.settings'
-        configuration.write_text(gpu_profile.text_profile(dict(values, recovery_rounds=args.recovery_rounds)
-                                                         if args.recovery_rounds else values))
+        configured = dict(values)
+        if args.recovery_rounds: configured['recovery_rounds'] = args.recovery_rounds
+        if args.retain_update_expansion: configured['retain_update_expansion'] = 1
+        configuration.write_text(gpu_profile.text_profile(configured))
         profile_inputs.update(hashes([configuration]))
     else:
         configuration = capture_dir / ('reference.settings' if profile == 'reference' else 'system')
@@ -578,6 +588,8 @@ def replay(args, output, public):
         launch['gpu_profile_source'] = str(args.gpu_profile_pair.resolve() / 'pressure.profile')
         if args.recovery_rounds:
             launch['recovery_rounds'] = args.recovery_rounds
+        if args.retain_update_expansion:
+            launch.update(retain_update_expansion=True, expansion_version=1)
         checked_gpu_configuration(output, launch, capture_dir)
     startup.write_json(output / 'launch-start.json', launch)
     public['failed_check'] = 'replay_launch'
@@ -607,6 +619,9 @@ def replay(args, output, public):
     verify(inputs)
     launch.update(exit_code=0, files=hashes([p for p in (output / 'result').rglob('*') if p.is_file()] +
                   [output / 'run.exit', output / 'run.log', output / 'launch-start.json']))
+    if args.retain_update_expansion:
+        public['failed_check'] = 'expansion_evidence'
+        public['expansion_candidate'] = checked_expansion(output, launch, reports)
     startup.write_json(output / 'replay.json', launch)
     public.update(comparison_status='replay_complete', failed_check='none', loaded_library_identity_verified=True,
                   backend=args.backend, profile=profile, convergence_verified=False)
@@ -768,8 +783,39 @@ def checked_correction_audit(path, record, reports):
     return correction_audit(path / 'result', reports)
 
 
-def check_candidate(checker, directory, result_path, name, public):
+def checked_expansion(path, record, reports):
+    keys = ('expansion_requested', 'expansion_version', 'expansion_step')
+    if not record.get('retain_update_expansion'):
+        require(not any(key in report for report in reports for key in keys))
+        return None
+    require(record.get('expansion_version') == 1 and record.get('recovery_rounds'))
+    require(checked_correction_audit(path, record, reports) is not None)
+    steps = []
+    for report in reports:
+        require(report.get('expansion_requested') == 1 and report.get('expansion_version') == 1)
+        step = report['expansion_step']
+        require(math.isfinite(step) and step == int(step) and step == report['recovery_audit_steps'])
+        steps.append(int(step))
+    require(steps and all(step == steps[0] for step in steps))
+    directory = path / 'result/expansion'
+    if steps[0]:
+        required = [directory / 'complete']
+        require(marker(directory, 'mars-pressure-expansion-v1') == len(reports))
+        for rank in range(len(reports)):
+            required += [rank_file(directory, rank, suffix) for suffix in ('.high', '.low')]
+            last = rank_file(path / 'result', rank, '.correction-audit').read_text().splitlines()[-1].split()
+            require(int(last[1]) == steps[0])
+        require(all(str(file) in record['files'] and digest(file) == record['files'][str(file)] for file in required))
+    else:
+        require(not directory.exists())
+    return dict(representation='fp64_two_sum_expansion', selection='last_completed_audited_trial',
+                candidate_available=steps[0] > 0, audited_step_binding_verified=True,
+                original_pressure_target_preserved=True)
+
+
+def check_candidate(checker, directory, result_path, name, public, expansion=False):
     command = [str(checker), str(directory / 'system'), '-' if result_path is None else str(result_path)]
+    if expansion: command.append('--expansion')
     public['failed_check'] = name + '_checker_launch'
     try:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -790,6 +836,7 @@ def check_candidate(checker, directory, result_path, name, public):
     value = json.loads(result.stdout.decode('utf-8'))
     keys = {'capture_valid', 'original_referenced_copies_equal_owners', 'finite', 'residual_passed', 'residual_failed', 'residual_inconclusive'}
     require(value['schema'] == 'mars-pressure-residual-v1' and all(type(value[key]) is bool for key in keys))
+    require(value.get('representation', 'fp64') == ('fp64_two_sum_expansion' if expansion else 'fp64'))
     return {key: value[key] for key in sorted(keys)}
 
 
@@ -853,6 +900,13 @@ def compare(args, public):
                 audit = checked_correction_audit(path, record, reports)
                 if audit is not None:
                     public.setdefault('correction_audit', {})[name] = audit
+                public['failed_check'] = name + '_expansion_evidence'
+                expanded = checked_expansion(path, record, reports)
+                if expanded is not None:
+                    public.setdefault('expansion_candidates', {})[name] = expanded
+                    if expanded['candidate_available']:
+                        verdict = check_candidate(checker, directory, path / 'result/expansion', name + '_expansion', public, expansion=True)
+                        public.setdefault('expansion_residual_checks', {})[name] = verdict
                 if args.recovery_progress:
                     public['failed_check'] = name + '_recovery_progress'
                     public.setdefault('recovery_progress', {})[name] = recovery_progress(path / 'result', reports)
@@ -885,6 +939,7 @@ def main(argv=None):
     r.add_argument('--profile', choices=('captured', 'reference', 'gpu-reference'))
     r.add_argument('--gpu-profile-pair', type=Path)
     r.add_argument('--recovery-rounds', type=int, choices=(0, 3, 4), default=0)
+    r.add_argument('--retain-update-expansion', action='store_true')
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)

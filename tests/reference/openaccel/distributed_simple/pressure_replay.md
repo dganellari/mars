@@ -1,6 +1,101 @@
 # Replay the rejected pressure equation
 
-## Distinguish correction error from rounding in the update
+## Preserve the pressure update that passed the audit
+
+The public `simple-pressure-correction-audit-25sfoe/comparison-public.json`
+verifies that all four correction equations meet their inner targets. On the
+fourth update, `b - A trial - A low` passes the original target, while the
+rounded `b - A trial` fails. This isolates the loss from storing this proposed
+update in one FP64 value. It does not prove that every one-double candidate
+would fail or establish full-flow convergence.
+
+`replay --retain-update-expansion` now keeps and exports both parts of the last
+completed audited trial under the private `result/expansion` directory. They
+represent `trial + low` in real arithmetic. Both have pressure units; the
+assembled equation, boundary elimination, pressure reference, four-correction
+budget and original acceptance target remain unchanged. A last trial rejected
+by the ordinary recovery test is still retained as a candidate. If recovery
+never completes an audit, the public report marks the candidate unavailable
+and no expansion files are produced.
+
+The independent checker has an explicit `--expansion` mode. It reads the owned
+`.high` and `.low` files, reconstructs their global mapping and accumulates
+`b - A high - A low` with separate products in the same compensated row sum.
+It never first rounds `high + low` to one double. Both sets of products enter
+the evaluation bound. Missing, truncated or unbound files fail verification;
+nonfinite components cannot pass. The format version, rank agreement, last
+audit step and component hashes are checked before evaluating the candidate.
+
+Public comparison adds `expansion_candidates.mars` and, when available,
+`expansion_residual_checks.mars`. Its `residual_passed` must be true to certify
+the retained candidate. The ordinary `residual_checks.mars`, initial failure,
+recovery stop reason and reference verdict remain separate. An expansion pass
+certifies this frozen linear-system candidate only. It does not make the
+ordinary `.solution` pass or show OpenAccel field parity. Production SIMPLE
+integration would need to retain the low component through pressure, gradient,
+velocity, flux and halo operations before a full-flow claim is justified.
+
+This opt-in output uses two additional persistent device vectors and copies the
+last audited pair to them once at recovery exit. The only added device-to-host
+copies write those owned components to private files after the solve. No new
+per-iteration transfer, correction solve or tolerance change is introduced.
+
+Local validation passes 82 tests, including real CPU Hypre 2.33 and 3.1 with
+ASan/UBSan and Hypre 2.32 on 1/2/4 MPI ranks. Exact rational arithmetic verifies a
+scalar rounding case whose ordinary result fails and retained pair passes.
+A coupled, partitioned case tests off-rank low-component contributions. Tests
+also reject a lost low component, nonfinite values, malformed files and altered
+provenance, and cover recovery without a completed candidate. The CUDA build
+and the retained candidate on the actual frozen system remain user-run gates.
+
+Run this **once, only in the MARS terminal**, with its working uenv and Python
+venv. It rebuilds the replay and checker, uses the saved launcher/rank count,
+and reuses the reference without launching OpenAccel or a full flow run.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+export TMPDIR="$scratch/tmp" XDG_CACHE_HOME="$scratch/.cache"
+export PYTHONDONTWRITEBYTECODE=1 MPICH_GPU_SUPPORT_ENABLED=1
+mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+cmake --build "$repo/build-hypre" --parallel 4 --target \
+  mars_simple_pressure_replay mars_simple_pressure_residual_check
+
+capture="$scratch/simple-pressure-frozen-RlGQaI/capture"
+profile="$scratch/simple-original-pressure-1xGpr2/pair"
+reference="$scratch/simple-reference-replay-URu8yA/reference"
+IFS= read -r archive < "$reference/input-archive-current.txt"
+test -f "$archive/archive.json"
+run=$(mktemp -d "$scratch/simple-pressure-expansion-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" replay \
+  --capture-run "$capture" --backend mars --profile gpu-reference \
+  --gpu-profile-pair "$profile" --recovery-rounds 4 \
+  --retain-update-expansion \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_replay" \
+  --output-dir "$run/mars" || status=$?
+cat "$run/mars/public.json"
+if (( status != 0 )); then exit "$status"; fi
+python3 "$repo/scripts/simple_pressure_replay.py" compare \
+  --capture-run "$capture" --mars-run "$run/mars" \
+  --reference-run "$reference" --reference-input-archive "$archive" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
+  --output "$run/comparison-public.json" || status=$?
+cat "$run/comparison-public.json"
+printf 'Share only: %s\n' "$run/comparison-public.json"
+exit "$status"
+)
+```
+
+## Earlier audit distinguishing correction error from update rounding
 
 The saved `simple-recovery4-progress-LWaMnA/public.json` reports three certified
 reduction lower bounds in `10_to_100x` and a fourth in `under_2x`. All reported
@@ -61,12 +156,11 @@ check. A scalar `A=3`, `b=nextafter(3,+infinity)` case solves its correction
 accurately, but FP64 update rounding prevents its candidate reaching an absolute
 target of `1e-17`; exact rational arithmetic independently checks the stored
 bounds. Manifest tampering, incomplete steps, nonfinite bounds and unequal rank
-reports are covered. CUDA compilation and the actual frozen-system diagnosis
-remain user-run gates.
+reports are covered. The later user-run GPU audit isolated rounding in the
+fourth update, as recorded above.
 
-Run this **once, only in the MARS terminal**, with its working uenv and Python
-venv. It rebuilds the replay and checker, uses the saved launcher/rank count,
-and reuses the reference without launching OpenAccel or a full flow run.
+The earlier audit-only recipe is kept below to reproduce that evidence in the
+MARS terminal. For the retained candidate, use the first recipe above.
 
 ```bash
 (

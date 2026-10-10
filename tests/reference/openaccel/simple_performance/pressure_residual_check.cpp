@@ -19,13 +19,16 @@ int marker(const std::filesystem::path& directory,const char* schema) {
 }
 int main(int argc,char** argv) {
     try {
-        require(argc==3);
+        require(argc==3 || (argc==4 && std::string(argv[3])=="--expansion"));
+        const bool expansion=argc==4;
         const std::filesystem::path capture(argv[1]); const bool original=std::string(argv[2])=="-";
+        require(!original || !expansion);
         const std::filesystem::path replay(argv[2]);
         const int ranks=marker(capture,"mars-pressure-capture-v1");
-        if (!original) require(marker(replay,"mars-pressure-replay-v1")==ranks);
+        if (!original) require(marker(replay,expansion?"mars-pressure-expansion-v1":"mars-pressure-replay-v1")==ranks);
         const auto first=frozen::Part::read(capture/frozen::part_name(0));
         std::vector<double> owners(first.total),solution(first.total);
+        std::vector<double> low(expansion?first.total:0);
         std::uint64_t previous=0;
         for (int rank=0;rank<ranks;++rank) {
             const auto p=frozen::Part::read(capture/frozen::part_name(rank));
@@ -41,15 +44,23 @@ int main(int argc,char** argv) {
             }
             require(std::all_of(found.begin(),found.end(),[](int value){return value==1;}));
             if (!original) {
-                const auto file=replay/frozen::part_name(rank,".solution");
+                const auto file=replay/frozen::part_name(rank,expansion?".high":".solution");
                 require(std::filesystem::file_size(file)==p.rows()*sizeof(double));
                 std::ifstream in(file,std::ios::binary);
                 in.read(reinterpret_cast<char*>(solution.data()+p.first),std::streamsize(p.rows()*sizeof(double))); require(bool(in));
+                if(expansion) {
+                    const auto low_file=replay/frozen::part_name(rank,".low");
+                    require(std::filesystem::file_size(low_file)==p.rows()*sizeof(double));
+                    std::ifstream low_in(low_file,std::ios::binary);
+                    low_in.read(reinterpret_cast<char*>(low.data()+p.first),std::streamsize(p.rows()*sizeof(double)));
+                    require(bool(low_in));
+                }
             }
         }
         require(previous==first.total);
         if (original) solution=owners;
         bool finite=std::all_of(solution.begin(),solution.end(),[](double x){return std::isfinite(x);});
+        finite=finite && std::all_of(low.begin(),low.end(),[](double x){return std::isfinite(x);});
         bool copies=true;
         NormInterval residual,rhs;
         for (int rank=0;rank<ranks;++rank) {
@@ -60,6 +71,7 @@ int main(int argc,char** argv) {
                     const auto local=p.columns[k]; const auto id=p.map[local];
                     copies=copies && p.candidate[local]==owners[id];
                     dot.product(-p.values[k],solution[id]);
+                    if(expansion) dot.product(-p.values[k],low[id]);
                 }
                 const auto value=std::abs(dot.value()),error=dot.error_bound();
                 finite=finite && std::isfinite(value) && std::isfinite(error);
@@ -73,6 +85,7 @@ int main(int argc,char** argv) {
         const bool passed=finite && residual.upper()<=limit_low;
         const bool failed=finite && residual.lower()>limit_high;
         std::cout<<std::boolalpha<<"{\"schema\":\"mars-pressure-residual-v1\",\"scope\":\"frozen_owned_rows_compensated_dot_with_evaluation_bound\","
+            <<"\"representation\":\""<<(expansion?"fp64_two_sum_expansion":"fp64")<<"\","
             <<"\"capture_valid\":true,\"original_referenced_copies_equal_owners\":"<<copies
             <<",\"finite\":"<<finite<<",\"residual_passed\":"<<passed<<",\"residual_failed\":"<<failed
             <<",\"residual_inconclusive\":"<<(finite && !passed && !failed)<<"}\n";
