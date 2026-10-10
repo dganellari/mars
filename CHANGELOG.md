@@ -21,6 +21,8 @@ the cornerstone-octree library.
   assembled matrix on device, with several optimized assembly kernels.
 - Distributed multi-rank execution via MPI, including a per-node DOF halo for solver
   communication (CUDA-aware MPI) on top of the cornerstone element halo.
+- The node exchanges keep one layer of ghost nodes current, 2.5 to 3 times less data than the whole
+  cornerstone halo; `MARS_HALO_EXCHANGE=full` keeps the whole halo current.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
 - CMake install / `find_package(Mars)` packaging with the `Mars::mars` target

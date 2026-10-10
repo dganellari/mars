@@ -71,6 +71,11 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is enabled with `-DMARS_ENABLE_HIP=ON`, but
   the HIP build was not re-verified for v0.1.0, and the FEM examples are CUDA-only.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
+- Multi-rank node exchanges keep one layer of ghost nodes current: the nodes of the rank's own
+  elements and of the elements that touch a node it owns. Code that reads ghost values deeper in
+  cornerstone's halo needs `MARS_HALO_EXCHANGE=full`, which keeps the whole halo current (2.5 to 3
+  times more data). The AMR drivers, the development drivers (pump, coupled solver, outlet gates) and
+  the segregated SIMPLE solver select it themselves.
 - A Hypre built with 32-bit global indices (its default) limits a Navier–Stokes run to
   2^31 − 1 ≈ 2.1 billion unknowns per system; the solver stops with a message above that. Larger
   runs need Hypre built with 64-bit global indices (`--enable-mixedint`, in Spack `hypre+mixedint`).
