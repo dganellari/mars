@@ -232,6 +232,16 @@ exit "$status"
 
 ### Recheck an existing short run
 
+The user-run inspection `simple-expanded-inspection-jXgdKJ` on 2026-10-11
+reports `short_run_completed: true`, `pressure_expansion_accepted: true`,
+`unrecovered_hypre_rejection_present: false` and `failed_check: none` for the
+saved twenty-step flow. Input and output verification passed. Only its public
+JSON was retrieved and inspected; no private log or field was read here.
+The solver reached the intended iteration limit (exit 2), with no reported
+nonlinear convergence or OpenAccel field parity. This establishes recovery in
+the short production flow, beyond the frozen-system and public fixture checks.
+The earlier failure classification for this run was a reporting error.
+
 The initial short-flow reporter did not recognize `[simple-pressure-expansion]`
 recovery messages. It could therefore label a completed run as failed because an
 intermediate Hypre candidate had been rejected. The reporter now clears preceding
