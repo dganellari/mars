@@ -235,7 +235,7 @@ foreach(_case upwind high_resolution)
     if(_case STREQUAL high_resolution)
         list(APPEND _exp_args --high-resolution 1 --velocity-interpolation linear-linear)
     endif()
-    _dsimple_test(marsSimpleExpansionFlowReference_${_case} 1 ${_exp_args} --write-reference ${_ref}-expanded-${_case}.bin)
+    _dsimple_test(marsSimpleExpansionFlowReference_${_case} 1 ${_exp_args} --pressure-expansion 1 --write-reference ${_ref}-expanded-${_case}.bin)
     set_tests_properties(marsSimpleExpansionFlowReference_${_case} PROPERTIES FIXTURES_SETUP expansion_${_case})
     foreach(_ranks 1 2 4)
         _dsimple_test(marsSimpleExpansionFlow_${_case}_${_ranks} ${_ranks} ${_exp_args}

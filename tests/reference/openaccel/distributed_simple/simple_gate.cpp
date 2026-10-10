@@ -20,6 +20,7 @@ using namespace dsimple_gate;
 
 namespace {
 MPI_Comm gate_comm=MPI_COMM_WORLD;
+constexpr double expansion_pressure_relative=1e-12,expansion_pressure_absolute=0;
 using Entries=std::vector<std::pair<long long,double>>;
 using Snapshots=std::map<std::string,Entries>;
 long long node_key(int g,int c) { return 4LL*g+c; }
@@ -230,6 +231,7 @@ std::string header_of(const Options& o) {
     if (o.velocity_shifted) h<<" linear-linear";
     if (o.water) h<<" water";
     if (o.bent_inlet) h<<" bent-inlet";
+    if (o.pressure_expansion) h<<" pressure_rtol="<<expansion_pressure_relative<<" pressure_atol="<<expansion_pressure_absolute;
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
@@ -288,6 +290,13 @@ int execute(const Options& o) {
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
         SimpleRunner run(mesh,controls); run.momentum.verbose=run.poisson.verbose=false;
+#ifdef MARS_REPLAY_CUDA
+        if(o.pressure_expansion) {
+            // Keep ordinary reference arithmetic, but match the expanded solve's accuracy.
+            run.poisson.solver.set_stopping_tolerances(expansion_pressure_relative,expansion_pressure_absolute);
+            run.poisson.solver.enable_true_residual_check(expansion_pressure_absolute,expansion_pressure_relative,true);
+        }
+#endif
         initial(run,mesh.x,mesh.y,mesh.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
         std::vector<int> global(mesh.x.size()); for (std::size_t g=0;g<global.size();++g) global[g]=int(g);
         std::vector<int> el(mesh.nodes[0].size()), fa(mesh.faces.size());
@@ -370,7 +379,7 @@ int execute(const Options& o) {
     }
     controls.pressure_expansion=o.pressure_expansion;
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(gate_comm,part.input,part.ownership,controls);
-    if(o.pressure_expansion) run.set_pressure_tolerances(true,1e-10,1e-13);
+    if(o.pressure_expansion) run.set_pressure_tolerances(true,expansion_pressure_relative,expansion_pressure_absolute);
     run.poison_unexchanged=true;
     run.overlap_assembly=o.overlap;
 #ifdef MARS_REPLAY_CUDA

@@ -93,6 +93,15 @@ checks pass on 1/2/4 ranks. The corrected GPU operator gate and remaining
 multi-rank/flow gates still need to run. Full-flow convergence and pump field
 parity remain unverified.
 
+A subsequent GPU flow comparison reached the snapshots and failed one
+`blend@1` entry at 1.35e-8 against the 1e-8 field threshold. The test had used
+pressure stopping rtol 1e-12 for the reference and 1e-10 for the expanded run.
+Both now explicitly use rtol 1e-12 and atol zero; the field threshold is
+unchanged. This removes a solver-accuracy difference, but its role in that
+mismatch still needs GPU confirmation. With `--write-reference`, the expansion
+flag selects the matched pressure target while retaining ordinary arithmetic.
+The target is recorded in the reference header, so old references are rejected.
+
 Run this block in the **MARS terminal only**, in one tmux pane.
 It builds the production executable and runs public synthetic tests on 1/2/4
 GPUs. No OpenAccel environment, Python modules or private geometry are needed.
@@ -128,6 +137,7 @@ srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \
   --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
   "$HOME/affinity/bind_numa.sh" ./mars_distributed_simple_cuda_gate \
   --mesh 4x2x2 --iterations 3 --high-resolution 1 --velocity-interpolation linear-linear \
+  --pressure-expansion 1 \
   --write-reference "$run/reference.bin" 2>&1 | tee "$run/reference.log"
 for np in 1 2 4; do
   srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
