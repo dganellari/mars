@@ -53,13 +53,19 @@ exit "$status"
 )
 ```
 
-## Bounded recovery on the frozen GPU system
+## Four-correction recovery on the frozen GPU system
 
-The saved GPU-profile replay and the reference-library replay both reached their
-iteration caps without passing the frozen equation's residual target. That does
-not establish an unattainable target or a particular internal stagnation branch.
-The next experiment adds `--recovery-rounds 3` to the GPU-profile replay only.
-Production SIMPLE and the saved reference are unchanged.
+The public `simple-recovery-progress-N9uuXM/public.json` report verifies that each
+of the three corrections reduced the residual by at least 10 times. None reached
+its iteration cap, and the final residual upper bound is between one and ten
+times the original target. Its lower bound exceeds the target, so this remains
+a definite failure, not an inconclusive check. The evaluation interval width is
+smaller than the target; this alone does not establish an attainable error floor.
+
+This measured progress supports allowing one more correction with
+`--recovery-rounds 4`. Another tenfold reduction would suffice, but repeating
+that reduction is not guaranteed. Three-correction runs remain supported and
+verifiable. Production SIMPLE and the saved reference are unchanged.
 
 For the same pressure-correction equation `A p' = b`, form the compensated defect
 `r = b - A p'`, solve `A delta = r` from zero, and try `p' + delta`. Both unknowns
@@ -67,10 +73,10 @@ have pressure units. Boundary elimination, pressure reference, matrix, RHS,
 partition and the original acceptance target are unchanged. This changes how
 the linear system is solved; it is not an identical OpenAccel iteration path.
 
-There are at most three additional solves, each with the original iteration cap,
+There are at most four additional solves, each with the original iteration cap,
 relative tolerance 0.1, absolute tolerance zero and minimum iterations zero.
 The initial solve has its own original budget. The same Krylov object and AMG
-hierarchy are reused without another setup. This costs at most four times the
+hierarchy are reused without another setup. This costs at most five times the
 original Krylov iteration budget; it does not promise a speedup. A capped
 correction can be used if the original residual decreases. Nonfinite values,
 fatal backend errors and failure to establish a decrease stop recovery. Original
@@ -107,10 +113,6 @@ umask 077
 export TMPDIR="$scratch/tmp" XDG_CACHE_HOME="$scratch/.cache"
 export PYTHONDONTWRITEBYTECODE=1 MPICH_GPU_SUPPORT_ENABLED=1
 mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
-cmake -S "$repo" -B "$repo/build-hypre" \
-  -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_MPI=ON \
-  -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_HYPRE=ON \
-  -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_SEGREGATED=ON
 cmake --build "$repo/build-hypre" --parallel 4 --target \
   mars_simple_pressure_replay mars_simple_pressure_residual_check
 
@@ -119,12 +121,12 @@ profile="$scratch/simple-original-pressure-1xGpr2/pair"
 reference="$scratch/simple-reference-replay-URu8yA/reference"
 IFS= read -r archive < "$reference/input-archive-current.txt"
 test -f "$archive/archive.json"
-run=$(mktemp -d "$scratch/simple-pressure-recovery-XXXXXX")
+run=$(mktemp -d "$scratch/simple-pressure-recovery4-XXXXXX")
 printf 'Private results: %s\n' "$run"
 status=0
 python3 "$repo/scripts/simple_pressure_replay.py" replay \
   --capture-run "$capture" --backend mars --profile gpu-reference \
-  --gpu-profile-pair "$profile" --recovery-rounds 3 \
+  --gpu-profile-pair "$profile" --recovery-rounds 4 \
   --executable "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_replay" \
   --output-dir "$run/mars" || status=$?
 cat "$run/mars/public.json"
@@ -152,7 +154,11 @@ Local checks cover recovery after a capped solve, budget exhaustion at a stricte
 target, already-converged, zero-RHS and inconsistent systems, original/final
 metadata separation and tampered evidence. Real CPU Hypre 2.33/3.1 builds run
 under ASan/UBSan. CPU MPI Hypre 2.32 exercises 1/2/4 ranks with separate owned rows
-and exchanged off-rank values. These do not replace the CUDA build/run above.
+and exchanged off-rank values. The four-correction regression includes a target
+that fails after three corrections and passes after four in the sequential
+builds, plus distributed success and budget-exhaustion cases. Correction counts
+can depend on the partition. All 70 replay tests pass with these local builds;
+this does not replace the CUDA build/run above.
 The optional local test executables are selected with
 `MARS_TEST_PRESSURE_REPLAYS` (colon-separated), `MARS_TEST_PRESSURE_MPI_REPLAY`
 and `MARS_TEST_PRESSURE_CHECKER`; run `scripts/test_simple_pressure_replay.py`

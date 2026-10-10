@@ -69,7 +69,7 @@ int main(int argc,char** argv) {
         frozen::require(bool(cfg)); auto controls=settings::read(cfg);
         const double recovery_requested=controls.count("recovery_rounds")?controls.at("recovery_rounds"):0;
         controls.erase("recovery_rounds");
-        frozen::require(recovery_requested==0 || recovery_requested==3);
+        frozen::require(recovery_requested==0 || recovery_requested==3 || recovery_requested==4);
         const int recovery_rounds=int(recovery_requested);
         const int maximum_recovery=recovery::maximum(recovery_rounds,hypre_MPI_COMM_WORLD);
         frozen::require(recovery::maximum(recovery_rounds!=maximum_recovery,hypre_MPI_COMM_WORLD)==0);
@@ -80,7 +80,7 @@ int main(int argc,char** argv) {
         frozen::require(part.maximum && controls.at("rtol")==part.relative && controls.at("atol")==part.absolute);
         const bool gpu_profile=controls.count("relax_down") || controls.count("relax_up");
         if (gpu_profile) settings::validate_gpu_profile(controls);
-        frozen::require(!recovery_rounds || (gpu_profile && controls.at("maxiter")<=INT32_MAX/4));
+        frozen::require(!recovery_rounds || (gpu_profile && controls.at("maxiter")<=INT32_MAX/(recovery_rounds+1)));
         if(recovery_rounds) {
             // IJ must preserve the captured coefficients without duplicate-column sums.
             for(std::size_t row=0;row<part.rows();++row) {

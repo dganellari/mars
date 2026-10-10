@@ -107,7 +107,7 @@ def checked_replay_record(path, name, capture_dir, capture, check, archive=None)
     require(record['profile'] in ('captured', 'reference', 'gpu-reference')
             and (name != 'mars' or record['profile'] in ('captured', 'gpu-reference'))
             and (name != 'reference' or record['profile'] != 'gpu-reference'))
-    require(record.get('recovery_rounds', 0) in (0, 3)
+    require(record.get('recovery_rounds', 0) in (0, 3, 4)
             and (not record.get('recovery_rounds') or record['profile'] == 'gpu-reference'))
     if record['profile'] == 'gpu-reference':
         check['failed_check'] = 'gpu_profile_binding'
@@ -393,7 +393,7 @@ def checked_gpu_configuration(path, record, capture_dir):
     _, target, _ = capture_inputs(capture_dir / 'system')
     values.update(atol=target[0], rtol=target[1])
     requested = record.get('recovery_rounds', 0)
-    require(requested in (0, 3))
+    require(requested in (0, 3, 4))
     expected = dict(values, recovery_rounds=requested) if requested else values
     require(numeric_file(configuration) == expected)
     profile.validate(values)
@@ -608,7 +608,7 @@ def replay(args, output, public):
 
 
 def recovery_checks(reports, requested):
-    require(requested == 3 and reports)
+    require(requested in (3, 4) and reports)
     keys = ('recovery_requested_rounds', 'recovery_rounds', 'recovery_iterations', 'recovery_stop', 'recovery_controls_restored')
     for report in reports:
         require(all(math.isfinite(report[k]) and report[k] == int(report[k]) for k in keys))
@@ -791,7 +791,7 @@ def main(argv=None):
     r.add_argument('--backend', choices=('mars', 'reference'), required=True)
     r.add_argument('--profile', choices=('captured', 'reference', 'gpu-reference'))
     r.add_argument('--gpu-profile-pair', type=Path)
-    r.add_argument('--recovery-rounds', type=int, choices=(0, 3), default=0)
+    r.add_argument('--recovery-rounds', type=int, choices=(0, 3, 4), default=0)
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
