@@ -530,10 +530,12 @@ private:
         // Only the copies this rank's own elements touch: the solver loops over own elements, so a node that
         // only halo elements hold is never read or added into. cornerstone's halo is made of whole octree
         // leaves, several element layers deep, and exchanging all of it would multiply the halo volume.
-        thrust::device_vector<uint8_t> used(n_, 0);
+        // MARS_HALO_EXCHANGE=full keeps every copy.
+        const bool full = nodeHaloExchangeFull();
+        thrust::device_vector<uint8_t> used(n_, full ? 1 : 0);
         uint8_t* usedPtr   = thrust::raw_pointer_cast(used.data());
         const size_t first = domain.startIndex(), count = domain.localElementCount();
-        if (count > 0)
+        if (!full && count > 0)
             std::apply(
                 [&](const auto&... corner) {
                     (dofMarkUsedKernel<KeyType><<<int((count + 255) / 256), 256>>>(corner.data(), first, count,

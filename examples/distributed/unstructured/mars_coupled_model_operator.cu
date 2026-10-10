@@ -922,6 +922,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    mars::requestFullNodeHaloExchange(); // not yet checked for halo reads beyond one layer
     std::cout << std::unitbuf;          // flush per write: live [phase0] trace under srun's block-buffered pipe
     int rank = 0, numRanks = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

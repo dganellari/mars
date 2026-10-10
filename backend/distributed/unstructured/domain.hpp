@@ -251,6 +251,18 @@ MARS_HOST_DEVICE inline std::tuple<RealType, RealType, RealType> decodeSfcToPhys
     return std::make_tuple(x, y, z);
 }
 
+// MARS_HALO_EXCHANGE=full: node exchanges keep all of cornerstone's halo current (several element layers)
+// instead of the one layer that owned rows and own-element loops read.
+inline bool nodeHaloExchangeFull()
+{
+    const char* mode = std::getenv("MARS_HALO_EXCHANGE");
+    return mode != nullptr && std::string(mode) == "full";
+}
+
+// For drivers whose code was written against the full halo and is not yet checked for reads beyond one
+// layer. Call before the domain is built; an explicit MARS_HALO_EXCHANGE set by the user wins.
+inline void requestFullNodeHaloExchange() { setenv("MARS_HALO_EXCHANGE", "full", 0); }
+
 // Better: use std::array for compile-time indexing
 template<typename KeyType, size_t NodesPerElement>
 struct ConnPtrs

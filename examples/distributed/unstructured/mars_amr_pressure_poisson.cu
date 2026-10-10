@@ -636,6 +636,7 @@ void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::execu
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    mars::requestFullNodeHaloExchange(); // not yet checked for halo reads beyond one layer
 
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

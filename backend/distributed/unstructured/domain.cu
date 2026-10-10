@@ -2163,8 +2163,35 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
     const uint8_t* own  = thrust::raw_pointer_cast(domain.getNodeOwnershipMap().data());
     auto owner          = domain.sfcNodeOwner();
 
+    // The ghosts to keep current: by default one layer, the non-owned nodes of the own elements and of the
+    // elements touching an owned node. Every value that lands on an owned node, and every own-element loop,
+    // reads only those. cornerstone's halo is whole octree leaves, several element layers deep;
+    // MARS_HALO_EXCHANGE=full keeps all of it current, for code that reads deeper.
+    const bool full = nodeHaloExchangeFull();
+    thrust::device_vector<uint8_t> d_needed(full ? 0 : nodeCount, 0);
+    const uint8_t* needed = thrust::raw_pointer_cast(d_needed.data());
+    if (!full && domain.getElementCount() > 0)
+    {
+        constexpr int NPC   = ElementTag::NodesPerElement;
+        auto conn           = connPtrsOf<KeyType, NPC>(domain.getElementToNodeConnectivity(),
+                                                       std::make_index_sequence<NPC>{});
+        uint8_t* mark       = thrust::raw_pointer_cast(d_needed.data());
+        const size_t first  = domain.startIndex(), last = domain.endIndex();
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                         thrust::counting_iterator<size_t>(domain.getElementCount()),
+                         [=] __device__(size_t e)
+                         {
+                             bool keep = e >= first && e < last;
+                             for (int c = 0; c < NPC && !keep; ++c)
+                                 keep = own[conn.ptrs[c][e]] == 1;
+                             if (!keep) return;
+                             for (int c = 0; c < NPC; ++c)
+                                 mark[conn.ptrs[c][e]] = 1;
+                         });
+    }
+
     // ghost nodes grouped by owner; within an owner, node ids and therefore keys ascend
-    auto isGhost     = [own] __device__(int n) { return own[n] == 0; };
+    auto isGhost     = [own, needed, full] __device__(int n) { return own[n] == 0 && (full || needed[n]); };
     size_t numGhosts = thrust::count_if(thrust::device, thrust::counting_iterator<int>(0),
                                         thrust::counting_iterator<int>(int(nodeCount)), isGhost);
     thrust::device_vector<int> d_ghostNode(numGhosts), d_ghostOwner(numGhosts);
@@ -2246,7 +2273,8 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
                    cudaMemcpyDeviceToDevice);
     }
 
-    std::cout << "Rank " << rank << ": NodeHaloTopo[sfc] " << peers_.size() << " peers, " << numRequested
+    std::cout << "Rank " << rank << ": NodeHaloTopo[" << (full ? "sfc-full" : "sfc") << "] " << peers_.size()
+              << " peers, " << numRequested
               << " send nodes, " << numGhosts << " recv nodes" << std::endl;
 }
 
