@@ -31,9 +31,10 @@ Public comparison adds `expansion_candidates.mars` and, when available,
 the retained candidate. The ordinary `residual_checks.mars`, initial failure,
 recovery stop reason and reference verdict remain separate. An expansion pass
 certifies this frozen linear-system candidate only. It does not make the
-ordinary `.solution` pass or show OpenAccel field parity. Production SIMPLE
-integration would need to retain the low component through pressure, gradient,
-velocity, flux and halo operations before a full-flow claim is justified.
+ordinary `.solution` pass or show OpenAccel field parity. The opt-in
+[production integration](pressure_expansion.md) now retains the low component
+through those operations and shares the recovery implementation with this replay.
+Its GPU gate and full-flow validation remain separate requirements.
 
 This opt-in output uses two additional persistent device vectors and copies the
 last audited pair to them once at recovery exit. The only added device-to-host

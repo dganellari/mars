@@ -258,3 +258,13 @@ gates exercise collective failure on one rank, restored/published owned and ghos
 values, and the untouched successful-solve path. The separate exact-rational test
 `test_compensated_dot.py` checks 1004 dot products, including severe cancellation
 and underflow. These are CPU results; new CUDA execution is pending.
+
+## Retained pressure recovery
+
+The host-emulated wrapper also runs the public `3 x = nextafter(3,+inf)`
+rounding case, with fresh and cached setup. The rounded candidate must fail
+the original target while its nonzero retained remainder passes. The checks
+verify restored controls, unchanged setup counts and norm intervals for zero
+and RHS values whose squares underflow. This uses the shared recovery source
+with real CPU Hypre; the host shim replaces the device copy and stream fence,
+so the [CUDA gate](../distributed_simple/pressure_expansion.md) remains required.

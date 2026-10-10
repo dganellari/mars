@@ -344,6 +344,44 @@ template<class Matrix,class GlobalId> void pressure_audit_gates(MPI_Comm comm,Re
 
 // Dot2 itself can round to zero on extreme cancellation. Acceptance must
 // include its error bound, not merely the compensated point estimate.
+template<class Matrix,class GlobalId> void expansion_residual_gates(MPI_Comm comm,Report& report) {
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    const int n=2*ranks;
+    Local l; l.global.resize(n); l.solver_node.resize(n); l.rhs.resize(n);
+    std::vector<double> high(n,0x1p60),low(n);
+    for(int i=0;i<n;++i) { l.global[i]=i; l.solver_node[i]=i; low[i]=.25*(i+1); }
+    l.owned={2*rank,2*rank+1};
+    for(int row=0;row<n;++row) {
+        l.offsets.push_back(int(l.columns.size()));
+        for(int col=0;col<n;++col) { l.columns.push_back(col); l.blocks.push_back(double(col==row)-double(col==(row+1)%n)); }
+        l.rhs[row]=low[row]-low[(row+1)%n];
+    }
+    l.offsets.push_back(int(l.columns.size()));
+    Device<1,GlobalId> d(l); Buffer<double> b(2),defect(2);
+    auto h=upload(high),lo=upload(low);
+    System<1,Matrix,GlobalId> system(comm,d.view(),raw(d.owned),2,raw(d.solver_node),n);
+    system.update(d.view(),raw(b),b.size()); const Tolerance target{1e-12,1e-12,true};
+    const auto ordinary=system.residual(halo_complete(raw(h),h.size()),raw(b),target);
+    auto check=[&] { return system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),raw(b),raw(defect),defect.size(),target); };
+    const auto paired=check();
+    report.result("expanded original rows preserve cancelling high and referenced low terms",!ordinary.passed && paired.passed);
+    low[(2*rank+2)%n]=0; lo=upload(low);
+    report.result("expanded original rows reject a stale referenced low term",!check().passed);
+    low[(2*rank+2)%n]=std::numeric_limits<double>::quiet_NaN(); lo=upload(low);
+    report.result("expanded original rows reject nonfinite low terms",!check().passed);
+    auto tiny=upload(std::vector<double>(2,1e-155));
+    lo=upload(std::vector<double>(n,0.));
+    const auto underflow=system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),
+        raw(tiny),raw(defect),defect.size(),target);
+    report.result("expanded original rows reject subnormal RHS squares",!underflow.finite && !underflow.passed);
+    expect_rejection(comm,report,"expanded residual rejects missing low capacity","capacity",ranks-1,[&] {
+        system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),rank==ranks-1?0:lo.size()),raw(b),raw(defect),defect.size(),target);
+    });
+    expect_rejection(comm,report,"expanded residual rejects low-defect alias","capacity",ranks-1,[&] {
+        system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),raw(b),rank==ranks-1?raw(lo):raw(defect),defect.size(),target);
+    });
+}
+
 template<class Matrix,class GlobalId> void bounded_defect_gates(MPI_Comm comm,Report& report) {
     int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const int n=6*ranks;
@@ -380,7 +418,7 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+": ";
     const int last=ranks-1; const bool injecting=rank==last;
-    if constexpr (C==1) { pressure_audit_gates<Matrix,GlobalId>(comm,report); bounded_defect_gates<Matrix,GlobalId>(comm,report); }
+    if constexpr (C==1) { pressure_audit_gates<Matrix,GlobalId>(comm,report); expansion_residual_gates<Matrix,GlobalId>(comm,report); bounded_defect_gates<Matrix,GlobalId>(comm,report); }
     {   // Build, first values, oracle comparison of every entry, RHS and map.
         Problem p(C,ranks,base); Local l=extract(p,rank);
         fill(p,l,rank,1,[&](int g,int c) { return p.rhs(g,c,1); });

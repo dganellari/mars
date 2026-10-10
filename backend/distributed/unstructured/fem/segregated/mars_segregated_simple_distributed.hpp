@@ -29,6 +29,7 @@
 #include "mars_segregated_simple_reduction.hpp"
 #include "mars_segregated_simple_profile.hpp"
 #include "mars_segregated_pressure_refinement.hpp"
+#include "mars_segregated_simple_expansion.hpp"
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -138,7 +139,7 @@ template<int C> struct HypreSimpleSolve {
     using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
     Solver solver;
     MPI_Comm comm;
-    typename Solver::Vector b,x,defect,delta,trial;
+    typename Solver::Vector b,x,defect,delta,trial,expansion_low;
     explicit HypreSimpleSolve(MPI_Comm c):solver(c,2000,1e-12,Solver::BOOMERAMG,100),comm(c) {
         solver.setVerbose(false); solver.setPointBlock(C);
         const distributed::Tolerance acceptance;
@@ -159,6 +160,7 @@ template<int C> struct HypreSimpleSolve {
         if (s.rows()) assembly_cuda_check(cudaMemset(x.data(),0,std::size_t(s.rows())*sizeof(double)));
         return distributed::solve_owned(solver,s,b,x);
     }
+    auto expand() { return solver.recover_prepared_expansion(x,expansion_low); }
     template<class System,class Publish>
     PressureRefinementResult refine(System& system,Publish publish,distributed::Tolerance acceptance) {
         static_assert(C==1,"refinement is pressure-only");
@@ -216,6 +218,9 @@ struct DistributedSimpleRunner {
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
     Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity,outlet_area,outlet_pressure;
+    Array<double> pressure_low{0},pg_low{0},phi_low{0},gp_low{0},trace_low{0},outlet_pressure_low{0},old_pressure_low{0},expansion_defect{0};
+    std::unique_ptr<PressureIncidence> pressure_cells,pressure_faces;
+    std::unique_ptr<PressureMomentReduction> pressure_moments;
     Array<int> n0,n1,n2,n3,error,flags,old_flags,owned,elements,boundary,momentum_elements,momentum_faces;
     Array<unsigned char> owned_mask;
     Array<GlobalId> solver_node;
@@ -241,7 +246,7 @@ private:
     bool pressure_refinement_=false;
 public:
     void set_pressure_refinement(bool enabled) {
-        simple_collective(comm,completed==0,"pressure refinement must be selected before iterating");
+        simple_collective(comm,completed==0 && !(enabled && controls.pressure_expansion),"pressure refinement must be selected before iterating and cannot use pressure expansion");
         const int local[2]={int(enabled),-int(enabled)}; int global[2];
         simple_max(comm,local,global,2);
         simple_collective(comm,global[0]==-global[1],"pressure refinement differs between ranks");
@@ -250,7 +255,7 @@ public:
 
     // All ranks enter, including those without the override, before either solve.
     void set_pressure_tolerances(bool enabled,double relative,double absolute) {
-        simple_collective(comm,completed==0 && std::isfinite(relative) && std::isfinite(absolute)
+        simple_collective(comm,(!controls.pressure_expansion || enabled) && completed==0 && std::isfinite(relative) && std::isfinite(absolute)
             && relative>0 && relative<1 && absolute>=0,"invalid or late pressure tolerances");
         const double local[6]={double(enabled),-double(enabled),relative,-relative,absolute,-absolute};
         double global[6];
@@ -285,9 +290,25 @@ public:
         momentum(c,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),owned.data(),owned_nodes,solver_node.data(),solver_node.values.size(),empty),
         poisson(c,graph.template view<1>(poisson_blocks.data(),poisson_rhs.data()),owned.data(),owned_nodes,solver_node.data(),solver_node.values.size(),empty),
         momentum_solve(c),poisson_solve(c),
-        exchange(c,o.peers,o.send_offsets,o.send_nodes,o.recv_offsets,o.recv_nodes,n,ctl.high_resolution?15:8)
+        exchange(c,o.peers,o.send_offsets,o.send_nodes,o.recv_offsets,o.recv_nodes,n,ctl.pressure_expansion?18:ctl.high_resolution?15:8)
     {
         simple_collective(comm,valid_simple_controls(ctl),"invalid SIMPLE controls");
+        const int mode[2]={int(ctl.pressure_expansion),-int(ctl.pressure_expansion)}; int modes[2];
+        simple_max(comm,mode,modes,2);
+        simple_collective(comm,modes[0]==-modes[1],"pressure expansion differs between ranks");
+        if (ctl.pressure_expansion) {
+#ifdef MARS_REPLAY_CUDA
+            poisson_solve.solver.enable_gpu_aware_mpi();
+#endif
+            pressure_low.values.resize(n); pg_low.values.resize(3*n); phi_low.values.resize(n); gp_low.values.resize(3*n);
+            trace_low.values.resize(3*b); outlet_pressure_low.values.resize(n); old_pressure_low.values.resize(n);
+            expansion_defect.values.resize(poisson.rows());
+            state.pressure_low=pressure_low.data(); state.pressure_gradient_low=pg_low.data(); state.trace_low=trace_low.data();
+            state.outlet_pressure_low=outlet_pressure_low.data(); state.old_pressure_low=old_pressure_low.data();
+            pressure_cells=std::make_unique<PressureIncidence>(mesh,false);
+            pressure_faces=std::make_unique<PressureIncidence>(mesh,true);
+            pressure_moments=std::make_unique<PressureMomentReduction>();
+        }
         simple_collective(comm,valid_indices(o.owned_elements,e) && valid_indices(o.owned_faces,b),
                           "owned element or face list outside the local mesh");
         launch(owned_nodes,MarkOwnedNodes{owned.data(),owned_mask.data()});
@@ -343,6 +364,10 @@ public:
         if (poison_unexchanged) launch(components*n,PoisonGhosts{a.data(),components,owned_mask.data(),
             never_read?std::numeric_limits<double>::quiet_NaN():1e30});
     }
+    void pressure_gradient(const double* high,const double* low,double* gradient_high,double* gradient_low) {
+        launch(owned_nodes,OnList<ExpandedGradient>{{mesh,pressure_cells->offsets.data(),pressure_cells->entries.data(),
+            high,low,volume.data(),gradient_high,gradient_low,error.data()},owned.data()});
+    }
     void assemble_momentum() {
         auto timing=profile.scope(SimpleProfile::assembly);
         gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient,controls.velocity_shifted);
@@ -354,10 +379,17 @@ public:
             launch(owned_nodes,OnList<SimpleBlendFinish>{{blend_candidate.data(),blend.data()},owned.data()});
             limiter_iteration=completed;
         }
-        gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
+        if(controls.pressure_expansion) pressure_gradient(pressure.data(),pressure_low.data(),pg.data(),pg_low.data());
+        else gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
         momentum_blocks.zero(); momentum_rhs.zero(); auto am=graph.template view<3>(momentum_blocks.data(),momentum_rhs.data());
         poison(pg,3);
-        if (controls.high_resolution) {
+        if(controls.pressure_expansion) {
+            poison(pg_low,3);
+            if(controls.high_resolution) {
+                poison(vg,9); poison(blend,3);
+                exchange.begin({{pg.data(),3},{pg_low.data(),3},{vg.data(),9},{blend.data(),3}});
+            } else { poison(vg,9,false); exchange.begin({{pg.data(),3},{pg_low.data(),3}}); }
+        } else if (controls.high_resolution) {
             poison(vg,9); poison(blend,3);
             // Owners have complete stars: compute locally, then batch both fields with grad(p).
             exchange.begin({{pg.data(),3},{vg.data(),9},{blend.data(),3}});
@@ -432,6 +464,34 @@ public:
         const auto acceptance=C==1 && pressure_tolerance?*pressure_tolerance:tolerance;
         auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
         if constexpr (C==1) {
+            if (controls.pressure_expansion) {
+                ensure(bool(pressure_tolerance),"pressure expansion requires explicit tolerances");
+                phi_low.zero();
+                norms=system.expansion_residual(distributed::halo_complete(increment.data(),increment.values.size()),
+                    distributed::halo_complete(phi_low.data(),phi_low.values.size()),solver.rhs(),
+                    expansion_defect.data(),expansion_defect.values.size(),acceptance);
+                if(!verdict[1] || !norms.passed) {
+                    if constexpr (requires { solver.expand(); solver.expansion_low; }) {
+                        const auto recovery=solver.expand();
+                        verdict[1]=recovery.accepted?1:0;
+                        int any=0,failed=verdict[1]?0:1; simple_max(comm,&failed,&any,1); verdict[1]=any?0:1;
+                        if(verdict[1]) {
+                            system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
+                            system.unpack(solver.expansion_low.data(),solver.expansion_low.size(),phi_low.data(),phi_low.values.size());
+                            poison(increment,1); poison(phi_low,1);
+                            exchange({{increment.data(),1},{phi_low.data(),1}});
+                            norms=system.expansion_residual(distributed::halo_complete(increment.data(),increment.values.size()),
+                                distributed::halo_complete(phi_low.data(),phi_low.values.size()),solver.rhs(),
+                                expansion_defect.data(),expansion_defect.values.size(),acceptance);
+                        }
+                        int rank=0; MPI_Comm_rank(comm,&rank);
+                        if(!rank) std::cerr<<"[simple-pressure-expansion] rounds="<<recovery.rounds
+                            <<" correction_iterations="<<recovery.iterations<<" hypre_passed="<<verdict[1]<<" mars_passed="<<norms.passed<<'\n';
+                    } else throw std::runtime_error("pressure expansion recovery unavailable in this solver");
+                }
+                if (!verdict[1] || !norms.passed) throw std::runtime_error(context("expanded pressure residual failed"));
+                return;
+            }
             auto publish=[&](const auto& candidate_values) {
                 system.unpack(candidate_values.data(),candidate_values.size(),increment.data(),increment.values.size());
                 exchange({{increment.data(),1}});
@@ -486,12 +546,22 @@ public:
         ensure(assembled,"advance requires momentum assembly");
         old_velocity.copy_from(velocity); old_pressure.copy_from(pressure); old_flags.copy_from(flags);
         old_eflux.copy_from(eflux); old_bflux.copy_from(bflux);
+        if(controls.pressure_expansion) old_pressure_low.copy_from(pressure_low);
         poison(momentum_rhs,3);
         solve<3>(momentum,momentum_solve,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),du,false,{{d.data(),3}});
         launch(3*n,SimpleAddIncrement{state.velocity,du.data(),1});
         observe("momentum",velocity); observe("influence",d);
         {
             auto timing=profile.scope(SimpleProfile::outlet);
+            if(controls.pressure_expansion) {
+                const auto mean=pressure_moments->mean(comm,owned_faces,ExpandedMoment{mesh,state,boundary.data()});
+                launch(b,ExpandedTrace{mesh,state,controls,mean});
+                launch(owned_nodes,OnList<ExpandedOutletPressure>{{mesh,state,pressure_faces->offsets.data(),pressure_faces->entries.data(),
+                    outlet_area.data(),outlet_pressure.data(),outlet_pressure_low.data()},owned.data()});
+                check("expanded outlet pressure failed");
+                poison(outlet_pressure,1); poison(outlet_pressure_low,1);
+                exchange.begin({{outlet_pressure.data(),1},{outlet_pressure_low.data(),1}});
+            } else {
             moment.zero(); launch(owned_faces,OnList<SimpleTraceMoment>{{mesh,state,moment.data()},boundary.data()});
 #ifdef MARS_REPLAY_CUDA
             assembly_cuda_check(cudaStreamSynchronize(nullptr));
@@ -510,6 +580,7 @@ public:
             launch(owned_nodes,OnList<SimpleOutletTraceFinish>{{outlet_pressure.data(),outlet_area.data(),outlet_pressure.data(),error.data()},owned.data()});
             poison(outlet_pressure,1);
             exchange.begin({{outlet_pressure.data(),1}});
+            }
         }
         auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
         {
@@ -524,15 +595,26 @@ public:
         observe("raw_pressure_increment",phi);
         {
             auto timing=profile.scope(SimpleProfile::correction);
-            launch(n,SimpleAddIncrement{state.pressure,phi.data(),controls.alpha_p});
-            gradient<1>(mesh,state,phi.data(),sum,gp.data());
+            if(controls.pressure_expansion) {
+                launch(n,ExpandedPressureUpdate{pressure.data(),pressure_low.data(),phi.data(),phi_low.data(),controls.alpha_p});
+                pressure_gradient(phi.data(),phi_low.data(),gp.data(),gp_low.data());
+            } else {
+                launch(n,SimpleAddIncrement{state.pressure,phi.data(),controls.alpha_p});
+                gradient<1>(mesh,state,phi.data(),sum,gp.data());
+            }
             poison(gp,3);
             // Match the reference: new p, predicted u, old grad(p), then reversal and velocity correction.
             div.zero(); launch(e,SimpleInterior<1>{mesh,state,controls,ap,true});
             launch(b,SimpleBoundary<1>{mesh,state,controls,ap,completed>0,true}); check("flux update failed");
             poison(div,1);
-            launch(owned_nodes,OnList<SimpleCorrectVelocity>{{state,gp.data()},owned.data()});
-            exchange({{velocity.data(),3},{pressure.data(),1}});
+            if(controls.pressure_expansion) {
+                poison(gp_low,3);
+                launch(owned_nodes,OnList<ExpandedVelocityUpdate>{{state,gp.data(),gp_low.data()},owned.data()});
+                exchange({{velocity.data(),3},{pressure.data(),1},{pressure_low.data(),1}});
+            } else {
+                launch(owned_nodes,OnList<SimpleCorrectVelocity>{{state,gp.data()},owned.data()});
+                exchange({{velocity.data(),3},{pressure.data(),1}});
+            }
             observe("pressure",pressure); observe("velocity",velocity); observe("interior_flux",eflux);
             observe("boundary_flux",bflux); observe("mass_divergence",div);
         }

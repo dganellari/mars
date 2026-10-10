@@ -24,6 +24,7 @@ CAPTURE_MARKER = '[simple-pressure-capture] complete; files are private; origina
 ROOT = Path(__file__).resolve().parent.parent
 CPP = ROOT / 'tests/reference/openaccel/simple_performance/pressure_replay.cpp'
 HEADERS = [CPP.with_name('pressure_replay_recovery.hpp'),
+           ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_recovery.hpp',
            ROOT / 'backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp',
            ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp',
            ROOT / 'backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp',

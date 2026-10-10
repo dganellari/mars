@@ -10,6 +10,7 @@
 #include <_hypre_parcsr_mv.h>
 #endif
 #include "mars_solver_profile.hpp"
+#include "mars_hypre_pressure_recovery.hpp"
 #include <functional>
 #include <limits>
 #include <stdexcept>
@@ -53,6 +54,12 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+    static void initialize_hypre() { static HypreInitGuard guard; }
+    void enable_gpu_aware_mpi() {
+        initialize_hypre();
+        require_reuse(HYPRE_SetGpuAwareMPI(1)==0,"pressure expansion requires GPU-aware MPI");
+    }
+
 
     // Instance controls keep a pressure comparison from changing momentum too.
     void set_krylov_controls(bool flex, int restart, int minimum, int maximum) {
@@ -175,8 +182,7 @@ public:
         last_timing_ = {};
         prepare_start_ = wall_stamp();
         if (profile_) profile_start_ = profile_->stamp();
-        static HypreInitGuard g_hypreInit;
-        (void)g_hypreInit;
+        initialize_hypre();
         configure_spmv();
 
         int rank;
@@ -255,8 +261,7 @@ public:
             require_reuse(false, "fixed graph updates require the device-map overload");
         if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
-        static HypreInitGuard g_hypreInit;
-        (void)g_hypreInit;
+        initialize_hypre();
         configure_spmv();
 
         int rank;
@@ -349,6 +354,51 @@ public:
         if (!(solver_ && precond_ && precondType_==BOOMERAMG && !precondMatrix_))
             throw std::runtime_error("pressure capture requires a prepared BoomerAMG solve");
         inspect(solver_,precond_,useFlexGmres_);
+    }
+
+    struct ExpansionResult { bool accepted=false; int rounds=0,iterations=0; };
+    ExpansionResult recover_prepared_expansion(Vector& high,Vector& low) {
+        static_assert(std::is_same_v<RealType,double>,"pressure expansion requires FP64");
+        require_reuse(solver_ && parcsr_A_ && par_b_ && par_x_ && true_residual_check_ && maximum_residual_check_
+            && !amg_cycle_ && precondType_==BOOMERAMG && !precondMatrix_,"invalid pressure expansion solve");
+        const auto saved=prepared_controls();
+        require_reuse(saved.relative==residual_relative_tolerance_ && saved.absolute==residual_absolute_tolerance_
+            && saved.maximum>0 && saved.maximum<=INT_MAX/5,"pressure expansion budget overflow");
+        const double started=wall_stamp();
+        namespace recovery=pressure_recovery;
+        auto* a=reinterpret_cast<hypre_ParCSRMatrix*>(parcsr_A_);
+        auto* rhs=reinterpret_cast<hypre_ParVector*>(par_b_);
+        auto* solution=reinterpret_cast<hypre_ParVector*>(par_x_);
+        const auto memory=hypre_VectorMemoryLocation(hypre_ParVectorLocalVector(solution));
+        pressure_settings::Values controls{{"rtol",saved.relative},{"atol",saved.absolute},
+            {"miniter",double(saved.minimum)},{"maxiter",double(saved.maximum)}};
+        recovery::Expansion expansion(solution,memory);
+        recovery::DiscardBuffer discard; std::ostream sink(&discard);
+        // Fatal backend failures have already thrown in solve_vectors. A cap is recoverable.
+        const auto result=recovery::run(a,rhs,solution,solver_,useFlexGmres_,controls,memory,4,{},sink,&sink,&expansion);
+        set_prepared_controls(saved);
+        lastNumIters_+=result.iterations;
+        ExpansionResult answer{false,result.rounds,result.iterations};
+        require_reuse(result.stop!=4,"pressure expansion backend failure");
+        if (expansion.step && result.stop!=3) {
+            recovery::Residual evaluator(a,solution,memory);
+            recovery::Vector work(solution,memory);
+            const auto rhs_norm=evaluator.norm(rhs);
+            const auto norm=evaluator.evaluate(expansion.high.p,rhs,work.p,expansion.low.p);
+            const double limit=std::max(saved.absolute,std::nextafter(saved.relative*rhs_norm.lower,0.));
+            answer.accepted=rhs_norm.finite() && norm.finite() && std::isfinite(limit) && norm.upper<=limit;
+            if (answer.accepted) {
+                const auto count=std::size_t(hypre_CSRMatrixNumRows(hypre_ParCSRMatrixDiag(a)));
+                high.resize(count); low.resize(count);
+                // Hypre and SIMPLE may use different CUDA streams.
+                require_reuse(hypre_ForceSyncComputeStream()==0,"pressure expansion stream completion failed");
+                require_reuse(cudaMemcpy(high.data(),recovery::data(expansion.high.p),count*sizeof(double),cudaMemcpyDeviceToDevice)==cudaSuccess
+                    && cudaMemcpy(low.data(),recovery::data(expansion.low.p),count*sizeof(double),cudaMemcpyDeviceToDevice)==cudaSuccess,
+                    "pressure expansion extraction failed");
+            }
+        }
+        if(timing_enabled_) last_timing_.solve_seconds+=wall_stamp()-started;
+        return answer;
     }
 
     // Reuse the prepared matrix and preconditioner for A*delta=defect. The

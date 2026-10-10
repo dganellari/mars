@@ -45,8 +45,9 @@ used. AMG remains one V-cycle with tolerance zero. The production default path
 and momentum instance retain their existing controls. Native GPU SpMV and both
 independent acceptance checks remain in effect.
 
-`--pressure-solver-profile` requires explicit pressure tolerances and the existing
-one-step audit mode. Rank zero reads the small settings file and broadcasts it;
+`--pressure-solver-profile` requires explicit pressure tolerances and either the
+one-step audit mode or opt-in [retained pressure expansion](pressure_expansion.md).
+The recipe below uses the audit. Rank zero reads the small settings file and broadcasts it;
 there are no added host matrix/vector computations. The audit already enables
 private field/matrix output and its device-to-host copies. Each rank also writes
 its actual Krylov and AMG settings after setup. The comparison requires these

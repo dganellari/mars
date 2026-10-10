@@ -39,7 +39,10 @@ struct SimpleNodeSums {
             const double du=u-old_velocity[3*n+j];
             a.momentum2+=r*r/v; a.velocity_change2+=v*du*du; a.speed2+=u*u;
         }
-        const double dp=state.pressure[n]-old_pressure[n]; a.pressure_change2=v*dp*dp;
+        const double dp=state.pressure_low?
+            (PressureValue::load(state.pressure,state.pressure_low,n)-PressureValue::load(old_pressure,state.old_pressure_low,n)).rounded():
+            state.pressure[n]-old_pressure[n];
+        a.pressure_change2=v*dp*dp;
         a.invalid=!finite_coefficient(a.momentum2) || !finite_coefficient(a.continuity2)
             || !finite_coefficient(a.velocity_change2) || !finite_coefficient(a.pressure_change2)
             || !finite_coefficient(a.speed2);

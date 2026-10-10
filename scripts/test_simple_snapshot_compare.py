@@ -163,6 +163,15 @@ class SnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(compare.EvidenceError, '^pressure_refinement_not_comparable$'):
                     compare.controls(self.case, self.reference, self.mesh, original + extra.splitlines())
 
+    def test_pressure_expansion_is_separate_from_original_arithmetic(self):
+        original = self.log.read_text().splitlines()
+        compare.controls(self.case, self.reference, self.mesh, original + ['pressure_expansion=0'])
+        for extra in ('pressure_expansion=1', 'pressure_expansion=', 'pressure_expansion=unknown',
+                      'pressure_expansion=0\npressure_expansion=0', '[simple-pressure-expansion] rounds=4'):
+            with self.subTest(extra=extra):
+                with self.assertRaisesRegex(compare.EvidenceError, '^pressure_expansion_not_comparable$'):
+                    compare.controls(self.case, self.reference, self.mesh, original + extra.splitlines())
+
     def test_serial_reference_and_mars_output(self):
         for path in self.ref_paths:
             path.unlink()

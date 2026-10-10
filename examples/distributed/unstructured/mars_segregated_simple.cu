@@ -132,7 +132,7 @@ int execute(const SimpleOptions& o) {
                  <<" beta="<<c.beta<<" pseudo_dt="<<c.pseudo_dt<<" (steady, no physical time)\n"
                  <<"linear_cache="<<o.linear_cache<<" halo_overlap="<<o.halo_overlap
                  <<" field_output="<<o.field_output<<" profile="<<o.profile<<'\n'
-                 <<"pressure_refinement="<<o.pressure_refinement<<'\n'
+                 <<"pressure_refinement="<<o.pressure_refinement<<" pressure_expansion="<<o.controls.pressure_expansion<<'\n'
                  <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
         if (o.pressure_tolerances)
             std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol

@@ -125,6 +125,51 @@ void pressure_refinement_gate(MPI_Comm comm,Report& report) {
     unsetenv("MARS_HYPRE_MINITER");
 }
 
+void pressure_expansion_gate(MPI_Comm comm,Report& report) {
+    using mars::segregated::runtime::HypreSimpleSolve;
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    setenv("MARS_HYPRE_MINITER","0",1);
+    for(bool cached:{false,true}) {
+        Problem p(1,ranks,{}); Local l=extract(p,rank);
+        const double rhs=std::nextafter(3.,INFINITY);
+        fill(p,l,rank,1,[&](int,int) { return rhs; });
+        for(int i=0;i<l.nodes();++i) for(int k=l.offsets[i];k<l.offsets[i+1];++k) l.blocks[k]=l.columns[k]==i?3.:0.;
+        Device<1,HYPRE_BigInt> d(l);
+        OwnedRowSystem<1,Matrix,HYPRE_BigInt> system(comm,d.view(),raw(d.owned),int(l.owned.size()),raw(d.solver_node),l.nodes());
+        HypreSimpleSolve<1> solve(comm);
+        solve.solver.enable_gpu_aware_mpi();
+        if(cached) solve.solver.enable_fixed_graph_updates();
+        solve.solver.set_stopping_tolerances(1e-20,1e6);
+        const Tolerance target{1e-17,1e-20,true}; solve.solver.enable_true_residual_check(1e-17,1e-20,true);
+        system.update(d.view(),solve.rhs(system.rows()),system.rows());
+        const bool initial=solve(system);
+        // Force an initial rejection without depending on a library-specific stagnation path.
+        solve.solver.set_prepared_controls({1e-20,1e-17,0,2000});
+        const auto controls=solve.solver.prepared_controls();
+        const int setups=solve.solver.get_setup_count(),graphs=solve.solver.get_graph_build_count();
+        const auto recovered=solve.expand();
+        Buffer<double> high(l.nodes(),NAN),low(l.nodes(),NAN),defect(system.rows());
+        system.unpack(solve.solution(),solve.size(),raw(high),high.size());
+        system.unpack(solve.expansion_low.data(),solve.expansion_low.size(),raw(low),low.size());
+        GhostExchange halo(p,l,rank); halo.run(raw(high),comm); halo.run(raw(low),comm);
+        const auto norms=system.expansion_residual(halo_complete(raw(high),high.size()),halo_complete(raw(low),low.size()),
+            solve.rhs(),raw(defect),defect.size(),target);
+        const auto h=download(raw(high),high.size()),lo=download(raw(low),low.size());
+        const auto ordinary=system.residual(halo_complete(raw(high),high.size()),solve.rhs(),target);
+        bool retained=true;
+        for(int i=0;i<l.nodes();++i) retained=retained && std::isfinite(h[i]) && std::isfinite(lo[i])
+            && lo[i]!=0 && std::abs(h[i]-1.)<1e-14;
+        const auto restored=solve.solver.prepared_controls();
+        const bool ok=!initial && recovered.accepted && recovered.rounds>0 && recovered.rounds<=4
+            && recovered.iterations>0 && recovered.iterations<=4*controls.maximum && norms.passed && !ordinary.passed && retained
+            && setups==solve.solver.get_setup_count() && graphs==solve.solver.get_graph_build_count()
+            && restored.relative==controls.relative && restored.absolute==controls.absolute
+            && restored.minimum==controls.minimum && restored.maximum==controls.maximum;
+        report.result("GPU retained pressure: original target, halo pair, setup reuse and restored controls; cache="+std::to_string(cached),all_true(ok,comm));
+    }
+    unsetenv("MARS_HYPRE_MINITER");
+}
+
 template<int C> void bench(MPI_Comm comm,Report& report,int repetitions) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     Options o; o.nx=48; o.ny=48; o.nz=24; o.far_ghosts=false;
@@ -173,6 +218,8 @@ int main(int argc,char** argv) {
                 hypre_gates<3>(MPI_COMM_WORLD,report,o,EmptyRanks::allow,"zero-row rank probe");
             }
         } else {
+            // Exercise expansion initialization before any other Hypre solve.
+            pressure_expansion_gate(MPI_COMM_WORLD,report);
             run_gates<1,Matrix,HYPRE_BigInt>(MPI_COMM_WORLD,report);
             run_gates<3,Matrix,HYPRE_BigInt>(MPI_COMM_WORLD,report);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"uneven");

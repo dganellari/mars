@@ -1,7 +1,7 @@
 #pragma once
 #include <cmath>
 #include <limits>
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #define MARS_COMPENSATED_HD __host__ __device__
 #else
 #define MARS_COMPENSATED_HD

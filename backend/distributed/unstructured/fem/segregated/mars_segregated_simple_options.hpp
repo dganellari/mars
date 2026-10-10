@@ -111,12 +111,13 @@ inline SimpleOptions simple_options(int argc,char** argv) {
                     throw std::runtime_error("--profile-warmup expects a nonnegative integer");
                 o.profile_warmup=int(number);
             }
-            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap" || key=="--first-step-audit" || key=="--pressure-refinement") {
+            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap" || key=="--first-step-audit" || key=="--pressure-refinement" || key=="--pressure-expansion") {
                 if (number!=0 && number!=1) throw std::runtime_error(key+" expects 0 or 1");
                 if (key=="--setup-only") o.setup_only=number!=0;
                 else if (key=="--profile") o.profile=number!=0;
                 else if (key=="--linear-cache") o.linear_cache=number!=0;
                 else if (key=="--halo-overlap") o.halo_overlap=number!=0;
+                else if (key=="--pressure-expansion") o.controls.pressure_expansion=number!=0;
                 else if (key=="--pressure-refinement") o.pressure_refinement=number!=0;
                 else o.first_step_audit=number!=0;
             }
@@ -149,10 +150,13 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         throw std::runtime_error("snapshots require field output, iterations covering the requested range, and no setup-only or profiling");
     if (o.first_step_audit && (o.iterations!=1 || o.snapshot_iterations!=1 || o.field_output!="distributed" || o.setup_only || o.profile))
         throw std::runtime_error("first-step audit requires one iteration, one snapshot interval and distributed field output without profiling");
+    if (o.controls.pressure_expansion && (!o.pressure_tolerances || o.pressure_refinement || o.first_step_audit
+        || o.snapshot_iterations || !o.pressure_failure_capture.empty() || o.setup_only))
+        throw std::runtime_error("pressure expansion requires explicit targets, no snapshots, audit, capture or legacy refinement");
     if (!o.pressure_failure_capture.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || o.first_step_audit))
         throw std::runtime_error("pressure failure capture requires explicit pressure targets and iterations without refinement or first-step audit");
-    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || !o.first_step_audit))
-        throw std::runtime_error("pressure profile comparison requires a first-step audit and explicit unchanged targets without refinement");
+    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || (!o.first_step_audit && !o.controls.pressure_expansion)))
+        throw std::runtime_error("pressure profile requires first-step audit or expansion, and explicit unchanged targets without refinement");
     return o;
 }
 inline const char* simple_help() {
@@ -174,7 +178,8 @@ inline const char* simple_help() {
            "    Sets pressure Krylov and both true residual targets; momentum stays unchanged.\n"
            "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
-           "  --pressure-solver-profile FILE      opt-in pressure controls; requires first-step audit and explicit tolerances\n"
+           "  --pressure-expansion 0             opt-in retained pressure pair and four correction budgets; explicit targets required\n"
+           "  --pressure-solver-profile FILE      opt-in pressure controls; requires first-step audit or expansion, and explicit tolerances\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

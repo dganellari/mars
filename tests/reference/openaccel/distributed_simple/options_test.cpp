@@ -20,6 +20,9 @@ int main() {
     check(!defaults.pressure_refinement);
     check(defaults.pressure_failure_capture.empty());
     check(defaults.pressure_solver_profile.empty());
+    check(!defaults.controls.pressure_expansion);
+    check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0").controls.pressure_expansion);
+    check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --pressure-solver-profile settings").controls.pressure_expansion);
     check(parse("--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
                 "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").pressure_solver_profile=="settings");
     check(parse("--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0").pressure_failure_capture=="private");
@@ -74,6 +77,10 @@ int main() {
         "--advection central","--advection 1","--velocity-interpolation other","--velocity-interpolation 1",
         "--inlet-ss outlet","--inlet-ss OUTLET","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--wall-ss walls,INLET","--unknown 1",
         "--profile 2","--linear-cache -1","--halo-overlap 3","--profile-warmup -1","--profile-warmup 1.5","--field-output vtk",
+        "--pressure-expansion 1","--pressure-expansion 2",
+        "--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --pressure-refinement 1",
+        "--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --snapshot-iterations 1",
+        "--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --pressure-failure-capture private",
         "--pressure-refinement 2","--pressure-refinement -1","--pressure-refinement 0.5",
         "--pressure-refinement 0 --pressure-refinement 1",
         "--snapshot-iterations -1","--snapshot-iterations 101","--snapshot-iterations 2.5",

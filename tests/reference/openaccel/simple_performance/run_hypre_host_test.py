@@ -27,8 +27,9 @@ def main():
     wrapper = (directory / 'mars_hypre_gmres_solver.hpp').read_text()
     # Observe the selection while still calling the installed Hypre API.
     wrapper = wrapper.replace('HYPRE_SetSpMVUseVendor(', 'host_set_spmv_use_vendor(')
+    wrapper = wrapper.replace('hypre_ForceSyncComputeStream()', 'host_hypre_stream_sync()')
     # Keep Hypre includes so version-specific declarations are compiled too.
-    wrapper = re.sub(r'^#include(?!\s+[<"](?:HYPRE|_hypre))[^\n]*\n', '', wrapper, flags=re.M)
+    wrapper = re.sub(r'^#include(?!\s+[<"](?:HYPRE|_hypre|mars_hypre_pressure_recovery\.hpp))[^\n]*\n', '', wrapper, flags=re.M)
     # Sequential internal headers alias MPI names; retain our instrumented stubs.
     mpi_names = ('Comm', 'COMM_WORLD', 'INT', 'DOUBLE', 'MAX', 'SUM', 'Comm_rank',
                  'Allreduce', 'Barrier', 'Abort', 'Wtime')
@@ -44,7 +45,7 @@ def main():
     (build / 'host_gmres.hpp').write_text(source)
     exe = build / 'hypre_numeric_refresh'
     command = [args.cxx, '-std=c++20', '-O1', '-g', '-fsanitize=address,undefined',
-               '-fno-omit-frame-pointer', '-I' + str(HERE), '-I' + str(build),
+               '-fno-omit-frame-pointer', '-I' + str(HERE), '-I' + str(build), '-I' + str(directory),
                '-I' + str(args.hypre_prefix / 'include'),
                str(HERE / 'hypre_numeric_refresh.cpp'),
                str(args.hypre_prefix / 'lib/libHYPRE.a'), '-o', str(exe)]

@@ -44,11 +44,12 @@ inline void MPI_Barrier(MPI_Comm) { ++host_barriers; }
 inline double MPI_Wtime() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-constexpr int cudaSuccess = 0, cudaMemcpyDeviceToHost = 0;
+constexpr int cudaSuccess = 0, cudaMemcpyDeviceToHost = 0, cudaMemcpyDeviceToDevice = 1;
 inline int cudaGetLastError() { return 0; }
+inline int host_hypre_stream_sync() { return 0; }
 inline int host_device_synchronizations = 0;
 inline int cudaDeviceSynchronize() { ++host_device_synchronizations; return cudaSuccess; }
-inline void cudaMemcpy(void* dst, const void* src, size_t bytes, int) { std::memcpy(dst, src, bytes); }
+inline int cudaMemcpy(void* dst, const void* src, size_t bytes, int) { std::memcpy(dst, src, bytes); return cudaSuccess; }
 inline int host_spmv_set_calls = 0, host_spmv_last_request = -1;
 inline HYPRE_Int host_set_spmv_use_vendor(HYPRE_Int requested) {
     ++host_spmv_set_calls;

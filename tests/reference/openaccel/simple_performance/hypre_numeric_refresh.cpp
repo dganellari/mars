@@ -1,4 +1,5 @@
 #include "hypre_host_shim.hpp"
+#include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_recovery.hpp"
 // Inspect resource identity without exposing production test hooks.
 #define private public
 #include "host_gmres.hpp"
@@ -678,11 +679,48 @@ void explicit_pressure_profile() {
     std::cout<<"PASS: pressure profiles, one/multiple levels, GMRES/FlexGMRES and cached updates\n";
 }
 
+void retained_pressure_checks() {
+    namespace recovery=mars::fem::pressure_recovery;
+    for(bool cached:{false,true}) {
+        Matrix matrix; matrix.column_count=1; matrix.offsets={0,1}; matrix.columns={0}; matrix.values={3.};
+        std::vector<HYPRE_BigInt> map{0};
+        std::vector<double> b{std::nextafter(3.,INFINITY)},x(1,0),low;
+        Solver solver(0,20,1e-20,Solver::BOOMERAMG,5);
+        solver.setVerbose(false); solver.set_stopping_tolerances(1e-20,1e6);
+        solver.enable_true_residual_check(1e-17,1e-20,true);
+        if(cached) solver.enable_fixed_graph_updates();
+        check(!solver.solve(matrix,b,x,0,1,0,1,map),"loose initial stop did not fail true residual");
+        solver.set_prepared_controls({1e-20,1e-17,0,20});
+        const int setups=solver.get_setup_count(),graphs=solver.get_graph_build_count();
+        const auto result=solver.recover_prepared_expansion(x,low);
+        check(result.accepted && result.rounds>0 && result.rounds<=4 && low.size()==1 && low[0]!=0,
+              "wrapper did not retain a passing nonzero remainder");
+        const double rounded=std::fma(3.,x[0],-b[0]);
+        check(std::abs(rounded)>1e-17 && std::abs(rounded+3*low[0])<1e-17,
+              "retained scalar candidate did not remove update rounding error");
+        const auto restored=solver.prepared_controls();
+        check(restored.relative==1e-20 && restored.absolute==1e-17 && restored.minimum==0 && restored.maximum==20
+            && solver.get_setup_count()==setups && solver.get_graph_build_count()==graphs,
+              "expansion changed original controls or rebuilt AMG");
+        auto* a=reinterpret_cast<hypre_ParCSRMatrix*>(solver.parcsr_A_);
+        auto* px=reinterpret_cast<hypre_ParVector*>(solver.par_x_);
+        recovery::Vector values(px,HYPRE_MEMORY_HOST);
+        recovery::Residual evaluator(a,px,HYPRE_MEMORY_HOST);
+        for(double value:{0.,1e-200,1e-160,1.}) {
+            recovery::checked(hypre_ParVectorSetConstantValues(values.p,value));
+            const auto norm=evaluator.norm(values.p);
+            check(norm.finite() && norm.lower<=value && norm.upper>=value,
+                  "shared norm failed to enclose a scalar with underflowing square");
+        }
+    }
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
     unsetenv("MARS_HYPRE_RESIDUAL_AUDIT");
     try {
+        retained_pressure_checks();
         explicit_pressure_profile();
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);

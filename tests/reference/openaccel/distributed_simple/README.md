@@ -22,7 +22,12 @@ state when a private case still disagrees with OpenAccel.
 The opt-in [original-pressure first-step profile](pressure_profile.md) reuses
 that saved reference and applies its supported pressure controls on the GPU,
 with explicit coarsening/coarse-solve substitutions. Local configuration tests
-pass; GPU execution and private first-step parity remain pending.
+pass; private first-step field parity is not established. The later public
+common-system check in [the profile notes](pressure_profile.md) found distinct
+pressure increments passing the same original residual target.
+The opt-in [retained pressure extension](pressure_expansion.md) carries a
+correction remainder through SIMPLE; its production GPU gate and full-flow
+validation remain pending.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared
@@ -50,7 +55,8 @@ integer messages too. Finally, reverse-added own-element incidence must equal
 held incidence at owned nodes. This last check assumes unique element ownership
 and a valid local mesh; counts alone are not a general identity proof.
 
-The steady iteration publishes five messages per peer (15 doubles per ghost):
+With pressure expansion disabled, the steady iteration publishes five messages
+per peer (15 doubles per ghost):
 
 1. reconstructed pressure gradient (3);
 2. momentum increment and influence coefficient (3 + 3);

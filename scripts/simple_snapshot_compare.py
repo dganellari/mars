@@ -58,6 +58,9 @@ def controls(case_path, reference_dir, mesh, log):
     refinement = re.findall(r'(?:^|\s)pressure_refinement=([^\s]*)', '\n'.join(log))
     require(refinement in ([], ['0']) and not any('[simple-pressure-refinement]' in line for line in log),
             'pressure_refinement_not_comparable')
+    expansion = re.findall(r'(?:^|\s)pressure_expansion=([^\s]*)', '\n'.join(log))
+    require(expansion in ([], ['0']) and not any('[simple-pressure-expansion]' in line for line in log),
+            'pressure_expansion_not_comparable')
     case = json.loads(case_path.read_text())
     require(case['format'] == 'mars-simple-deck-v1')
     prepared = options(case['arguments'])

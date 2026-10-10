@@ -51,6 +51,7 @@ template<class T> std::vector<T> download(const T* p,std::size_t n) { return std
 template<int C> struct Solve {
     MPI_Comm comm;
     explicit Solve(MPI_Comm c):comm(c) {}
+    void set_tolerances(double,double) {}
     std::vector<double> b, x;
     double* rhs(std::size_t rows) { b.assign(rows,0); return b.data(); }
     const double* rhs() const { return b.data(); }
@@ -101,7 +102,7 @@ struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
     bool split=false,configured=false,high_resolution=false,overlap=true,water=false,linear_cache=true;
-    bool velocity_shifted=false,bent_inlet=false;
+    bool velocity_shifted=false,bent_inlet=false,pressure_expansion=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -367,7 +368,9 @@ int execute(const Options& o) {
         solver_to_global.assign(std::size_t(total/2),-1);
         for (int i=0;i<total;i+=2) solver_to_global[std::size_t(all[i])]=int(all[i+1]);
     }
+    controls.pressure_expansion=o.pressure_expansion;
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(gate_comm,part.input,part.ownership,controls);
+    if(o.pressure_expansion) run.set_pressure_tolerances(true,1e-10,1e-13);
     run.poison_unexchanged=true;
     run.overlap_assembly=o.overlap;
 #ifdef MARS_REPLAY_CUDA
@@ -498,6 +501,7 @@ int main(int argc,char** argv) {
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
+            else if (k=="--pressure-expansion") o.pressure_expansion=v=="1";
             else if (k=="--bent-inlet") o.bent_inlet=v=="1";
             else if (k=="--velocity-interpolation") {
                 if (v!="trilinear" && v!="linear-linear") throw std::runtime_error("unsupported velocity interpolation");
