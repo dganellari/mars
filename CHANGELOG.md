@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-10-09
+## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
