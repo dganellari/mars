@@ -41,6 +41,8 @@
 // marsir-mlir/test/cellwise_krylov_ref.py to about 4 digits (BiCGStab amplifies the
 // rounding of the different summation orders).
 
+#include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
+
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"

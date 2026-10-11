@@ -148,7 +148,7 @@ public:
     // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank).
     P1Amg(const UnstructuredTopology& T, const double* G1, const CvfemMatrices<1>& M1, UnstructuredHalo* halo1,
           MPI_Comm comm, cudaStream_t stream)
-        : T_(T), halo_(halo1), comm_(comm), stream_(stream), y_(T.local * 8), v_(T.local * 8)
+        : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
         int rank = 0;
@@ -302,7 +302,6 @@ private:
 
     const UnstructuredTopology& T_;
     UnstructuredHalo* halo_;
-    MPI_Comm comm_;
     cudaStream_t stream_;
     mutable thrust::device_vector<double> y_, v_;   // scratch of the p = 1 size
     thrust::device_vector<int> copy_;                // the counting copy of every numbered vertex
