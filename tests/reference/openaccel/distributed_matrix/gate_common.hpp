@@ -3,6 +3,7 @@
 // and device buffers (CUDA-aware MPI); only Buffer/apply differ. Fixtures are generated,
 // replicated on every rank (test-only), and keyed by nontrivial source ids.
 #include "mars_segregated_distributed_matrix.hpp"
+#include "gate_problem.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -23,90 +24,6 @@
 namespace dmatrix_gate {
 using namespace mars::segregated::distributed;
 using mars::segregated::BlockCsrView;
-
-inline std::uint64_t mix(std::uint64_t x) {
-    x+=0x9e3779b97f4a7c15ull; x=(x^(x>>30))*0xbf58476d1ce4e5b9ull; x=(x^(x>>27))*0x94d049bb133111ebull;
-    return x^(x>>31);
-}
-inline std::uint64_t key(std::uint64_t a,std::uint64_t b,std::uint64_t c,std::uint64_t d) { return mix(mix(mix(mix(a)^b)^c)^d); }
-inline double symmetric(std::uint64_t k) { return double(mix(k)>>11)*0x1.0p-52-1.0; } // [-1,1)
-template<class T> void shuffle(std::vector<T>& v,std::uint64_t seed) {
-    for (std::size_t i=v.size();i>1;--i) std::swap(v[i-1],v[mix(seed^(i*0x100000001b3ull))%i]);
-}
-
-struct Options {
-    int nx=6, ny=5, nz=4;          // 120 nodes, 27-point couplings
-    bool empty_rank=false;         // rank 1 owns no rows (needs >= 2 ranks)
-    bool empty_rank_holds_nothing=false;
-    bool far_ghosts=true;          // partial second ghost layer, never used by owned rows
-    bool far_ghosts_without_id=false;
-    bool omit_coupling=false;      // last rank drops its largest ghost coupling from one owned row
-};
-
-// One global nonsymmetric, diagonally dominant block system and its partition.
-struct Problem {
-    int C, ranks, nodes;
-    Options options;
-    std::vector<std::vector<int>> neighbors, owned_order;
-    std::vector<int> owner, weight, solver_to_global;
-    std::vector<long long> first, solver_node, source_id;
-    Problem(int components,int rank_count,Options o):C(components),ranks(rank_count),nodes(o.nx*o.ny*o.nz),options(o) {
-        neighbors.resize(nodes);
-        for (int z=0;z<o.nz;++z) for (int y=0;y<o.ny;++y) for (int x=0;x<o.nx;++x)
-            for (int dz=-1;dz<=1;++dz) for (int dy=-1;dy<=1;++dy) for (int dx=-1;dx<=1;++dx) {
-                const int X=x+dx, Y=y+dy, Z=z+dz;
-                if (X>=0 && Y>=0 && Z>=0 && X<o.nx && Y<o.ny && Z<o.nz) neighbors[x+o.nx*(y+o.ny*z)].push_back(X+o.nx*(Y+o.ny*Z));
-            }
-        for (auto& n:neighbors) std::sort(n.begin(),n.end());
-        std::vector<int> permutation(nodes); for (int g=0;g<nodes;++g) permutation[g]=g;
-        shuffle(permutation,7); source_id.resize(nodes);
-        for (int g=0;g<nodes;++g) source_id[g]=1000003+17LL*permutation[g];
-        // Uneven weights, then irregular seams: every fifth node moves to the next owning rank.
-        weight.resize(ranks); int total=0;
-        for (int r=0;r<ranks;++r) total+=weight[r]=(o.empty_rank && r==1)?0:r+1;
-        owner.resize(nodes);
-        for (int g=0,r=0,acc=0;g<nodes;++g) {
-            while (r<ranks-1 && (long long)g*total>=(long long)(acc+weight[r])*nodes) acc+=weight[r++];
-            while (weight[r]==0) r=(r+1)%ranks;
-            owner[g]=r;
-            if (ranks>1 && mix(31ull*g+7)%5==0) { int q=(r+1)%ranks; while (weight[q]==0) q=(q+1)%ranks; owner[g]=q; }
-        }
-        owned_order.resize(ranks); first.assign(ranks+1,0); solver_node.resize(nodes); solver_to_global.resize(nodes);
-        for (int g=0;g<nodes;++g) owned_order[owner[g]].push_back(g);
-        for (int r=0;r<ranks;++r) {
-            shuffle(owned_order[r],1000+r); first[r+1]=first[r]+(long long)owned_order[r].size();
-            for (std::size_t k=0;k<owned_order[r].size();++k) {
-                solver_node[owned_order[r][k]]=first[r]+(long long)k; solver_to_global[first[r]+k]=owned_order[r][k];
-            }
-        }
-    }
-    // Entries are functions of source ids, so any identity mix-up changes the value read.
-    double value(int gi,int gj,int c,int j,unsigned seed) const {
-        const double v=symmetric(key(std::uint64_t(source_id[gi]),std::uint64_t(source_id[gj]),std::uint64_t(8*c+j),seed));
-        return gi==gj && c==j?40.0*C+1.0+0.5*v:0.5*v;
-    }
-    double rhs(int g,int c,unsigned seed) const { return symmetric(key(std::uint64_t(source_id[g]),77,std::uint64_t(c),seed)); }
-    double solution(int g,int c,unsigned seed) const { return symmetric(key(std::uint64_t(source_id[g]),99,std::uint64_t(c),seed)); }
-    double product(int g,int c,unsigned value_seed,unsigned x_seed) const {
-        long double s=0;
-        for (int u:neighbors[g]) for (int j=0;j<C;++j) s+=(long double)value(g,u,c,j,value_seed)*solution(u,j,x_seed);
-        return double(s);
-    }
-    bool coupled(int g,int u) const { return std::binary_search(neighbors[g].begin(),neighbors[g].end(),u); }
-    // Nodes present on rank r: owned, every coupled neighbour (complete owned rows), and far ghosts.
-    std::vector<int> holds(int r,std::set<int>* far=nullptr) const {
-        std::set<int> present(owned_order[r].begin(),owned_order[r].end()), ghosts, extra;
-        for (int g:owned_order[r]) for (int u:neighbors[g]) if (!present.count(u)) ghosts.insert(u);
-        if (options.empty_rank && weight[r]==0 && !options.empty_rank_holds_nothing)
-            for (int g=0;g<nodes;++g) if (mix(std::uint64_t(g))%11==0) ghosts.insert(g);
-        if (options.far_ghosts)
-            for (int g:ghosts) for (int u:neighbors[g])
-                if (!present.count(u) && !ghosts.count(u) && mix(std::uint64_t(u)+5)%3==0) extra.insert(u);
-        present.insert(ghosts.begin(),ghosts.end()); present.insert(extra.begin(),extra.end());
-        if (far) *far=extra;
-        return {present.begin(),present.end()};
-    }
-};
 
 // Rank-local runtime view: shuffled local order (owned and ghosts interleaved), block graph over
 // every local node, owned rows complete, ghost rows partial and NaN-poisoned.
@@ -406,6 +323,94 @@ template<class Matrix,class GlobalId> void pressure_audit_gates(MPI_Comm comm,Re
             && audit.compensated_residual_passed==(mode==9 || mode==11);
         ok=ok && before==download(system.matrix().valuesPtr(),before.size());
         report.result("pressure audit fixture "+std::to_string(mode),all_true(ok,comm));
+        Buffer<double> defect(b.size()+2,-123.);
+        const auto saved_b=download(raw(b),b.size()),saved_x=download(raw(x),x.size());
+        const auto norms=system.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),b.size(),tolerance);
+        const auto got=download(raw(defect),defect.size());
+        const auto after_b=download(raw(b),b.size()),after_x=download(raw(x),x.size());
+        bool exact=norms.finite==audit.compensated_residual_finite && norms.passed==audit.compensated_residual_passed;
+        if (mode>=9) {
+            const double expected=mode==10?-1.:mode==12?0x1p-54:0.;
+            for (std::size_t i=0;i<b.size();++i) exact=exact && got[i]==expected;
+            exact=exact && norms.residual2==n*expected*expected;
+        }
+        exact=exact && got[b.size()]==-123. && got[b.size()+1]==-123.
+            && !std::memcmp(saved_b.data(),after_b.data(),b.size()*sizeof(double))
+            && !std::memcmp(saved_x.data(),after_x.data(),x.size()*sizeof(double))
+            && before==download(system.matrix().valuesPtr(),before.size());
+        report.result("compensated owned defect fixture "+std::to_string(mode),all_true(exact,comm));
+    }
+}
+
+// Dot2 itself can round to zero on extreme cancellation. Acceptance must
+// include its error bound, not merely the compensated point estimate.
+template<class Matrix,class GlobalId> void expansion_residual_gates(MPI_Comm comm,Report& report) {
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    const int n=2*ranks;
+    Local l; l.global.resize(n); l.solver_node.resize(n); l.rhs.resize(n);
+    std::vector<double> high(n,0x1p60),low(n);
+    for(int i=0;i<n;++i) { l.global[i]=i; l.solver_node[i]=i; low[i]=.25*(i+1); }
+    l.owned={2*rank,2*rank+1};
+    for(int row=0;row<n;++row) {
+        l.offsets.push_back(int(l.columns.size()));
+        for(int col=0;col<n;++col) { l.columns.push_back(col); l.blocks.push_back(double(col==row)-double(col==(row+1)%n)); }
+        l.rhs[row]=low[row]-low[(row+1)%n];
+    }
+    l.offsets.push_back(int(l.columns.size()));
+    Device<1,GlobalId> d(l); Buffer<double> b(2),defect(2);
+    auto h=upload(high),lo=upload(low);
+    System<1,Matrix,GlobalId> system(comm,d.view(),raw(d.owned),2,raw(d.solver_node),n);
+    system.update(d.view(),raw(b),b.size()); const Tolerance target{1e-12,1e-12,true};
+    const auto ordinary=system.residual(halo_complete(raw(h),h.size()),raw(b),target);
+    auto check=[&] { return system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),raw(b),raw(defect),defect.size(),target); };
+    const auto paired=check();
+    report.result("expanded original rows preserve cancelling high and referenced low terms",!ordinary.passed && paired.passed);
+    low[(2*rank+2)%n]=0; lo=upload(low);
+    report.result("expanded original rows reject a stale referenced low term",!check().passed);
+    low[(2*rank+2)%n]=std::numeric_limits<double>::quiet_NaN(); lo=upload(low);
+    report.result("expanded original rows reject nonfinite low terms",!check().passed);
+    auto tiny=upload(std::vector<double>(2,1e-155));
+    lo=upload(std::vector<double>(n,0.));
+    const auto underflow=system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),
+        raw(tiny),raw(defect),defect.size(),target);
+    report.result("expanded original rows reject subnormal RHS squares",!underflow.finite && !underflow.passed);
+    expect_rejection(comm,report,"expanded residual rejects missing low capacity","capacity",ranks-1,[&] {
+        system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),rank==ranks-1?0:lo.size()),raw(b),raw(defect),defect.size(),target);
+    });
+    expect_rejection(comm,report,"expanded residual rejects low-defect alias","capacity",ranks-1,[&] {
+        system.expansion_residual(halo_complete(raw(h),h.size()),halo_complete(raw(lo),lo.size()),raw(b),rank==ranks-1?raw(lo):raw(defect),defect.size(),target);
+    });
+}
+
+template<class Matrix,class GlobalId> void bounded_defect_gates(MPI_Comm comm,Report& report) {
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    const int n=6*ranks;
+    for (int mode=0;mode<4;++mode) {
+        Local l; l.global.resize(n); l.solver_node.resize(n); l.rhs.assign(n,0);
+        for (int i=0;i<n;++i) { l.global[i]=i; l.solver_node[i]=i; }
+        for (int i=0;i<6;++i) l.owned.push_back(6*rank+i);
+        const double coefficients[]={0x1p106,0x1p53,1.,-0x1p106,-0x1p53,0.};
+        for (int row=0;row<n;++row) {
+            l.offsets.push_back(int(l.columns.size()));
+            for (int col=0;col<n;++col) {
+                l.columns.push_back(col);
+                l.blocks.push_back(mode==0?(col<6?coefficients[col]:0.):double(col==row));
+            }
+            l.rhs[row]=mode==0?0.:mode==2?1e-250:1.;
+        }
+        l.offsets.push_back(int(l.columns.size()));
+        Device<1,GlobalId> d(l); Buffer<double> b(l.owned.size()),defect(l.owned.size());
+        std::vector<double> values(n,mode==2?1e-250:1.);
+        if (mode==3) values.back()=std::numeric_limits<double>::quiet_NaN();
+        auto x=upload(values);
+        System<1,Matrix,GlobalId> system(comm,d.view(),raw(d.owned),int(l.owned.size()),raw(d.solver_node),n);
+        system.update(d.view(),raw(b),b.size());
+        const Tolerance tolerance{1e-6,0};
+        const auto point=system.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),defect.size(),tolerance);
+        const auto bounded=system.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),defect.size(),tolerance,true);
+        bool ok=mode==0?point.passed && bounded.finite && !bounded.passed && bounded.residual2>=n
+               :mode==1?point.passed && bounded.passed:!bounded.finite && !bounded.passed;
+        report.result("bounded defect fixture "+std::to_string(mode),all_true(ok,comm));
     }
 }
 
@@ -413,7 +418,7 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+": ";
     const int last=ranks-1; const bool injecting=rank==last;
-    if constexpr (C==1) pressure_audit_gates<Matrix,GlobalId>(comm,report);
+    if constexpr (C==1) { pressure_audit_gates<Matrix,GlobalId>(comm,report); expansion_residual_gates<Matrix,GlobalId>(comm,report); bounded_defect_gates<Matrix,GlobalId>(comm,report); }
     {   // Build, first values, oracle comparison of every entry, RHS and map.
         Problem p(C,ranks,base); Local l=extract(p,rank);
         fill(p,l,rank,1,[&](int g,int c) { return p.rhs(g,c,1); });
@@ -448,6 +453,7 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
         s.update(d.view(),raw(b),b.size());
         std::vector<double> xs; for (int g:p.owned_order[rank]) for (int c=0;c<C;++c) xs.push_back(p.solution(g,c,5));
         Buffer<double> x_owned=upload(xs), x_local=upload(local_solution(p,l,5,1.0)); // previous iterate: x*+1
+        Buffer<double> defect(b.size());
         std::vector<double> sentinel=download(raw(x_local),x_local.size());
         s.unpack(raw(x_owned),x_owned.size(),raw(x_local),x_local.size()); device_sync();
         const auto unpacked=download(raw(x_local),x_local.size()); long long unpack_bad=0;
@@ -467,6 +473,8 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
             report.result(tag+"stale ghosts (exchange skipped) fail the true residual",!stale.passed
                 && std::abs(stale.residual2-double(oracle))<=1e-9*double(oracle),
                 "relative="+sci(stale.relative())+" adapter_r2="+sci(stale.residual2)+" oracle_r2="+sci(double(oracle)));
+            const auto stale_defect=s.compensated_defect(halo_complete(raw(x_local),x_local.size()),raw(b),raw(defect),defect.size());
+            report.result(tag+"stale ghosts also fail compensated defect",!stale_defect.passed);
         } else report.skip(tag+"stale ghosts (exchange skipped) fail the true residual","no ghosts on one rank");
         exchange.run(raw(x_local),comm);
         const auto fresh=s.residual(halo_complete(raw(x_local),x_local.size()),raw(b));
@@ -474,6 +482,8 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
         std::ostringstream detail; detail<<"relative="<<fresh.relative()<<" oracle_r2="<<double(oracle)<<" adapter_r2="<<fresh.residual2;
         report.result(tag+"exchanged known solution passes the true residual",fresh.passed && sum_all(incomplete,comm)==0
             && fresh.relative()<1e-14,detail.str());
+        const auto fresh_defect=s.compensated_defect(halo_complete(raw(x_local),x_local.size()),raw(b),raw(defect),defect.size());
+        report.result(tag+"exchanged known solution passes compensated defect",fresh_defect.passed && fresh_defect.relative()<1e-14);
         if (ghosts>0) {   // One referenced ghost left stale on the last rank.
             Buffer<double> again=upload(local_solution(p,l,5,1.0));
             s.unpack(raw(x_owned),x_owned.size(),raw(again),again.size());
@@ -490,6 +500,13 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
         const auto nonzero=s.residual(halo_complete(raw(x_local),x_local.size()),raw(zero_b));
         report.result(tag+"zero RHS: absolute tolerance accepts x=0 and rejects x!=0",zero.passed && zero.residual2==0 && !nonzero.passed);
         const auto no_solution=halo_complete(raw(zero_x),zero_x.size());
+        s.compensated_defect(no_solution,raw(b),raw(defect),defect.size());
+        bool defect_order=download(raw(defect),defect.size())==download(raw(b),b.size());
+        s.compensated_defect(halo_complete(raw(x_local),x_local.size()),raw(zero_b),raw(defect),defect.size());
+        const auto negative_product=download(raw(defect),defect.size());
+        for (std::size_t i=0;i<expected.size();++i)
+            defect_order=defect_order && std::abs(negative_product[i]+expected[i])<=1e-12*(1+std::abs(expected[i]));
+        report.result(tag+"defect sign and owned solver ordering match source oracle",all_true(defect_order,comm));
         const double bnorm=std::sqrt(s.residual(no_solution,raw(b)).rhs2);
         const Tolerance additive{.6*bnorm,.6}, maximum{.6*bnorm,.6,true};
         report.result(tag+"maximum tolerance rejects residual between max and sum",
@@ -543,8 +560,10 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
         Buffer<double> x_owned=upload(xs), x=upload(local_solution(p,l,5,1.0));
         s.unpack(raw(x_owned),x_owned.size(),raw(x),x.size()); GhostExchange(p,l,rank).run(raw(x),comm);
         const auto norms=s.residual(halo_complete(raw(x),x.size()),raw(b));
+        Buffer<double> defect(b.size());
+        const auto precise=s.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),defect.size());
         int empty_rows=rank==1?s.rows():-1, reported=0; MPI_Allreduce(&empty_rows,&reported,1,MPI_INT,MPI_MAX,comm);
-        report.result(name+": reject policy collective, allow policy exact",all_true(rejected && bad==0 && norms.passed && (rank!=1 || s.rows()==0),comm),
+        report.result(name+": reject policy collective, allow policy exact",all_true(rejected && bad==0 && norms.passed && precise.passed && (rank!=1 || s.rows()==0),comm),
             "rank 1 rows="+std::to_string(reported)+" local nodes="+std::to_string(int(sum_all((long long)(rank==1?l.nodes():0),comm)))
             +", oracle mismatches="+std::to_string(bad)+", relative="+sci(norms.relative()));
     }
@@ -600,6 +619,16 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
             s.residual(halo_complete(raw(x),x.size()),raw(b)); });
         expect_rejection(comm,report,tag+"collective rejection: residual vector smaller than local columns","capacity",last,[&] {
             s.residual(halo_complete(raw(x),injecting?x.size()-1:x.size()),raw(b)); });
+        Buffer<double> defect(b.size());
+        expect_rejection(comm,report,tag+"collective rejection: undersized defect output","capacity",last,[&] {
+            s.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),injecting?defect.size()-1:defect.size()); });
+        expect_rejection(comm,report,tag+"collective rejection: defect overlaps RHS","capacity",last,[&] {
+            s.compensated_defect(halo_complete(raw(x),x.size()),raw(b),injecting?raw(b)+1:raw(defect),defect.size()); });
+        expect_rejection(comm,report,tag+"collective rejection: defect overlaps solution","capacity",last,[&] {
+            s.compensated_defect(halo_complete(raw(x),x.size()),raw(b),injecting?raw(x):raw(defect),defect.size()); });
+        expect_rejection(comm,report,tag+"collective rejection: defect overlaps matrix values","capacity",last,[&] {
+            s.compensated_defect(halo_complete(raw(x),x.size()),raw(b),
+                injecting?const_cast<double*>(s.matrix().valuesPtr()):raw(defect),defect.size()); });
     }
 }
 } // namespace dmatrix_gate

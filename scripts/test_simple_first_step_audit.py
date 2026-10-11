@@ -86,12 +86,14 @@ class FirstStepTests(unittest.TestCase):
                 field = ds.createVariable('vals_nod_var', 'f8', ('time_step', 'num_nod_var', 'num_nodes'))
                 field[0] = 0.; field[1] = values[nodes].T
 
-    def write_reference_matrices(self, width=4):
+    def write_reference_matrices(self, width=4, row_factor=None):
         mapping = np.argsort(self.numbering)
         for stage, system, c in (('momentum', 'coupled_navier_stokes', 3), ('pressure', 'pressure_correction', 1)):
             dofs = (mapping[:, None]*c + np.arange(c)).ravel()
             # Different positive row factors exercise normalization and diagonal scaling.
             factors = np.arange(len(dofs))*.07 + .4
+            if row_factor is not None:
+                factors[:] = row_factor
             matrix = self.matrices[stage][dofs][:, dofs]*factors[:, None]
             prefix = self.pair / ('reference/' + system + '_0000')
             data = {'rows': (np.arange(len(dofs)+1)*len(dofs), '<i'+str(width)),
@@ -133,6 +135,99 @@ class FirstStepTests(unittest.TestCase):
     def test_64_bit_reference_indices(self):
         self.write_reference_matrices(8); self.refresh()
         self.assertEqual(self.compare()[0], 0)
+
+    def test_common_pressure_system_with_nonuniform_row_scaling(self):
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_common_system_checks']
+        self.assertEqual(checks['row_scaling'], 'nonuniform')
+        self.assertFalse(checks['unscaled_matrix_matches'])
+        self.assertFalse(checks['unscaled_rhs_matches'])
+        self.assertTrue(checks['both_solutions_meet_reference_target'])
+        self.assertTrue(checks['reference_solution_meets_mars_runtime_target'])
+        self.assertEqual(checks['assessment'], 'increments_match')
+
+    def test_common_pressure_system_unit_and_uniform_scaling(self):
+        for factor, expected in ((1., 'unit'), (7., 'uniform_nonunit')):
+            with self.subTest(factor=factor):
+                self.write_reference_matrices(row_factor=factor); self.refresh()
+                code, result = self.compare()
+                self.assertEqual(code, 0, result)
+                checks = result['pressure_common_system_checks']
+                self.assertEqual(checks['row_scaling'], expected)
+                self.assertEqual(checks['unscaled_matrix_matches'], factor == 1.)
+                self.assertEqual(checks['unscaled_rhs_matches'], factor == 1.)
+                self.assertTrue(checks['both_solutions_meet_reference_target'])
+
+    def test_distinct_increments_can_both_meet_same_reference_target(self):
+        self.phi += 1e-6
+        self.change_mars_final()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        self.assertFalse(result['first_step_stage_matches']['pressure_increment'])
+        checks = result['pressure_common_system_checks']
+        self.assertTrue(checks['both_solutions_meet_reference_target'])
+        self.assertEqual(checks['assessment'], 'distinct_increments_pass_common_fp64_check')
+
+    def test_own_residuals_can_pass_while_common_absolute_target_fails(self):
+        reference_phi = self.phi.copy()
+        self.write_reference_matrices(row_factor=1000.)
+        self.phi += 1e-6
+        self.write_mars_parts()
+        parts = [audit.MarsPart(self.mars / 'flow-audit-rank{:06d}.bin'.format(rank), rank, 2, 6)
+                 for rank in (0, 1)]
+        reference = audit.ReferenceMatrix(self.pair / 'reference', 'pressure_correction', 1,
+                                          np.argsort(self.numbering))
+        system = audit.compare_system(parts, reference, 'pressure', self.phi, reference_phi, 1.)
+        targets = dict(limits=dict(reference=1e-5, runtime=1e-5))
+        self.assertLess(system['mars']['absolute_residual'], 1e-5)
+        self.assertLess(system['reference']['absolute_residual'], 1e-5)
+        checks = audit.pressure_common_system_checks(system, targets, False)
+        self.assertEqual(checks['row_scaling'], 'uniform_nonunit')
+        self.assertEqual(checks['assessment'], 'mars_candidate_fails_reference_target')
+
+    def test_unscaled_rhs_overflow_does_not_report_zero_difference(self):
+        columns = np.array([0])
+        with np.errstate(over='ignore'):
+            with self.assertRaisesRegex(ValueError, 'audit_residual_arithmetic'):
+                audit.unscaled_row_difference((columns, np.array([1e-308]), 1.),
+                                              (columns, np.array([1e-308]), .5), 1e308)
+
+    def test_common_system_detects_candidate_outside_reference_target(self):
+        self.phi += .001
+        self.change_mars_final()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_common_system_checks']
+        self.assertTrue(checks['reference_solution_meets_reference_target'])
+        self.assertFalse(checks['mars_solution_meets_reference_target'])
+        self.assertEqual(checks['assessment'], 'mars_candidate_fails_reference_target')
+
+    def test_reference_target_failure_is_not_diagnosed_as_tolerance_ambiguity(self):
+        self.phi += .001
+        self.final = np.column_stack([self.predictor-self.influence*self.gradient, .3*self.phi])
+        self.write_reference_fields()
+        self.phi += .001
+        self.change_mars_final()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_common_system_checks']
+        self.assertFalse(checks['reference_solution_meets_reference_target'])
+        self.assertEqual(checks['assessment'], 'reference_target_not_met')
+
+    def test_common_checks_do_not_hide_bad_equations_or_ghost_copies(self):
+        for fault in ('pressure_matrix', 'pressure_rhs'):
+            with self.subTest(fault=fault):
+                self.write_mars_parts(fault); self.refresh()
+                code, result = self.compare()
+                self.assertEqual(code, 0, result)
+                checks = result['pressure_common_system_checks']
+                self.assertEqual(checks['row_scaling'], 'not_equivalent')
+                self.assertEqual(checks['assessment'], 'row_scaled_equivalence_failed')
+        self.write_mars_parts(); self.change_pressure_ghost()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result['pressure_common_system_checks']['assessment'], 'referenced_copies_differ')
 
     def test_each_assembly_error_is_localized(self):
         for fault in ('momentum_matrix', 'momentum_rhs', 'pressure_matrix', 'pressure_rhs'):

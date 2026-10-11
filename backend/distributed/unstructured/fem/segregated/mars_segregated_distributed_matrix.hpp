@@ -21,6 +21,7 @@
 // reduction. Host transfers are scalars only (see the README next to the gates).
 // Every validation ends in one collective, so all ranks throw together.
 #include "mars_segregated_assembly.hpp"
+#include "mars_segregated_compensated_dot.hpp"
 #include <mpi.h>
 #include <cmath>
 #include <cstddef>
@@ -143,32 +144,31 @@ namespace kernels {
 enum PressureAuditFlag { audit_nonfinite=1, audit_zero_row=2, audit_nonpositive=4,
                          audit_positive_offdiagonal=8, audit_constant_broken=16, audit_compensated_invalid=32 };
 
-// Dot2 with an FMA product remainder preserves terms lost through cancellation.
-// Explicit device rounding prevents contraction from removing the error terms.
-struct CompensatedDot {
-    double sum=0, error=0;
-    MARS_DMATRIX_HD static double add(double a,double b) {
-#if defined(__CUDA_ARCH__)
-        return __dadd_rn(a,b);
-#else
-        return a+b;
-#endif
+using CompensatedDot=mars::segregated::CompensatedDot;
+MARS_DMATRIX_HD inline SquareSums compensated_defect_row(int row,const int* offsets,const int* columns,
+    const double* values,const double* x,const double* rhs,double* defect,bool bounded=false,const double* low=nullptr)
+{
+    CompensatedDot dot;
+    for (int k=offsets[row];k<offsets[row+1];++k) {
+        dot.product(values[k],x[columns[k]]);
+        if (low) dot.product(values[k],low[columns[k]]);
     }
-    MARS_DMATRIX_HD void product(double a,double b) {
-#if defined(__CUDA_ARCH__)
-        const double p=__dmul_rn(a,b), remainder=__fma_rn(a,b,-p);
-#else
-        // The rounded product must exist separately even with FMA contraction.
-        const volatile double rounded=a*b;
-        const double p=rounded, remainder=std::fma(a,b,-p);
-#endif
-        const double next=add(sum,p), z=add(next,-sum);
-        const double lost=add(add(sum,-add(next,-z)),add(p,-z));
-        error=add(error,add(lost,remainder));
-        sum=next;
+    dot.product(-1.,rhs[row]);
+    const double r=-dot.value(), b2=rhs[row]*rhs[row];
+    defect[row]=r;
+    if (rhs[row]!=0 && (b2==0 || (low && b2<std::numeric_limits<double>::min()))) return {std::numeric_limits<double>::quiet_NaN(),b2};
+    if (bounded) {
+        const double upper=CompensatedDot::add_up(fabs(r),dot.error_bound());
+        // Expansion acceptance bounds the reduction separately; the legacy
+        // compensated check retains its conservative factor two.
+        return {(low?1:2)*CompensatedDot::multiply_up(upper,upper),b2};
     }
-    MARS_DMATRIX_HD double value() const { return add(sum,error); }
-};
+    const double r2=r*r;
+    // Squaring must not hide a nonzero defect or RHS below the norm's range.
+    if ((r!=0 && r2==0) || (rhs[row]!=0 && b2==0))
+        return {std::numeric_limits<double>::quiet_NaN(),b2};
+    return {r2,b2};
+}
 struct PressureAuditRow {
     const int *offsets,*columns,*owned;
     const double *values,*x,*rhs;
@@ -317,6 +317,25 @@ struct ResidualDecision {
     }
 };
 constexpr int residual_threads=256, residual_blocks=1024;
+__global__ void compensated_defect_partials(int rows,const int* offsets,const int* columns,const double* values,
+    const double* x,const double* rhs,double* defect,SquareSums* partial,bool bounded,const double* low)
+{
+    double r2=0,b2=0;
+    for (long long row=(long long)blockIdx.x*blockDim.x+threadIdx.x;row<rows;
+         row+=(long long)gridDim.x*blockDim.x) {
+        const auto sum=compensated_defect_row(int(row),offsets,columns,values,x,rhs,defect,bounded,low);
+        r2+=sum.residual2; b2+=sum.rhs2;
+    }
+    __shared__ double s_r[residual_threads/32],s_b[residual_threads/32];
+    for (int o=16;o>0;o/=2) { r2+=__shfl_down_sync(0xffffffffu,r2,o); b2+=__shfl_down_sync(0xffffffffu,b2,o); }
+    if ((threadIdx.x&31)==0) { s_r[threadIdx.x/32]=r2; s_b[threadIdx.x/32]=b2; }
+    __syncthreads();
+    if (threadIdx.x==0) {
+        SquareSums sum{0,0};
+        for (int w=0;w<residual_threads/32;++w) { sum.residual2+=s_r[w]; sum.rhs2+=s_b[w]; }
+        partial[blockIdx.x]=sum;
+    }
+}
 template<int W>
 __global__ void owned_residual_partials(int rows,const int* offsets,const int* columns,const double* values,
     const double* x,const double* rhs,SquareSums* partial)
@@ -444,16 +463,58 @@ public:
     }
     // True residual over owned rows: global sums of r^2 and b^2, then one decision on all ranks.
     ResidualNorms residual(HaloComplete x,const double* rhs,Tolerance tolerance={}) {
+        return residual_impl(x,rhs,tolerance,false,nullptr,0,false);
+    }
+    // Keep b-Ax in owned solver order for correction solves; x must include fresh ghosts.
+    // Compensation reduces cancellation error, but is not an exact-arithmetic certificate.
+    ResidualNorms compensated_defect(HaloComplete x,const double* rhs,double* defect,std::size_t size,
+                                    Tolerance tolerance={},bool bounded=false) {
+        return residual_impl(x,rhs,tolerance,true,defect,size,bounded);
+    }
+    // Both halo-complete components are evaluated before rounding the residual.
+    ResidualNorms expansion_residual(HaloComplete high,HaloComplete low,const double* rhs,
+                                    double* defect,std::size_t size,Tolerance tolerance) {
+        if (low.size<std::size_t(C)*nodes_ || (rows_ && !low.values)) deferred_|=capacity;
+        auto norms=residual_impl(high,rhs,tolerance,true,defect,size,true,low);
+        const double margin=(8.*double(C*total_)+128.)*std::numeric_limits<double>::epsilon();
+        norms.finite=norms.finite && margin>0 && margin<.01;
+        norms.residual2=std::nextafter(norms.residual2/(1-margin),INFINITY);
+        norms.rhs2=std::nextafter(norms.rhs2/(1+margin),0.);
+        const double lower=std::nextafter(std::sqrt(norms.rhs2),0.);
+        const double limit=std::max(tolerance.absolute,std::nextafter(tolerance.relative*lower,0.));
+        norms.passed=norms.finite && std::isfinite(limit)
+            && std::nextafter(norms.absolute(),INFINITY)<=limit;
+        return norms;
+    }
+private:
+    ResidualNorms residual_impl(HaloComplete x,const double* rhs,Tolerance tolerance,bool compensated,
+                               double* defect,std::size_t size,bool bounded,HaloComplete low={nullptr,0}) {
         int local=deferred_|(updated_?0:values_not_updated); deferred_=0;
         if (x.size<std::size_t(C)*std::size_t(nodes_) || (rows_>0 && (!x.values || !rhs))) local|=capacity;
+        if (low.values && low.size<std::size_t(C)*nodes_) local|=capacity;
+        if (compensated) {
+            if (size<std::size_t(rows_) || (rows_>0 && !defect)) local|=capacity;
+            const auto overlap=[](const double* a,std::size_t na,const double* b,std::size_t nb) {
+                if (!na || !nb) return false;
+                const auto ia=reinterpret_cast<std::uintptr_t>(a),ib=reinterpret_cast<std::uintptr_t>(b);
+                return ia<=ib ? ib-ia<na*sizeof(double) : ia-ib<nb*sizeof(double);
+            };
+            if (overlap(defect,rows_,rhs,rows_) || overlap(defect,rows_,x.values,std::size_t(C)*nodes_)
+                || overlap(defect,rows_,matrix_.valuesPtr(),nnz_)
+                || (low.values && overlap(defect,rows_,low.values,std::size_t(C)*nodes_))) local|=capacity;
+        }
 #if defined(__CUDACC__)
         if (!cuda_ok(cudaMemsetAsync(raw(result_),0,sizeof(SquareSums),stream_))) local|=device_error;
         if (!(local&capacity) && rows_>0) {
-            constexpr int lanes=C==1?4:8;
+            const int lanes=compensated?1:C==1?4:8;
             const long long threads=(long long)rows_*lanes;
             const int blocks=int(std::min<long long>(partial_count,(threads+kernels::residual_threads-1)/kernels::residual_threads));
-            kernels::owned_residual_partials<lanes><<<blocks,kernels::residual_threads,0,stream_>>>(rows_,
-                matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,raw(partial_));
+            if (compensated)
+                kernels::compensated_defect_partials<<<blocks,kernels::residual_threads,0,stream_>>>(rows_,
+                    matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,defect,raw(partial_),bounded,low.values);
+            else
+                kernels::owned_residual_partials<C==1?4:8><<<blocks,kernels::residual_threads,0,stream_>>>(rows_,
+                    matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,raw(partial_));
             kernels::owned_residual_finish<kernels::residual_threads><<<1,kernels::residual_threads,0,stream_>>>(blocks,raw(partial_),raw(result_));
             if (!cuda_ok(cudaGetLastError())) local|=device_error;
         }
@@ -473,6 +534,11 @@ public:
         if (!(local&capacity) && rows_>0) {
             const int* offsets=matrix_.rowOffsetsPtr(); const int* columns=matrix_.colIndicesPtr(); const double* values=matrix_.valuesPtr();
             for (int row=0;row<rows_;++row) {
+                if (compensated) {
+                    const auto sum=kernels::compensated_defect_row(row,offsets,columns,values,x.values,rhs,defect,bounded,low.values);
+                    sums.residual2+=sum.residual2; sums.rhs2+=sum.rhs2;
+                    continue;
+                }
                 double sum=0; for (int k=offsets[row];k<offsets[row+1];++k) sum+=values[k]*x.values[columns[k]];
                 const double r=sum-rhs[row]; sums.residual2+=r*r; sums.rhs2+=rhs[row]*rhs[row];
             }
@@ -487,6 +553,7 @@ public:
         return norms;
 #endif
     }
+public:
     // Failure-only audit of the original owned pressure rows and halo-complete candidate.
     // Only these fixed-size flags leave device memory; no matrix or field is exported.
     PressureAudit pressure_audit(HaloComplete x,const double* rhs,Tolerance tolerance={}) {

@@ -612,6 +612,7 @@ void check_krylov_products(int rank, int ranks, Checks& checks)
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    mars::requestFullNodeHaloExchange(); // not yet checked for halo reads beyond one layer
     int rank = 0, ranks = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &ranks);

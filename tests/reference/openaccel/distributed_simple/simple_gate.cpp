@@ -20,6 +20,7 @@ using namespace dsimple_gate;
 
 namespace {
 MPI_Comm gate_comm=MPI_COMM_WORLD;
+constexpr double expansion_pressure_relative=1e-12,expansion_pressure_absolute=0;
 using Entries=std::vector<std::pair<long long,double>>;
 using Snapshots=std::map<std::string,Entries>;
 long long node_key(int g,int c) { return 4LL*g+c; }
@@ -51,6 +52,7 @@ template<class T> std::vector<T> download(const T* p,std::size_t n) { return std
 template<int C> struct Solve {
     MPI_Comm comm;
     explicit Solve(MPI_Comm c):comm(c) {}
+    void set_tolerances(double,double) {}
     std::vector<double> b, x;
     double* rhs(std::size_t rows) { b.assign(rows,0); return b.data(); }
     const double* rhs() const { return b.data(); }
@@ -101,7 +103,7 @@ struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
     bool split=false,configured=false,high_resolution=false,overlap=true,water=false,linear_cache=true;
-    bool velocity_shifted=false,bent_inlet=false;
+    bool velocity_shifted=false,bent_inlet=false,pressure_expansion=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -229,6 +231,7 @@ std::string header_of(const Options& o) {
     if (o.velocity_shifted) h<<" linear-linear";
     if (o.water) h<<" water";
     if (o.bent_inlet) h<<" bent-inlet";
+    if (o.pressure_expansion) h<<" pressure_rtol="<<expansion_pressure_relative<<" pressure_atol="<<expansion_pressure_absolute;
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
@@ -287,6 +290,13 @@ int execute(const Options& o) {
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
         SimpleRunner run(mesh,controls); run.momentum.verbose=run.poisson.verbose=false;
+#ifdef MARS_REPLAY_CUDA
+        if(o.pressure_expansion) {
+            // Keep ordinary reference arithmetic, but match the expanded solve's accuracy.
+            run.poisson.solver.set_stopping_tolerances(expansion_pressure_relative,expansion_pressure_absolute);
+            run.poisson.solver.enable_true_residual_check(expansion_pressure_absolute,expansion_pressure_relative,true);
+        }
+#endif
         initial(run,mesh.x,mesh.y,mesh.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
         std::vector<int> global(mesh.x.size()); for (std::size_t g=0;g<global.size();++g) global[g]=int(g);
         std::vector<int> el(mesh.nodes[0].size()), fa(mesh.faces.size());
@@ -367,7 +377,9 @@ int execute(const Options& o) {
         solver_to_global.assign(std::size_t(total/2),-1);
         for (int i=0;i<total;i+=2) solver_to_global[std::size_t(all[i])]=int(all[i+1]);
     }
+    controls.pressure_expansion=o.pressure_expansion;
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(gate_comm,part.input,part.ownership,controls);
+    if(o.pressure_expansion) run.set_pressure_tolerances(true,expansion_pressure_relative,expansion_pressure_absolute);
     run.poison_unexchanged=true;
     run.overlap_assembly=o.overlap;
 #ifdef MARS_REPLAY_CUDA
@@ -498,6 +510,7 @@ int main(int argc,char** argv) {
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
+            else if (k=="--pressure-expansion") o.pressure_expansion=v=="1";
             else if (k=="--bent-inlet") o.bent_inlet=v=="1";
             else if (k=="--velocity-interpolation") {
                 if (v!="trilinear" && v!="linear-linear") throw std::runtime_error("unsupported velocity interpolation");

@@ -1,4 +1,5 @@
 #pragma once
+#include "mars_segregated_pressure_value.hpp"
 #include <cmath>
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -16,10 +17,12 @@ struct BoundaryInput {
     double area[9]{}, shape[9]{}, gradient[36]{}, velocity[12]{};
     double boundary_velocity[9]{}, viscosity[3]{}, density[3]{}, pressure[4]{};
     double pressure_gradient[12]{}, influence_lhs[9]{}, influence_rhs[9]{};
+    bool pressure_expansion=false;
+    double pressure_low[4]{}, pressure_gradient_low[12]{};
     double bc_multiplier[4]{}, stored_flux[3]{}, wall_coefficient[3]{};
 };
 struct BoundaryOutput {
-    double lhs[144]{}, rhs[12]{}, flux[3]{};
+    double lhs[144]{}, rhs[12]{}, flux[3]{}, flux_low[3]{};
 };
 
 // Inputs are reference workspaces after side-value substitution. No row pinning,
@@ -61,6 +64,23 @@ MARS_BOUNDARY_HD inline void boundary_block(const BoundaryInput& x, BoundaryOutp
                     const double g = .5*(x.pressure_gradient[3*row+i]+x.pressure_gradient[3*x.opposing[sample]+i]);
                     out.flux[sample] += (rho*u-rho*d*(dp-g))*a[i];
                 }
+            }
+            if (x.stage==1 && x.pressure_expansion) {
+                PressureValue flux;
+                for (int i=0;i<3;++i) {
+                    double u=0,d=0;
+                    for (int f=0;f<3;++f) {
+                        u+=shape[f]*x.velocity[3*x.face_nodes[f]+i];
+                        d+=shape[f]*x.influence_rhs[3*f+i];
+                    }
+                    PressureValue compact;
+                    for (int k=0;k<4;++k)
+                        compact=compact+PressureValue::load(x.pressure,x.pressure_low,k)*grad[3*k+i];
+                    const auto g=(PressureValue::load(x.pressure_gradient,x.pressure_gradient_low,3*row+i)
+                        +PressureValue::load(x.pressure_gradient,x.pressure_gradient_low,3*x.opposing[sample]+i))*.5;
+                    flux=flux+(PressureValue{u,0}-(compact-g)*d)*rho*a[i];
+                }
+                flux.store(out.flux,out.flux_low,sample);
             }
             out.rhs[row] -= out.flux[sample];
             continue;

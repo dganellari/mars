@@ -59,9 +59,10 @@ On several ranks three more pieces are needed:
    belongs to the lowest rank among the ranks that hold it. An element-interior DOF belongs to
    the rank of its element. The numbering registers corners only through the elements a rank
    owns, so it needs every node owner to own an element at its node. The older vote node
-   ownership guarantees that; the default SFC ownership does not. The multi-rank drivers select
-   vote ownership themselves (`MARS_OWNERSHIP=vote`, set before the domain is built); code of
-   your own needs the same setting, and the halo stops with a message if it is missing.
+   ownership guarantees that; the default SFC ownership does not. `mars_ho_dist_apply_test`
+   selects vote ownership itself (`MARS_OWNERSHIP=vote`, set before the domain is built); code of
+   your own needs the same setting, and the halo stops with a message if it is missing. The
+   `p = 1` weak-scaling driver numbers mesh nodes only and runs on the default ownership.
 3. **Halo.** One distributed matvec is `forward` (owners copy their values to the ghost copies),
    the apply over the elements this rank owns, then `reverseAdd` (ghost contributions are added
    to the owners).
@@ -242,9 +243,41 @@ metric bytes per DOF of that run.
 
 ### GPU throughput and scaling
 
-This page quotes no GPU throughput or scaling numbers. The two drivers print them for every
-run (MDOF/s, GDOF/s, ms per matvec, the communication share), and they depend on the GPU, the
-kernel variant, the order and the number of DOFs per GPU. Measure them on your system.
+The drivers print the throughput of every run (MDOF/s, ms per matvec, the communication share). It
+depends on the GPU, the order and the number of DOFs per GPU, so measure it on your system. As one
+example, here is weak scaling of the distributed `p = 1` matvec of `mars_cvfem_ho_weakscale`: every
+GPU keeps 16 million elements of a cube, and each matvec does the forward halo exchange, the element
+apply and the reverse halo addition. This is MARS alone: the decomposition, the halo and the
+exchange; no external solver is involved.
+
+| GPUs | DOFs | MDOF/s per GPU | vs one node | with `--overlap` | vs one node |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 16.2 M | 5375 | | | |
+| 4 (one node) | 64.5 M | 4952–4969 | 100% | | |
+| 8 | 129 M | 4274–4282 | 86% | 4408 | 89% |
+| 64 | 1.03 B | 3327–3441 | 67–69% | 3785 | 76% |
+| 256 | 4.10 B | 2921–3336 | 59–67% | 3701 | 75% |
+| 1024 | 16.4 B | 3244–3245 | 65% | 3456 | 70% |
+| 2048 | 32.8 B | 2239–3081 | 45–62% | 3294 | 66% |
+
+MDOF/s per GPU is the global DOF count divided by the slowest rank's time per matvec and by the
+number of GPUs. Where a range is given, two runs in different allocations differ by that much.
+The apply alone takes 3.0 to 3.15 ms at every size: the work per GPU does not grow with the GPU
+count, and what is lost is the halo exchange (36% of the matvec at 1024 GPUs). `--overlap` hides
+the forward exchange behind the apply of the interior elements. With less work per GPU the exchange
+weighs more: at 2 million elements per GPU the matvec keeps 56% of the one-node rate at 1024 GPUs.
+The correctness gates of the driver (exchange, element stars, A·1 = 0, A·linear = 0) pass at every
+size.
+
+Measured on Alps (CSCS), GH200 nodes with 4 GPUs, one rank per GPU bound to its NUMA domain;
+CUDA 12.9, Cray MPICH; 50 matvecs (2026-10-11). To reproduce, keep `--ncells` near the cube root of
+16 million times the GPU count: 252, 400, 504, 1008, 1600, 2540 and 3200 for the rows above. For
+example on 256 GPUs (64 nodes):
+
+```bash
+srun --nodes=64 --ntasks-per-node=4 ./build/examples/distributed/unstructured/mars_cvfem_ho_weakscale \
+  --ncells=1600 --iters=50 --overlap
+```
 
 ## Other drivers
 

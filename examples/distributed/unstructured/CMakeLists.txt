@@ -406,6 +406,13 @@ if(MARS_ENABLE_SEGREGATED)
         set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON
             CUDA_SEPARABLE_COMPILATION ON)
         install(TARGETS mars_segregated_simple RUNTIME DESTINATION bin/examples)
+        add_executable(mars_simple_pressure_replay mars_simple_pressure_replay.cu)
+        target_link_libraries(mars_simple_pressure_replay PRIVATE mars ${CMAKE_DL_LIBS})
+        set_target_properties(mars_simple_pressure_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+        add_executable(mars_simple_pressure_residual_check
+            ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/simple_performance/pressure_residual_check.cpp)
+        target_compile_features(mars_simple_pressure_residual_check PRIVATE cxx_std_17)
+        target_compile_options(mars_simple_pressure_residual_check PRIVATE -ffp-contract=off)
         add_executable(mars_segregated_simple_check mars_segregated_simple_check.cu)
         target_link_libraries(mars_segregated_simple_check PRIVATE mars)
         target_compile_definitions(mars_segregated_simple_check PRIVATE MARS_REPLAY_CUDA)
@@ -462,6 +469,12 @@ if(MARS_ENABLE_MARSIR)
     add_executable(mars_marsir_cellwise_solve mars_marsir_cellwise_solve.cu)
     target_link_libraries(mars_marsir_cellwise_solve PRIVATE mars CUDA::cuda_driver)
     install(TARGETS mars_marsir_cellwise_solve RUNTIME DESTINATION bin/examples)
+
+    # The unstructured element-local DSS (solvers/mars_cellwise_topology.hpp) on a cube
+    # with randomly rotated element frames, against an oracle and the structured DSS.
+    add_executable(mars_cellwise_unstructured_dss mars_cellwise_unstructured_dss.cu)
+    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars)
+    install(TARGETS mars_cellwise_unstructured_dss RUNTIME DESTINATION bin/examples)
 endif()
 
 # End-to-end release checks on generated meshes (`ctest -L release`).

@@ -1,6 +1,7 @@
 // GPT/Codex, 2026-09-21. Interior algebra for the pinned OpenAccel contract.
 // Geometry, reconstructed gradients and influence coefficients are inputs.
 #pragma once
+#include "mars_segregated_pressure_value.hpp"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #define MARS_SEGREGATED_HD __host__ __device__
@@ -17,16 +18,19 @@ struct TetInteriorInput {
     double velocity_shape[24], coordinate_shape[24], shape_gradient[72], area[18];
     double viscosity[4], velocity_blend[12], velocity_gradient[36], stored_flux[6];
     double pressure[4], pressure_gradient[12], influence_lhs[12], influence_rhs[12];
+    bool pressure_expansion=false;
+    double pressure_low[4]{}, pressure_gradient_low[12]{};
     double density_blend[4], density_gradient[12];
 };
 
 struct TetInteriorOutput {
-    double lhs[144], rhs[12], flux[6];
+    double lhs[144], rhs[12], flux[6], flux_low[6]{};
 };
 
 // Incompressible, fixed mesh/frame, no body force or NSO. No boundary/time terms.
 MARS_SEGREGATED_HD inline void tet_interior(const TetInteriorInput& in, TetInteriorOutput& out)
 {
+    for (int i=0;i<6;++i) out.flux_low[i]=0;
     for (int i = 0; i < 144; ++i) out.lhs[i] = 0;
     for (int i = 0; i < 12; ++i) out.rhs[i] = 0;
     for (int s = 0; s < 6; ++s) {
@@ -56,6 +60,19 @@ MARS_SEGREGATED_HD inline void tet_interior(const TetInteriorInput& in, TetInter
                 volume_flux += u[j]*area[j];
                 volume_flux -= dr[j]*(dp[j]-reconstructed)*area[j];
             }
+            PressureValue expanded_flux;
+            if (in.pressure_expansion) {
+                auto& flux=expanded_flux;
+                for (int j=0;j<3;++j) {
+                    PressureValue compact;
+                    for (int k=0;k<4;++k)
+                        compact=compact+PressureValue::load(in.pressure,in.pressure_low,k)*grad[3*k+j];
+                    const auto reconstructed=(PressureValue::load(in.pressure_gradient,in.pressure_gradient_low,3*left+j)
+                        +PressureValue::load(in.pressure_gradient,in.pressure_gradient_low,3*right+j))*.5;
+                    flux=flux+(PressureValue{u[j],0}-(compact-reconstructed)*dr[j])*area[j];
+                }
+                volume_flux=flux.rounded();
+            }
             const int up = volume_flux > 0 ? left : right;
             double correction = 0;
             for (int j = 0; j < 3; ++j)
@@ -63,6 +80,7 @@ MARS_SEGREGATED_HD inline void tet_interior(const TetInteriorInput& in, TetInter
                               *in.density_gradient[3*up+j];
             const double rho = in.density[up]+correction;
             out.flux[s] = rho*volume_flux;
+            if(in.pressure_expansion) (expanded_flux*rho).store(out.flux,out.flux_low,s);
             for (int n = 0; n < 4; ++n) {
                 double value = 0;
                 for (int j = 0; j < 3; ++j) value -= rho*dl[j]*grad[3*n+j]*area[j];

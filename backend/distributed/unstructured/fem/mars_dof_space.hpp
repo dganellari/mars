@@ -37,8 +37,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <iterator>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 #include <mpi.h>
@@ -96,6 +98,24 @@ struct DofIsCopy
 {
     HOST_DEVICE_FUN bool operator()(int rank) const { return rank >= 0; }
 };
+
+// Marks the slots of one corner of this rank's own elements [first, first + count).
+template<typename KeyType>
+__global__ void dofMarkUsedKernel(const KeyType* corner, size_t first, size_t count, uint8_t* used)
+{
+    size_t e = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (e < count) used[corner[first + e]] = 1;
+}
+
+// A copy that no own element touches is not a copy: rank -1, like a DOF. synced marks the slots the
+// exchanges keep current: the DOFs and the copies left.
+__global__ void dofDropUnusedKernel(const uint8_t* used, const uint8_t* isDof, size_t n, int* rank, uint8_t* synced)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    if (rank[i] >= 0 && !used[i]) rank[i] = -1;
+    synced[i] = isDof[i] || rank[i] >= 0;
+}
 
 // The slot of the DOF with key query[k] on this rank, -1 if this rank does not hold it as a DOF.
 template<typename KeyType>
@@ -202,6 +222,7 @@ public:
         : n_(domain.getNodeCount())
         , blockSize_(blockSize)
         , isDof_(n_)
+        , synced_(n_)
     {
         MPI_Comm_dup(MPI_COMM_WORLD, &comm_);
         build(domain, periodic);
@@ -233,6 +254,9 @@ public:
 
     long long numDofs() const { return numDofs_; }
     const uint8_t* isDof() const { return isDof_.data(); }
+    // The slots prolong and restrict keep current: the DOFs and the copies own elements touch. A slot
+    // that only halo elements hold is in neither and keeps whatever it had.
+    const uint8_t* isSynced() const { return synced_.data(); }
 
     // P^T A P for a matrix A over this rank's slots: the row of every copy is added into the
     // row of its DOF, on whatever rank owns it, in one exchange (row lengths, then entries),
@@ -372,15 +396,71 @@ public:
     }
 
     // The exchanges of prolong and restrict on this rank since the last reset: how many,
-    // their time from pack to the end of the MPI wait, and the MPI part of it.
+    // their time from pack to the end of the MPI wait, and the MPI part of it. With
+    // MARS_EXCHANGE_PROFILE set, a barrier before the MPI part splits it: waitMs is the wait for the
+    // last rank to arrive (skew from the work before), mpiMs the transfer after it.
     struct ExchangeStats
     {
-        long count  = 0;
-        double ms   = 0;
-        double mpiMs = 0;
+        long count    = 0;
+        double ms     = 0;
+        double mpiMs  = 0;
+        double waitMs = 0;
     };
     const ExchangeStats& exchangeStats() const { return stats_; }
     void resetExchangeStats() { stats_ = {}; }
+    bool profiling() const { return profile_; }
+
+    // This rank's peers and the values it sends per field in a forward exchange, split by whether
+    // the peer runs on the same node. Collective.
+    struct ExchangeShape
+    {
+        int peers = 0, peersOnNode = 0;
+        long long sendValues = 0, sendValuesOffNode = 0;
+    };
+    ExchangeShape exchangeShape() const
+    {
+        int rank = 0, size = 1;
+        MPI_Comm_rank(comm_, &rank);
+        MPI_Comm_size(comm_, &size);
+        MPI_Comm node;
+        MPI_Comm_split_type(comm_, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node);
+        int leader = rank;
+        MPI_Allreduce(MPI_IN_PLACE, &leader, 1, MPI_INT, MPI_MIN, node);
+        MPI_Comm_free(&node);
+        std::vector<int> nodeOf(size);
+        MPI_Allgather(&leader, 1, MPI_INT, nodeOf.data(), 1, MPI_INT, comm_);
+        ExchangeShape s;
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            const long long sent = sendOffsets_[p + 1] - sendOffsets_[p];
+            const bool onNode    = nodeOf[peers_[p]] == nodeOf[rank];
+            s.peers += 1;
+            s.peersOnNode += onNode ? 1 : 0;
+            s.sendValues += sent;
+            if (!onNode) s.sendValuesOffNode += sent;
+        }
+        return s;
+    }
+
+    // reps exchanges of these fields back to back, each after a barrier, so no skew from earlier work
+    // is in them: the cost of the exchange pattern alone. Per exchange, this rank's time in ms from
+    // the barrier to the end of the unpack. Collective; the exchange statistics are left unchanged.
+    std::vector<double> benchmark(Vector* const* fields, int count, int reps, bool reverse) const
+    {
+        const ExchangeStats saved = stats_;
+        Fields f                  = pointers(fields, count);
+        std::vector<double> t(reps);
+        for (int r = 0; r < reps; ++r)
+        {
+            MPI_Barrier(comm_);
+            const double start = MPI_Wtime();
+            exchange(f, reverse);
+            cudaDeviceSynchronize();
+            t[r] = 1e3 * (MPI_Wtime() - start);
+        }
+        stats_ = saved;
+        return t;
+    }
 
 private:
     int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
@@ -447,6 +527,23 @@ private:
                 dofOwnerKernel<<<grid(), blockSize_>>>(dofKey.data(), isDof_.data(), n_, SingleRankOwner<KeyType>{},
                                                        ownerPtr);
         }
+        // Only the copies this rank's own elements touch: the solver loops over own elements, so a node that
+        // only halo elements hold is never read or added into. cornerstone's halo is made of whole octree
+        // leaves, several element layers deep, and exchanging all of it would multiply the halo volume.
+        // MARS_HALO_EXCHANGE=full keeps every copy.
+        const bool full = nodeHaloExchangeFull();
+        thrust::device_vector<uint8_t> used(n_, full ? 1 : 0);
+        uint8_t* usedPtr   = thrust::raw_pointer_cast(used.data());
+        const size_t first = domain.startIndex(), count = domain.localElementCount();
+        if (!full && count > 0)
+            std::apply(
+                [&](const auto&... corner) {
+                    (dofMarkUsedKernel<KeyType><<<int((count + 255) / 256), 256>>>(corner.data(), first, count,
+                                                                                  usedPtr),
+                     ...);
+                },
+                domain.getElementToNodeConnectivity());
+        if (n_ > 0) dofDropUnusedKernel<<<grid(), blockSize_>>>(usedPtr, isDof_.data(), n_, ownerPtr, synced_.data());
         cudaCheckError();
         long long dofs = thrust::count(thrust::device, isDof_.data(), isDof_.data() + n_, uint8_t(1));
         MPI_Allreduce(&dofs, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -594,6 +691,8 @@ private:
                                                                            sendBuf_.data());
         cudaDeviceSynchronize();
         double packed = MPI_Wtime();
+        if (profile_) MPI_Barrier(comm_);
+        double synced = MPI_Wtime();
 
         auto type     = mpiDatatype<RealType>();
         const int tag = reverse ? 0x4e51 : 0x4e50;
@@ -619,7 +718,8 @@ private:
         double done = MPI_Wtime();
         stats_.count += 1;
         stats_.ms += 1e3 * (done - start);
-        stats_.mpiMs += 1e3 * (done - packed);
+        stats_.waitMs += 1e3 * (synced - packed);
+        stats_.mpiMs += 1e3 * (done - synced);
 
         if (unpackTotal > 0)
             dofUnpackKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(unpackIds.data(), unpackTotal, f,
@@ -631,12 +731,14 @@ private:
     int blockSize_;
     MPI_Comm comm_ = MPI_COMM_NULL;
     cstone::DeviceVector<uint8_t> isDof_;
+    cstone::DeviceVector<uint8_t> synced_;
     long long numDofs_ = 0;
     cstone::DeviceVector<int> localCopy_, localDof_; // copies whose DOF is on this rank
     std::vector<int> peers_, sendOffsets_, recvOffsets_;
     cstone::DeviceVector<int> sendDof_, recvCopy_;   // per peer: DOF slots sent, copies received
     mutable Vector sendBuf_, recvBuf_;
     mutable ExchangeStats stats_;
+    bool profile_ = std::getenv("MARS_EXCHANGE_PROFILE") != nullptr;
 };
 
 } // namespace fem

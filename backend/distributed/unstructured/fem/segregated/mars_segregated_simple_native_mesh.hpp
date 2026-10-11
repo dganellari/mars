@@ -280,6 +280,7 @@ inline std::unique_ptr<NativeSimpleDomain> distribute_simple_mesh(MPI_Comm comm,
     simple_collective(comm,relation==MPI_IDENT || relation==MPI_CONGRUENT,"ElementDomain requires the world communicator");
     const char* mode=std::getenv("MARS_OWNERSHIP");
     simple_collective(comm,!mode || std::string(mode)!="vote","native SIMPLE requires SFC node ownership");
+    mars::requestFullNodeHaloExchange(); // not yet checked for halo reads beyond one layer
     auto local=native_initial_partition(comm,source);
     NativeSimpleDomain::DeviceCoordsTuple coordinates;
     auto copy=[](auto& out,const auto& in) {

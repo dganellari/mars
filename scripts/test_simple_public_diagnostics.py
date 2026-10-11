@@ -39,6 +39,54 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertIs(result['hypre_explicit_residual_passed'], False)
         self.assertIs(result['mars_explicit_residual_passed'], True)
 
+    def test_work_vector_cannot_accept_rejected_candidate(self):
+        text = HYPRE + ' rhs_norm=0.02 krylov_work_norm=1e-16\n' + SIMPLE
+        result = summarize(text)
+        for key in ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                    'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero'):
+            self.assertIs(result[key], False)
+        self.assertIs(result['krylov_work_residual_finite'], True)
+        self.assertIs(result['krylov_work_residual_within_limit'], True)
+        for key in ('solver_accepted', 'mars_passed', 'hypre_explicit_residual_passed',
+                    'mars_explicit_residual_passed'):
+            self.assertIs(result[key], False)
+        self.assertEqual(result['run_status'], 'failed')
+
+    def test_zero_iteration_and_zero_target_remain_failed(self):
+        hypre = HYPRE.replace('7/2000', '0/2000').replace('acceptance_limit=1e-11', 'acceptance_limit=0')
+        simple = SIMPLE.replace('iteration=27', 'iteration=1')
+        result = summarize(hypre + ' rhs_norm=0 krylov_work_norm=nan\n' + simple)
+        for key in ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                    'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero'):
+            self.assertIs(result[key], True)
+        self.assertIs(result['krylov_work_residual_finite'], False)
+        self.assertIs(result['krylov_work_residual_within_limit'], False)
+        self.assertEqual(result['run_status'], 'failed')
+
+    def test_stopping_flags_missing_malformed_or_conflicting_are_unknown(self):
+        keys = ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero',
+                'krylov_work_residual_finite', 'krylov_work_residual_within_limit')
+        for key in keys:
+            self.assertIsNone(summarize('')[key])
+        for value in ('bad', '-1/2000', '7/0', '7/2000 iterations=0/2000'):
+            text = HYPRE.replace('iterations=7/2000', 'iterations=' + value)
+            self.assertIsNone(summarize(text)['krylov_iterations_zero'])
+        for value in ('bad', '-1', '0', '1.0', '27 iteration=1'):
+            text = SIMPLE.replace('iteration=27', 'iteration=' + value)
+            self.assertIsNone(summarize(text)['linear_failure_at_first_step'])
+        for value in ('bad', '-1', 'nan', 'inf', '1e999', '0 rhs_norm=1'):
+            self.assertIsNone(summarize(HYPRE + ' rhs_norm=' + value)['hypre_rhs_norm_zero'])
+        for value in ('bad', '-1', 'nan', 'inf', '1e999', '0 acceptance_limit=1'):
+            text = HYPRE.replace('acceptance_limit=1e-11', 'acceptance_limit=' + value)
+            self.assertIsNone(summarize(text)['hypre_acceptance_limit_zero'])
+        first = HYPRE + ' rhs_norm=0 krylov_work_norm=nan\n' + SIMPLE
+        second = (HYPRE.replace('7/2000', '0/2000').replace('acceptance_limit=1e-11', 'acceptance_limit=0')
+                  + ' rhs_norm=1 krylov_work_norm=0\n' + SIMPLE.replace('iteration=27', 'iteration=1'))
+        result = summarize(first + '\n' + second)
+        for key in keys:
+            self.assertIsNone(result[key])
+
     def test_unknowns_and_conflicts_do_not_pass(self):
         self.assertIsNone(summarize('')['solver_accepted'])
         result = summarize(HYPRE + '\n' + HYPRE.replace('solve_error=0', 'solve_error=256'))
@@ -157,6 +205,56 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertEqual(summarize(HYPRE + '\n' + converged, '0')['run_status'], 'failed')
         self.assertTrue(summarize(converged * 2, '0')['multiple_completions'])
         self.assertEqual(summarize(converged * 2, '0')['run_status'], 'incomplete')
+
+    def test_pressure_correction_preserves_failure_history(self):
+        header = 'SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar\n'
+        recovery = '[simple-pressure-refinement] iteration=2 rounds=1 iterations=25 accepted=1\n'
+        done = 'CONVERGED iterations=100 ranks=4 exchange_rounds=407\n'
+        result = summarize(header + HYPRE + '\n' + recovery + done, '0')
+        self.assertEqual(result['run_status'], 'converged')
+        self.assertTrue(result['hypre_rejection_present'])
+        self.assertTrue(result['pressure_refinement_accepted'])
+        self.assertFalse(result['unrecovered_hypre_rejection_present'])
+        limited = 'NOT CONVERGED: iteration limit iterations=100 ranks=4 exchange_rounds=407\n'
+        self.assertEqual(summarize(header + HYPRE + '\n' + recovery + limited, '2')['run_status'], 'iteration_limit')
+        cases = [header + HYPRE + '\n' + recovery + HYPRE + '\n' + done,
+                 header + HYPRE + '\n' + recovery.replace('accepted=1', 'accepted=0') + done,
+                 header + HYPRE + '\n' + recovery.replace('rounds=1', 'rounds=0') + done,
+                 header + HYPRE + '\n' + recovery.replace('iterations=25', 'iterations=0') + done,
+                 HYPRE + '\n' + recovery + done,
+                 header + HYPRE + '\n' + header + recovery + done,
+                 header + HYPRE + '\n' + done + recovery,
+                 header + HYPRE + '\n' + recovery + 'ERROR: pressure correction at SIMPLE iteration 2: linear solve failed\n' + done]
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual(summarize(case, '0')['run_status'], 'failed')
+
+    def test_expansion_clears_only_recovered_candidates(self):
+        header = 'SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar\n'
+        recovery = '[simple-pressure-expansion] rounds=4 correction_iterations=80 hypre_passed=1 mars_passed=1\n'
+        done = 'NOT CONVERGED: iteration limit iterations=20 ranks=4 exchange_rounds=81\n'
+        prefix = header + HYPRE + '\n'
+        result = summarize(prefix + recovery + done, '2')
+        self.assertEqual(result['run_status'], 'iteration_limit')
+        self.assertTrue(result['pressure_expansion_accepted'])
+        self.assertTrue(result['hypre_rejection_present'])
+        self.assertFalse(result['unrecovered_hypre_rejection_present'])
+        cases = [prefix + recovery + HYPRE + '\n' + done,
+                 prefix + recovery + SIMPLE + '\n' + done,
+                 prefix + recovery + 'ERROR: expanded pressure residual failed\n' + done,
+                 recovery + done, prefix + done + recovery,
+                 prefix + header + recovery + done,
+                 prefix + recovery + done + header]
+        for old, new in (('rounds=4', 'rounds=0'), ('rounds=4', 'rounds=5'),
+                         ('correction_iterations=80', 'correction_iterations=0'),
+                         ('hypre_passed=1', 'hypre_passed=0'), ('mars_passed=1', 'mars_passed=0')):
+            cases.append(prefix + recovery.replace(old, new) + done)
+        cases.append(prefix + recovery.rstrip() + ' SECRET\n' + done)
+        for text in cases:
+            with self.subTest(text=text):
+                result = summarize(text, '2')
+                self.assertEqual(result['run_status'], 'failed')
+                self.assertNotIn('SECRET', json.dumps(result))
 
     def test_application_failures_without_linear_rejection(self):
         cases = {

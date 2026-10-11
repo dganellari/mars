@@ -367,25 +367,28 @@ Use `--vtu-every=10` for a smooth movie.
 ## 7. Running on many GPUs
 
 Weak scaling keeps the work per GPU fixed: the generated channel grows with the number of GPUs.
-At 8 million nodes per GPU the step time goes from 272 ms on 1 GPU to 525 ms on 256 GPUs. The
-pressure solve needs 21 to 23 AMG iterations per step at every size, so the method scales; the
-time lost is in Hypre's solves, which take over 90% of each step.
+At 8 million nodes per GPU the step time goes from 362 ms on one node (4 GPUs) to 505 ms on 256
+GPUs, 72% of the one-node rate. The pressure solve needs 20 to 23 AMG iterations per step at every
+size, so the method scales; the time lost is in Hypre's solves, which take over 90% of each step.
+MARS's own part keeps 79%.
 
 | GPUs | Nodes | ms per step | MARS, ms | Hypre, ms | Efficiency: step / MARS / Hypre |
 |---:|---:|---:|---:|---:|---|
-| 1 | 8.0 M | 272 | 17.9 | 254 | 100% / 100% / 100% |
-| 4 | 32 M | 377 | 18.6 | 358 | 72% / 96% / 71% |
-| 16 | 128 M | 400 | 19.0 | 381 | 68% / 94% / 67% |
-| 64 | 512 M | 459 | 20.6 | 438 | 59% / 87% / 58% |
-| 256 | 2.05 B | 525 | 26.6 | 498 | 52% / 67% / 51% |
+| 1 | 8.0 M | 272 | 17.8 | 254 | |
+| 4 (one node) | 32 M | 362 | 18.5 | 344 | 100% / 100% / 100% |
+| 16 | 128 M | 395 | 18.6 | 376 | 92% / 99% / 91% |
+| 64 | 512 M | 452 | 19.3 | 432 | 80% / 96% / 79% |
+| 256 | 2.05 B | 505 | 23.5 | 482 | 72% / 79% / 71% |
 
-Efficiency is the 1-GPU time divided by the N-GPU time. `MARS` is everything outside Hypre:
-the element kernels, the halo exchanges and the projection. A smaller load per GPU hides less of
-the communication: at 2 million nodes per GPU the step takes 73 ms on 1 GPU and 238 ms on 256
-GPUs (31%), with MARS at 65%.
+Efficiency is the one-node time divided by the N-GPU time. One GPU does no communication at all,
+so its row is only a reference. `MARS` is everything outside Hypre: the element kernels, the halo
+exchanges and the projection. A smaller load per GPU hides less of the communication: at 2 million
+nodes per GPU the step takes 126 ms on one node, 237 ms on 256 GPUs (53%) and 301 ms on 1024 GPUs
+(42%), with MARS at 55% and 48%. For the scaling of MARS alone, without a linear solver, see the
+matrix-free operator in [Matrix-Free Tutorial](Matrix-Free-Tutorial.md).
 
 Measured on Alps (CSCS), GH200 nodes with 4 GPUs, one rank per GPU bound to its NUMA domain;
-CUDA 12.9, Cray MPICH, Hypre 2.33; 20 steps, the first left out (2026-10-06).
+CUDA 12.9, Cray MPICH, Hypre 2.33; 20 steps, the first left out (2026-10-11).
 
 **Reproduce it.** Generate the channel with `--cells=NX,NY` and grow both counts by `sqrt(N)` for
 N GPUs; shrink the time step by the same factor, so the CFL number stays the same:

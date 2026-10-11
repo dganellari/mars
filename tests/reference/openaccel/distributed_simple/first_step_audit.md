@@ -77,6 +77,14 @@ norm, and the inspected OpenAccel wrapper does not check `KSPGetConvergedReason`
 CPU recomputation can also differ from GPU reductions by roundoff. These flags
 do not by themselves prove a backend defect or an acceptable field error.
 
+`pressure_common_system_checks` additionally evaluates both increments on the
+same reference matrix/RHS and original reference target, and checks the reverse
+application on MARS rows. It distinguishes unscaled matrices from positive
+row-scaled equivalence. These are FP64 residual diagnostics without an evaluation
+error bound; the field verdict and solver acceptance are unchanged. See the
+[saved-result recipe](pressure_profile.md#recheck-the-saved-original-pressure-result)
+for interpretation and a comparison that launches neither solver.
+
 `first_differing_stage` gives the first captured mismatch in execution order.
 A pressure-stage difference can follow a differing momentum predictor; it is not
 automatically a pressure-kernel bug. A reconstructed predictor mismatch may also

@@ -276,8 +276,10 @@ class HypreAmgPcgSolver
 {
 public:
     // envPrefix selects the environment overrides of the AMG settings, e.g. MARS_PAMG_STRONG.
-    explicit HypreAmgPcgSolver(std::string envPrefix)
+    // maxLevels is the hierarchy depth unless <envPrefix>_MAX_LEVELS overrides it.
+    explicit HypreAmgPcgSolver(std::string envPrefix, int maxLevels = 25)
         : envPrefix_(std::move(envPrefix))
+        , maxLevels_(maxLevels)
     {
     }
     HypreAmgPcgSolver(const HypreAmgPcgSolver&)            = delete;
@@ -319,7 +321,7 @@ public:
         HYPRE_BoomerAMGSetCycleRelaxType(amg_, 18, 3);
         HYPRE_BoomerAMGSetCycleNumSweeps(amg_, envInt("COARSE_SWEEPS", 4), 3);
         HYPRE_BoomerAMGSetKeepTranspose(amg_, 1);
-        HYPRE_BoomerAMGSetMaxLevels(amg_, envInt("MAX_LEVELS", 25)); // 1: l1-Jacobi PCG, no hierarchy
+        HYPRE_BoomerAMGSetMaxLevels(amg_, envInt("MAX_LEVELS", maxLevels_)); // 1: l1-Jacobi PCG, no hierarchy
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
         HYPRE_BoomerAMGSetMaxIter(amg_, 1);
         HYPRE_BoomerAMGSetPrintLevel(amg_, envInt("PRINT", 0));
@@ -435,6 +437,7 @@ private:
     }
 
     std::string envPrefix_;
+    int maxLevels_;
     MPI_Comm comm_                = MPI_COMM_WORLD;
     HYPRE_Int rows_               = 0;
     HYPRE_BigInt partitioning_[2] = {0, 0};

@@ -55,9 +55,23 @@ def options(arguments):
 
 def controls(case_path, reference_dir, mesh, log):
     from prepare_simple_deck import load_deck, translate
+    refinement = re.findall(r'(?:^|\s)pressure_refinement=([^\s]*)', '\n'.join(log))
+    require(refinement in ([], ['0']) and not any('[simple-pressure-refinement]' in line for line in log),
+            'pressure_refinement_not_comparable')
+    expansion = re.findall(r'(?:^|\s)pressure_expansion=([^\s]*)', '\n'.join(log))
+    require(expansion in ([], ['0']) and not any('[simple-pressure-expansion]' in line for line in log),
+            'pressure_expansion_not_comparable')
     case = json.loads(case_path.read_text())
     require(case['format'] == 'mars-simple-deck-v1')
     prepared = options(case['arguments'])
+    mapped_prepared = dict(prepared)
+    if '--pressure-solver-profile' in mapped_prepared:
+        profile = Path(mapped_prepared.pop('--pressure-solver-profile'))
+        require(case.get('pressure_solver_profile_sha256') == digest(profile))
+        require([line.strip() for line in log if line.startswith('pressure_solver_profile=')] ==
+                ['pressure_solver_profile=explicit_gpu'])
+    else:
+        require(not any(line.startswith('pressure_solver_profile=') for line in log))
     require(mesh is None or Path(prepared['--mesh']).resolve() == mesh.resolve())
     require(prepared['--mesh-format'] == 'exodus')
     # The saved preparation hash selects the reference deck without printing its name.
@@ -70,8 +84,8 @@ def controls(case_path, reference_dir, mesh, log):
         try:
             translated, _ = translate(load_deck(deck.read_bytes()), case.get('pressure_linear_policy', 'mars'))
             reference = options(translated)
-            same = set(prepared) == set(reference) | {'--mesh', '--mesh-format', '--reference-length'}
-            same = same and all(prepared[key] == value for key, value in reference.items())
+            same = set(mapped_prepared) == set(reference) | {'--mesh', '--mesh-format', '--reference-length'}
+            same = same and all(mapped_prepared[key] == value for key, value in reference.items())
             reference_status = 'mapped_controls_match' if same else 'mapped_controls_differ'
         except Exception:
             reference_status = 'unsupported_deck'
@@ -181,7 +195,7 @@ def mars_fields(prefix, xyz, coordinate_tolerance, ranks):
     return values, ([manifest] if manifest.is_file() else []) + paths
 
 
-def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, fields=FIELDS):
+def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, fields=FIELDS, exact_storage=False):
     import numpy as np
     from netCDF4 import Dataset, chartostring
     order = np.argsort(ids)
@@ -221,6 +235,9 @@ def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, f
                     var = ds.variables['vals_nod_var' + str(j + 1)]
                     require(var.dimensions == ('time_step', 'num_nodes') and var.shape == (len(times), count))
                     variables.append((var, None))
+            if exact_storage:
+                require(all(v.dtype.kind == 'f' and v.dtype.itemsize == 8 for v, _ in variables),
+                        'gradient_storage_precision')
             for start in range(0, count, 65536):
                 stop = min(start + 65536, count)
                 nodes = source[start:stop]
@@ -231,7 +248,8 @@ def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, f
                 if duplicate.any():
                     a, b = block[duplicate], values[nodes[duplicate]]
                     limit = 1e-12 * (scales + np.maximum(np.abs(a), np.abs(b)))
-                    require(np.all(np.abs(a - b) <= limit), 'reference_ghost_values')
+                    require(np.array_equal(a, b) if exact_storage else np.all(np.abs(a - b) <= limit),
+                            'reference_ghost_values')
                 values[nodes] = block
                 seen[nodes] = True
     require(seen.all(), 'reference_node_coverage')

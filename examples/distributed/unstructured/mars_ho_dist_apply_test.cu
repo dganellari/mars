@@ -1292,20 +1292,7 @@ static void runOrder(int P, size_t ncells, int rank, int numRanks,
     typename Domain::HostConnectivityTuple h_conn{
         std::move(lconn[0]), std::move(lconn[1]), std::move(lconn[2]), std::move(lconn[3]),
         std::move(lconn[4]), std::move(lconn[5]), std::move(lconn[6]), std::move(lconn[7])};
-    // Global decomposition bucketSize. cstone's global octree is replicated on
-    // every rank and its per-leaf count Allreduce (MPI_UNSIGNED) must stay under
-    // 2 GiB, or Cray MPICH's chunked recursive-doubling collective overflows its
-    // 32-bit byte count and truncates. Leaves ~ 3 * ncells^3 / bucket (octree
-    // over-refine ~3x), each leaf 4 bytes -> raise the bucket for huge meshes so
-    // leaves*4 stays well under 2^31. bucketSizeFocus stays 8 (local resolution
-    // unchanged); only the decomposition tree coarsens. Override via env.
-    int gbucket = 64;
-    if (const char* e = std::getenv("MARS_GLOBAL_BUCKETSIZE")) {
-        gbucket = std::atoi(e);
-    } else {
-        const double need = 3.0 * (double)ncells * (double)ncells * (double)ncells / 4.0e8;
-        while (gbucket < need && gbucket < 8192) gbucket *= 2;
-    }
+    const int gbucket = globalBucketSize((double)ncells * (double)ncells * (double)ncells);
     if (rank == 0) { printf("[build] global bucketSize=%d (msg-safe replicated tree)\n", gbucket); fflush(stdout); }
     MPI_Barrier(MPI_COMM_WORLD);
     double tdom0 = MPI_Wtime();

@@ -1,4 +1,5 @@
 #include "../distributed_simple/channel.hpp"
+#include "mars_segregated_pressure_capture.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -57,9 +58,36 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
             a.values[C*C*k+C*c+c]=value;
             a.rhs[C*row+c]+=value*truth(C*run.solver_node.values[a.columns[k]]+c);
         }
-    int rank=0; MPI_Comm_rank(run.comm,&rank);
+    int rank=0,ranks=1; MPI_Comm_rank(run.comm,&rank); MPI_Comm_size(run.comm,&ranks);
     for (int mode=0;mode<6;++mode) {
         solver.mode=mode;
+        int captures=0;
+        run.pressure_failure_capture=[&](int iteration,bool solved,bool passed) {
+            ++captures;
+            simple_collective(run.comm,C==1 && iteration==run.completed+1 && solved==(mode==3) && passed==(mode==1),
+                "pressure capture received the wrong verdict");
+            if constexpr (C==1) {
+                const auto part=frozen::capture_part(system,distributed::raw(system.solver_dof_map()),solver.rhs(),
+                    distributed::halo_complete(increment.data(),increment.values.size()),rank,ranks,iteration,
+                    solved,passed,1e-13,1e-10,false);
+                part.validate();
+                simple_collective(run.comm,part.rows()==std::size_t(system.rows()) && part.total==std::uint64_t(system.solver_nodes())
+                    && part.values==system.matrix().values && part.rhs==solver.b,"pressure capture changed the system");
+                if (mode==1) {
+                    const auto file="pressure-capture-test-"+std::to_string(getpid())+".bin";
+                    part.write(file);
+                    const auto saved=frozen::Part::read(file);
+                    bool exclusive=false;
+                    try { part.write(file); } catch (const std::runtime_error&) { exclusive=true; }
+                    const bool private_file=(std::filesystem::status(file).permissions() &
+                        (std::filesystem::perms::group_all|std::filesystem::perms::others_all))==std::filesystem::perms::none;
+                    std::filesystem::remove(file);
+                    simple_collective(run.comm,exclusive && private_file && saved.values==part.values && saved.rhs==part.rhs
+                        && saved.map==part.map && saved.candidate==part.candidate && saved.offsets==part.offsets
+                        && saved.columns==part.columns,"private pressure file round trip failed");
+                }
+            }
+        };
         std::ostringstream message;
         auto* previous=std::cerr.rdbuf(message.rdbuf());
         std::string failure;
@@ -67,6 +95,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
         catch (const std::exception& error) { failure=error.what(); }
         std::cerr.rdbuf(previous);
         simple_collective(run.comm,failure.empty()==(mode==0),"linear rejection verdict changed");
+        simple_collective(run.comm,captures==(C==1 && mode!=0 && mode!=4?1:0),"pressure capture was not rejection-only");
         if (mode==0 || mode==1) {
             bool correct=true;
             for (int i=0;i<C*run.n;++i)
@@ -85,6 +114,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
             ==(audit && C==1 && mode!=0 && mode!=4);
         simple_collective(run.comm,report,"pressure audit opt-in or failure-only contract changed");
     }
+    run.pressure_failure_capture={};
 }
 
 template<int C,class System> void pressure_only_case(Runner& run,System& system,CandidateSolve<C>& solver) {
@@ -130,6 +160,89 @@ void pressure_configuration(Runner& run,int rank,int ranks) {
     pressure_only_case<3>(run,run.momentum,run.momentum_solve);
 }
 
+template<int C> struct RefiningSolve:CandidateSolve<C> {
+    int calls=0,fault=0;
+    using CandidateSolve<C>::CandidateSolve;
+    template<class System,class Publish>
+    PressureRefinementResult refine(System& system,Publish publish,distributed::Tolerance tolerance) {
+        static_assert(C==1);
+        ++calls;
+        struct Operations {
+            RefiningSolve& solve; System& system; Publish& publish; distributed::Tolerance tolerance;
+            std::vector<double> defect_values,trial;
+            auto defect() {
+                defect_values.resize(solve.b.size());
+                return system.compensated_defect(publish(solve.x),solve.b.data(),defect_values.data(),defect_values.size(),tolerance);
+            }
+            PressureCorrectionResult correct(int) {
+                int rank=0,ranks=1; MPI_Comm_rank(solve.comm,&rank); MPI_Comm_size(solve.comm,&ranks);
+                const int local=solve.fault==1 && rank==ranks-1?1:0; int any=0;
+                simple_max(solve.comm,&local,&any,1);
+                return {!any,1};
+            }
+            auto candidate() {
+                trial.resize(solve.x.size());
+                for (std::size_t i=0;i<trial.size();++i) trial[i]=truth(system.first_solver_node()+i);
+                if (solve.fault==2) trial=solve.x;
+                return system.compensated_defect(publish(trial),solve.b.data(),defect_values.data(),defect_values.size(),tolerance);
+            }
+            bool verify() { return solve.fault!=3; }
+            void keep() { solve.x.swap(trial); }
+            void restore() { publish(solve.x); }
+        } op{*this,system,publish,tolerance,{}, {}};
+        return refine_pressure(op,1,10);
+    }
+};
+
+template<class Part> void refinement_integration(MPI_Comm comm,const Part& part) {
+    DistributedSimpleRunner<HostMatrix,long long,RefiningSolve> run(comm,part.input,part.ownership);
+    Array<double> blocks(run.graph.blocks()),rhs(run.n),increment(run.n);
+    blocks.zero(); rhs.zero();
+    const auto a=run.graph.template view<1>(blocks.data(),rhs.data());
+    for (int row=0;row<run.n;++row) for (int k=a.offsets[row];k<a.offsets[row+1];++k) {
+        const double value=a.columns[k]==row?4.:-.0625;
+        a.values[k]=value; a.rhs[row]+=value*truth(run.solver_node.values[a.columns[k]]);
+    }
+    const auto rejected_without_refinement=[&]() {
+        const int before=run.poisson_solve.calls;
+        run.poisson_solve.mode=2;
+        bool rejected=false;
+        try { run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{}); }
+        catch (const std::runtime_error&) { rejected=true; }
+        simple_collective(comm,rejected && run.poisson_solve.calls==before,
+            "comparison path must reject without attempting pressure refinement");
+    };
+    rejected_without_refinement();
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    if (ranks>1) {
+        bool rejected=false;
+        try { run.set_pressure_refinement(rank==ranks-1); }
+        catch (const std::runtime_error&) { rejected=true; }
+        simple_collective(comm,rejected,"inconsistent refinement selection was not rejected collectively");
+        rejected_without_refinement();
+    }
+    run.set_pressure_refinement(true);
+    for (int fault=0;fault<4;++fault) {
+        run.poisson_solve.mode=2; run.poisson_solve.fault=fault;
+        bool accepted=true;
+        try { run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{}); }
+        catch (const std::runtime_error&) { accepted=false; }
+        simple_collective(comm,accepted==(fault==0),"pressure refinement integration verdict incorrect");
+        simple_collective(comm,run.poisson_solve.calls==fault+1,"refinement was not collective");
+        if (accepted) {
+            bool exact=true;
+            for (int i=0;i<run.n;++i) exact=exact && increment.values[i]==truth(run.solver_node.values[i]);
+            simple_collective(comm,exact,"refinement left incorrect owned or ghost values");
+        }
+    }
+    const int before=run.poisson_solve.calls;
+    run.poisson_solve.mode=0;
+    run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{});
+    simple_collective(comm,run.poisson_solve.calls==before,"successful solve entered refinement");
+    run.set_pressure_refinement(false);
+    rejected_without_refinement();
+}
+
 int main(int argc,char** argv) {
     MPI_Init(&argc,&argv);
     try {
@@ -145,6 +258,7 @@ int main(int argc,char** argv) {
         cases<3>(run,run.momentum,run.momentum_solve,true);
         cases<1>(run,run.poisson,run.poisson_solve,true);
         pressure_configuration(run,rank,ranks);
+        refinement_integration(MPI_COMM_WORLD,part);
         if (!rank) std::cout<<"PASS: accepted/rejected, wrong, missing and nonfinite candidates; original CSR and halo residual; ranks="<<ranks<<'\n';
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); return 1;

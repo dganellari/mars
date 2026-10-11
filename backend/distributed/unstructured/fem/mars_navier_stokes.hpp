@@ -791,10 +791,13 @@ struct NsToInt
     __device__ int operator()(uint8_t b) const { return b; }
 };
 
+// A slot the exchanges keep current whose DOF id never arrived.
 template<typename RealType>
-struct NsNegative
+struct NsSyncedWithoutId
 {
-    __device__ bool operator()(RealType g) const { return g < 0; }
+    const uint8_t* synced;
+    const RealType* gid;
+    __device__ bool operator()(size_t i) const { return synced[i] && gid[i] < 0; }
 };
 
 template<typename RealType>
@@ -1174,9 +1177,21 @@ public:
         double local[8] = {t.predictor, t.viscous, t.pressure, t.corrector, t.hypre, stages - t.hypre, ex.ms, ex.mpiMs};
         double slowest[8];
         MPI_Allreduce(local, slowest, 8, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        if (rank_ != 0) return;
         int ranks = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+        // MARS_EXCHANGE_PROFILE: the exchange time split into the wait for the last rank to arrive and
+        // the transfer, the mean and the slowest rank, and where the peers run.
+        double profMax[7] = {}, profSum[7] = {};
+        if (space_.profiling())
+        {
+            const auto sh     = space_.exchangeShape();
+            const double v[7] = {ex.waitMs / steps, ex.mpiMs / steps,       ex.ms / steps,
+                                 double(sh.peers),  double(sh.peersOnNode), double(sh.sendValues),
+                                 double(sh.sendValuesOffNode)};
+            MPI_Allreduce(v, profMax, 7, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(v, profSum, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        }
+        if (rank_ != 0) return;
         double total = slowest[0] + slowest[1] + slowest[2] + slowest[3];
         long long n  = globalDofs();
         std::cout << std::fixed << std::setprecision(3) << "[timing] ranks=" << ranks << " nodes=" << n
@@ -1191,6 +1206,57 @@ public:
                   << " | exchanges/step=" << double(ex.count) / steps << " exchange=" << slowest[6] / steps
                   << " mpi=" << slowest[7] / steps << "\n"
                   << std::defaultfloat;
+        if (space_.profiling())
+        {
+            auto mean = [&](int i) { return profSum[i] / ranks; };
+            std::cout << std::fixed << std::setprecision(3) << "[exchange] ms/step mean/slowest rank: wait for peers "
+                      << mean(0) << "/" << profMax[0] << " transfer " << mean(1) << "/" << profMax[1]
+                      << " pack to wait end " << mean(2) << "/" << profMax[2] << " | per rank mean/max: peers "
+                      << mean(3) << "/" << profMax[3] << " on the same node " << mean(4) << "/" << profMax[4]
+                      << " values sent per field " << mean(5) << "/" << profMax[5] << " off node "
+                      << mean(6) << "/" << profMax[6] << "\n"
+                      << std::defaultfloat;
+        }
+    }
+
+    // MARS_EXCHANGE_BENCH: the step's exchanges (one field, velocity and pressure, the two velocity
+    // scatters added back) reps times each, back to back after a barrier. Prints min, median and max
+    // over the repetitions of the slowest rank's time, and the median of the mean over ranks. Collective.
+    void benchmarkExchanges(int reps)
+    {
+        if (reps <= 0) return;
+        std::vector<Vector> scratch(2 * comps_);
+        std::vector<Vector*> fields;
+        for (auto& v : scratch)
+        {
+            allocate(v);
+            fields.push_back(&v);
+        }
+        int ranks = 1;
+        MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+        struct Case
+        {
+            const char* name;
+            int count;
+            bool reverse;
+        };
+        const Case cases[] = {{"prolong, 1 field", 1, false},
+                              {"prolong, velocity and pressure", comps_ + 1, false},
+                              {"restrict, 2 x velocity", 2 * comps_, true}};
+        for (const Case& c : cases)
+        {
+            std::vector<double> t = space_.benchmark(fields.data(), c.count, reps, c.reverse);
+            std::vector<double> slowest(reps), sum(reps);
+            MPI_Allreduce(t.data(), slowest.data(), reps, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(t.data(), sum.data(), reps, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (rank_ != 0) continue;
+            std::sort(slowest.begin(), slowest.end());
+            std::sort(sum.begin(), sum.end());
+            std::cout << std::fixed << std::setprecision(3) << "[exchange-bench] " << c.name << ": slowest rank min "
+                      << slowest.front() << " median " << slowest[reps / 2] << " max " << slowest.back()
+                      << " ms, mean rank median " << sum[reps / 2] / ranks << " ms (" << reps << " repetitions)\n"
+                      << std::defaultfloat;
+        }
     }
     int velocityIterations(int component) const { return velocityIters_[component]; }
     int pressureIterations() const { return pressureIters_; }
@@ -1318,8 +1384,14 @@ private:
         nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pressureFixed_.data(),
                                                         prm_.rho * invDt, divStar_.data(), rhs_.data());
         cudaCheckError();
+        // MARS_PRESSURE_GUESS: start from the last correction, which changes slowly from step to step.
+        if (pressureGuess_)
+        {
+            nsToDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), phi_.data(), x_.data());
+            cudaCheckError();
+        }
         StageClock clock;
-        pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
+        pressureIters_ = pressure_->solve(rhs_.data(), x_.data(), pressureGuess_);
         timing_.hypre += clock.lap();
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
@@ -1489,7 +1561,9 @@ private:
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
         cudaCheckError();
         space_.prolong(gid_);
-        long long missing = thrust::count_if(thrust::device, gid_.data(), gid_.data() + n_, NsNegative<RealType>{});
+        long long missing = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
+                                             thrust::counting_iterator<size_t>(n_),
+                                             NsSyncedWithoutId<RealType>{space_.isSynced(), gid_.data()});
         MPI_Allreduce(MPI_IN_PLACE, &missing, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (missing > 0)
         {
@@ -1610,14 +1684,17 @@ private:
     {
         const RealType c1  = RealType(1) / prm_.dt;
         const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
-        viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        // Three levels: on the channel at 256 and 1024 GPUs they gave the same velocity iterations and 3 to 5% less
+        // time per step; the coarser levels cost mostly communication. MARS_VAMG_MAX_LEVELS overrides.
+        constexpr int velocityLevels = 3;
+        viscousBdf1_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG", velocityLevels);
         viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true, nullptr), prm_.tolerance,
                             prm_.maxIter);
         trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
-        viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG", velocityLevels);
         viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false, nullptr),
                             prm_.tolerance, prm_.maxIter);
         trace("velocity AMG (BDF2)");
@@ -1708,6 +1785,7 @@ private:
     Params prm_;
     size_t n_;
     int rank_;
+    const bool pressureGuess_ = std::getenv("MARS_PRESSURE_GUESS") != nullptr;
     int comps_;
     Space space_;
     HexElements<KeyType> hex_{};

@@ -163,6 +163,27 @@ def cap_reached(record):
     return done >= cap if cap > 0 else None
 
 
+def zero_iterations(record):
+    match = re.fullmatch(r'([0-9]+)/([0-9]+)', record.get('iterations') or '')
+    if not match or int(match.group(2)) == 0:
+        return None
+    return int(match.group(1)) == 0
+
+
+def first_step(record):
+    value = record.get('iteration') or ''
+    if not re.fullmatch(r'[0-9]+', value) or int(value) == 0:
+        return None
+    return int(value) == 1
+
+
+def zero_norm(record, key):
+    value = number(record, key)
+    if value is None or not math.isfinite(value) or value < 0:
+        return None
+    return value == 0
+
+
 def error_nonzero(record):
     value = record.get('solve_error') or ''
     return int(value) != 0 if re.fullmatch(r'[0-9]+', value) else None
@@ -244,6 +265,14 @@ class DiagnosticState:
         self.scheduler_messages = []
         self.solver_started = False
         self.iteration_report_seen = False
+        self.headers = 0
+        self.pending_hypre_rejection = False
+        self.pressure_refinement_seen = False
+        self.pressure_refinement_accepted = False
+        self.pressure_refinement_invalid = False
+        self.pressure_expansion_seen = False
+        self.pressure_expansion_accepted = False
+        self.pressure_expansion_invalid = False
 
     def feed(self, line):
         line = line.strip()
@@ -256,6 +285,27 @@ class DiagnosticState:
                 if re.search(r'\b' + re.escape(message) + r'\b', line, re.IGNORECASE):
                     if label not in self.scheduler_messages:
                         self.scheduler_messages.append(label)
+        if line.startswith('[HypreGMRES] rejected:'):
+            self.pending_hypre_rejection = True
+        if line.startswith('[simple-pressure-expansion]'):
+            self.pressure_expansion_seen = True
+            match = re.fullmatch(r'\[simple-pressure-expansion\] rounds=([1-4]) '
+                                 r'correction_iterations=([1-9][0-9]*) hypre_passed=1 mars_passed=1', line)
+            if not match or self.completions or self.headers != 1:
+                self.pressure_expansion_invalid = True
+            else:
+                self.pressure_expansion_accepted = True
+                self.pending_hypre_rejection = False
+        if line.startswith('[simple-pressure-refinement]'):
+            self.pressure_refinement_seen = True
+            match = re.fullmatch(r'\[simple-pressure-refinement\] iteration=([1-9][0-9]*) '
+                                 r'rounds=([0-3]) iterations=([0-9]+) accepted=([01])', line)
+            if (not match or match.group(4) != '1' or int(match.group(2)) == 0
+                    or int(match.group(3)) == 0 or self.completions or self.headers != 1):
+                self.pressure_refinement_invalid = True
+            else:
+                self.pressure_refinement_accepted = True
+                self.pending_hypre_rejection = False
         for tag in TAGS:
             if line.startswith(tag):
                 record = fields(line[len(tag):])
@@ -270,6 +320,7 @@ class DiagnosticState:
         if re.fullmatch(r'SIMPLE Tet4, [0-9]+ ranks \(ElementDomain/cstone\), '
                         r'(?:upwind|high-resolution), laminar', line):
             self.solver_started = True
+            self.headers += 1
         if re.match(r'^\[simple\] iteration=[0-9]+ momentum=', line):
             self.iteration_report_seen = True
 
@@ -303,8 +354,11 @@ def summarize_state(state, exit_text, reference_deck):
     simple = records['[simple-linear]']
     hypre = records['[HypreGMRES] rejected:']
     spmv = records['[hypre-spmv]']
-    if simple or hypre or failures:
-        # A concatenated successful run cannot hide a rejection.
+    refinement_invalid = state.pressure_refinement_invalid or (state.pressure_refinement_seen and state.headers != 1)
+    expansion_invalid = state.pressure_expansion_invalid or (state.pressure_expansion_seen and state.headers != 1)
+    if simple or state.pending_hypre_rejection or failures or refinement_invalid or expansion_invalid:
+        # A successful correction clears only preceding candidate rejections;
+        # terminal errors, later rejections and concatenated runs still fail.
         status = 'failed'
     result = {
         'schema': 'mars-simple-public-diagnostics-v1',
@@ -313,11 +367,25 @@ def summarize_state(state, exit_text, reference_deck):
         'multiple_completions': len(completions) > 1,
         'simple_diagnostic_present': bool(simple),
         'hypre_rejection_present': bool(hypre),
+        'unrecovered_hypre_rejection_present': state.pending_hypre_rejection,
+        'pressure_refinement_seen': state.pressure_refinement_seen,
+        'pressure_refinement_accepted': state.pressure_refinement_accepted,
+        'pressure_refinement_invalid': refinement_invalid,
+        'pressure_expansion_seen': state.pressure_expansion_seen,
+        'pressure_expansion_accepted': state.pressure_expansion_accepted,
+        'pressure_expansion_invalid': expansion_invalid,
         'linear_stage': consensus(simple, lambda r: enum_value(r, 'stage', ('momentum', 'pressure')), 'unknown'),
         'backend': consensus(hypre, lambda r: enum_value(r, 'backend', ('GMRES', 'FlexGMRES')), 'unknown'),
         'solver_accepted': consensus(simple, lambda r: flag(r, 'solver_accepted')),
         'mars_passed': consensus(simple, lambda r: flag(r, 'mars_passed')),
         'iteration_cap_reached': consensus(hypre, cap_reached),
+        'linear_failure_at_first_step': consensus(simple, first_step),
+        'krylov_iterations_zero': consensus(hypre, zero_iterations),
+        'hypre_rhs_norm_zero': consensus(hypre, lambda r: zero_norm(r, 'rhs_norm')),
+        'hypre_acceptance_limit_zero': consensus(hypre, lambda r: zero_norm(r, 'acceptance_limit')),
+        # Hypre's work vector need not contain the final b-Ax after an early stop.
+        'krylov_work_residual_finite': consensus(hypre, lambda r: finite(r, 'krylov_work_norm')),
+        'krylov_work_residual_within_limit': consensus(hypre, lambda r: passed(r, 'krylov_work_norm', 'acceptance_limit')),
         'hypre_error_nonzero': consensus(hypre, error_nonzero),
         'reported_residual_finite': consensus(hypre, lambda r: finite(r, 'reported_relative')),
         'reported_residual_passed': consensus(hypre, lambda r: passed(r, 'reported_relative', 'tolerance')),

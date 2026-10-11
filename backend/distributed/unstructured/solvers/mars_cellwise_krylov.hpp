@@ -1,8 +1,17 @@
 #pragma once
 // Krylov solves on element-local (cell-wise) vectors: each element stores its own
-// copy of every node it touches, and no assembled vector is ever formed
-// (Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
-// internal-notes/FlexibleCG.pdf).
+// copy of every node it touches, and no assembled vector is ever formed.
+//
+// Credit: the method is from M. Wichrowski, "Coalesced Matrix-Free Finite Elements in Cell-Wise Storage",
+// arXiv:2607.02335 (2026) (a copy is in
+// internal-notes/FlexibleCG.pdf): element-local vectors as the Krylov state, the
+// operator applied without communication, DSS only inside the preconditioner, inner
+// products on element-local data, and the proof that such a solve reproduces the
+// assembled one when the preconditioner consumes the assembled residual and returns a
+// continuous field. What differs here: the paper runs flexible CG on a symmetric
+// operator; the CVFEM operator is nonsymmetric, so this is left-preconditioned
+// BiCGStab with a copy-weighted inner product (same equivalence argument), with the
+// DSS fused with Jacobi and the dots, and on several GPUs.
 //
 // The operator maps a continuous element-local field to unassembled element
 // residuals; it needs no communication. Elements talk only inside the
@@ -13,12 +22,19 @@
 // assembled one, so the iterates are those of the assembled solve. Reference:
 // marsir-mlir/test/cellwise_krylov_ref.py.
 //
-// First version: one structured block of hexahedra at p = 7. The DSS is the paper's
-// dimensionally split cascade: three axis passes of one-to-one face sums, which
-// complete the edge and vertex sums as a side effect. No atomics, no coloring, no
-// index map.
+// The DSS is a one-pass gather (mars_cellwise_layout.hpp) fused with the Jacobi step
+// and the dot products after it: a preconditioner call reads the residual once and
+// writes the result once. On GH200 the fused preconditioner took 1.6 ms against
+// 2.5 ms for the paper's three-pass cascade + Jacobi at 64^3 elements, although the
+// gather alone is slower than the cascade alone (1.3 vs 1.0 ms). On several ranks
+// the gather runs in two passes around the ghost exchange, and every global sum
+// goes through MPI_Allreduce, so all ranks use the same Krylov scalars and stop on
+// the same iteration.
+
+#include "backend/distributed/unstructured/solvers/mars_cellwise_layout.hpp"
 
 #include <cuda_runtime.h>
+#include <mpi.h>
 
 #include <cmath>
 #include <cstdio>
@@ -28,172 +44,185 @@
 namespace mars {
 namespace cellwise {
 
-constexpr int kN = 8, kNN = 64, kN3 = 512;   // nodes per edge, face, element (p = 7)
+// Sums NV per-thread values over the thread block in a fixed order, so repeated
+// solves give bit-identical scalars; thread 0 gets the totals.
+template <int NV>
+__device__ inline void block_sum(double (&v)[NV])
+{
+    __shared__ double sh[NV][kThreads / 32];
+    const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+#pragma unroll
+    for (int i = 0; i < NV; ++i) {
+        for (int o = 16; o > 0; o >>= 1) v[i] += __shfl_down_sync(0xffffffffu, v[i], o);
+        if (lane == 0) sh[i][warp] = v[i];
+    }
+    __syncthreads();
+    if (threadIdx.x != 0) return;
+#pragma unroll
+    for (int i = 0; i < NV; ++i) {
+        v[i] = 0.0;
+        for (int w = 0; w < kThreads / 32; ++w) v[i] += sh[i][w];
+    }
+}
 
-#define MARS_CELLWISE_CK(call)                                                   \
-    do {                                                                         \
-        cudaError_t e_ = (call);                                                 \
-        if (e_ != cudaSuccess) {                                                 \
-            fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e_),  \
-                    __FILE__, __LINE__);                                         \
-            std::abort();                                                        \
-        }                                                                        \
-    } while (0)
+template <int NV>
+__device__ inline void store_partial(double (&v)[NV], double* __restrict__ partial)
+{
+    block_sum<NV>(v);
+    if (threadIdx.x == 0)
+#pragma unroll
+        for (int i = 0; i < NV; ++i) partial[blockIdx.x * NV + i] = v[i];
+}
 
-// nx * ny * nz elements; element (ex, ey, ez) is ((ex * ny) + ey) * nz + ez, and its
-// local node (a, b, c) is (a * 8 + b) * 8 + c with local axis a along x.
-struct Block {
-    int nx, ny, nz;
-    long long elements() const { return (long long)nx * ny * nz; }
-    long long values() const { return elements() * kN3; }
+template <bool SHELL>
+__global__ void __launch_bounds__(kThreads)
+dss_kernel(const double* __restrict__ in, double* __restrict__ out, Block blk, ElementSet set,
+           GhostView ghost)
+{
+    const auto value = [in](long long i) { return in[i]; };
+    for_each_node<SHELL>(blk, set, [&](const Node& nd) { out[nd.t] = gather_value<SHELL>(value, ghost, nd, blk); });
+}
+
+// z = P q: gather-DSS, then zero on the outer boundary (homogeneous Dirichlet) and
+// divide by the assembled diagonal elsewhere. With AZ / ZZ it also forms the
+// weighted dot products <a, z> / <z, z> of the result while z is in registers.
+template <bool AZ, bool ZZ, bool SHELL>
+__global__ void __launch_bounds__(kThreads)
+precondition_kernel(const double* __restrict__ q, double* __restrict__ z,
+                    const double* __restrict__ diag, const double* __restrict__ a, Block blk,
+                    ElementSet set, GhostView ghost, double* __restrict__ partial)
+{
+    constexpr int NV = AZ + ZZ;
+    [[maybe_unused]] double acc[NV > 0 ? NV : 1] = {};
+    const auto value = [q](long long i) { return q[i]; };
+    for_each_node<SHELL>(blk, set, [&](const Node& nd) {
+        const double v = on_outer_boundary(nd, blk) ? 0.0
+                                                    : gather_value<SHELL>(value, ghost, nd, blk) / diag[nd.t];
+        z[nd.t] = v;
+        if constexpr (NV > 0) {
+            const double w = weight(nd, blk);
+            if constexpr (AZ) acc[0] += a[nd.t] * v * w;
+            if constexpr (ZZ) acc[NV - 1] += v * v * w;
+        }
+    });
+    if constexpr (NV > 0) store_partial<NV>(acc, partial);
+}
+
+// The weight of an element-local copy in the assembled inner product. On a structured
+// block it is 1 / (number of copies), a power of two, so the weighting is exact.
+// (Unstructured meshes use CountingWeight, mars_cellwise_topology.hpp.)
+struct BlockWeight {
+    Block blk;
+    __device__ double operator()(const Node& nd) const { return weight(nd, blk); }
 };
 
-// One thread per face node of each element pair adjacent along AXIS: sum the two
-// copies, write the sum to both. Each copy belongs to exactly one pair in a pass,
-// so plain stores are race-free; the passes run in sequence so that each sees the
-// partial sums of the previous one.
-template <int AXIS>
-__global__ void dss_axis_kernel(double* __restrict__ v, int nx, int ny, int nz)
+template <typename Weight>
+__global__ void __launch_bounds__(kThreads)
+wdot_kernel(const double* __restrict__ a, const double* __restrict__ b, Block blk, Weight wt,
+            double* __restrict__ partial)
 {
-    int dims[3] = {nx, ny, nz};
-    dims[AXIS] -= 1;
-    const long long pairs = (long long)dims[0] * dims[1] * dims[2];
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= pairs * kNN) return;
-    const int face = (int)(t % kNN);
-    const long long pair = t / kNN;
-    const int ez = (int)(pair % dims[2]);
-    const long long q = pair / dims[2];
-    const int ey = (int)(q % dims[1]);
-    const int ex = (int)(q / dims[1]);
-    const long long e = ((long long)ex * ny + ey) * nz + ez;
-    const long long f = e + (AXIS == 0 ? (long long)ny * nz : AXIS == 1 ? nz : 1);
-    const int u = face / kN, w = face % kN;
-    int lo, hi;   // the shared plane: last in e, first in f
-    if (AXIS == 0) { lo = (kN - 1) * kNN + u * kN + w; hi = u * kN + w; }
-    else if (AXIS == 1) { lo = u * kNN + (kN - 1) * kN + w; hi = u * kNN + w; }
-    else { lo = u * kNN + w * kN + (kN - 1); hi = u * kNN + w * kN; }
-    const double s = v[e * kN3 + lo] + v[f * kN3 + hi];
-    v[e * kN3 + lo] = s;
-    v[f * kN3 + hi] = s;
+    double acc[1] = {0.0};
+    for_each_node(blk, [&](const Node& nd) { acc[0] += a[nd.t] * b[nd.t] * wt(nd); });
+    store_partial<1>(acc, partial);
 }
 
-inline void dss(double* d_v, const Block& b, cudaStream_t stream = 0)
+// The weighted dot products <a, z> (AZ) and <z, z> (ZZ) of a preconditioned vector,
+// for preconditioners that cannot form them on the fly.
+template <bool AZ, bool ZZ, typename Weight>
+__global__ void __launch_bounds__(kThreads)
+wdots_kernel(const double* __restrict__ z, const double* __restrict__ a, Block blk, Weight wt,
+             double* __restrict__ partial)
 {
-    constexpr int threads = 256;
-    auto blocks = [&](long long pairs) {
-        return (unsigned)((pairs * kNN + threads - 1) / threads);
-    };
-    if (b.nx > 1)
-        dss_axis_kernel<0><<<blocks((long long)(b.nx - 1) * b.ny * b.nz), threads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    if (b.ny > 1)
-        dss_axis_kernel<1><<<blocks((long long)b.nx * (b.ny - 1) * b.nz), threads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    if (b.nz > 1)
-        dss_axis_kernel<2><<<blocks((long long)b.nx * b.ny * (b.nz - 1)), threads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    MARS_CELLWISE_CK(cudaGetLastError());
+    constexpr int NV = AZ + ZZ;
+    double acc[NV] = {};
+    for_each_node(blk, [&](const Node& nd) {
+        const double v = z[nd.t], w = wt(nd);
+        if constexpr (AZ) acc[0] += a[nd.t] * v * w;
+        if constexpr (ZZ) acc[NV - 1] += v * v * w;
+    });
+    store_partial<NV>(acc, partial);
 }
 
-__device__ inline bool on_boundary(long long t, int nx, int ny, int nz)
-{
-    const long long e = t / kN3;
-    const int l = (int)(t % kN3);
-    const int a = l / kNN, b = (l / kN) % kN, c = l % kN;
-    const int ez = (int)(e % nz);
-    const long long q = e / nz;
-    const int ey = (int)(q % ny);
-    const int ex = (int)(q / ny);
-    return (ex == 0 && a == 0) || (ex == nx - 1 && a == kN - 1) ||
-           (ey == 0 && b == 0) || (ey == ny - 1 && b == kN - 1) ||
-           (ez == 0 && c == 0) || (ez == nz - 1 && c == kN - 1);
-}
+// Krylov scalars live in device memory: the reductions write them and the vector
+// updates read them. kT0/kT1 hold a rank's totals on their way through MPI.
+enum Scalar { kRho, kAlpha, kOmega, kBeta, kRR, kT0, kT1, kScalars };
 
-// After the DSS: homogeneous Dirichlet copies to zero, the rest scaled by the
-// assembled diagonal (Jacobi).
-__global__ void jacobi_mask_kernel(double* __restrict__ z, const double* __restrict__ diag,
-                                   long long n, int nx, int ny, int nz)
-{
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= n) return;
-    z[t] = on_boundary(t, nx, ny, nz) ? 0.0 : z[t] / diag[t];
-}
+// What a finished reduction does with its global totals: store one, start the
+// solve, or form alpha, omega, or beta (with the new rho) for the next update.
+enum Step { kStepStore, kStepStart, kStepAlpha, kStepOmega, kStepRho };
 
-// z = P r: assemble the unassembled residual, then the Jacobi-and-Dirichlet step.
-// The result is continuous, as the equivalence with the assembled solve requires.
-inline void precondition(const double* d_r, double* d_z, const double* d_diag, const Block& b,
-                         cudaStream_t stream = 0)
+template <Step STEP>
+__device__ inline void apply_step(double* __restrict__ sc, const double* v, int slot)
 {
-    MARS_CELLWISE_CK(cudaMemcpyAsync(d_z, d_r, b.values() * sizeof(double),
-                                     cudaMemcpyDeviceToDevice, stream));
-    dss(d_z, b, stream);
-    constexpr int threads = 256;
-    jacobi_mask_kernel<<<(unsigned)((b.values() + threads - 1) / threads), threads, 0, stream>>>(
-        d_z, d_diag, b.values(), b.nx, b.ny, b.nz);
-    MARS_CELLWISE_CK(cudaGetLastError());
-}
-
-// Deterministic two-pass reduction of sum a * b / copies: fixed per-block partial
-// sums, then one block adds them in a fixed order, so repeated solves give
-// bit-identical scalars.
-constexpr int kDotThreads = 256, kDotBlocks = 1024;
-
-__global__ void wdot_partial_kernel(const double* __restrict__ a, const double* __restrict__ b,
-                                    const double* __restrict__ copies, long long n,
-                                    double* __restrict__ partial)
-{
-    __shared__ double sh[kDotThreads];
-    double s = 0.0;
-    for (long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x; t < n;
-         t += (long long)gridDim.x * blockDim.x)
-        s += a[t] * b[t] / copies[t];
-    sh[threadIdx.x] = s;
-    __syncthreads();
-    for (int w = kDotThreads / 2; w > 0; w >>= 1) {
-        if ((int)threadIdx.x < w) sh[threadIdx.x] += sh[threadIdx.x + w];
-        __syncthreads();
+    if constexpr (STEP == kStepStore) {
+        sc[slot] = v[0];
+    } else if constexpr (STEP == kStepStart) {   // rh = r0, so rho = <r0, r0>
+        sc[kRR] = v[0];
+        sc[kRho] = v[0];
+        sc[kAlpha] = 1.0;
+        sc[kOmega] = 1.0;
+        sc[kBeta] = 0.0;
+    } else if constexpr (STEP == kStepAlpha) {
+        sc[kAlpha] = sc[kRho] / v[0];
+    } else if constexpr (STEP == kStepOmega) {
+        sc[kOmega] = v[0] / v[1];
+    } else {
+        sc[kRR] = v[0];
+        sc[kBeta] = (v[1] / sc[kRho]) * (sc[kAlpha] / sc[kOmega]);
+        sc[kRho] = v[1];
     }
-    if (threadIdx.x == 0) partial[blockIdx.x] = sh[0];
 }
 
-__global__ void sum_partials_kernel(const double* __restrict__ partial, double* __restrict__ out)
+// x += alpha p + omega s and r = s - omega t, plus the weighted <r, r> (the stopping
+// test) and <rh, r> (the next rho).
+template <typename Weight>
+__global__ void __launch_bounds__(kThreads)
+update_xr_kernel(double* __restrict__ x, double* __restrict__ r, const double* __restrict__ p,
+                 const double* __restrict__ s, const double* __restrict__ tt,
+                 const double* __restrict__ rh, const double* __restrict__ sc, Block blk,
+                 Weight wt, double* __restrict__ partial)
 {
-    __shared__ double sh[kDotThreads];
-    double s = 0.0;
-    for (int i = threadIdx.x; i < kDotBlocks; i += kDotThreads) s += partial[i];
-    sh[threadIdx.x] = s;
-    __syncthreads();
-    for (int w = kDotThreads / 2; w > 0; w >>= 1) {
-        if ((int)threadIdx.x < w) sh[threadIdx.x] += sh[threadIdx.x + w];
-        __syncthreads();
+    const double alpha = sc[kAlpha], omega = sc[kOmega];
+    double acc[2] = {0.0, 0.0};
+    for_each_node(blk, [&](const Node& nd) {
+        const long long i = nd.t;
+        x[i] += alpha * p[i] + omega * s[i];
+        const double ri = s[i] - omega * tt[i];
+        r[i] = ri;
+        const double w = wt(nd);
+        acc[0] += ri * ri * w;
+        acc[1] += rh[i] * ri * w;
+    });
+    store_partial<2>(acc, partial);
+}
+
+// Sums the block partials of a reduction. GLOBAL (one rank): the totals are final, so
+// apply the step. Otherwise leave the rank's totals in kT0/kT1 for MPI.
+template <Step STEP, int NV, bool GLOBAL>
+__global__ void __launch_bounds__(kThreads)
+finish_kernel(const double* __restrict__ partial, int blocks, double* __restrict__ sc, int slot)
+{
+    double v[NV] = {};
+    for (int i = threadIdx.x; i < blocks; i += kThreads)
+#pragma unroll
+        for (int j = 0; j < NV; ++j) v[j] += partial[i * NV + j];
+    block_sum<NV>(v);
+    if (threadIdx.x != 0) return;
+    if constexpr (GLOBAL) {
+        apply_step<STEP>(sc, v, slot);
+    } else {
+#pragma unroll
+        for (int j = 0; j < NV; ++j) sc[kT0 + j] = v[j];
     }
-    if (threadIdx.x == 0) *out = sh[0];
 }
 
-// Krylov scalars live in device memory: the dot products write them, one-thread
-// kernels combine them, and the vector updates read them, so no step waits for a
-// round trip to the host. Slots of Workspace::scalars:
-enum Scalar { kRho, kRhoOld, kAlpha, kOmega, kBeta, kRhV, kTS, kTT, kRR, kScalars };
-
-__global__ void begin_iteration_kernel(double* __restrict__ sc)
+template <Step STEP>
+__global__ void step_kernel(double* __restrict__ sc, int slot)
 {
-    sc[kBeta] = (sc[kRho] / sc[kRhoOld]) * (sc[kAlpha] / sc[kOmega]);
-    sc[kRhoOld] = sc[kRho];
+    const double v[2] = {sc[kT0], sc[kT1]};
+    apply_step<STEP>(sc, v, slot);
 }
 
-__global__ void set_alpha_kernel(double* __restrict__ sc) { sc[kAlpha] = sc[kRho] / sc[kRhV]; }
-
-__global__ void set_omega_kernel(double* __restrict__ sc) { sc[kOmega] = sc[kTS] / sc[kTT]; }
-
-__global__ void init_scalars_kernel(double* __restrict__ sc)
-{
-    sc[kRhoOld] = 1.0;
-    sc[kAlpha] = 1.0;
-    sc[kOmega] = 1.0;
-}
-
-// BiCGStab vector updates, fused so each vector is read once per update.
 __global__ void update_p_kernel(double* __restrict__ p, const double* __restrict__ r,
                                 const double* __restrict__ v, const double* __restrict__ sc,
                                 long long n)
@@ -210,69 +239,179 @@ __global__ void update_s_kernel(double* __restrict__ s, const double* __restrict
     if (t < n) s[t] = r[t] - sc[kAlpha] * v[t];
 }
 
-__global__ void update_xr_kernel(double* __restrict__ x, double* __restrict__ r,
-                                 const double* __restrict__ p, const double* __restrict__ s,
-                                 const double* __restrict__ tt, const double* __restrict__ sc,
-                                 long long n)
-{
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n) {
-        x[t] += sc[kAlpha] * p[t] + sc[kOmega] * s[t];
-        r[t] = s[t] - sc[kOmega] * tt[t];
-    }
-}
-
 __global__ void fill_kernel(double* __restrict__ v, double value, long long n)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (t < n) v[t] = value;
 }
 
-struct Workspace {
-    double *r = nullptr, *rh = nullptr, *p = nullptr, *v = nullptr, *s = nullptr, *t = nullptr,
-           *q = nullptr, *partial = nullptr, *scalars = nullptr;
-    explicit Workspace(long long n)
-    {
-        for (double** a : {&r, &rh, &p, &v, &s, &t, &q})
-            MARS_CELLWISE_CK(cudaMalloc(a, n * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMalloc(&partial, kDotBlocks * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMalloc(&scalars, kScalars * sizeof(double)));
-    }
-    ~Workspace()
-    {
-        for (double* a : {r, rh, p, v, s, t, q, partial, scalars}) cudaFree(a);
-    }
-    Workspace(const Workspace&) = delete;
-    Workspace& operator=(const Workspace&) = delete;
-};
-
-// sum a * b / copies into the device slot `out`.
-inline void wdot(const double* d_a, const double* d_b, const double* d_copies, long long n,
-                 Workspace& ws, double* out, cudaStream_t stream = 0)
+// One wave of thread blocks: as many as the GPU keeps resident for this kernel.
+// A second, partial wave would leave most of the GPU idle while it runs.
+template <typename Kernel>
+int resident_grid(Kernel kernel)
 {
-    wdot_partial_kernel<<<kDotBlocks, kDotThreads, 0, stream>>>(d_a, d_b, d_copies, n, ws.partial);
-    sum_partials_kernel<<<1, kDotThreads, 0, stream>>>(ws.partial, out);
-    MARS_CELLWISE_CK(cudaGetLastError());
+    int dev = 0, sms = 0, per_sm = 0;
+    MARS_CELLWISE_CK(cudaGetDevice(&dev));
+    MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
+    MARS_CELLWISE_CK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, kernel, kThreads, 0));
+    return sms * per_sm;
 }
 
-// The residual norm is the one value the host needs: it decides when to stop.
-inline double read_norm(const Workspace& ws, cudaStream_t stream)
+// Scratch for the weighted dot products: per-block partial sums (two values per
+// block for two passes of any resident grid, at most 32 blocks per SM), the Krylov
+// scalars, and the communicator the totals are summed over.
+struct Reduction {
+    double* partial = nullptr;
+    double* scalars = nullptr;
+    double* host = nullptr;   // pinned, for the totals on their way through MPI
+    MPI_Comm comm;
+    int ranks = 1;
+    explicit Reduction(MPI_Comm c = MPI_COMM_SELF) : comm(c)
+    {
+        MARS_CELLWISE_MPI(MPI_Comm_size(comm, &ranks));
+        int dev = 0, sms = 0;
+        MARS_CELLWISE_CK(cudaGetDevice(&dev));
+        MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
+        MARS_CELLWISE_CK(cudaMalloc(&partial, 4 * 32 * sms * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMalloc(&scalars, kScalars * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMallocHost(&host, 2 * sizeof(double)));
+    }
+    ~Reduction()
+    {
+        cudaFree(partial);
+        cudaFree(scalars);
+        cudaFreeHost(host);
+    }
+    Reduction(const Reduction&) = delete;
+    Reduction& operator=(const Reduction&) = delete;
+
+    // Global totals of NV values from `blocks` block partials, then STEP.
+    template <Step STEP, int NV>
+    void finish(int blocks, int slot, cudaStream_t stream)
+    {
+        if (ranks == 1) {
+            finish_kernel<STEP, NV, true><<<1, kThreads, 0, stream>>>(partial, blocks, scalars, slot);
+            MARS_CELLWISE_CK(cudaGetLastError());
+            return;
+        }
+        finish_kernel<STEP, NV, false><<<1, kThreads, 0, stream>>>(partial, blocks, scalars, slot);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        MARS_CELLWISE_CK(cudaMemcpyAsync(host, scalars + kT0, NV * sizeof(double),
+                                         cudaMemcpyDeviceToHost, stream));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, host, NV, MPI_DOUBLE, MPI_SUM, comm));
+        MARS_CELLWISE_CK(cudaMemcpyAsync(scalars + kT0, host, NV * sizeof(double),
+                                         cudaMemcpyHostToDevice, stream));
+        step_kernel<STEP><<<1, 1, 0, stream>>>(scalars, slot);
+        MARS_CELLWISE_CK(cudaGetLastError());
+    }
+};
+
+// out = DSS(in): every copy of a node gets the sum of all its copies. `halo` is null
+// on one rank.
+inline void dss(const double* d_in, double* d_out, const Block& b, Halo* halo,
+                cudaStream_t stream = 0)
+{
+    run_gather_pass(halo, d_in, nullptr, stream, [&](const ElementSet& set, bool shell, int) {
+        if (shell) {
+            static const int grid = resident_grid(dss_kernel<true>);
+            dss_kernel<true><<<grid, kThreads, 0, stream>>>(d_in, d_out, b, set, halo->view());
+            MARS_CELLWISE_CK(cudaGetLastError());
+            return grid;
+        }
+        static const int grid = resident_grid(dss_kernel<false>);
+        dss_kernel<false><<<grid, kThreads, 0, stream>>>(d_in, d_out, b, set, GhostView{});
+        MARS_CELLWISE_CK(cudaGetLastError());
+        return grid;
+    });
+}
+
+// DSS + Jacobi, fused with the dot products that follow it. A preconditioner maps an
+// unassembled q to a continuous z = P q, writes the block partials of <a, z> (AZ) and
+// <z, z> (ZZ) to `partial`, and returns how many blocks wrote them. `halo` is null
+// on one rank.
+struct JacobiPreconditioner {
+    const double* diag;
+    Block blk;
+    Halo* halo;
+
+    template <bool AZ, bool ZZ>
+    int operator()(const double* q, double* z, const double* a, double* partial,
+                   cudaStream_t stream) const
+    {
+        constexpr int NV = AZ + ZZ;
+        return run_gather_pass(halo, q, nullptr, stream, [&](const ElementSet& set, bool shell, int first) {
+            double* p = partial ? partial + (long long)first * (NV > 0 ? NV : 1) : nullptr;
+            if (shell) return launch<AZ, ZZ, true>(q, z, a, set, halo->view(), p, stream);
+            return launch<AZ, ZZ, false>(q, z, a, set, GhostView{}, p, stream);
+        });
+    }
+
+private:
+    template <bool AZ, bool ZZ, bool SHELL>
+    int launch(const double* q, double* z, const double* a, const ElementSet& set,
+               const GhostView& ghost, double* partial, cudaStream_t stream) const
+    {
+        static const int grid = resident_grid(precondition_kernel<AZ, ZZ, SHELL>);
+        precondition_kernel<AZ, ZZ, SHELL><<<grid, kThreads, 0, stream>>>(q, z, diag, a, blk, set, ghost,
+                                                                         partial);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        return grid;
+    }
+};
+
+// z = P q without dot products. The result is continuous, as the equivalence with the
+// assembled solve requires.
+inline void precondition(const double* d_q, double* d_z, const double* d_diag, const Block& b,
+                         Halo* halo, cudaStream_t stream = 0)
+{
+    JacobiPreconditioner{d_diag, b, halo}.operator()<false, false>(d_q, d_z, nullptr, nullptr, stream);
+}
+
+// Weighted (= assembled) dot product of two continuous fields into scalar `slot`. `b`
+// is the iteration space (a block, or E x 1 x 1 elements of an unstructured mesh).
+template <typename Weight>
+void wdot(const double* d_a, const double* d_b, const Block& b, const Weight& wt, Reduction& red,
+          int slot, cudaStream_t stream = 0)
+{
+    static const int grid = resident_grid(wdot_kernel<Weight>);
+    wdot_kernel<Weight><<<grid, kThreads, 0, stream>>>(d_a, d_b, b, wt, red.partial);
+    MARS_CELLWISE_CK(cudaGetLastError());
+    red.finish<kStepStore, 1>(grid, slot, stream);
+}
+
+inline void wdot(const double* d_a, const double* d_b, const Block& b, Reduction& red, int slot,
+                 cudaStream_t stream = 0)
+{
+    wdot(d_a, d_b, b, BlockWeight{b}, red, slot, stream);
+}
+
+// The square root of scalar kRR: the one value the host needs, to decide when to stop.
+inline double read_norm(const Reduction& red, cudaStream_t stream)
 {
     double h = 0.0;
-    MARS_CELLWISE_CK(cudaMemcpyAsync(&h, ws.scalars + kRR, sizeof(double),
+    MARS_CELLWISE_CK(cudaMemcpyAsync(&h, red.scalars + kRR, sizeof(double),
                                      cudaMemcpyDeviceToHost, stream));
     MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
     return std::sqrt(h);
 }
 
-// Number of element-local copies of every node: the DSS of ones.
-inline void copies(double* d_copies, const Block& b, cudaStream_t stream = 0)
-{
-    constexpr int threads = 256;
-    fill_kernel<<<(unsigned)((b.values() + threads - 1) / threads), threads, 0, stream>>>(
-        d_copies, 1.0, b.values());
-    dss(d_copies, b, stream);
-}
+struct Workspace {
+    double *r = nullptr, *rh = nullptr, *p = nullptr, *v = nullptr, *s = nullptr, *t = nullptr,
+           *q = nullptr;
+    Reduction red;
+    Workspace(long long n, MPI_Comm comm) : red(comm)
+    {
+        for (double** a : {&r, &rh, &p, &v, &s, &t, &q})
+            MARS_CELLWISE_CK(cudaMalloc(a, n * sizeof(double)));
+    }
+    ~Workspace()
+    {
+        for (double* a : {r, rh, p, v, s, t, q}) cudaFree(a);
+    }
+    Workspace(const Workspace&) = delete;
+    Workspace& operator=(const Workspace&) = delete;
+};
 
 struct SolveResult {
     int iterations = 0;
@@ -281,56 +420,62 @@ struct SolveResult {
 };
 
 // Left-preconditioned BiCGStab on P A x = P b, x starting at zero. `apply(u, y)`
-// computes y = A u on element-local vectors (u continuous, y unassembled).
-template <typename Apply>
-SolveResult bicgstab(Apply&& apply, const Block& b, const double* d_rhs, double* d_x,
-                     const double* d_diag, const double* d_copies, double tol, int max_iterations,
+// computes y = A u on this rank's element-local vectors (u continuous, y
+// unassembled); `precond` is a preconditioner as JacobiPreconditioner above; `comm`
+// holds the ranks that share the block. Per iteration: two operator calls, two
+// preconditioner-and-dot passes, three vector updates (one also forms the two dot
+// products the next iteration needs), and three global sums.
+template <typename Apply, typename Precond, typename Weight>
+SolveResult bicgstab(Apply&& apply, const Precond& precond, const Weight& wt, const Block& b,
+                     const double* d_rhs, double* d_x, MPI_Comm comm, double tol, int max_iterations,
                      cudaStream_t stream = 0)
 {
+    static const int grid_xr = resident_grid(update_xr_kernel<Weight>);
     const long long n = b.values();
-    constexpr int threads = 256;
-    const unsigned grid = (unsigned)((n + threads - 1) / threads);
-    Workspace ws(n);
-    double* sc = ws.scalars;
-    auto dot = [&](const double* x, const double* y, Scalar slot) {
-        wdot(x, y, d_copies, n, ws, sc + slot, stream);
-    };
+    const unsigned grid = (unsigned)((n + kThreads - 1) / kThreads);
+    Workspace ws(n, comm);
+    Reduction& red = ws.red;
+    double* sc = red.scalars;
 
-    fill_kernel<<<grid, threads, 0, stream>>>(d_x, 0.0, n);
-    precondition(d_rhs, ws.r, d_diag, b, stream);   // r = P (b - A 0)
+    fill_kernel<<<grid, kThreads, 0, stream>>>(d_x, 0.0, n);
+    fill_kernel<<<grid, kThreads, 0, stream>>>(ws.p, 0.0, n);
+    fill_kernel<<<grid, kThreads, 0, stream>>>(ws.v, 0.0, n);
+    int blocks = precond.template operator()<false, true>(d_rhs, ws.r, nullptr, red.partial,
+                                                          stream);   // r = P (b - A 0)
+    red.finish<kStepStart, 1>(blocks, 0, stream);
     MARS_CELLWISE_CK(cudaMemcpyAsync(ws.rh, ws.r, n * sizeof(double), cudaMemcpyDeviceToDevice, stream));
-    fill_kernel<<<grid, threads, 0, stream>>>(ws.p, 0.0, n);
-    fill_kernel<<<grid, threads, 0, stream>>>(ws.v, 0.0, n);
-    init_scalars_kernel<<<1, 1, 0, stream>>>(sc);
     MARS_CELLWISE_CK(cudaGetLastError());
 
     SolveResult res;
-    dot(ws.r, ws.r, kRR);
-    res.residual0 = read_norm(ws, stream);
+    res.residual0 = read_norm(red, stream);
     res.residual = res.residual0;
     for (int k = 0; k < max_iterations; ++k) {
-        dot(ws.rh, ws.r, kRho);
-        begin_iteration_kernel<<<1, 1, 0, stream>>>(sc);
-        update_p_kernel<<<grid, threads, 0, stream>>>(ws.p, ws.r, ws.v, sc, n);
+        update_p_kernel<<<grid, kThreads, 0, stream>>>(ws.p, ws.r, ws.v, sc, n);
         apply(ws.p, ws.q);
-        precondition(ws.q, ws.v, d_diag, b, stream);
-        dot(ws.rh, ws.v, kRhV);
-        set_alpha_kernel<<<1, 1, 0, stream>>>(sc);
-        update_s_kernel<<<grid, threads, 0, stream>>>(ws.s, ws.r, ws.v, sc, n);
+        blocks = precond.template operator()<true, false>(ws.q, ws.v, ws.rh, red.partial, stream);
+        red.finish<kStepAlpha, 1>(blocks, 0, stream);
+        update_s_kernel<<<grid, kThreads, 0, stream>>>(ws.s, ws.r, ws.v, sc, n);
         apply(ws.s, ws.q);
-        precondition(ws.q, ws.t, d_diag, b, stream);
-        dot(ws.t, ws.s, kTS);
-        dot(ws.t, ws.t, kTT);
-        set_omega_kernel<<<1, 1, 0, stream>>>(sc);
-        update_xr_kernel<<<grid, threads, 0, stream>>>(d_x, ws.r, ws.p, ws.s, ws.t, sc, n);
+        blocks = precond.template operator()<true, true>(ws.q, ws.t, ws.s, red.partial, stream);
+        red.finish<kStepOmega, 2>(blocks, 0, stream);
+        update_xr_kernel<Weight><<<grid_xr, kThreads, 0, stream>>>(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh,
+                                                                   sc, b, wt, red.partial);
+        red.finish<kStepRho, 2>(grid_xr, 0, stream);
         MARS_CELLWISE_CK(cudaGetLastError());
-        dot(ws.r, ws.r, kRR);
-        res.residual = read_norm(ws, stream);
+        res.residual = read_norm(red, stream);
         res.history.push_back(res.residual);
         res.iterations = k + 1;
         if (res.residual <= tol * res.residual0) break;
     }
     return res;
+}
+
+template <typename Apply, typename Precond>
+SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, const double* d_rhs,
+                     double* d_x, MPI_Comm comm, double tol, int max_iterations,
+                     cudaStream_t stream = 0)
+{
+    return bicgstab(apply, precond, BlockWeight{b}, b, d_rhs, d_x, comm, tol, max_iterations, stream);
 }
 
 }  // namespace cellwise

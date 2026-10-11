@@ -1,0 +1,307 @@
+"""Synthetic capture records exercise library identity and the public output boundary."""
+
+import contextlib
+import io
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import simple_hypre_defaults as probe
+import simple_startup_probe as startup
+
+
+def raw_defaults(library, mpi):
+    values = {key: 1 for key in probe.INT_KEYS}
+    values.update({key: .25 for key in probe.REAL_KEYS})
+    return dict(schema=probe.RAW_SCHEMA, version='2.33.0', build_cuda=False,
+                library_path=str(library), mpi_library_path=str(mpi),
+                memory_location=1, execution_policy=0, header_version_matches=True,
+                getter_layout_checks_passed=True, defaults=values)
+
+
+class DefaultsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.pair = self.root / 'PRIVATE_PAIR'
+        reference = self.pair / 'reference'
+        reference.mkdir(parents=True)
+        (self.pair / 'pair.json').write_text('{}')
+        (reference / 'input.i').write_text('PRIVATE_DECK_WITHOUT_MESH_OR_FIELDS')
+        (reference / 'run.log').write_text('PRIVATE_LOG')
+        (reference / 'run.exit').write_text('0\n')
+        self.exe = self.root / 'PRIVATE_EXECUTABLE'
+        self.exe.write_text('synthetic executable')
+        self.library = self.root / 'PRIVATE_INSTALL/lib/libHYPRE.so.2.33.0'
+        self.library.parent.mkdir(parents=True)
+        self.library.write_text('synthetic Hypre library')
+        self.mpi = self.library.with_name('libmpi_gnu.so.12')
+        self.mpi.write_text('synthetic MPI library')
+        self.include = self.library.parent.parent / 'include'
+        self.include.mkdir()
+        for name in ('HYPRE.h', 'HYPRE_config.h', '_hypre_parcsr_ls.h'):
+            (self.include / name).write_text('// synthetic installed header\n')
+        self.libraries = {str(path): startup.digest(path) for path in (self.library, self.mpi)}
+        self.record = dict(schema=startup.SCHEMA, solver='openaccel', status='started', ranks=4,
+            command=['PRIVATE_LAUNCHER', str(self.exe), '-i', 'input.i'],
+            executable=str(self.exe), executable_sha256=startup.digest(self.exe),
+            libraries=self.libraries, environment={}, pair_sha256=startup.digest(self.pair / 'pair.json'))
+        (reference / 'launch-start.json').write_text(json.dumps(self.record))
+        self.record.update(status='finished', exit_code=0,
+            files={name: startup.digest(reference / name) for name in ('input.i', 'run.log', 'run.exit')})
+        (reference / 'launch.json').write_text(json.dumps(self.record))
+        self.output = self.root / 'result'
+        self.raw = raw_defaults(self.library, self.mpi)
+        self.compilation_exit = 0
+        self.launch_exit = 0
+        self.after_launch = lambda: None
+        self.calls = []
+        self.cache = None
+
+    def configure_cache(self):
+        self.cache = self.root / 'CMakeCache.txt'
+        self.mpi_include = self.root / 'PRIVATE_MPI_INCLUDE'
+        self.mpi_include.mkdir()
+        (self.mpi_include / 'mpi.h').write_text('// synthetic MPI header\n')
+        self.gcc = self.root / 'PRIVATE_GCC'
+        self.cache.write_text('\n'.join((
+            'CMAKE_CXX_COMPILER:FILEPATH=' + str(self.gcc),
+            'MPI_CXX_COMPILER:FILEPATH=/PRIVATE_MISSING_WRAPPER',
+            'MPI_CXX_COMPILER_INCLUDE_DIRS:STRING=' + str(self.mpi_include),
+            'MPI_CXX_COMPILE_DEFINITIONS:STRING=MPICH_SKIP_MPICXX;OMPI_SKIP_MPICXX;_MPICC_H',
+            'MPI_CXX_COMPILE_OPTIONS:STRING=-pthread',
+            'MPI_CXX_LIB_NAMES:STRING=mpi_gnu',
+            'MPI_mpi_gnu_LIBRARY:FILEPATH=' + str(self.mpi),
+            'MPI_CXX_LINK_FLAGS:STRING=-Wl,--no-as-needed',
+        )) + '\n')
+
+    def subprocess(self, command, stdout, **kwargs):
+        self.calls.append(command)
+        if '-o' in command:
+            Path(command[-1]).write_text('synthetic probe executable')
+            stdout.write(b'PRIVATE compiler output\n')
+            code = self.compilation_exit
+        else:
+            stdout.write(b'PRIVATE binding output\n')
+            stdout.write((json.dumps(self.raw, separators=(',', ':')) + '\n').encode())
+            self.after_launch()
+            code = self.launch_exit
+        return type('ProcessResult', (), dict(returncode=code))()
+
+    def invoke(self, linked=None):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream), \
+                patch.object(probe.shutil, 'which', side_effect=lambda name:
+                             name if Path(name).is_absolute() else '/PRIVATE_BIN/' + name), \
+                patch.object(probe.subprocess, 'run', side_effect=self.subprocess), \
+                patch.object(startup, 'runtime_libraries', return_value=linked or self.libraries):
+            code = probe.main(['--pair', str(self.pair), '--output-dir', str(self.output),
+                               *(['--build-cache', str(self.cache)] if self.cache else []),
+                               '--launcher', 'srun', '--nodes=1', '-n', '1'])
+        text = (self.output / 'public.json').read_text()
+        self.assertNotIn('PRIVATE', text + stream.getvalue())
+        self.assertNotIn(str(self.root), text + stream.getvalue())
+        return code, json.loads(text)
+
+    def test_queries_captured_install_and_exports_only_fresh_defaults(self):
+        before = {p: p.read_bytes() for p in self.pair.rglob('*') if p.is_file()}
+        code, result = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['defaults'], self.raw['defaults'])
+        self.assertTrue(result['loaded_hypre_library_matches_capture'])
+        self.assertTrue(result['mpi_library_identity_verified'])
+        self.assertFalse(result['application_effective_settings_verified'])
+        self.assertFalse(result['matrix_dependent_amg_setup_verified'])
+        self.assertEqual(len(self.calls), 2)
+        self.assertIn(str(self.library), self.calls[0])
+        self.assertIn('-I' + str(self.include), self.calls[0])
+        self.assertEqual(self.calls[1], ['srun', '--nodes=1', '-n', '1', str(self.output / 'probe')])
+        self.assertNotIn(str(self.exe), json.dumps(self.calls))
+        self.assertEqual(before, {p: p.read_bytes() for p in self.pair.rglob('*') if p.is_file()})
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o700)
+
+    def test_recorded_gcc_and_mpi_flags_work_without_wrapper(self):
+        self.configure_cache()
+        code, result = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['compiler_configuration'], 'reference_build_cache')
+        command = self.calls[0]
+        self.assertEqual(command[0], str(self.gcc))
+        self.assertIn('-I' + str(self.mpi_include), command)
+        self.assertIn('-DMPICH_SKIP_MPICXX', command)
+        self.assertIn('-DOMPI_SKIP_MPICXX', command)
+        self.assertIn('-D_MPICC_H', command)
+        self.assertIn('-pthread', command)
+        self.assertIn('-Wl,--no-as-needed', command)
+        self.assertLess(command.index(str(self.library)), command.index(str(self.mpi)))
+        self.assertNotIn('/PRIVATE_MISSING_WRAPPER', command)
+
+    def test_recorded_mpi_header_is_required_before_compile(self):
+        self.configure_cache()
+        (self.mpi_include / 'mpi.h').unlink()
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'recorded_build_configuration')
+        self.assertEqual(self.calls, [])
+
+    def test_recorded_link_flags_do_not_bypass_mpi_identity_check(self):
+        self.configure_cache()
+        _, result = self.invoke(dict(self.libraries, **{str(self.mpi): 'b'*64}))
+        self.assertEqual(result['failed_check'], 'probe_libraries')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_changed_build_cache_is_rejected(self):
+        self.configure_cache()
+        self.after_launch = lambda: self.cache.write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'inputs_changed')
+        self.assertNotIn('defaults', result)
+
+    def test_changed_cached_mpi_header_is_rejected(self):
+        self.configure_cache()
+        self.after_launch = lambda: (self.mpi_include / 'mpi.h').write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'inputs_changed')
+
+    def test_missing_or_stale_capture_stops_before_compile(self):
+        (self.pair / 'reference/run.log').write_text('PRIVATE_STALE')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'saved_capture')
+        self.assertEqual(self.calls, [])
+
+    def test_changed_recorded_library_stops_before_compile(self):
+        self.library.write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'capture_libraries')
+        self.assertEqual(self.calls, [])
+
+    def test_changed_recorded_executable_stops_before_compile(self):
+        self.exe.write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'capture_libraries')
+        self.assertEqual(self.calls, [])
+
+    def test_missing_installed_header_stops_before_compile(self):
+        (self.include / '_hypre_parcsr_ls.h').unlink()
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'installed_headers')
+        self.assertEqual(self.calls, [])
+
+    def test_compile_failure_does_not_launch(self):
+        self.compilation_exit = 1
+        code, result = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertEqual(result['failed_check'], 'probe_compile')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_cray_wrapper_fallback_and_explicit_compiler(self):
+        def available(name):
+            return '/PRIVATE_BIN/CC' if name == 'CC' else None
+        with patch.object(probe.shutil, 'which', side_effect=available):
+            self.assertEqual(probe.find_compiler(None), '/PRIVATE_BIN/CC')
+            self.assertEqual(probe.find_compiler('CC'), '/PRIVATE_BIN/CC')
+            self.assertIsNone(probe.find_compiler('PRIVATE_MISSING_COMPILER'))
+
+    def test_missing_compiler_is_distinguished_from_compile_failure(self):
+        self.output.mkdir()
+        with patch.object(probe.shutil, 'which', return_value=None), \
+                patch.object(probe.subprocess, 'run') as run:
+            result = probe.inspect(self.pair, self.output, None, ['srun'])
+        self.assertEqual(result['failed_check'], 'compiler_unavailable')
+        self.assertFalse(result['compiler_available'])
+        run.assert_not_called()
+        self.assertFalse((self.output / 'compile.log').exists())
+
+    def test_missing_launcher_is_distinguished_from_compile_failure(self):
+        self.output.mkdir()
+        def available(name):
+            return '/PRIVATE_BIN/CC' if name == 'CC' else None
+        with patch.object(probe.shutil, 'which', side_effect=available), \
+                patch.object(probe.subprocess, 'run') as run:
+            result = probe.inspect(self.pair, self.output, None, ['PRIVATE_MISSING_LAUNCHER'])
+        self.assertEqual(result['failed_check'], 'launcher_unavailable')
+        self.assertTrue(result['compiler_available'])
+        self.assertFalse(result['launcher_available'])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        run.assert_not_called()
+
+    def test_mpi_link_mismatch_does_not_launch(self):
+        _, result = self.invoke(dict(self.libraries, **{str(self.mpi): 'a'*64}))
+        self.assertEqual(result['failed_check'], 'probe_libraries')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_sequential_library_does_not_claim_mpi_verification(self):
+        (self.include / 'HYPRE_config.h').write_text('#define HYPRE_SEQUENTIAL 1\n')
+        self.raw['mpi_library_path'] = ''
+        code, result = self.invoke({str(self.library): startup.digest(self.library)})
+        self.assertEqual(code, 0)
+        self.assertFalse(result['mpi_enabled'])
+        self.assertFalse(result['mpi_library_identity_verified'])
+
+    def test_wrong_runtime_hypre_is_rejected(self):
+        self.raw['library_path'] = str(self.exe)
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'loaded_library_identity')
+        self.assertNotIn('defaults', result)
+
+    def test_wrong_runtime_mpi_is_rejected(self):
+        self.raw['mpi_library_path'] = str(self.exe)
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'loaded_library_identity')
+
+    def test_nonzero_launch_exit_rejects_even_complete_output(self):
+        self.launch_exit = 137
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'probe_launch')
+        self.assertNotIn('defaults', result)
+
+    def test_header_change_during_probe_is_rejected(self):
+        self.after_launch = lambda: (self.include / 'HYPRE.h').write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'inputs_changed')
+        self.assertNotIn('defaults', result)
+
+    def test_library_change_during_probe_is_rejected(self):
+        self.after_launch = lambda: self.mpi.write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'loaded_library_identity')
+
+    def test_existing_output_directory_is_not_reused(self):
+        self.output.mkdir()
+        marker = self.output / 'keep'
+        marker.write_text('original')
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = probe.main(['--pair', str(self.pair), '--output-dir', str(self.output),
+                               '--launcher', 'srun'])
+        self.assertEqual(code, 1)
+        self.assertEqual(marker.read_text(), 'original')
+
+    def test_public_projection_rejects_malformed_values_and_omits_unknown_text(self):
+        self.raw['PRIVATE_EXTRA'] = 'PRIVATE_SECRET'
+        self.assertNotIn('PRIVATE', json.dumps(probe.public_defaults(self.raw)))
+        for key, value in (('version', 'PRIVATE_VERSION'), ('header_version_matches', False),
+                           ('getter_layout_checks_passed', False), ('build_cuda', 'PRIVATE_BOOL'),
+                           ('execution_policy', True), ('memory_location', 99)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                probe.public_defaults(dict(self.raw, **{key: value}))
+        for value in (True, 'PRIVATE_VALUE', float('nan'), float('inf'), .5, 2**50):
+            bad = dict(self.raw, defaults=dict(self.raw['defaults'], gmres_restart_dimension=value))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                probe.public_defaults(bad)
+        del self.raw['defaults']['amg_relax_coarse']
+        with self.assertRaises(ValueError):
+            probe.public_defaults(self.raw)
+
+    def test_ambiguous_or_missing_raw_record_fails(self):
+        log = self.root / 'raw.log'
+        line = json.dumps(self.raw, separators=(',', ':')) + '\n'
+        for content in ('PRIVATE_NO_RECORD', line + line):
+            log.write_text(content)
+            with self.assertRaises(ValueError):
+                probe.raw_output(log)
+
+
+if __name__ == '__main__':
+    unittest.main()

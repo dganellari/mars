@@ -10,6 +10,8 @@
 #include <_hypre_parcsr_mv.h>
 #endif
 #include "mars_solver_profile.hpp"
+#include "mars_hypre_pressure_recovery.hpp"
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <thrust/gather.h>
@@ -52,6 +54,30 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+    static void initialize_hypre() { static HypreInitGuard guard; }
+    void enable_gpu_aware_mpi() {
+        initialize_hypre();
+        require_reuse(HYPRE_SetGpuAwareMPI(1)==0,"pressure expansion requires GPU-aware MPI");
+    }
+
+
+    // Instance controls keep a pressure comparison from changing momentum too.
+    void set_krylov_controls(bool flex, int restart, int minimum, int maximum) {
+        require_reuse(!solver_ && !A_hypre_ && restart > 0 && minimum >= 0
+            && maximum > 0 && minimum <= maximum, "invalid or late Krylov controls");
+        const int bounds[8]={int(flex),-int(flex),restart,-restart,minimum,-minimum,maximum,-maximum};
+        int global[8];
+        MPI_Allreduce(bounds,global,8,MPI_INT,MPI_MAX,comm_);
+        bool same=true;
+        for (int i=0;i<8;i+=2) same= same && global[i]==-global[i+1];
+        require_reuse(same,"Krylov controls differ between ranks");
+        useFlexGmres_=flex; kDim_=restart; minimum_iterations_=minimum; maxIter_=maximum;
+    }
+    void set_amg_controls(std::function<void(HYPRE_Solver)> configure) {
+        require_reuse(!solver_ && !A_hypre_ && precondType_==BOOMERAMG && !precondMatrix_,
+                      "AMG controls require an unprepared BoomerAMG solver");
+        amg_controls_=std::move(configure);
+    }
 
     // Use ||b-Ax||/||b|| instead of unit-dependent x/b magnitude heuristics.
     // A zero RHS uses an absolute residual. The caller must fix any nullspace.
@@ -156,8 +182,7 @@ public:
         last_timing_ = {};
         prepare_start_ = wall_stamp();
         if (profile_) profile_start_ = profile_->stamp();
-        static HypreInitGuard g_hypreInit;
-        (void)g_hypreInit;
+        initialize_hypre();
         configure_spmv();
 
         int rank;
@@ -236,8 +261,7 @@ public:
             require_reuse(false, "fixed graph updates require the device-map overload");
         if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
-        static HypreInitGuard g_hypreInit;
-        (void)g_hypreInit;
+        initialize_hypre();
         configure_spmv();
 
         int rank;
@@ -322,6 +346,138 @@ public:
     // above tol) is visible in the step log instead of buried in Hypre's own
     // print output.
     int    getLastIterations()    const { return lastNumIters_; }
+    int get_max_iterations() const { return maxIter_; }
+
+    // Opt-in diagnostics inspect the live objects without changing their controls.
+    template<class Inspect> void inspect_prepared(Inspect inspect) const {
+        // The capture caller combines failures after rank-local allocation and I/O.
+        if (!(solver_ && precond_ && precondType_==BOOMERAMG && !precondMatrix_))
+            throw std::runtime_error("pressure capture requires a prepared BoomerAMG solve");
+        inspect(solver_,precond_,useFlexGmres_);
+    }
+
+    struct ExpansionResult { bool accepted=false; int rounds=0,iterations=0; };
+    ExpansionResult recover_prepared_expansion(Vector& high,Vector& low) {
+        static_assert(std::is_same_v<RealType,double>,"pressure expansion requires FP64");
+        require_reuse(solver_ && parcsr_A_ && par_b_ && par_x_ && true_residual_check_ && maximum_residual_check_
+            && !amg_cycle_ && precondType_==BOOMERAMG && !precondMatrix_,"invalid pressure expansion solve");
+        const auto saved=prepared_controls();
+        require_reuse(saved.relative==residual_relative_tolerance_ && saved.absolute==residual_absolute_tolerance_
+            && saved.maximum>0 && saved.maximum<=INT_MAX/5,"pressure expansion budget overflow");
+        const double started=wall_stamp();
+        namespace recovery=pressure_recovery;
+        auto* a=reinterpret_cast<hypre_ParCSRMatrix*>(parcsr_A_);
+        auto* rhs=reinterpret_cast<hypre_ParVector*>(par_b_);
+        auto* solution=reinterpret_cast<hypre_ParVector*>(par_x_);
+        const auto memory=hypre_VectorMemoryLocation(hypre_ParVectorLocalVector(solution));
+        pressure_settings::Values controls{{"rtol",saved.relative},{"atol",saved.absolute},
+            {"miniter",double(saved.minimum)},{"maxiter",double(saved.maximum)}};
+        recovery::Expansion expansion(solution,memory);
+        recovery::DiscardBuffer discard; std::ostream sink(&discard);
+        // Fatal backend failures have already thrown in solve_vectors. A cap is recoverable.
+        const auto result=recovery::run(a,rhs,solution,solver_,useFlexGmres_,controls,memory,4,{},sink,&sink,&expansion);
+        set_prepared_controls(saved);
+        lastNumIters_+=result.iterations;
+        ExpansionResult answer{false,result.rounds,result.iterations};
+        require_reuse(result.stop!=4,"pressure expansion backend failure");
+        if (expansion.step && result.stop!=3) {
+            recovery::Residual evaluator(a,solution,memory);
+            recovery::Vector work(solution,memory);
+            const auto rhs_norm=evaluator.norm(rhs);
+            const auto norm=evaluator.evaluate(expansion.high.p,rhs,work.p,expansion.low.p);
+            const double limit=std::max(saved.absolute,std::nextafter(saved.relative*rhs_norm.lower,0.));
+            answer.accepted=rhs_norm.finite() && norm.finite() && std::isfinite(limit) && norm.upper<=limit;
+            if (answer.accepted) {
+                const auto count=std::size_t(hypre_CSRMatrixNumRows(hypre_ParCSRMatrixDiag(a)));
+                high.resize(count); low.resize(count);
+                // Hypre and SIMPLE may use different CUDA streams.
+                require_reuse(hypre_ForceSyncComputeStream()==0,"pressure expansion stream completion failed");
+                require_reuse(cudaMemcpy(high.data(),recovery::data(expansion.high.p),count*sizeof(double),cudaMemcpyDeviceToDevice)==cudaSuccess
+                    && cudaMemcpy(low.data(),recovery::data(expansion.low.p),count*sizeof(double),cudaMemcpyDeviceToDevice)==cudaSuccess,
+                    "pressure expansion extraction failed");
+            }
+        }
+        if(timing_enabled_) last_timing_.solve_seconds+=wall_stamp()-started;
+        return answer;
+    }
+
+    // Reuse the prepared matrix and preconditioner for A*delta=defect. The
+    // original stopping controls are restored before returning to the caller.
+    bool solve_prepared_correction(const Vector& defect, Vector& delta, int remaining) {
+        require_reuse(solver_ && parcsr_A_ && true_residual_check_ && !amg_cycle_
+                      && remaining > 0 && remaining <= maxIter_, "invalid pressure correction solve");
+        const int previous_iterations=lastNumIters_;
+        const auto previous_timing=last_timing_;
+        const auto controls=prepared_controls();
+        const RealType previous_tolerance=tolerance_;
+        const int previous_max=maxIter_;
+        const bool previous_mixed=mixed_residual_check_, previous_maximum=maximum_residual_check_;
+        const double previous_absolute=residual_absolute_tolerance_, previous_relative=residual_relative_tolerance_;
+        auto restore=[&] {
+            set_prepared_controls(controls);
+            tolerance_=previous_tolerance; maxIter_=previous_max;
+            mixed_residual_check_=previous_mixed; maximum_residual_check_=previous_maximum;
+            residual_absolute_tolerance_=previous_absolute; residual_relative_tolerance_=previous_relative;
+        };
+        try {
+            set_prepared_controls({0.1,0.0,0,remaining});
+            tolerance_=RealType(0.1); maxIter_=remaining;
+            enable_true_residual_check(0.0,0.1,true);
+            last_timing_={};
+            const double prepare=wall_stamp();
+            const auto old_b=par_b_, old_x=par_x_;
+            require_reuse(update_vectors(defect,delta,true) && old_b==par_b_ && old_x==par_x_,
+                          "correction changed prepared vector storage");
+            if (timing_enabled_) last_timing_.prepare_seconds=wall_stamp()-prepare;
+            const bool accepted=solve_vectors(defect,delta);
+            restore();
+            lastNumIters_+=previous_iterations;
+            last_timing_.prepare_seconds+=previous_timing.prepare_seconds;
+            last_timing_.packing_seconds+=previous_timing.packing_seconds;
+            last_timing_.setup_seconds+=previous_timing.setup_seconds;
+            last_timing_.solve_seconds+=previous_timing.solve_seconds;
+            last_timing_.finish_seconds+=previous_timing.finish_seconds;
+            return accepted;
+        } catch (...) { restore(); throw; }
+    }
+
+    // Evaluate the original equation after an actual correction, not a retry of
+    // a rejected residual measurement. No Krylov convergence flag is substituted.
+    bool check_prepared_solution(const Vector& b, Vector& x) {
+        require_reuse(solver_ && parcsr_A_ && true_residual_check_, "no prepared pressure equation");
+        const double prepare=wall_stamp();
+        require_reuse(update_vectors(b,x,true), "pressure candidate update failed");
+        const double finish=wall_stamp();
+        lastFinalRes_=true_relative_residual();
+        if (timing_enabled_) {
+            last_timing_.prepare_seconds+=finish-prepare;
+            last_timing_.finish_seconds+=wall_stamp()-finish;
+        }
+        const double scaled=residual_relative_tolerance_*last_rhs_norm_;
+        const double limit=maximum_residual_check_?std::max(residual_absolute_tolerance_,scaled)
+                                                :residual_absolute_tolerance_+scaled;
+        return std::isfinite(lastFinalRes_) && (mixed_residual_check_
+            ? std::isfinite(limit) && last_absolute_residual_<=limit : lastFinalRes_<tolerance_);
+    }
+
+    struct PreparedControls { double relative,absolute; int minimum,maximum; };
+    PreparedControls prepared_controls() const {
+        PreparedControls c{0,prepared_absolute_tolerance_,0,0};
+        HYPRE_Int error=(useFlexGmres_?HYPRE_FlexGMRESGetTol:HYPRE_GMRESGetTol)(solver_,&c.relative);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESGetMinIter:HYPRE_GMRESGetMinIter)(solver_,&c.minimum);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESGetMaxIter:HYPRE_GMRESGetMaxIter)(solver_,&c.maximum);
+        // FlexGMRES 2.33 has no public GetAbsoluteTol; retain the configured value.
+        require_reuse(error==0 && HYPRE_GetError()==0,"pressure control lookup failed");
+        return c;
+    }
+    void set_prepared_controls(PreparedControls c) {
+        HYPRE_Int error=(useFlexGmres_?HYPRE_FlexGMRESSetTol:HYPRE_GMRESSetTol)(solver_,c.relative);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetAbsoluteTol:HYPRE_GMRESSetAbsoluteTol)(solver_,c.absolute);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetMinIter:HYPRE_GMRESSetMinIter)(solver_,c.minimum);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetMaxIter:HYPRE_GMRESSetMaxIter)(solver_,c.maximum);
+        require_reuse(error==0 && HYPRE_GetError()==0,"pressure control update failed");
+        prepared_absolute_tolerance_=c.absolute;
+    }
 
     // Opt-in systems / point-block AMG: with N>1 and node-major interleaved DOFs
     // (dof = N*node + comp), BoomerAMG auto-generates dof_func[i] = i % N, so a
@@ -480,6 +636,11 @@ public:
             HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
             HYPRE_BoomerAMGSetTol(precond_, 0.0);           // GMRES controls outer tol
             HYPRE_BoomerAMGSetMaxIter(precond_, 1);         // 1 V-cycle per GMRES iter
+            if (amg_controls_) {
+                bool configured=true;
+                try { amg_controls_(precond_); } catch (...) { configured=false; }
+                require_reuse(configured && HYPRE_GetError()==0,"explicit AMG controls failed");
+            }
             // Note: an earlier attempt called HYPRE_BoomerAMGSetInterpVectors
             // with the constant-of-ones to declare the near-null mode of the
             // pressure-Poisson. That call is REJECTED with HYPRE_ERROR_GENERIC
@@ -566,8 +727,8 @@ public:
         // iteration count forces GMRES to keep building the Krylov space past
         // that first deceptive cycle so a real x emerges. Env-overridable.
         {
-            int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
-            if (minIt > 0)
+            int minIt = minimum_iterations_>=0 ? minimum_iterations_ : getEnvInt("MARS_HYPRE_MINITER", 3);
+            if (minIt > 0 || minimum_iterations_>=0)
                 (useFlexGmres_ ? HYPRE_FlexGMRESSetMinIter : HYPRE_GMRESSetMinIter)(solver_, minIt);
         }
         // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
@@ -575,6 +736,7 @@ public:
         {
             double absTol = stopping_absolute_tolerance_ >= 0
                 ? stopping_absolute_tolerance_ : getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
+            prepared_absolute_tolerance_=absTol>0?absTol:0;
             if (absTol > 0.0 || stopping_absolute_tolerance_ >= 0.0)
                 (useFlexGmres_ ? HYPRE_FlexGMRESSetAbsoluteTol : HYPRE_GMRESSetAbsoluteTol)(solver_, absTol);
         }
@@ -642,7 +804,7 @@ public:
     }
 
     // Reinitialize the same IJ vectors; their partition and storage stay fixed.
-    bool update_vectors(const Vector& b, Vector& x) {
+    bool update_vectors(const Vector& b, Vector& x, bool check_inputs=false) {
         int rank = 0;
         MPI_Comm_rank(comm_, &rank);
         const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
@@ -656,7 +818,7 @@ public:
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
             HYPRE_ClearAllErrors();
-        } else if (fixed_graph_updates_) {
+        } else if (fixed_graph_updates_ || check_inputs) {
             const bool sized = b.size() >= size_t(m) && x.size() >= size_t(m);
             const bool bad_b = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
@@ -1399,6 +1561,7 @@ private:
     bool spmv_configured_ = false;
     double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
     double stopping_absolute_tolerance_ = -1;
+    double prepared_absolute_tolerance_ = 0;
     int graph_build_count_ = 0, numeric_update_count_ = 0;
     SolveTiming last_timing_;
     double prepare_start_ = 0;
@@ -1463,6 +1626,8 @@ private:
     bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
     int  pointBlock_   = 1;      // >1: systems/point-block BoomerAMG via SetNumFunctions
     int  coarseRelaxType_ = -1;
+    int minimum_iterations_ = -1;
+    std::function<void(HYPRE_Solver)> amg_controls_;
 };
 
 } // namespace fem

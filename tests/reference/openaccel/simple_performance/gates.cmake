@@ -18,6 +18,17 @@ if(MARS_SIMPLE_NETCDF_INCLUDE_DIR AND MARS_SIMPLE_NETCDF_LIBRARY)
     target_compile_definitions(mars_simple_native_source_host_gate PRIVATE MARS_HAVE_NETCDF OMPI_SKIP_MPICXX=1 MPICH_SKIP_MPICXX=1)
     target_link_libraries(mars_simple_native_source_host_gate PRIVATE MPI::MPI_CXX "${MARS_SIMPLE_NETCDF_LIBRARY}")
 endif()
+if(Python3_Interpreter_FOUND)
+    add_executable(mars_simple_pressure_residual_host_check "${_simple_perf}/pressure_residual_check.cpp")
+    target_compile_features(mars_simple_pressure_residual_host_check PRIVATE cxx_std_17)
+    target_compile_options(mars_simple_pressure_residual_host_check PRIVATE -ffp-contract=off)
+    add_test(NAME marsSimpleCompensatedDotBound COMMAND ${Python3_EXECUTABLE}
+        "${_simple_perf}/test_compensated_dot.py")
+    add_test(NAME marsSimplePressureReplay COMMAND ${Python3_EXECUTABLE}
+        "${_simple_perf_root}/scripts/test_simple_pressure_replay.py")
+    set_tests_properties(marsSimplePressureReplay PROPERTIES
+        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MARS_TEST_PRESSURE_CHECKER=$<TARGET_FILE:mars_simple_pressure_residual_host_check>" TIMEOUT 120)
+endif()
 foreach(_np 1 2 4)
     add_test(NAME marsSimpleLinearRejection${_np} COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_np} ${MPIEXEC_PREFLAGS}
         $<TARGET_FILE:mars_simple_linear_rejection_host_gate> ${MPIEXEC_POSTFLAGS})

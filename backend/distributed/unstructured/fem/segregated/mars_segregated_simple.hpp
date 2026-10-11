@@ -18,6 +18,7 @@ struct SimpleControls {
     double reference_length=1;
     bool high_resolution=false;
     bool velocity_shifted=false;
+    bool pressure_expansion=false;
 };
 inline bool valid_simple_controls(const SimpleControls& c) {
     for (double value:{c.density,c.viscosity,c.pseudo_dt,c.inlet_speed,c.reference_length})
@@ -128,6 +129,8 @@ struct SimpleState {
     double* velocity_blend=nullptr;
     const double* inlet_velocity=nullptr;
     const double* outlet_pressure=nullptr;
+    double *pressure_low=nullptr,*pressure_gradient_low=nullptr,*trace_low=nullptr;
+    const double *outlet_pressure_low=nullptr,*old_pressure_low=nullptr;
 };
 struct SimpleGeometry {
     SimpleMesh mesh; SimpleState state;
@@ -212,11 +215,20 @@ template<int Components> struct SimpleInterior {
         if constexpr (Components==3) if (controls.high_resolution)
             for (int k=0;k<4;++k) for (int j=0;j<3;++j)
                 x.velocity_blend[3*k+j]=state.velocity_blend[3*nodes[k]+j];
+        if constexpr (Components==1) if (state.pressure_low) {
+            x.pressure_expansion=true;
+            for (int k=0;k<4;++k) {
+                x.pressure_low[k]=state.pressure_low[nodes[k]];
+                for (int j=0;j<3;++j) x.pressure_gradient_low[3*k+j]=state.pressure_gradient_low[3*nodes[k]+j];
+            }
+        }
         TetInteriorOutput y; tet_interior(x,y);
         if (!update_flux) {
             if (!scatter_block(matrix,nodes,4,y.lhs,y.rhs)) simple_error(state.error);
         } else for (int s=0;s<6;++s) {
-            const double q=controls.alpha_mass*y.flux[s]+(1-controls.alpha_mass)*state.interior_flux[6*e+s];
+            const double q=state.pressure_low?
+                (PressureValue{y.flux[s],y.flux_low[s]}*controls.alpha_mass+PressureValue{state.interior_flux[6*e+s],0}*(1-controls.alpha_mass)).rounded():
+                controls.alpha_mass*y.flux[s]+(1-controls.alpha_mass)*state.interior_flux[6*e+s];
             state.interior_flux[6*e+s]=q;
             assembly_add(state.mass_divergence+nodes[tet_edge_node(s,0)],q);
             assembly_add(state.mass_divergence+nodes[tet_edge_node(s,1)],-q);
@@ -238,19 +250,47 @@ template<int Components> struct SimpleBoundary {
                 x.pressure[local]=state.outlet_pressure[nodes[local]];
             }
         if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence,controls.velocity_shifted)) { simple_error(state.error); return; }
+        if constexpr (Components==1) if (state.pressure_low) {
+            x.pressure_expansion=true;
+            for (int k=0;k<4;++k) {
+                x.pressure_low[k]=state.pressure_low[nodes[k]];
+                for (int j=0;j<3;++j) x.pressure_gradient_low[3*k+j]=state.pressure_gradient_low[3*nodes[k]+j];
+            }
+            if (face.kind==1) for (int f=0;f<3;++f) {
+                const int local=tet_face_node(face.ordinal,f);
+                x.pressure_low[local]=state.outlet_pressure_low?state.outlet_pressure_low[nodes[local]]:state.trace_low[3*i+f];
+            }
+        }
         BoundaryOutput y; boundary_block(x,y);
         if (!update_flux) {
             if (!scatter_block(matrix,input.nodes,x.stage==5?3:4,y.lhs,y.rhs)) simple_error(state.error);
         } else {
             double flux[3];
-            for (int j=0;j<3;++j) flux[j]=x.reversal[j]?0:controls.alpha_mass*y.flux[j]+(1-controls.alpha_mass)*state.boundary_flux[3*i+j];
+            for (int j=0;j<3;++j) flux[j]=x.reversal[j]?0:state.pressure_low?
+                (PressureValue{y.flux[j],y.flux_low[j]}*controls.alpha_mass+PressureValue{state.boundary_flux[3*i+j],0}*(1-controls.alpha_mass)).rounded():
+                controls.alpha_mass*y.flux[j]+(1-controls.alpha_mass)*state.boundary_flux[3*i+j];
             if (face.kind==1) {
                 int next[3]; double velocity[9],pressure[3],filtered[3];
                 for (int f=0;f<3;++f) {
                     const int n=nodes[tet_face_node(face.ordinal,f)]; pressure[f]=state.pressure[n];
                     for (int j=0;j<3;++j) velocity[3*f+j]=state.velocity[3*n+j];
                 }
-                outlet_reversal_update(flux,x.reversal,velocity,pressure,state.trace+3*i,x.area,false,filtered,next);
+                double trace_difference[3];
+                const double* reversal_trace=state.trace+3*i;
+                if (state.pressure_low) {
+                    PressureValue difference;
+                    for (int f=0;f<3;++f) {
+                        const int n=nodes[tet_face_node(face.ordinal,f)];
+                        difference=difference+PressureValue::load(state.trace,state.trace_low,3*i+f)
+                            -PressureValue::load(state.pressure,state.pressure_low,n);
+                        pressure[f]=trace_difference[f]=0;
+                    }
+                    // The reversal rule uses only this sign; round after all cancellation.
+                    trace_difference[0]=difference.high>0 || (difference.high==0 && difference.low>0)?1:
+                        difference.high<0 || difference.low<0?-1:0;
+                    reversal_trace=trace_difference;
+                }
+                outlet_reversal_update(flux,x.reversal,velocity,pressure,reversal_trace,x.area,false,filtered,next);
                 for (int j=0;j<3;++j) {
                     if (state.reversal) state.reversal[3*i+j]=next[j];
                     else if (next[j]) simple_error(state.error);
@@ -270,7 +310,15 @@ struct SimpleMomentumNode {
         SteadyMomentumNode x{}; x.density=controls.density; x.pseudo_dt=controls.pseudo_dt;
         x.volume=state.volume[n]; x.mass_divergence=state.mass_divergence[n];
         for (int j=0;j<3;++j) { x.velocity[j]=state.velocity[3*n+j]; x.pressure_gradient[j]=state.pressure_gradient[3*n+j]; }
-        double a[9],b[3],dt[3]; steady_momentum_node(x,a,b);
+        double a[9],b[3],dt[3];
+        if (state.pressure_low) for (int j=0;j<3;++j) x.pressure_gradient[j]=0;
+        steady_momentum_node(x,a,b);
+        if (state.pressure_low) for (int j=0;j<3;++j) {
+            const int row=3*n+j;
+            matrix.rhs[row]=(PressureValue{matrix.rhs[row],0}+PressureValue{b[j],0}
+                -PressureValue::load(state.pressure_gradient,state.pressure_gradient_low,row)*x.volume).rounded();
+            b[j]=0;
+        }
         if (!scatter_block(matrix,&n,1,a,b) || !finish_momentum_row(matrix,n,x.volume,controls.alpha_u,state.boundary_factor[n]>0?.75:1.,false,state.influence+3*n,dt)) simple_error(state.error);
     }
 };

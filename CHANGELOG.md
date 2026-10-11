@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-10-09
+## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
@@ -21,6 +21,8 @@ the cornerstone-octree library.
   assembled matrix on device, with several optimized assembly kernels.
 - Distributed multi-rank execution via MPI, including a per-node DOF halo for solver
   communication (CUDA-aware MPI) on top of the cornerstone element halo.
+- The node exchanges keep one layer of ghost nodes current, 2.5 to 3 times less data than the whole
+  cornerstone halo; `MARS_HALO_EXCHANGE=full` keeps the whole halo current.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
 - CMake install / `find_package(Mars)` packaging with the `Mars::mars` target
@@ -60,8 +62,11 @@ the cornerstone-octree library.
   one point share one unknown, and every matrix is Pᵀ A P, formed by sending each copy's
   matrix row to the rank that owns its unknown. Both systems are solved with Hypre PCG +
   BoomerAMG (18 pressure iterations per step in the Poiseuille validation). Weak scaling on
-  Alps GH200, 8M nodes per GPU: 52% of the 1-GPU step speed on 256 GPUs, Hypre-bound, with
-  21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
+  Alps GH200, 8M nodes per GPU: 72% of the one-node (4-GPU) step speed on 256 GPUs, Hypre-bound,
+  with 20 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
+- Weak scaling of MARS alone, the distributed matrix-free operator at 16M elements per GPU: 70%
+  of the one-node rate on 1024 GPUs and 66% on 2048 GPUs (32.8 billion DOFs), with overlap of
+  the halo exchange (Matrix-Free tutorial).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
   and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,

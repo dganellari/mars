@@ -8,9 +8,8 @@ evaluates the true distributed residual. It does **not** establish distributed S
 nonlinear convergence or pump readiness. Node ownership, element-star completion and native
 ingestion belong to other work; this code takes their results as explicit inputs.
 
-Base revision: `eb6a605fd3b61b90bb80692d23ba98cc1009e266` (`cstone`). Shared CMake, the
-SIMPLE runtime and drivers, domain/halo, native-input and Poiseuille files are unchanged.
-The runtime integration is a separate, unapplied diff.
+The adapter is integrated into the native distributed SIMPLE driver. Its original
+isolated review used base `eb6a605f`; the current runtime and tests have since evolved.
 
 ## Contract
 
@@ -50,6 +49,46 @@ rows of all ranks before the norm is formed, with the same defaults as `SimpleRu
 `halo_complete` is the caller's explicit statement that ghost entries were refreshed after
 the last change of owned entries.
 
+### Compensated defect for correction solves
+
+`s.compensated_defect(halo_complete(x, local_size), b, defect, owned_size, tolerance)`
+writes `b - A*x` in owned scalar solver order and returns global residual norms.
+It uses the original owned CSR and an FMA product remainder with compensated summation
+to retain small terms lost through cancellation. This reduces arithmetic error; it is
+not an exact-arithmetic certificate. The supplied tolerance and its additive/maximum
+convention are unchanged.
+
+The caller supplies persistent output storage, separate from the RHS, local solution
+and matrix values. Capacity and overlap errors are rejected collectively. Empty ranks
+follow the same policy as `residual`. Nonfinite results, overflow and a nonzero residual
+or RHS whose square underflows are rejected. Ghost values must already be current.
+
+The CUDA path computes full rows on device, reuses the existing reduction scratch and
+reduces norms through CUDA-aware MPI. Only the fixed-size decision report reaches the
+host. The ordinary residual implementation retains its existing arithmetic. The pressure
+runner uses this API for bounded correction solves only when the experimental
+`--pressure-refinement 1` option is selected. It is disabled by default and must
+remain disabled for controlled OpenAccel comparisons.
+The optional final `bounded=true` argument tests an upper bound on the residual,
+including compensated-dot evaluation error. See the [correction contract and GPU
+gate](../simple_performance/pressure_refinement.md); previous component results
+below do not validate that new integration.
+
+On 2026-10-07 the shared host gates passed with ASan/UBSan on 1, 2 and 4 ranks
+(87/99/99 checks; eight inapplicable checks skipped on one rank). They cover exact sum
+and product cancellation, defect sign and row order, stale ghosts, empty ranks,
+nonfinite values, norm range, output bounds and input preservation.
+
+On 2026-10-08 the CUDA gate built and passed on Alps at MARS `59c89f0e`, using
+Hypre 2.33.0 with native GPU SpMV. The saved public logs report 95/107/107 passed
+checks on 1/2/4 ranks, zero failures and exit code zero on each run. The eight
+one-rank skips require ghost nodes or multiple ranks. All 13 compensated-defect
+fixtures passed on each rank count, and the four-rank launcher reported distinct
+GPUs 0/1/2/3. Results and executable SHA-256 are recorded under
+`/capstor/scratch/cscs/gandanie/simple-defect-gate-AwOrJE`.
+This validates the component and existing Hypre solve gates on one node; pressure
+refinement, pump convergence and multi-node behavior are not established by it.
+
 Detected input errors are reduced before throwing at these checks. Callers must abort
 on unexpected rank-local exceptions, including allocation failures:
 - **Build:** capacity, overflow, owned range, duplicates, row contiguity, ghost ids in range
@@ -59,7 +98,10 @@ on unexpected rank-local exceptions, including allocation failures:
   own assembly error.
 - **`unpack` and `residual`:** capacity, and a residual requested before the first update.
 
-## Wrapper findings (wrapper not modified)
+## Original wrapper review
+
+These findings describe the initial adapter review. The current wrapper adds
+collective validation for cached solves and the prepared-correction path.
 
 1. **Unmapped columns are dropped silently.** `buildParCsr` discards any column whose map
    entry is `-1`. The adapter therefore rejects a referenced column without a solver id at

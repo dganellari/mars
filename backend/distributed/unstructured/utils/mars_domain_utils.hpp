@@ -48,6 +48,19 @@ inline void abortAllRanksOnUncaughtException()
     });
 }
 
+// Bucket size of cornerstone's global tree for a mesh of globalElements. The tree is replicated on every
+// rank and its leaf counts are summed with one MPI_Allreduce, which Cray MPICH truncates above 2 GiB.
+// Leaves are about 3 * elements / bucket, 4 bytes each, so the bucket grows with the mesh. Only the
+// decomposition gets coarser; the halo comes from the focus tree. MARS_GLOBAL_BUCKETSIZE overrides.
+inline int globalBucketSize(double globalElements)
+{
+    if (const char* e = std::getenv("MARS_GLOBAL_BUCKETSIZE")) return std::atoi(e);
+    int bucket = 64;
+    while (bucket < 3.0 * globalElements / 4.0e8 && bucket < 8192)
+        bucket *= 2;
+    return bucket;
+}
+
 #define cudaCheckError()                                                                                               \
     {                                                                                                                  \
         cudaError_t e = cudaGetLastError();                                                                            \
