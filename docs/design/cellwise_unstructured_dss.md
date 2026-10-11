@@ -213,6 +213,11 @@ of Chebyshev steps degrades with ne, so large meshes need AMG there. Plan:
    `ho_cvfem_apply_launch` reads them from one constant bank that holds a single degree,
    while a V-cycle alternates degrees. Same thread layout as that kernel (one thread per
    tangential slot, the element in shared memory), MARSIR's metric layout.
+   GH200 (`mars_marsir_cellwise_solve --mg --unstructured`, deform 0.05, 10 coarse
+   steps): lambda_max at p = 7, 3, 1 and the iteration counts equal the reference to the
+   printed digits (7 at ne = 4 and 8); 7 with rotated frames, on 4 ranks and from an
+   ElementDomain; ne = 64 (90.5 M unique nodes): 19 iterations, 2.11 s (Jacobi needs
+   about 1530), V-cycle 44.5 ms.
 2. hypre BoomerAMG at p = 1 on the assembled p = 1 operator (global vertex numbering
    from the node owners), for h-independence at production sizes.
 
