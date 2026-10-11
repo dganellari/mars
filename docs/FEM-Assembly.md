@@ -148,8 +148,11 @@ each owned boundary row into an identity row with a zero right-hand side.
 
 On several ranks, a matrix-vector product needs the current values of the ghost DOFs. The
 domain's node halo provides them: `exchangeNodeHalo` copies owner values to the ghosts, and
-`reverseExchangeNodeHaloAdd` adds ghost contributions to the owners. The bundled CG takes the
-exchange as a callback, and the number of owned rows for its global dot products:
+`reverseExchangeNodeHaloAdd` adds ghost contributions to the owners. By default both keep one layer
+of ghosts current: the nodes of the rank's own elements and of the elements around its owned nodes,
+which is all an element loop reads. `MARS_HALO_EXCHANGE=full` keeps every ghost of cornerstone's
+halo current. The bundled CG takes the exchange as a callback, and the number of owned rows for its
+global dot products:
 
 ```cpp
 solver.setOwnedSize(numOwned);   // dot products sum owned rows only, then MPI_Allreduce

@@ -3,7 +3,7 @@ message: "If you use MARS, please cite it as below."
 title: "MARS — Mesh Adaptive Refinement for Supercomputing"
 abstract: >-
   MARS is an open-source, GPU-native mesh management and finite-element assembly
-  library for N-dimensional elements (N <= 4), written in C++20 for CUDA/HIP and MPI.
+  library for 3D tetrahedral and hexahedral meshes, written in C++20 for CUDA and MPI.
 type: software
 authors:
   - family-names: Ganellari
