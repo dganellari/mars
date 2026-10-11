@@ -186,14 +186,38 @@ error 2.3e-11.
 
 ## Multigrid on unstructured meshes
 
-- **p-multigrid** (7 -> 3 -> 1) on the same mesh, with exactly nested element-local
-  transfers, then AMG (hypre BoomerAMG, already in MARS) on the assembled p=1 operator.
-  Works for any imported mesh; this is the general path.
-- **h-multigrid** at fixed p=7 when the mesh comes from uniform refinement of a coarse
-  hex mesh. Needs the parent key and octant of every element carried through the
-  cstone resync (the AMR does not keep them today), and siblings kept on one rank or
-  one more exchange in the transfers. Adaptive meshes would need the paper's local
-  smoothing and refinement-edge masks (arXiv 2607.03413); not in the first version.
+**p-multigrid** on the same mesh, degrees 7 -> 3 -> 1, works for any imported mesh:
+the Knaus CVFEM operator rediscretized at each degree, Chebyshev-Jacobi smoothing
+through the DSS (degree 3, range [lmax/15, 1.1 lmax], lmax by 30 power steps, as in the
+structured h-multigrid), element-local GLL interpolation between degrees (exactly
+nested; restriction is its transpose on the raw residual), one V-cycle per BiCGStab
+preconditioner call. The tables, counting bits and Dirichlet flags are the same at every
+degree; only the node layout of each entity changes.
+
+Numpy reference `marsir-mlir/test/cellwise_pmg_ref.py` (deform 0.05, (pre, post) = (0, 3),
+BiCGStab to 1e-10):
+
+| coarse solve at p = 1 | ne = 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|
+| exact (an ideal AMG) | 7 | 7 | 7 | 6 | - |
+| 10 Chebyshev steps | | 7 | 7 | 7 | 9 |
+| 3 Chebyshev steps | | | 7 | 9 | |
+
+Without the p = 3 level (7 -> 1) it takes 15 iterations at ne = 8; (2, 2) smoothing saves
+one iteration. The coarse level needs only a modest-accuracy solve, but a fixed number
+of Chebyshev steps degrades with ne, so large meshes need AMG there. Plan:
+
+1. GPU p-multigrid with k Chebyshev steps at p = 1: all cell-wise, no assembly. The
+   p = 3 and p = 1 operators are MARS's `ho_cvfem_apply_launch<double, P>` with an
+   identity element-to-DOF map (each copy its own DOF, so its atomics never collide).
+2. hypre BoomerAMG at p = 1 on the assembled p = 1 operator (global vertex numbering
+   from the node owners), for h-independence at production sizes.
+
+**h-multigrid** at fixed p = 7 when the mesh comes from uniform refinement of a coarse
+hex mesh. Needs the parent key and octant of every element carried through the
+cstone resync (the AMR does not keep them today), and siblings kept on one rank or
+one more exchange in the transfers. Adaptive meshes would need the paper's local
+smoothing and refinement-edge masks (arXiv 2607.03413); not in the first version.
 
 ## Validation
 
