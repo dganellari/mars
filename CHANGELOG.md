@@ -62,8 +62,11 @@ the cornerstone-octree library.
   one point share one unknown, and every matrix is Pᵀ A P, formed by sending each copy's
   matrix row to the rank that owns its unknown. Both systems are solved with Hypre PCG +
   BoomerAMG (18 pressure iterations per step in the Poiseuille validation). Weak scaling on
-  Alps GH200, 8M nodes per GPU: 52% of the 1-GPU step speed on 256 GPUs, Hypre-bound, with
-  21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
+  Alps GH200, 8M nodes per GPU: 70% of the one-node (4-GPU) step speed on 256 GPUs, Hypre-bound,
+  with 21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
+- Weak scaling of MARS alone, the distributed matrix-free operator at 16M elements per GPU: 70%
+  of the one-node rate on 1024 GPUs and 66% on 2048 GPUs (32.8 billion DOFs), with overlap of
+  the halo exchange (Matrix-Free tutorial).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
   and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,
