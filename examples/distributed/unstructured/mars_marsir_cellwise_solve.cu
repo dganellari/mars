@@ -31,7 +31,7 @@
 // the DSS against the copy counts the geometry implies.
 // --mg with --unstructured or --domain preconditions with the p-multigrid V-cycle
 // (solvers/mars_cellwise_pmg.hpp, degrees 7 -> 3 -> 1, --coarse k Chebyshev steps at p = 1,
-// or --amg: one BoomerAMG V-cycle there, in a Hypre build); it must match
+// or --amg: --amg-cycles k (1) BoomerAMG V-cycles there, in a Hypre build); it must match
 // marsir-mlir/test/cellwise_pmg_ref.py.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
@@ -417,6 +417,7 @@ int main(int argc, char** argv)
     double deform = 0.0, tol = 1e-10;
     bool use_mg = false, unstructured = false, rotate = false, use_domain = false, use_amg = false;
     int pre = 0, post = 3, coarse_steps = 100;   // 100: the fewest-time choice measured at 64^3
+    int amg_cycles = 1;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
@@ -434,6 +435,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--pre")) pre = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--post")) post = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--coarse")) coarse_steps = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-cycles")) amg_cycles = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     if (!error && ptx_path.empty()) error = "--ptx is required";
@@ -445,8 +447,8 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--amg] [--unstructured] "
-                            "[--rotate] [--domain]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--amg] [--amg-cycles k] "
+                            "[--unstructured] [--rotate] [--domain]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
@@ -723,7 +725,7 @@ int main(int argc, char** argv)
 #ifdef MARS_ENABLE_HYPRE
             if (use_amg) {
                 amg.reset(new cellwise::P1Amg(topo, d_G1, cellwise::cvfem_matrices<1>(), uhalo1.get(), MPI_COMM_WORLD,
-                                              stream));
+                                              stream, amg_cycles));
                 pmg->set_coarse_solve([&](const double* b1, double* x1) { amg->solve(b1, x1); });
             }
 #endif
@@ -780,7 +782,7 @@ int main(int argc, char** argv)
         if (use_mg && unstructured) {
             const auto& l = pmg->lambda_max();
             char coarse[64];
-            if (use_amg) snprintf(coarse, sizeof(coarse), "one BoomerAMG V-cycle");
+            if (use_amg) snprintf(coarse, sizeof(coarse), "%d BoomerAMG V-cycle(s)", amg_cycles);
             else snprintf(coarse, sizeof(coarse), "%d Chebyshev steps", coarse_steps);
             printf("  p-multigrid (%d,%d), %s at p = 1, setup %.1f ms; lambda_max(P_J A) at p = 7, 3, 1:"
                    " %.4f %.4f %.4f\n", pre, post, coarse, setup_ms, l[0], l[1], l[2]);

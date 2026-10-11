@@ -1,6 +1,6 @@
 #pragma once
-// The p = 1 coarse solve of the cell-wise p-multigrid (mars_cellwise_pmg.hpp): one
-// BoomerAMG V-cycle on the assembled p = 1 operator. Needs a Hypre build.
+// The p = 1 coarse solve of the cell-wise p-multigrid (mars_cellwise_pmg.hpp): BoomerAMG
+// V-cycles on the assembled p = 1 operator. Needs a Hypre build.
 //
 // Each vertex belongs to the rank that holds its counting copy (the canonically first).
 // That rank numbers its vertices densely after the lower ranks' (one MPI_Exscan) and
@@ -147,9 +147,10 @@ __global__ void scatter_kernel(const double* __restrict__ u, const int* __restri
 
 class P1Amg {
 public:
-    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank).
+    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank);
+    // cycles: V-cycles per coarse solve.
     P1Amg(const UnstructuredTopology& T, const double* G1, const CvfemMatrices<1>& M1, UnstructuredHalo* halo1,
-          MPI_Comm comm, cudaStream_t stream)
+          MPI_Comm comm, cudaStream_t stream, int cycles = 1)
         : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
@@ -242,7 +243,7 @@ public:
         HYPRE_ParVectorCreate(comm, (HYPRE_BigInt)total, part, &u_);
         HYPRE_ParVectorInitialize(f_);
         HYPRE_ParVectorInitialize(u_);
-        // The settings of HypreAmgPcgSolver (PMIS, extended+i, l1-Jacobi), as one V-cycle.
+        // The settings of HypreAmgPcgSolver (PMIS, extended+i, l1-Jacobi), as `cycles` V-cycles.
         HYPRE_BoomerAMGCreate(&amg_);
         HYPRE_BoomerAMGSetCoarsenType(amg_, 8);
         HYPRE_BoomerAMGSetInterpType(amg_, 6);
@@ -255,7 +256,7 @@ public:
         HYPRE_BoomerAMGSetCycleNumSweeps(amg_, 4, 3);
         HYPRE_BoomerAMGSetMaxLevels(amg_, 25);
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
-        HYPRE_BoomerAMGSetMaxIter(amg_, 1);
+        HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
         HYPRE_BoomerAMGSetPrintLevel(amg_, 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
         fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
