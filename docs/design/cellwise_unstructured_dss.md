@@ -216,10 +216,25 @@ of Chebyshev steps degrades with ne, so large meshes need AMG there. Plan:
    GH200 (`mars_marsir_cellwise_solve --mg --unstructured`, deform 0.05, 10 coarse
    steps): lambda_max at p = 7, 3, 1 and the iteration counts equal the reference to the
    printed digits (7 at ne = 4 and 8); 7 with rotated frames, on 4 ranks and from an
-   ElementDomain; ne = 64 (90.5 M unique nodes): 19 iterations, 2.11 s (Jacobi needs
-   about 1530), V-cycle 44.5 ms.
-2. hypre BoomerAMG at p = 1 on the assembled p = 1 operator (global vertex numbering
-   from the node owners), for h-independence at production sizes.
+   ElementDomain. ne = 64 in the table below (Jacobi needs about 1530 iterations).
+2. hypre BoomerAMG at p = 1 on the assembled p = 1 operator (`mars_cellwise_amg.hpp`,
+   `--amg`, needs a Hypre build). Global vertex numbers: the counting copy of each vertex
+   writes its number, one DSS at p = 1 gives it to every copy. The 8x8 element matrices
+   come from 8 unit-vector applies of `cvfem_apply<1>`; entries of rows owned by other
+   ranks go to their owners (`sparseExchange`), and `hypreFromEntries` builds the ParCSR
+   matrix on the GPU. Settings of `HypreAmgPcgSolver` (PMIS, extended+i, l1-Jacobi);
+   `--amg-cycles k` V-cycles per coarse solve (default 1). GH200, one V-cycle: 7
+   iterations at ne = 8 on one rank, on 4 ranks with rotated frames and on 4 ranks from
+   an ElementDomain; AMG setup 640 ms at ne = 64.
+
+GH200, ne = 64 (90.5 M unique nodes), deform 0.05, one rank:
+
+| coarse solve at p = 1 | iterations | V-cycle | solve |
+|---|---|---|---|
+| 10 Chebyshev steps | 19 | 44.5 ms | 2.11 s |
+| 30 Chebyshev steps | 11 | 51.9 ms | 1.41 s |
+| 100 Chebyshev steps (`--coarse` default) | 6 | 76.8 ms | 1.13 s |
+| one BoomerAMG V-cycle (`--amg`) | 10 | 41.7 ms | 1.10 s |
 
 **h-multigrid** at fixed p = 7 when the mesh comes from uniform refinement of a coarse
 hex mesh. Needs the parent key and octant of every element carried through the
