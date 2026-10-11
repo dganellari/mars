@@ -10,8 +10,9 @@ public API may change between minor releases.
 ## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
-assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
-the cornerstone-octree library.
+assembly library for 3D tetrahedral and hexahedral meshes, built in C++20 on CUDA and the
+cornerstone-octree library. The older serial and Kokkos backends, off by default and not
+re-tested for this release, also handle simplices up to dimension 4.
 
 ### Added (stable)
 - GPU-native unstructured meshes — mesh built and stored entirely on device, no host
@@ -23,6 +24,9 @@ the cornerstone-octree library.
   communication (CUDA-aware MPI) on top of the cornerstone element halo.
 - The node exchanges keep one layer of ghost nodes current, 2.5 to 3 times less data than the whole
   cornerstone halo; `MARS_HALO_EXCHANGE=full` keeps the whole halo current.
+- A mesh too small for the rank count stops every rank with a message instead of failing on a rank
+  without elements. For small meshes the bucket of cornerstone's global tree shrinks, so every rank
+  gets elements.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
 - CMake install / `find_package(Mars)` packaging with the `Mars::mars` target

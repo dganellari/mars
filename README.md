@@ -6,9 +6,10 @@
 
 **[Read the Full Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
 
-MARS is an open-source, GPU-native mesh management library for N-dimensional elements
-(N <= 4). It is written in C++20; the element type, the floating-point precision and the
-SFC key type are template parameters.
+MARS is an open-source, GPU-native mesh management and finite-element assembly library. Its GPU
+backend handles 3D tetrahedral and hexahedral meshes; the older serial and Kokkos backends (off by
+default, not re-tested for v0.1) also handle simplices up to dimension 4. It is written in C++20;
+the element type, the floating-point precision and the SFC key type are template parameters.
 
 The main features of MARS are:
 
@@ -34,10 +35,11 @@ The main features of MARS are:
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
-MARS targets multi-core CPUs and GPUs (NVIDIA via CUDA, AMD via HIP); a Kokkos backend
-covers the older structured-mesh path. Because the mesh stays on the device, libraries
-built on MARS can run further operations directly on the GPU without going through the
-host.
+The GPU backend runs on NVIDIA GPUs with CUDA. A HIP build for AMD GPUs compiles the library,
+but it was not re-verified for v0.1 and the examples are CUDA-only. The older Kokkos backend
+covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
+device, libraries built on MARS can run further operations directly on the GPU without going
+through the host.
 
 ## Releases & status ##
 
@@ -56,8 +58,9 @@ A plain clone is all you need:
 
 A network connection is required at configure time for the dependency fetch.
 
-GPU build (the main use case; for AMD use `-DMARS_ENABLE_HIP=ON` instead of the CUDA flags).
-The unstructured backend is on by default in a GPU build. This builds the library, the example
+GPU build (the main use case; on AMD GPUs `-DMARS_ENABLE_HIP=ON` instead of the CUDA flags builds
+the library only, see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The unstructured backend is on
+by default in a GPU build. This builds the library, the example
 programs of the tutorials and the release checks; leave out `-DMARS_ENABLE_HYPRE=ON` if Hypre is
 not installed (the Navier–Stokes examples and their checks then are not built):
 
