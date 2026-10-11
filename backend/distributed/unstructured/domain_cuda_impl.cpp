@@ -66,14 +66,34 @@ void addStarHalos(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* dom
                   Properties properties,
                   Scratch scratch)
 {
+    // cornerstone gives each rank whole leaves of its global tree, so a small mesh can leave a rank without
+    // elements even with more elements than ranks. Everything after this point assumes every rank has some.
+    int numRanks = 1;
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+    unsigned long long local = domain->endIndex() - domain->startIndex(), fewest = 0, total = 0;
+    MPI_Allreduce(&local, &fewest, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&local, &total, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    const std::string tooSmall = "The mesh (" + std::to_string(total) + " elements) is too small for " +
+                                 std::to_string(numRanks) + " ranks: ";
+    if (fewest == 0) { throw std::runtime_error(tooSmall + "a rank got no element. Run on fewer ranks."); }
+
     if (!starHaloKeys) return;
     cstone::DeviceVector<KeyType> haloKeys;
     bool any = starHaloKeys(haloKeys);
     syncTrace("star requests");
     if (any)
     {
-        domain->addHalos({haloKeys.data(), haloKeys.size()}, elemSfcCodes, elemX, elemY, elemZ, elemH, properties,
-                         scratch);
+        // addHalos agrees on the failure across ranks before it throws, so every rank ends up here
+        try
+        {
+            domain->addHalos({haloKeys.data(), haloKeys.size()}, elemSfcCodes, elemX, elemY, elemZ, elemH, properties,
+                             scratch);
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error(tooSmall + "the elements around a node lie beyond the ranks next to its owner. "
+                                                "Run on fewer ranks.");
+        }
         syncTrace("addHalos");
     }
 }

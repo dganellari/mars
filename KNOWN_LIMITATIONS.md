@@ -71,6 +71,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is enabled with `-DMARS_ENABLE_HIP=ON`, but
   the HIP build was not re-verified for v0.1.0, and the FEM examples are CUDA-only.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
+- Every rank must own part of the mesh. A mesh too small for the rank count stops on every rank with a
+  message, instead of leaving a rank without elements.
 - Multi-rank node exchanges keep one layer of ghost nodes current: the nodes of the rank's own
   elements and of the elements that touch a node it owns. Code that reads ghost values deeper in
   cornerstone's halo needs `MARS_HALO_EXCHANGE=full`, which keeps the whole halo current (2.5 to 3

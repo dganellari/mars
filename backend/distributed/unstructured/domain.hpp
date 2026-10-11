@@ -909,6 +909,17 @@ public:
     // Helper methods
     void readMeshDataSoA(const std::string& meshFile, HostCoordsTuple& h_coords_, HostConnectivityTuple& h_conn_);
 
+    // cornerstone gives each rank whole leaves of its global tree. With the default bucket a small mesh has
+    // about as many leaves as ranks, and some ranks get no element; at most elements / (8 ranks) per leaf
+    // gives every rank several leaves. Large meshes keep the requested bucket. Collective.
+    unsigned globalTreeBucket(int requested, unsigned bucketSizeFocus) const
+    {
+        unsigned long long local = elementCount_, total = 0;
+        MPI_Allreduce(&local, &total, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        const unsigned long long fine = total / (8ull * (unsigned long long)numRanks_);
+        return unsigned(std::max<unsigned long long>(bucketSizeFocus, std::min<unsigned long long>(requested, fine)));
+    }
+
     // Real coordinate conversion from SFC
     MARS_HOST_DEVICE std::tuple<RealType, RealType, RealType> sfcToPhysicalCoordinate(KeyType sfcKey) const;
     MARS_HOST_DEVICE RealType sfcToPhysicalCoordinateX(KeyType sfcKey) const;
@@ -2345,7 +2356,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks,
+                                           globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
@@ -2411,7 +2423,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks,
+                                           globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
@@ -2467,7 +2480,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks,
+                                           globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
@@ -2562,7 +2576,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
 
     RealType theta = 0.5;
 
-    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks,
+                                           globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
