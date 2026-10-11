@@ -367,24 +367,24 @@ Use `--vtu-every=10` for a smooth movie.
 ## 7. Running on many GPUs
 
 Weak scaling keeps the work per GPU fixed: the generated channel grows with the number of GPUs.
-At 8 million nodes per GPU the step time goes from 372 ms on one node (4 GPUs) to 531 ms on 256
-GPUs, 70% of the one-node rate. The pressure solve needs 21 to 23 AMG iterations per step at every
+At 8 million nodes per GPU the step time goes from 362 ms on one node (4 GPUs) to 505 ms on 256
+GPUs, 72% of the one-node rate. The pressure solve needs 20 to 23 AMG iterations per step at every
 size, so the method scales; the time lost is in Hypre's solves, which take over 90% of each step.
-MARS's own part keeps 81%.
+MARS's own part keeps 79%.
 
 | GPUs | Nodes | ms per step | MARS, ms | Hypre, ms | Efficiency: step / MARS / Hypre |
 |---:|---:|---:|---:|---:|---|
-| 1 | 8.0 M | 272 | 18.0 | 254 | |
-| 4 (one node) | 32 M | 372 | 18.5 | 354 | 100% / 100% / 100% |
-| 16 | 128 M | 392 | 18.6 | 373 | 95% / 99% / 95% |
-| 64 | 512 M | 469 | 19.1 | 450 | 79% / 97% / 79% |
-| 256 | 2.05 B | 531 | 22.9 | 507 | 70% / 81% / 70% |
+| 1 | 8.0 M | 272 | 17.8 | 254 | |
+| 4 (one node) | 32 M | 362 | 18.5 | 344 | 100% / 100% / 100% |
+| 16 | 128 M | 395 | 18.6 | 376 | 92% / 99% / 91% |
+| 64 | 512 M | 452 | 19.3 | 432 | 80% / 96% / 79% |
+| 256 | 2.05 B | 505 | 23.5 | 482 | 72% / 79% / 71% |
 
 Efficiency is the one-node time divided by the N-GPU time. One GPU does no communication at all,
 so its row is only a reference. `MARS` is everything outside Hypre: the element kernels, the halo
 exchanges and the projection. A smaller load per GPU hides less of the communication: at 2 million
-nodes per GPU the step takes 124 ms on one node, 254 ms on 256 GPUs (49%) and 335 ms on 1024 GPUs
-(37%), with MARS at 82% and 50%. For the scaling of MARS alone, without a linear solver, see the
+nodes per GPU the step takes 126 ms on one node, 237 ms on 256 GPUs (53%) and 301 ms on 1024 GPUs
+(42%), with MARS at 55% and 48%. For the scaling of MARS alone, without a linear solver, see the
 matrix-free operator in [Matrix-Free Tutorial](Matrix-Free-Tutorial.md).
 
 Measured on Alps (CSCS), GH200 nodes with 4 GPUs, one rank per GPU bound to its NUMA domain;
