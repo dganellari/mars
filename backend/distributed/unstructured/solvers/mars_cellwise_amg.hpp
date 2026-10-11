@@ -12,6 +12,8 @@
 // V-cycle the right-hand side is the DSS of the raw residual read at the counting copies,
 // and the solution returns to every copy through the counting copies and a second DSS.
 
+// domain.hpp first: the Hypre headers use its VectorSelector without including it.
+#include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/mars_sfc_ownership.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
