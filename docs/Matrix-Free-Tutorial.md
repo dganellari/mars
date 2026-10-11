@@ -59,9 +59,10 @@ On several ranks three more pieces are needed:
    belongs to the lowest rank among the ranks that hold it. An element-interior DOF belongs to
    the rank of its element. The numbering registers corners only through the elements a rank
    owns, so it needs every node owner to own an element at its node. The older vote node
-   ownership guarantees that; the default SFC ownership does not. The multi-rank drivers select
-   vote ownership themselves (`MARS_OWNERSHIP=vote`, set before the domain is built); code of
-   your own needs the same setting, and the halo stops with a message if it is missing.
+   ownership guarantees that; the default SFC ownership does not. `mars_ho_dist_apply_test`
+   selects vote ownership itself (`MARS_OWNERSHIP=vote`, set before the domain is built); code of
+   your own needs the same setting, and the halo stops with a message if it is missing. The
+   `p = 1` weak-scaling driver numbers mesh nodes only and runs on the default ownership.
 3. **Halo.** One distributed matvec is `forward` (owners copy their values to the ghost copies),
    the apply over the elements this rank owns, then `reverseAdd` (ghost contributions are added
    to the owners).
