@@ -740,17 +740,23 @@ int main(int argc, char** argv)
         return ms / reps;
     };
     // Bandwidth counts each element-local value read and written once (8 B each), plus
-    // the diagonal read in the preconditioner: what a single pass must move at least.
+    // the diagonal and the dot partner read in the preconditioner: what a single pass
+    // must move at least.
     const double vec_gb = n * 8.0 / 1e9;
     const float op_ms = time_ms([&] { apply(d_uex, d_b); });
     const float dss_ms = unstructured ? time_ms([&] { cellwise::dss(d_b, d_x, topo, uhalo.get(), stream); })
                                       : time_ms([&] { cellwise::dss(d_b, d_x, blk, halo.get(), stream); });
+    // The preconditioner as the iteration runs it: with the two dot products that follow.
+    cellwise::Reduction timing_red(MPI_COMM_WORLD);
     const float pre_ms = unstructured
         ? time_ms([&] {
-              cellwise::UnstructuredJacobi{tview, d_diag, uhalo.get()}.operator()<false, false>(d_b, d_x, nullptr,
-                                                                                               nullptr, stream);
+              cellwise::UnstructuredJacobi{tview, d_diag, uhalo.get()}.operator()<true, true>(d_b, d_x, d_uex,
+                                                                                             timing_red.partial, stream);
           })
-        : time_ms([&] { cellwise::precondition(d_b, d_x, d_diag, blk, halo.get(), stream); });
+        : time_ms([&] {
+              cellwise::JacobiPreconditioner{d_diag, blk, halo.get()}.operator()<true, true>(d_b, d_x, d_uex,
+                                                                                            timing_red.partial, stream);
+          });
     const float vc_ms = use_mg ? time_ms([&] { mg->vcycle(0, d_b, d_x, stream); }) : 0.0f;
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
     if (rank == 0) {
@@ -758,7 +764,7 @@ int main(int argc, char** argv)
                op_ms * 1e6 / E, unique / dec.size / (op_ms * 1e-3) / 1e9);
         printf("  DSS gather   %8.3f ms  %5.2f TB/s%s\n", dss_ms, 2 * vec_gb / dss_ms,
                dec.size > 1 ? "  (with the ghost exchange)" : "");
-        printf("  precond      %8.3f ms  %5.2f TB/s  (gather + Jacobi, one pass)\n", pre_ms, 3 * vec_gb / pre_ms);
+        printf("  precond      %8.3f ms  %5.2f TB/s  (gather + Jacobi + 2 dots, one pass)\n", pre_ms, 4 * vec_gb / pre_ms);
         if (use_mg) printf("  V-cycle      %8.3f ms  (%.1f operator calls' worth)\n", vc_ms, vc_ms / op_ms);
         printf("  iteration    %8.3f ms  (2 operator, 2 precond + dots, 3 updates)\n", it_ms);
         printf("  solve        %8.3f ms\n", solve_ms);
