@@ -281,19 +281,6 @@ bool one_rank(int ne, int reps)
     row("structured gather", ms_struct);
     row("unstructured, plain", ms_plain);
     row("unstructured, rotated", ms_rot);
-
-    // Thread blocks per SM the unstructured kernels are compiled for (a register cap):
-    // the DSS alone, and DSS + Jacobi + the two dot products the Krylov step uses.
-    thrust::device_vector<double> diag(n, 2.0), adot(n, 1.0), partial(1 << 16);
-    for (int mb : {1, 4, 5}) {
-        const float ms_dss = time_ms(reps, [&] { dss(raw(in), raw(out_rot), rotated.topo, nullptr, 0, mb); });
-        const UnstructuredJacobi jac{view(rotated.topo), raw(diag), nullptr, mb};
-        const float ms_jac = time_ms(reps, [&] {
-            jac.operator()<true, true>(raw(in), raw(out_rot), raw(adot), raw(partial), 0);
-        });
-        printf("  rotated, compiled for %d blocks/SM: DSS %8.3f ms, DSS + Jacobi + 2 dots %8.3f ms\n", mb, ms_dss,
-               ms_jac);
-    }
     return ok;
 }
 

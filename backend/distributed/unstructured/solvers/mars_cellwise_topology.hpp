@@ -46,7 +46,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <type_traits>
 #include <vector>
 
 namespace mars {
@@ -652,10 +651,12 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
     }
 }
 
-// MIN_BLOCKS: thread blocks per SM the kernels are compiled for, which caps their
-// registers (under measurement: 1 = no cap, 4, 5).
-template <int MIN_BLOCKS>
-__global__ void __launch_bounds__(kThreads, MIN_BLOCKS)
+// Both kernels are compiled for 4 thread blocks per SM (at most 64 registers). Measured
+// on GH200, 64^3 rotated elements: DSS 1.21 ms (1.25 uncapped, 2.09 at 5 blocks), DSS +
+// Jacobi + 2 dots 2.26 ms (3.22 uncapped, 3.15 at 5 blocks).
+constexpr int kMinBlocks = 4;
+
+__global__ void __launch_bounds__(kThreads, kMinBlocks)
 unstructured_dss_kernel(const double* __restrict__ in, const double* __restrict__ ghost, double* __restrict__ out,
                         TopologyView T, ElementList set)
 {
@@ -675,8 +676,8 @@ struct CountingWeight {
 
 // z = P q: the DSS sum, zero on Dirichlet nodes, divided by the assembled diagonal
 // elsewhere; with AZ / ZZ also <a, z> and <z, z>, each node counted once.
-template <bool AZ, bool ZZ, int MIN_BLOCKS>
-__global__ void __launch_bounds__(kThreads, MIN_BLOCKS)
+template <bool AZ, bool ZZ>
+__global__ void __launch_bounds__(kThreads, kMinBlocks)
 unstructured_precondition_kernel(const double* __restrict__ q, const double* __restrict__ ghost,
                                  double* __restrict__ z, const double* __restrict__ diag,
                                  const double* __restrict__ a, TopologyView T, ElementList set,
@@ -1117,28 +1118,16 @@ int run_unstructured_pass(UnstructuredHalo* halo, long long local, const double*
     return first + launch(halo->boundary(), halo->ghost(), first);
 }
 
-// Calls f with MIN_BLOCKS = min_blocks as a compile-time constant.
-template <typename F>
-int with_min_blocks(int min_blocks, F&& f)
-{
-    if (min_blocks == 4) return f(std::integral_constant<int, 4>{});
-    if (min_blocks == 5) return f(std::integral_constant<int, 5>{});
-    return f(std::integral_constant<int, 1>{});
-}
-
 // out = DSS(in) on every local copy. `halo` is null on one rank.
 inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, UnstructuredHalo* halo = nullptr,
-                cudaStream_t stream = 0, int min_blocks = 1)
+                cudaStream_t stream = 0)
 {
     const TopologyView v = view(T);
     run_unstructured_pass(halo, T.local, d_in, stream, [&](const ElementList& set, const double* ghost, int) {
-        return with_min_blocks(min_blocks, [&](auto mb) {
-            constexpr int M = decltype(mb)::value;
-            static const int grid = resident_grid(unstructured_dss_kernel<M>);
-            unstructured_dss_kernel<M><<<grid, kThreads, 0, stream>>>(d_in, ghost, d_out, v, set);
-            MARS_CELLWISE_CK(cudaGetLastError());
-            return grid;
-        });
+        static const int grid = resident_grid(unstructured_dss_kernel);
+        unstructured_dss_kernel<<<grid, kThreads, 0, stream>>>(d_in, ghost, d_out, v, set);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        return grid;
     });
 }
 
@@ -1148,7 +1137,6 @@ struct UnstructuredJacobi {
     TopologyView T;
     const double* diag;
     UnstructuredHalo* halo = nullptr;
-    int min_blocks = 1;
 
     template <bool AZ, bool ZZ>
     int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
@@ -1157,14 +1145,10 @@ struct UnstructuredJacobi {
         return run_unstructured_pass(halo, T.local, q, stream, [&](const ElementList& set, const double* ghost,
                                                                    int first) {
             double* p = partial ? partial + (long long)first * (NV > 0 ? NV : 1) : nullptr;
-            return with_min_blocks(min_blocks, [&](auto mb) {
-                constexpr int M = decltype(mb)::value;
-                static const int grid = resident_grid(unstructured_precondition_kernel<AZ, ZZ, M>);
-                unstructured_precondition_kernel<AZ, ZZ, M><<<grid, kThreads, 0, stream>>>(q, ghost, z, diag, a, T,
-                                                                                           set, p);
-                MARS_CELLWISE_CK(cudaGetLastError());
-                return grid;
-            });
+            static const int grid = resident_grid(unstructured_precondition_kernel<AZ, ZZ>);
+            unstructured_precondition_kernel<AZ, ZZ><<<grid, kThreads, 0, stream>>>(q, ghost, z, diag, a, T, set, p);
+            MARS_CELLWISE_CK(cudaGetLastError());
+            return grid;
         });
     }
 };
