@@ -1684,14 +1684,17 @@ private:
     {
         const RealType c1  = RealType(1) / prm_.dt;
         const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
-        viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        // Three levels: on the channel at 256 and 1024 GPUs they gave the same velocity iterations and 3 to 5% less
+        // time per step; the coarser levels cost mostly communication. MARS_VAMG_MAX_LEVELS overrides.
+        constexpr int velocityLevels = 3;
+        viscousBdf1_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG", velocityLevels);
         viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true, nullptr), prm_.tolerance,
                             prm_.maxIter);
         trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
-        viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG", velocityLevels);
         viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false, nullptr),
                             prm_.tolerance, prm_.maxIter);
         trace("velocity AMG (BDF2)");
