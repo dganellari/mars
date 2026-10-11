@@ -233,7 +233,7 @@ public:
                                                                    first_, raw(lrow), raw(lcol), raw(lval));
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
-        A_ = hypreFromEntries(comm, first_, (HYPRE_Int)rows_, total, lrow, lcol, lval);
+        A_ = fem::hypreFromEntries(comm, first_, (HYPRE_Int)rows_, total, lrow, lcol, lval);
 #if defined(HYPRE_USING_GPU)
         hypre_CSRMatrixMoveDiagFirstDevice(hypre_ParCSRMatrixDiag(A_.get()));   // relaxation reads it first
 #endif
@@ -258,7 +258,7 @@ public:
         HYPRE_BoomerAMGSetMaxIter(amg_, 1);
         HYPRE_BoomerAMGSetPrintLevel(amg_, 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
-        hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
+        fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
         rows_global_ = total;
     }
     ~P1Amg()
@@ -308,7 +308,7 @@ private:
     mutable thrust::device_vector<double> y_, v_;   // scratch of the p = 1 size
     thrust::device_vector<int> copy_;                // the counting copy of every numbered vertex
     long long rows_ = 0, first_ = 0, rows_global_ = 0;
-    HypreMatrix A_;
+    fem::HypreMatrix A_;
     HYPRE_ParVector f_ = nullptr, u_ = nullptr;
     HYPRE_Solver amg_ = nullptr;
 };
