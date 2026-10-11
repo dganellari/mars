@@ -143,16 +143,16 @@ __constant__ int c_hexCornerRef[8][3] =
 // ho_cvfem_metric_perpoint_kernel / the host computeElementMetric.
 // Output g[3]: g[2]=normal(dir), g[1]=tang1(s-axis), g[0]=tang2(r-axis) -- the EXACT
 // layout the apply's step-2 read expects (g[2]*deriv + g[0]*dt2 + g[1]*dt1).
-template<int P>
-__device__ __forceinline__ void ho_cvfem_metric_point(const double corners[8][3],
-                                                       int dir, int l, int s, int r,
-                                                       double g[3])
+// The same at an explicit reference point (normal coordinate xi_n, tangential zeta_s,
+// zeta_r), for callers whose operators are not in the constant bank.
+__device__ __forceinline__ void ho_cvfem_metric_at(const double corners[8][3], int dir, double xi_n,
+                                                   double zeta_s, double zeta_r, double g[3])
 {
     const int t1axis[3] = {1, 0, 0}, t2axis[3] = {2, 2, 1};
     double rf[3];
-    rf[dir]          = c_xi[l];
-    rf[t1axis[dir]]  = c_zeta[s];
-    rf[t2axis[dir]]  = c_zeta[r];
+    rf[dir]          = xi_n;
+    rf[t1axis[dir]]  = zeta_s;
+    rf[t2axis[dir]]  = zeta_r;
 
     double J[3][3];
     #pragma unroll
@@ -196,6 +196,14 @@ __device__ __forceinline__ void ho_cvfem_metric_point(const double corners[8][3]
     g[0] = gvec[t2axis[dir]];   // tang2 (r-axis)
     g[1] = gvec[t1axis[dir]];   // tang1 (s-axis)
     g[2] = gvec[dir];           // normal
+}
+
+template<int P>
+__device__ __forceinline__ void ho_cvfem_metric_point(const double corners[8][3],
+                                                       int dir, int l, int s, int r,
+                                                       double g[3])
+{
+    ho_cvfem_metric_at(corners, dir, c_xi[l], c_zeta[s], c_zeta[r], g);
 }
 
 // --------------------------------------------------------------------------

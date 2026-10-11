@@ -21,8 +21,11 @@ constexpr int kP = kN - 1;   // polynomial degree (7)
 // (i, j) over the other two axes in increasing order, corner slot s = i-bit + 2 j-bit.
 // Edge k: axis k / 4 varies (position t from coordinate 0 to p), the other two axes fixed
 // at ((k / 2) % 2) * p and (k % 2) * p, in increasing axis order.
+// The node functions take the degree P as a template argument (p = 7 by default) for the
+// p-multigrid levels; node (a, b, c) of degree P is (a * (P + 1) + b) * (P + 1) + c.
 
-MARS_CW_HD inline int node_at(int x, int y, int z) { return (x * kN + y) * kN + z; }
+template <int P = kP>
+MARS_CW_HD inline int node_at(int x, int y, int z) { return (x * (P + 1) + y) * (P + 1) + z; }
 
 MARS_CW_HD inline int corner_from_bits(int bx, int by, int bz)
 {
@@ -37,11 +40,12 @@ MARS_CW_HD inline void corner_bits(int c, int& bx, int& by, int& bz)
     by = (q >= 2);
 }
 
+template <int P = kP>
 MARS_CW_HD inline int corner_node(int c)
 {
     int bx, by, bz;
     corner_bits(c, bx, by, bz);
-    return node_at(bx * kP, by * kP, bz * kP);
+    return node_at<P>(bx * P, by * P, bz * P);
 }
 
 MARS_CW_HD inline void other_axes(int axis, int& o0, int& o1)
@@ -50,15 +54,16 @@ MARS_CW_HD inline void other_axes(int axis, int& o0, int& o1)
     o1 = axis == 2 ? 1 : 2;
 }
 
+template <int P = kP>
 MARS_CW_HD inline int face_node(int f, int i, int j)
 {
     const int axis = f / 2;
     int x[3], o0, o1;
     other_axes(axis, o0, o1);
-    x[axis] = (f % 2) * kP;
+    x[axis] = (f % 2) * P;
     x[o0] = i;
     x[o1] = j;
-    return node_at(x[0], x[1], x[2]);
+    return node_at<P>(x[0], x[1], x[2]);
 }
 
 MARS_CW_HD inline int face_corner(int f, int s)
@@ -72,15 +77,16 @@ MARS_CW_HD inline int face_corner(int f, int s)
     return corner_from_bits(b[0], b[1], b[2]);
 }
 
+template <int P = kP>
 MARS_CW_HD inline int edge_node(int k, int t)
 {
     const int axis = k / 4;
     int x[3], o0, o1;
     other_axes(axis, o0, o1);
     x[axis] = t;
-    x[o0] = ((k / 2) % 2) * kP;
-    x[o1] = (k % 2) * kP;
-    return node_at(x[0], x[1], x[2]);
+    x[o0] = ((k / 2) % 2) * P;
+    x[o1] = (k % 2) * P;
+    return node_at<P>(x[0], x[1], x[2]);
 }
 
 MARS_CW_HD inline int edge_corner(int k, int end)
@@ -124,18 +130,20 @@ MARS_CW_HD inline int face_frame_code(const unsigned long long (&key)[4])
     return o | (first_is_i ? 4 : 0);
 }
 
+template <int P = kP>
 MARS_CW_HD inline void face_to_canonical(int code, int i, int j, int& I, int& J)
 {
-    const int di = (code & 1) ? kP - i : i, dj = (code & 2) ? kP - j : j;
+    const int di = (code & 1) ? P - i : i, dj = (code & 2) ? P - j : j;
     if (code & 4) { I = di; J = dj; }
     else { I = dj; J = di; }
 }
 
+template <int P = kP>
 MARS_CW_HD inline void canonical_to_face(int code, int I, int J, int& i, int& j)
 {
     const int di = (code & 4) ? I : J, dj = (code & 4) ? J : I;
-    i = (code & 1) ? kP - di : di;
-    j = (code & 2) ? kP - dj : dj;
+    i = (code & 1) ? P - di : di;
+    j = (code & 2) ? P - dj : dj;
 }
 
 }  // namespace cellwise

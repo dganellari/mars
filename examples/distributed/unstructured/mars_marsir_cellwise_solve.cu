@@ -29,6 +29,9 @@
 // gives a share of the elements, the domain redistributes them by SFC) and builds the
 // tables and ghost layer from it (solvers/mars_cellwise_domain.hpp); it first checks
 // the DSS against the copy counts the geometry implies.
+// --mg with --unstructured or --domain preconditions with the p-multigrid V-cycle
+// (solvers/mars_cellwise_pmg.hpp, degrees 7 -> 3 -> 1, --coarse k Chebyshev steps at p = 1);
+// it must match marsir-mlir/test/cellwise_pmg_ref.py.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -41,6 +44,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
@@ -406,7 +410,7 @@ int main(int argc, char** argv)
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
     bool use_mg = false, unstructured = false, rotate = false, use_domain = false;
-    int pre = 0, post = 3;
+    int pre = 0, post = 3, coarse_steps = 10;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
@@ -422,15 +426,15 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--reps")) reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--pre")) pre = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--post")) post = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--coarse")) coarse_steps = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     if (!error && ptx_path.empty()) error = "--ptx is required";
-    if (!error && use_mg && (ne & (ne - 1))) error = "--mg needs ne to be a power of two";
-    if (!error && unstructured && use_mg) error = "--unstructured runs with Jacobi only for now";
+    if (!error && use_mg && !unstructured && (ne & (ne - 1))) error = "--mg needs ne to be a power of two";
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--unstructured] "
+                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--unstructured] "
                             "[--rotate] [--domain]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
@@ -554,6 +558,8 @@ int main(int argc, char** argv)
     // The unstructured tables of the same cube: this rank's elements, then the ghost
     // elements around them; corner keys = global lattice vertex ids.
     cellwise::UnstructuredTopology topo;
+    thrust::device_vector<unsigned long long> elem;   // lattice ids and owners of the tables' elements
+    thrust::device_vector<int> owner;
     const cellwise::Block flat(E, 1, 1);   // unstructured iteration space: E elements in a row
     if (use_domain) {
         topo = std::move(dtables.topo);
@@ -563,8 +569,6 @@ int main(int argc, char** argv)
         cellwise::zero_dirichlet(d_uex, topo, stream);
         cellwise::dss(d_b, d_diag, topo, uhalo.get(), stream);   // assembled diagonal on every copy
     } else if (unstructured) {
-        thrust::device_vector<unsigned long long> elem;
-        thrust::device_vector<int> owner;
         cellwise::block_elements(dec, elem, owner);
         const long long ET = (long long)elem.size();
         thrust::device_vector<unsigned long long> key[8];
@@ -648,6 +652,36 @@ int main(int argc, char** argv)
     };
     apply(d_uex, d_b);                   // b = A u, unassembled
 
+    // p-multigrid on the unstructured tables: the p = 3 and p = 1 metrics from the same
+    // corners, and on several ranks an exchange per degree.
+    auto apply7 = [&](const double* u, double* y, cudaStream_t s) {
+        op.apply(u, d_btil, d_dtil, d_w, d_d, d_G, y, E, s);
+    };
+    using PMultigrid = cellwise::PMultigrid<decltype(apply7)>;
+    std::unique_ptr<PMultigrid> pmg;
+    std::unique_ptr<cellwise::UnstructuredHalo> uhalo3, uhalo1;
+    double *d_G3 = nullptr, *d_G1 = nullptr;
+    if (unstructured && use_mg) {
+        d_G3 = device_array(E * cellwise::metric_size<3>);
+        d_G1 = device_array(E * cellwise::metric_size<1>);
+        auto coarse_metrics = [&](auto corners) {
+            if (E == 0) return;
+            cellwise::cvfem_metric_kernel<3><<<blocks_for(E * 3LL * 3 * 16, threads), threads, 0, stream>>>(
+                d_G3, E, corners, cellwise::cvfem_matrices<3>());
+            cellwise::cvfem_metric_kernel<1><<<blocks_for(E * 3LL * 1 * 4, threads), threads, 0, stream>>>(
+                d_G1, E, corners, cellwise::cvfem_matrices<1>());
+            MARS_CELLWISE_CK(cudaGetLastError());
+        };
+        if (use_domain) coarse_metrics(StoredCorners{thrust::raw_pointer_cast(stored.data())});
+        else coarse_metrics(LatticeCorners{blk, deform, rotate});
+        if (dec.size > 1) {
+            const unsigned long long* gid = thrust::raw_pointer_cast(use_domain ? dtables.gid.data() : elem.data());
+            const int* own = thrust::raw_pointer_cast(use_domain ? dtables.owner.data() : owner.data());
+            uhalo3.reset(new cellwise::UnstructuredHalo(topo, gid, own, MPI_COMM_WORLD, 3));
+            uhalo1.reset(new cellwise::UnstructuredHalo(topo, gid, own, MPI_COMM_WORLD, 1));
+        }
+    }
+
     // Multigrid levels: the metric and the unassembled diagonal of any block (a rank's
     // part or, on rank 0, a whole coarse block), made on the GPU.
     auto apply_on = [&](const double* u, double* y, const double* G, long long elements,
@@ -669,8 +703,12 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaEventCreate(&t1));
     if (use_mg) {
         MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
-        mg.reset(new Multigrid(apply_on, make_level, {blk, d_G, d_diag}, dec, ops.zeta.data(), pre, post,
-                               stream));
+        if (unstructured)
+            pmg.reset(new PMultigrid(apply7, topo, d_diag, d_G3, d_G1, {uhalo.get(), uhalo3.get(), uhalo1.get()}, pre,
+                                     post, coarse_steps, MPI_COMM_WORLD, stream));
+        else
+            mg.reset(new Multigrid(apply_on, make_level, {blk, d_G, d_diag}, dec, ops.zeta.data(), pre, post,
+                                   stream));
         MARS_CELLWISE_CK(cudaEventRecord(t1, stream));
         MARS_CELLWISE_CK(cudaEventSynchronize(t1));
         MARS_CELLWISE_CK(cudaEventElapsedTime(&setup_ms, t0, t1));
@@ -680,7 +718,9 @@ int main(int argc, char** argv)
 
     MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
     const cellwise::SolveResult res =
-        unstructured ? cellwise::bicgstab(apply, cellwise::UnstructuredJacobi{tview, d_diag, uhalo.get()}, counting,
+        unstructured && use_mg
+            ? cellwise::bicgstab(apply, *pmg, counting, flat, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
+        : unstructured ? cellwise::bicgstab(apply, cellwise::UnstructuredJacobi{tview, d_diag, uhalo.get()}, counting,
                                           flat, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
         : use_mg     ? cellwise::bicgstab(apply, *mg, blk, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
                      : cellwise::bicgstab(apply, cellwise::JacobiPreconditioner{d_diag, blk, halo.get()}, blk,
@@ -706,7 +746,8 @@ int main(int argc, char** argv)
     if (rank == 0) {
         printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f, %s\n",
                kP, ne, (long long)ne * ne * ne, unique, deform,
-               use_domain   ? (rotate ? "ElementDomain tables, rotated frames, DSS + Jacobi" : "ElementDomain tables, DSS + Jacobi")
+               unstructured && use_mg ? (use_domain ? "ElementDomain tables, p-multigrid 7-3-1" : "unstructured tables, p-multigrid 7-3-1")
+               : use_domain   ? (rotate ? "ElementDomain tables, rotated frames, DSS + Jacobi" : "ElementDomain tables, DSS + Jacobi")
                : unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
                : use_mg     ? "multigrid V-cycle" : "DSS + Jacobi");
         if (use_domain)
@@ -714,7 +755,11 @@ int main(int argc, char** argv)
         else
             printf("  %d rank(s) as %d x %d x %d, %d x %d x %d elements each\n", dec.size, dec.P[0], dec.P[1],
                    dec.P[2], blk.nx, blk.ny, blk.nz);
-        if (use_mg) {
+        if (use_mg && unstructured) {
+            const auto& l = pmg->lambda_max();
+            printf("  p-multigrid (%d,%d), %d Chebyshev steps at p = 1, setup %.1f ms; lambda_max(P_J A) at p = 7, 3, 1:"
+                   " %.4f %.4f %.4f\n", pre, post, coarse_steps, setup_ms, l[0], l[1], l[2]);
+        } else if (use_mg) {
             printf("  multigrid (%d,%d) setup %.1f ms; lambda_max(P_J A) per level:", pre, post, setup_ms);
             for (double l : mg->lambda_max()) printf(" %.4f", l);
             printf("\n");
@@ -757,7 +802,9 @@ int main(int argc, char** argv)
               cellwise::JacobiPreconditioner{d_diag, blk, halo.get()}.operator()<true, true>(d_b, d_x, d_uex,
                                                                                             timing_red.partial, stream);
           });
-    const float vc_ms = use_mg ? time_ms([&] { mg->vcycle(0, d_b, d_x, stream); }) : 0.0f;
+    const float vc_ms = !use_mg       ? 0.0f
+                        : unstructured ? time_ms([&] { pmg->template vcycle<7>(d_b, d_x); })
+                                       : time_ms([&] { mg->vcycle(0, d_b, d_x, stream); });
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
     if (rank == 0) {
         printf("  operator     %8.3f ms  %7.1f ns/elem  %6.2f GDoF/s (unique, per rank)\n", op_ms,
@@ -771,8 +818,13 @@ int main(int argc, char** argv)
     }
 
     mg.reset();
+    pmg.reset();
     halo.reset();
     uhalo.reset();
+    uhalo3.reset();
+    uhalo1.reset();
+    cudaFree(d_G3);
+    cudaFree(d_G1);
     for (double* p : {d_btil, d_dtil, d_w, d_d, d_G, d_diag, d_uex, d_b, d_x})
         cudaFree(p);
     MARS_CELLWISE_CK(cudaStreamDestroy(stream));

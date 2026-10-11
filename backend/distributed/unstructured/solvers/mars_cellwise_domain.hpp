@@ -215,12 +215,15 @@ inline void sort_unique_pairs(thrust::device_vector<int>& dest, thrust::device_v
 
 }  // namespace domain_detail
 
-// The tables of one rank, its exchange (null on one rank), and where its elements sit
-// in the domain: local element i is domain element first + i.
+// The tables of one rank, its exchange at p = 7 (null on one rank), where its elements
+// sit in the domain (local element i is domain element first + i), and the element ids
+// and owners of the tables' elements, for exchanges at other degrees.
 struct DomainTables {
     UnstructuredTopology topo;
     std::unique_ptr<UnstructuredHalo> halo;
     long long first = 0;
+    thrust::device_vector<unsigned long long> gid;
+    thrust::device_vector<int> owner;
 };
 
 template <class RealType, class KeyType>
@@ -396,6 +399,8 @@ DomainTables build_tables(const ElementDomain<HexTag, RealType, KeyType, cstone:
     const thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
     out.topo = build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()), E, L);
     if (size > 1) out.halo.reset(new UnstructuredHalo(out.topo, raw(gid), raw(owner), comm));
+    out.gid = std::move(gid);
+    out.owner = std::move(owner);
     return out;
 }
 

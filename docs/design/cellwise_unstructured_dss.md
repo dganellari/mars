@@ -207,9 +207,12 @@ Without the p = 3 level (7 -> 1) it takes 15 iterations at ne = 8; (2, 2) smooth
 one iteration. The coarse level needs only a modest-accuracy solve, but a fixed number
 of Chebyshev steps degrades with ne, so large meshes need AMG there. Plan:
 
-1. GPU p-multigrid with k Chebyshev steps at p = 1: all cell-wise, no assembly. The
-   p = 3 and p = 1 operators are MARS's `ho_cvfem_apply_launch<double, P>` with an
-   identity element-to-DOF map (each copy its own DOF, so its atomics never collide).
+1. GPU p-multigrid with k Chebyshev steps at p = 1 (`mars_cellwise_pmg.hpp`): all
+   cell-wise, no assembly. The p = 3 and p = 1 operators are `cvfem_apply<P>`
+   (`mars_cellwise_operator.hpp`), which takes its 1D matrices as a kernel argument: MARS's
+   `ho_cvfem_apply_launch` reads them from one constant bank that holds a single degree,
+   while a V-cycle alternates degrees. Same thread layout as that kernel (one thread per
+   tangential slot, the element in shared memory), MARSIR's metric layout.
 2. hypre BoomerAMG at p = 1 on the assembled p = 1 operator (global vertex numbering
    from the node owners), for h-independence at production sizes.
 

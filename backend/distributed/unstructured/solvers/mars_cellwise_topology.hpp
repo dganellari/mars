@@ -455,8 +455,13 @@ inline TopologyView view(const UnstructuredTopology& T)
             raw(T.face_code),   raw(T.edge_dirichlet), raw(T.vert_dirichlet), raw(T.counting)};
 }
 
-constexpr int kFaceNodes = (kN - 2) * (kN - 2);                  // 36 per face
-constexpr int kEdgeNodes = kN - 2;                               // 6 per edge
+// Interior nodes of a face and an edge at degree P (36 and 6 at p = 7). The per-degree
+// code below takes P as a template argument, p = 7 by default; the tables are the same at
+// every degree.
+template <int P>
+constexpr int face_nodes = (P - 1) * (P - 1);
+template <int P>
+constexpr int edge_nodes = P - 1;
 
 // The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner,
 // and its local number (f, k or c).
@@ -464,21 +469,22 @@ struct LocalEntity {
     int kind, index;
 };
 
+template <int P = kP>
 __device__ inline LocalEntity local_entity(int a, int b, int c)
 {
     const int x[3] = {a, b, c};
     int on = 0;
-    for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == kP);
+    for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == P);
     if (on == 0) return {0, 0};
-    if (on == 3) return {3, corner_from_bits(x[0] == kP, x[1] == kP, x[2] == kP)};
+    if (on == 3) return {3, corner_from_bits(x[0] == P, x[1] == P, x[2] == P)};
     int axis = 0, o0, o1;
     if (on == 1) {
-        while (x[axis] != 0 && x[axis] != kP) ++axis;
-        return {1, axis * 2 + (x[axis] == kP)};
+        while (x[axis] != 0 && x[axis] != P) ++axis;
+        return {1, axis * 2 + (x[axis] == P)};
     }
-    while (x[axis] == 0 || x[axis] == kP) ++axis;   // the edge runs along the free axis
+    while (x[axis] == 0 || x[axis] == P) ++axis;   // the edge runs along the free axis
     other_axes(axis, o0, o1);
-    return {2, axis * 4 + (x[o0] == kP) * 2 + (x[o1] == kP)};
+    return {2, axis * 4 + (x[o0] == P) * 2 + (x[o1] == P)};
 }
 
 __device__ inline int entity_bit(const LocalEntity& le)
@@ -500,35 +506,43 @@ __device__ inline int entity_bit(const LocalEntity& le)
 // Every copy of a node gets the same bits: a face adds its two copies (addition is
 // commutative), edges and vertices sum their stars in canonical order.
 
+template <int P>
 struct HexTables {
-    unsigned short face_l[6 * kFaceNodes];   // local node of face f at position q = (i - 1) * 6 + j - 1
-    unsigned char face_map[64 * kFaceNodes];  // frame codes (own | other << 3), own q -> the other's q
-    unsigned short edge_l[12 * kN];           // local node of edge k at position t
+    static constexpr int F = face_nodes<P> > 0 ? face_nodes<P> : 1;   // no zero-size arrays at p = 1
+    unsigned short face_l[6 * F];    // local node of face f at position q = (i - 1) (P - 1) + j - 1
+    unsigned char face_map[64 * F];  // frame codes (own | other << 3), own q -> the other's q
+    unsigned short edge_l[12 * (P + 1)];   // local node of edge k at position t
     unsigned short corner_l[8];
-    unsigned char bit[kN3];                   // entity bit of every local node
+    unsigned char bit[(P + 1) * (P + 1) * (P + 1)];   // entity bit of every local node
 };
 
-__device__ inline void build_hex_tables(HexTables& h)
+template <int P>
+__device__ inline void build_hex_tables(HexTables<P>& h)
 {
-    for (int i = threadIdx.x; i < 64 * kFaceNodes; i += blockDim.x) {
-        const int q = i % kFaceNodes, code = i / kFaceNodes;
-        int I, J, i2, j2;
-        face_to_canonical(code & 7, 1 + q / 6, 1 + q % 6, I, J);
-        canonical_to_face(code >> 3, I, J, i2, j2);
-        h.face_map[i] = (unsigned char)((i2 - 1) * 6 + j2 - 1);
+    constexpr int n = P + 1, F = face_nodes<P>;
+    if constexpr (P > 1) {
+        for (int i = threadIdx.x; i < 64 * F; i += blockDim.x) {
+            const int q = i % F, code = i / F;
+            int I, J, i2, j2;
+            face_to_canonical<P>(code & 7, 1 + q / (P - 1), 1 + q % (P - 1), I, J);
+            canonical_to_face<P>(code >> 3, I, J, i2, j2);
+            h.face_map[i] = (unsigned char)((i2 - 1) * (P - 1) + j2 - 1);
+        }
+        for (int i = threadIdx.x; i < 6 * F; i += blockDim.x)
+            h.face_l[i] = (unsigned short)face_node<P>(i / F, 1 + (i % F) / (P - 1), 1 + (i % F) % (P - 1));
     }
-    for (int i = threadIdx.x; i < 6 * kFaceNodes; i += blockDim.x)
-        h.face_l[i] = (unsigned short)face_node(i / kFaceNodes, 1 + (i % kFaceNodes) / 6, 1 + i % 6);
-    for (int i = threadIdx.x; i < 12 * kN; i += blockDim.x) h.edge_l[i] = (unsigned short)edge_node(i / kN, i % kN);
-    if (threadIdx.x < 8) h.corner_l[threadIdx.x] = (unsigned short)corner_node(threadIdx.x);
-    for (int l = threadIdx.x; l < kN3; l += blockDim.x)
-        h.bit[l] = (unsigned char)entity_bit(local_entity(l / kNN, (l / kN) % kN, l % kN));
+    for (int i = threadIdx.x; i < 12 * n; i += blockDim.x) h.edge_l[i] = (unsigned short)edge_node<P>(i / n, i % n);
+    if (threadIdx.x < 8) h.corner_l[threadIdx.x] = (unsigned short)corner_node<P>(threadIdx.x);
+    for (int l = threadIdx.x; l < n * n * n; l += blockDim.x)
+        h.bit[l] = (unsigned char)entity_bit(local_entity<P>(l / (n * n), (l / n) % n, l % n));
     __syncthreads();
 }
 
-// One pad slot per row of 8 spreads the strided nodes of a face over the shared-memory banks.
-constexpr int kStage = kN3 + kN3 / kN;
-__device__ inline int stage_slot(int l) { return l + l / kN; }
+// One pad slot per row of P + 1 spreads the strided nodes of a face over the shared-memory banks.
+template <int P>
+constexpr int stage_size = (P + 1) * (P + 1) * (P + 2);
+template <int P>
+__device__ inline int stage_slot(int l) { return l + l / (P + 1); }
 
 // Sum of value over star entries [begin, end) in order; entries are loaded four at a
 // time so their value loads overlap.
@@ -565,19 +579,33 @@ struct GhostedValues {
     __device__ double operator()(long long i) const { return i < local_values ? local[i] : ghost[i - local_values]; }
 };
 
+// The residual b - y (b alone when y is null) on the local copies; the ghost copies hold
+// the exchanged residual.
+struct ResidualValues {
+    const double* b;
+    const double* y;
+    const double* ghost;
+    long long local_values;
+    __device__ double operator()(long long i) const
+    {
+        return i < local_values ? b[i] - (y ? y[i] : 0.0) : ghost[i - local_values];
+    }
+};
+
 // visit(t, s, dirichlet, counted) for every copy t of the elements in `set`, in
 // coalesced order: s is the sum over all copies of its node, counted marks the counting
 // copy. Called by every thread of the block (it synchronises the block once, to build
 // the tables).
-template <typename Value, typename Visit>
+template <int P, typename Value, typename Visit>
 __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementList& set, const Value& value,
                                          Visit&& visit)
 {
     constexpr unsigned kAll = 0xffffffffu;
-    constexpr int kFaceSlots = 6 * kFaceNodes, kEdgeSlots = 12 * kEdgeNodes, kStarSlots = kEdgeSlots + 8;
-    __shared__ HexTables h;
-    __shared__ double stage_all[kThreads / 32][kStage];
-    build_hex_tables(h);
+    constexpr int n = P + 1, n3 = n * n * n, F = face_nodes<P>, Ed = edge_nodes<P>;
+    constexpr int kFaceSlots = 6 * F, kEdgeSlots = 12 * Ed, kStarSlots = kEdgeSlots + 8;
+    __shared__ HexTables<P> h;
+    __shared__ double stage_all[kThreads / 32][stage_size<P>];
+    build_hex_tables<P>(h);
     const int lane = threadIdx.x & 31;
     double* stage = stage_all[threadIdx.x >> 5];
     const long long warps = ((long long)gridDim.x * blockDim.x) >> 5;
@@ -605,47 +633,53 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
         }
         const unsigned dirichlet = __ballot_sync(kAll, dir != 0);
         const unsigned counting = T.counting[e];
-        const long long base = e * kN3;
+        const long long base = e * n3;
 #pragma unroll
-        for (int it = 0; it < kN3 / 32; ++it) stage[stage_slot(it * 32 + lane)] = value(base + it * 32 + lane);
+        for (int it = 0; it < (n3 + 31) / 32; ++it) {
+            const int l = it * 32 + lane;
+            if (l < n3) stage[stage_slot<P>(l)] = value(base + l);
+        }
         __syncwarp();
         // Shuffles stay outside conditions: every lane must execute each of them.
+        if constexpr (P > 1) {
 #pragma unroll
-        for (int p0 = 0; p0 < kFaceSlots; p0 += 32) {
-            const int p = p0 + lane;
-            const int f = p < kFaceSlots ? p / kFaceNodes : 0;
-            const int nbr = __shfl_sync(kAll, d0, f);
-            const int code = __shfl_sync(kAll, d1, f);
-            if (p < kFaceSlots && nbr >= 0) {
-                const int q = h.face_map[(code & 63) * kFaceNodes + p - f * kFaceNodes];
-                stage[stage_slot(h.face_l[p])] += value((long long)(nbr / 6) * kN3 + h.face_l[(nbr % 6) * kFaceNodes + q]);
+            for (int p0 = 0; p0 < kFaceSlots; p0 += 32) {
+                const int p = p0 + lane;
+                const int f = p < kFaceSlots ? p / F : 0;
+                const int nbr = __shfl_sync(kAll, d0, f);
+                const int code = __shfl_sync(kAll, d1, f);
+                if (p < kFaceSlots && nbr >= 0) {
+                    const int q = h.face_map[(code & 63) * F + p - f * F];
+                    stage[stage_slot<P>(h.face_l[p])] += value((long long)(nbr / 6) * n3 + h.face_l[(nbr % 6) * F + q]);
+                }
             }
         }
         for (int p0 = 0; p0 < kStarSlots; p0 += 32) {
             const int p = p0 + lane;
-            const int k = p < kEdgeSlots ? p / kEdgeNodes : 0;
+            const int k = p < kEdgeSlots ? p / (Ed > 0 ? Ed : 1) : 0;
             const int src = p < kEdgeSlots ? kEdgeBit + k : (p < kStarSlots ? kVertexBit + p - kEdgeSlots : 0);
             const int n0 = __shfl_sync(kAll, d0, src);
             const int n1 = __shfl_sync(kAll, d1, src);
             const int n2 = __shfl_sync(kAll, d2, src);
             if (p < kEdgeSlots) {
-                const int t = 1 + p - k * kEdgeNodes;
-                const int tc = n0 < 0 ? kP - t : t;   // canonical position on the edge
-                stage[stage_slot(h.edge_l[k * kN + t])] = star_sum(value, T.edge_ent, n1, n2, [&](int c) {
+                const int t = 1 + p - k * Ed;
+                const int tc = n0 < 0 ? P - t : t;   // canonical position on the edge
+                stage[stage_slot<P>(h.edge_l[k * n + t])] = star_sum(value, T.edge_ent, n1, n2, [&](int c) {
                     const int m = c & 0x7fffffff;
-                    return (long long)(m / 12) * kN3 + h.edge_l[(m % 12) * kN + (c < 0 ? kP - tc : tc)];
+                    return (long long)(m / 12) * n3 + h.edge_l[(m % 12) * n + (c < 0 ? P - tc : tc)];
                 });
             } else if (p < kStarSlots) {
-                stage[stage_slot(h.corner_l[p - kEdgeSlots])] = star_sum(
-                    value, T.vert_ent, n1, n2, [&](int c) { return (long long)(c / 8) * kN3 + h.corner_l[c % 8]; });
+                stage[stage_slot<P>(h.corner_l[p - kEdgeSlots])] = star_sum(
+                    value, T.vert_ent, n1, n2, [&](int c) { return (long long)(c / 8) * n3 + h.corner_l[c % 8]; });
             }
         }
         __syncwarp();
 #pragma unroll
-        for (int it = 0; it < kN3 / 32; ++it) {
+        for (int it = 0; it < (n3 + 31) / 32; ++it) {
             const int l = it * 32 + lane;
+            if (l >= n3) continue;
             const int bit = h.bit[l];
-            visit(base + l, stage[stage_slot(l)], ((dirichlet >> bit) & 1u) != 0, ((counting >> bit) & 1u) != 0);
+            visit(base + l, stage[stage_slot<P>(l)], ((dirichlet >> bit) & 1u) != 0, ((counting >> bit) & 1u) != 0);
         }
         __syncwarp();   // the next element reuses the stage
     }
@@ -656,12 +690,13 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
 // Jacobi + 2 dots 2.26 ms (3.22 uncapped, 3.15 at 5 blocks).
 constexpr int kMinBlocks = 4;
 
+template <int P = kP>
 __global__ void __launch_bounds__(kThreads, kMinBlocks)
 unstructured_dss_kernel(const double* __restrict__ in, const double* __restrict__ ghost, double* __restrict__ out,
                         TopologyView T, ElementList set)
 {
-    const GhostedValues value{in, ghost, T.local * kN3};
-    for_each_copy_sum(T, set, value, [&](long long t, double s, bool, bool) { out[t] = s; });
+    const GhostedValues value{in, ghost, T.local * (P + 1) * (P + 1) * (P + 1)};
+    for_each_copy_sum<P>(T, set, value, [&](long long t, double s, bool, bool) { out[t] = s; });
 }
 
 // Weight of a copy in the assembled inner product: 1 on the counting copy of its node
@@ -686,7 +721,7 @@ unstructured_precondition_kernel(const double* __restrict__ q, const double* __r
     constexpr int NV = AZ + ZZ;
     [[maybe_unused]] double acc[NV > 0 ? NV : 1] = {};
     const GhostedValues value{q, ghost, T.local * kN3};
-    for_each_copy_sum(T, set, value, [&](long long t, double s, bool dirichlet, bool counted) {
+    for_each_copy_sum<kP>(T, set, value, [&](long long t, double s, bool dirichlet, bool counted) {
         const double v = dirichlet ? 0.0 : s / diag[t];
         z[t] = v;
         if constexpr (NV > 0) {
@@ -698,15 +733,53 @@ unstructured_precondition_kernel(const double* __restrict__ q, const double* __r
     if constexpr (NV > 0) store_partial<NV>(acc, partial);
 }
 
+// One Chebyshev step of the p-multigrid smoother at degree P: z = Jacobi(DSS(b - y)),
+// zero on Dirichlet copies, with y = A x (null while x = 0); then d = c1 d + c2 z and
+// x += d (FIRST: d = c2 z, and x = d when y is null).
+template <int P, bool FIRST>
+__global__ void __launch_bounds__(kThreads)
+unstructured_chebyshev_kernel(const double* __restrict__ b, const double* __restrict__ y,
+                              const double* __restrict__ ghost, const double* __restrict__ diag,
+                              double* __restrict__ d, double* __restrict__ x, double c1, double c2, TopologyView T,
+                              ElementList set)
+{
+    const ResidualValues value{b, y, ghost, T.local * (P + 1) * (P + 1) * (P + 1)};
+    for_each_copy_sum<P>(T, set, value, [&](long long t, double s, bool dirichlet, bool) {
+        const double z = dirichlet ? 0.0 : s / diag[t];
+        const double dn = FIRST ? c2 * z : c1 * d[t] + c2 * z;
+        d[t] = dn;
+        x[t] = FIRST && !y ? dn : x[t] + dn;
+    });
+}
+
+// Block partials of <a, b> over the local copies at degree P, each node counted once.
+template <int P>
+__global__ void __launch_bounds__(kThreads)
+level_wdot_kernel(const double* __restrict__ a, const double* __restrict__ b, const unsigned* __restrict__ counting,
+                  long long local, double* __restrict__ partial)
+{
+    constexpr int n = P + 1, n3 = n * n * n;
+    double acc[1] = {0.0};
+    for (long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x; t < local * n3;
+         t += (long long)gridDim.x * blockDim.x) {
+        const int l = (int)(t % n3);
+        if ((counting[t / n3] >> entity_bit(local_entity<P>(l / (n * n), (l / n) % n, l % n))) & 1u)
+            acc[0] += a[t] * b[t];
+    }
+    store_partial<1>(acc, partial);
+}
+
 // u = 0 on every local copy of a Dirichlet node: a homogeneous Dirichlet condition on an
 // element-local vector (e.g. a manufactured solution on quantized coordinates).
+template <int P = kP>
 __global__ void zero_dirichlet_kernel(double* __restrict__ u, TopologyView T)
 {
+    constexpr int n = P + 1, n3 = n * n * n;
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= T.local * kN3) return;
-    const long long e = t / kN3;
-    const int l = (int)(t % kN3);
-    const LocalEntity le = local_entity(l / kNN, (l / kN) % kN, l % kN);
+    if (t >= T.local * n3) return;
+    const long long e = t / n3;
+    const int l = (int)(t % n3);
+    const LocalEntity le = local_entity<P>(l / (n * n), (l / n) % n, l % n);
     bool dirichlet = false;
     if (le.kind == 1) dirichlet = (T.face_code[e * 6 + le.index] >> 6) != 0;
     else if (le.kind == 2) dirichlet = T.edge_dirichlet[T.edge_of[e * 12 + le.index] & 0x7fffffff] != 0;
@@ -714,11 +787,18 @@ __global__ void zero_dirichlet_kernel(double* __restrict__ u, TopologyView T)
     if (dirichlet) u[t] = 0.0;
 }
 
-inline void zero_dirichlet(double* d_u, const UnstructuredTopology& T, cudaStream_t stream = 0)
+template <int P = kP>
+void zero_dirichlet(double* d_u, const TopologyView& T, cudaStream_t stream = 0)
 {
-    const long long n = T.local * kN3;
-    if (n > 0) zero_dirichlet_kernel<<<topo_detail::blocks(n), kThreads, 0, stream>>>(d_u, view(T));
+    const long long n = T.local * (P + 1) * (P + 1) * (P + 1);
+    if (n > 0) zero_dirichlet_kernel<P><<<topo_detail::blocks(n), kThreads, 0, stream>>>(d_u, T);
     MARS_CELLWISE_CK(cudaGetLastError());
+}
+
+template <int P = kP>
+void zero_dirichlet(double* d_u, const UnstructuredTopology& T, cudaStream_t stream = 0)
+{
+    zero_dirichlet<P>(d_u, view(T), stream);
 }
 
 // ---- several ranks ---------------------------------------------------------------------
@@ -759,13 +839,31 @@ inline MPI_Datatype mpi_type<double>() { return MPI_DOUBLE; }
 template <>
 inline MPI_Datatype mpi_type<unsigned long long>() { return MPI_UINT64_T; }
 
-// The interior nodes of a face (36), an edge (6) or a corner (1).
-__device__ inline int entity_nodes(int kind) { return kind == 1 ? kFaceNodes : (kind == 2 ? kEdgeNodes : 1); }
-__device__ inline int entity_node(int kind, int index, int j)
+// The interior nodes of a face ((p - 1)^2), an edge (p - 1) or a corner (1) at degree p,
+// and the local node of the j-th of them (the node functions of mars_cellwise_hex.hpp
+// with a run-time degree: the exchange is set up once per degree).
+__device__ inline int entity_nodes(int kind, int p) { return kind == 1 ? (p - 1) * (p - 1) : (kind == 2 ? p - 1 : 1); }
+__device__ inline int entity_node(int kind, int index, int j, int p)
 {
-    if (kind == 1) return face_node(index, 1 + j / 6, 1 + j % 6);
-    if (kind == 2) return edge_node(index, 1 + j);
-    return corner_node(index);
+    int x[3], o0, o1;
+    if (kind == 3) {
+        int b[3];
+        corner_bits(index, b[0], b[1], b[2]);
+        for (int k = 0; k < 3; ++k) x[k] = b[k] * p;
+    } else if (kind == 1) {
+        const int axis = index / 2;
+        other_axes(axis, o0, o1);
+        x[axis] = (index % 2) * p;
+        x[o0] = 1 + j / (p - 1);
+        x[o1] = 1 + j % (p - 1);
+    } else {
+        const int axis = index / 4;
+        other_axes(axis, o0, o1);
+        x[axis] = 1 + j;
+        x[o0] = ((index / 2) % 2) * p;
+        x[o1] = (index % 2) * p;
+    }
+    return (x[0] * (p + 1) + x[1]) * (p + 1) + x[2];
 }
 
 // A local element reads ghost copies iff one of its vertex stars holds a ghost element:
@@ -804,19 +902,20 @@ struct Entries {
 // copy once to each rank that owns a ghost copy.
 template <bool FILL>
 __global__ void entries_kernel(TopologyView T, long long edges, long long vertices,
-                               const unsigned long long* __restrict__ gid, const int* __restrict__ owner,
+                               const unsigned long long* __restrict__ gid, const int* __restrict__ owner, int p,
                                long long* __restrict__ send_at, long long* __restrict__ recv_at, Entries send,
                                Entries recv)
 {
+    const long long n3 = (long long)(p + 1) * (p + 1) * (p + 1);
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     const long long faces = T.local * 6;
     if (t >= faces + edges + vertices) return;
     long long so = FILL ? send_at[t] : 0, ro = FILL ? recv_at[t] : 0;
     auto emit = [&](Entries& out, long long& o, int peer, long long elem, int kind, int index, long long base) {
-        const int n = entity_nodes(kind);
+        const int n = entity_nodes(kind, p);
         if (FILL)
             for (int j = 0; j < n; ++j) {
-                const int l = entity_node(kind, index, j);
+                const int l = entity_node(kind, index, j, p);
                 out.peer[o + j] = peer;
                 out.gid[o + j] = gid[elem];
                 out.node[o + j] = l;
@@ -828,8 +927,8 @@ __global__ void entries_kernel(TopologyView T, long long edges, long long vertic
         const long long e = t / 6;
         const int c = T.face_nbr[t];
         if (c >= 0 && c / 6 >= T.local) {
-            emit(send, so, owner[c / 6], e, 1, (int)(t % 6), e * kN3);
-            emit(recv, ro, owner[c / 6], c / 6, 1, c % 6, (long long)(c / 6 - T.local) * kN3);
+            emit(send, so, owner[c / 6], e, 1, (int)(t % 6), e * n3);
+            emit(recv, ro, owner[c / 6], c / 6, 1, c % 6, (long long)(c / 6 - T.local) * n3);
         }
     } else {
         const bool edge = t < faces + edges;
@@ -845,7 +944,7 @@ __global__ void entries_kernel(TopologyView T, long long edges, long long vertic
                 const int c = ent[m] & 0x7fffffff;
                 const long long el = c / per;
                 if (el >= T.local) {
-                    emit(recv, ro, owner[el], el, kind, c % per, (el - T.local) * kN3);
+                    emit(recv, ro, owner[el], el, kind, c % per, (el - T.local) * n3);
                     continue;
                 }
                 for (int j = b; j < end; ++j) {
@@ -856,7 +955,7 @@ __global__ void entries_kernel(TopologyView T, long long edges, long long vertic
                         const long long ei = (ent[i] & 0x7fffffff) / per;
                         first = !(ei >= T.local && owner[ei] == owner[ej]);
                     }
-                    if (first) emit(send, so, owner[ej], el, kind, c % per, el * kN3);
+                    if (first) emit(send, so, owner[ej], el, kind, c % per, el * n3);
                 }
             }
     }
@@ -892,11 +991,12 @@ inline void sort_entries(thrust::device_vector<int>& peer, thrust::device_vector
     index.swap(sorted_index);
 }
 
-__global__ void pack_kernel(const double* __restrict__ q, const long long* __restrict__ index, long long n,
-                            double* __restrict__ out)
+// out = b - q at the listed copies (b alone when q is null).
+__global__ void pack_kernel(const double* __restrict__ b, const double* __restrict__ q,
+                            const long long* __restrict__ index, long long n, double* __restrict__ out)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n) out[t] = q[index[t]];
+    if (t < n) out[t] = q ? b[index[t]] - q[index[t]] : b[index[t]];
 }
 
 __global__ void unpack_kernel(const double* __restrict__ in, const long long* __restrict__ index, long long n,
@@ -908,15 +1008,16 @@ __global__ void unpack_kernel(const double* __restrict__ in, const long long* __
 
 }  // namespace halo_detail
 
-// The ghost exchange of one rank's tables. gid: a global id of each of the T.elements
-// elements (any partition-independent, unique number); owner: the rank that owns it.
+// The ghost exchange of one rank's tables for values of degree p. gid: a global id of each
+// of the T.elements elements (any partition-independent, unique number); owner: the rank
+// that owns it.
 // start() sends the local copies the peers need, the caller runs the elements that read
 // no ghost copies, finish() waits and files the received copies into the ghost blocks.
 // Device buffers throughout: GPU-aware MPI (on Cray MPICH, MPICH_GPU_SUPPORT_ENABLED=1).
 class UnstructuredHalo {
 public:
     UnstructuredHalo(const UnstructuredTopology& T, const unsigned long long* d_gid, const int* d_owner,
-                     MPI_Comm comm)
+                     MPI_Comm comm, int p = kP)
     {
         using namespace halo_detail;
         MARS_CELLWISE_MPI(MPI_Comm_dup(comm, &comm_));
@@ -945,7 +1046,7 @@ public:
         thrust::device_vector<long long> send_at(items), recv_at(items);
         Entries none{nullptr, nullptr, nullptr, nullptr};
         if (items > 0)
-            entries_kernel<false><<<blocks(items), kThreads>>>(v, T.edges(), T.vertices(), d_gid, d_owner,
+            entries_kernel<false><<<blocks(items), kThreads>>>(v, T.edges(), T.vertices(), d_gid, d_owner, p,
                                                                raw(send_at), raw(recv_at), none, none);
         MARS_CELLWISE_CK(cudaGetLastError());
         const long long send_total = thrust::reduce(thrust::device, send_at.begin(), send_at.end(), 0LL);
@@ -958,7 +1059,7 @@ public:
         recv_index_.resize(recv_total);
         if (items > 0)
             entries_kernel<true><<<blocks(items), kThreads>>>(
-                v, T.edges(), T.vertices(), d_gid, d_owner, raw(send_at), raw(recv_at),
+                v, T.edges(), T.vertices(), d_gid, d_owner, p, raw(send_at), raw(recv_at),
                 Entries{raw(speer), raw(sgid), raw(snode), raw(send_index_)},
                 Entries{raw(rpeer), raw(rgid), raw(rnode), raw(recv_index_)});
         MARS_CELLWISE_CK(cudaGetLastError());
@@ -988,7 +1089,7 @@ public:
 
         if (send_total > 0) MARS_CELLWISE_CK(cudaMalloc(&send_, send_total * sizeof(double)));
         if (recv_total > 0) MARS_CELLWISE_CK(cudaMalloc(&recv_, recv_total * sizeof(double)));
-        const long long ghost_values = (T.elements - L) * kN3;
+        const long long ghost_values = (T.elements - L) * (p + 1) * (p + 1) * (p + 1);
         if (ghost_values > 0) {
             MARS_CELLWISE_CK(cudaMalloc(&ghost_, ghost_values * sizeof(double)));
             MARS_CELLWISE_CK(cudaMemset(ghost_, 0, ghost_values * sizeof(double)));
@@ -1014,11 +1115,12 @@ public:
     long long values_sent() const { return send_total_; }
     int peers() const { return (int)peers_.size(); }
 
-    void start(const double* q, cudaStream_t stream)
+    // Sends b - q (b when q is null) at the copies the peers need.
+    void start(const double* b, const double* q, cudaStream_t stream)
     {
         using namespace halo_detail;
         if (send_total_ > 0)
-            pack_kernel<<<blocks(send_total_), kThreads, 0, stream>>>(q, raw(send_index_), send_total_, send_);
+            pack_kernel<<<blocks(send_total_), kThreads, 0, stream>>>(b, q, raw(send_index_), send_total_, send_);
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream));   // MPI reads send_ next
         post(send_, recv_);
@@ -1103,29 +1205,32 @@ private:
     std::vector<MPI_Request> requests_;
 };
 
-// Runs a pass over the local elements: one launch on one rank; otherwise start the
-// exchange, launch the elements that read no ghost copies, wait, launch the rest.
+// Runs a pass over the local elements on the values b - q (q may be null): one launch on
+// one rank; otherwise start the exchange, launch the elements that read no ghost copies,
+// wait, launch the rest.
 // launch(set, ghost, first) returns its number of thread blocks; `first` is how many
 // blocks earlier launches used (for partial sums). Returns the total.
 template <typename Launch>
-int run_unstructured_pass(UnstructuredHalo* halo, long long local, const double* q, cudaStream_t stream,
-                          Launch&& launch)
+int run_unstructured_pass(UnstructuredHalo* halo, long long local, const double* b, const double* q,
+                          cudaStream_t stream, Launch&& launch)
 {
     if (!halo || !halo->active()) return launch(ElementList{nullptr, local}, nullptr, 0);
-    halo->start(q, stream);
+    halo->start(b, q, stream);
     const int first = launch(halo->interior(), nullptr, 0);
     halo->finish(stream);
     return first + launch(halo->boundary(), halo->ghost(), first);
 }
 
-// out = DSS(in) on every local copy. `halo` is null on one rank.
-inline void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, UnstructuredHalo* halo = nullptr,
-                cudaStream_t stream = 0)
+// out = DSS(in) on every local copy of degree P. `halo` (of the same degree) is null on
+// one rank.
+template <int P = kP>
+void dss(const double* d_in, double* d_out, const UnstructuredTopology& T, UnstructuredHalo* halo = nullptr,
+         cudaStream_t stream = 0)
 {
     const TopologyView v = view(T);
-    run_unstructured_pass(halo, T.local, d_in, stream, [&](const ElementList& set, const double* ghost, int) {
-        static const int grid = resident_grid(unstructured_dss_kernel);
-        unstructured_dss_kernel<<<grid, kThreads, 0, stream>>>(d_in, ghost, d_out, v, set);
+    run_unstructured_pass(halo, T.local, d_in, nullptr, stream, [&](const ElementList& set, const double* ghost, int) {
+        static const int grid = resident_grid(unstructured_dss_kernel<P>);
+        unstructured_dss_kernel<P><<<grid, kThreads, 0, stream>>>(d_in, ghost, d_out, v, set);
         MARS_CELLWISE_CK(cudaGetLastError());
         return grid;
     });
@@ -1142,7 +1247,7 @@ struct UnstructuredJacobi {
     int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
     {
         constexpr int NV = AZ + ZZ;
-        return run_unstructured_pass(halo, T.local, q, stream, [&](const ElementList& set, const double* ghost,
+        return run_unstructured_pass(halo, T.local, q, nullptr, stream, [&](const ElementList& set, const double* ghost,
                                                                    int first) {
             double* p = partial ? partial + (long long)first * (NV > 0 ? NV : 1) : nullptr;
             static const int grid = resident_grid(unstructured_precondition_kernel<AZ, ZZ>);
