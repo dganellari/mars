@@ -152,6 +152,38 @@ the DSS on 4 and 8 ranks (32^3 elements) is bit-identical to one domain, and the
 solve at ne = 8, deform 0.05 takes 151 iterations on one rank and 153 on 4 and 8, with
 the same residual history to 4 digits.
 
+## From an ElementDomain
+
+`build_tables` (`mars_cellwise_domain.hpp`) makes one rank's tables from a hexahedral
+`ElementDomain`: its local elements (the domain's local range, in its order) and the
+ghost layer. The ghost layer is completed through the node owners (`SfcNodeOwner`), so
+it does not depend on the reach of the cornerstone halo search, which completes stars
+only for owned nodes:
+
+1. Every rank sends each element to the owners of the element's vertices (one NBX
+   `sparseExchange`); each owner then holds the complete star of every node it owns.
+2. Each owner sends every star to the ranks that have an element in it (a second
+   exchange).
+3. The ghosts are the received elements, once each, that share a vertex with a local
+   element.
+
+A ghost travels as a record of 10 keys: its id, owner rank and 8 corner keys; it needs no
+coordinates, because the operator never runs on it. The id is a hash of the sorted
+corner keys: the domain's element SFC codes repeat (two elements can share the corner a
+code is taken from), and the exchange needs ids that are unique within a rank (checked
+at setup). Local corner ids are the ranks of the corner keys among the rank's distinct
+keys. Needs SFC node ownership (the default; not `MARS_OWNERSHIP=vote`).
+
+The domain's device constructor keeps only SFC-quantized coordinates, so a
+manufactured solution is about 1e-7 instead of 0 on the boundary; `zero_dirichlet` sets
+it to 0 on the Dirichlet copies before b = A u is formed.
+
+Measured on GH200 (`mars_marsir_cellwise_solve --domain`, the cube of 8^3 elements with
+deform 0.05 and rotated frames, handed to the domain as an unstructured mesh): DSS(1)
+equals the copy counts implied by the geometry exactly, DSS(1 + x + 2y + 3z) equals
+count x f to 7e-15, and the Jacobi solve takes 154 iterations on 1, 4 and 8 ranks, with
+error 2.3e-11.
+
 ## Multigrid on unstructured meshes
 
 - **p-multigrid** (7 -> 3 -> 1) on the same mesh, with exactly nested element-local
