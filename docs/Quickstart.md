@@ -102,7 +102,7 @@ Options (run it without `--mesh` to print them):
 | `--kernel=VARIANT` | assembly kernel, see the table below (default `original`) |
 | `--iterations=N` | repeat the assembly N times, for timing (default 10) |
 | `--block-size=N` | CUDA block size (default 256) |
-| `--bucket-size=N` | cornerstone octree bucket size (default 64; try 32 or 16 for 16+ ranks) |
+| `--bucket-size=N` | cornerstone octree bucket size (default 64; MARS lowers it for small meshes so every rank gets elements) |
 | `--bucket-size-focus=N` | focus-tree bucket size (default 8; lower = finer halo, more memory) |
 | `--quiet` | do not print the timing breakdown |
 

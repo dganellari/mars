@@ -185,6 +185,10 @@ of nodes owned elsewhere. The node halo moves values between an owner and its gh
 - `exchangeNodeHalo`: owner → ghosts (a copy),
 - `reverseExchangeNodeHaloAdd`: ghosts → owner (a sum).
 
+By default both keep one layer of ghosts current: the nodes of the rank's own elements and of the
+elements around its owned nodes, which is all an element loop reads. `MARS_HALO_EXCHANGE=full`
+keeps every ghost of cornerstone's halo current.
+
 The example makes the cornerstone box periodic:
 
 ```cpp
