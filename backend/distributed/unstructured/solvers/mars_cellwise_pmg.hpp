@@ -3,8 +3,9 @@
 // on the same mesh and the same tables, the Knaus CVFEM operator rediscretized at each
 // degree (the MARSIR kernel at p = 7, mars_cellwise_operator.hpp below), Chebyshev-Jacobi
 // smoothing through the DSS, element-local GLL interpolation between degrees
-// (restriction is its transpose on the raw residual), and Chebyshev steps on the p = 1
-// level as its coarse solve. One V-cycle per BiCGStab preconditioner call.
+// (restriction is its transpose on the raw residual), and on the p = 1 level Chebyshev
+// steps or a given coarse solve (BoomerAMG, mars_cellwise_amg.hpp). One V-cycle per
+// BiCGStab preconditioner call.
 // Design: docs/design/cellwise_unstructured_dss.md ("Multigrid on unstructured meshes");
 // reference: marsir-mlir/test/cellwise_pmg_ref.py, which it must match.
 
@@ -15,6 +16,7 @@
 
 #include <array>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 namespace mars {
@@ -144,6 +146,10 @@ public:
 
     const std::array<double, 3>& lambda_max() const { return lmax_; }
 
+    // solve(b1, x1): the coarse correction of the raw p = 1 residual b1, continuous, zero
+    // on Dirichlet copies. Replaces the Chebyshev steps on the p = 1 level.
+    void set_coarse_solve(std::function<void(const double*, double*)> solve) { coarse_solve_ = std::move(solve); }
+
     // z = one V-cycle applied to the unassembled q, then the dots BiCGStab needs.
     template <bool AZ, bool ZZ>
     int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
@@ -165,7 +171,8 @@ public:
     void vcycle(const double* b, double* x) const
     {
         if constexpr (P == 1) {
-            chebyshev<1>(b, x, coarse_steps_, true);
+            if (coarse_solve_) coarse_solve_(b, x);
+            else chebyshev<1>(b, x, coarse_steps_, true);
         } else {
             constexpr int PC = P == 7 ? 3 : 1, n3 = (P + 1) * (P + 1) * (P + 1);
             double* r = P == 7 ? r7_ : r3_;
@@ -327,6 +334,7 @@ private:
     double *b3_ = nullptr, *x3_ = nullptr, *r3_ = nullptr, *d3_ = nullptr, *y3_ = nullptr, *diag3_ = nullptr;
     double *b1_ = nullptr, *x1_ = nullptr, *d1_ = nullptr, *y1_ = nullptr, *diag1_ = nullptr;
     std::array<double, 3> lmax_{};
+    std::function<void(const double*, double*)> coarse_solve_;
 };
 
 }  // namespace cellwise

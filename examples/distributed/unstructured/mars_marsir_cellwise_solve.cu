@@ -30,8 +30,9 @@
 // tables and ghost layer from it (solvers/mars_cellwise_domain.hpp); it first checks
 // the DSS against the copy counts the geometry implies.
 // --mg with --unstructured or --domain preconditions with the p-multigrid V-cycle
-// (solvers/mars_cellwise_pmg.hpp, degrees 7 -> 3 -> 1, --coarse k Chebyshev steps at p = 1);
-// it must match marsir-mlir/test/cellwise_pmg_ref.py.
+// (solvers/mars_cellwise_pmg.hpp, degrees 7 -> 3 -> 1, --coarse k Chebyshev steps at p = 1,
+// or --amg: one BoomerAMG V-cycle there, in a Hypre build); it must match
+// marsir-mlir/test/cellwise_pmg_ref.py.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -45,6 +46,9 @@
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
+#ifdef MARS_ENABLE_HYPRE
+#include "backend/distributed/unstructured/solvers/mars_cellwise_amg.hpp"
+#endif
 #include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
@@ -409,14 +413,15 @@ int main(int argc, char** argv)
     std::string ptx_path;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
-    bool use_mg = false, unstructured = false, rotate = false, use_domain = false;
-    int pre = 0, post = 3, coarse_steps = 10;
+    bool use_mg = false, unstructured = false, rotate = false, use_domain = false, use_amg = false;
+    int pre = 0, post = 3, coarse_steps = 100;   // 100: the fewest-time choice measured at 64^3
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
         if (!strcmp(argv[i], "--unstructured")) { unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--rotate")) { rotate = unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--domain")) { use_domain = unstructured = true; --i; continue; }
+        if (!strcmp(argv[i], "--amg")) { use_amg = true; --i; continue; }
         if (i + 1 >= argc) { error = "an option needs a value"; break; }
         if (!strcmp(argv[i], "--ptx")) ptx_path = argv[i + 1];
         else if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
@@ -431,10 +436,14 @@ int main(int argc, char** argv)
     }
     if (!error && ptx_path.empty()) error = "--ptx is required";
     if (!error && use_mg && !unstructured && (ne & (ne - 1))) error = "--mg needs ne to be a power of two";
+    if (!error && use_amg && !(use_mg && unstructured)) error = "--amg goes with --mg and --unstructured or --domain";
+#ifndef MARS_ENABLE_HYPRE
+    if (!error && use_amg) error = "--amg needs a Hypre build (MARS_ENABLE_HYPRE)";
+#endif
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--unstructured] "
+                            "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--amg] [--unstructured] "
                             "[--rotate] [--domain]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
@@ -659,6 +668,9 @@ int main(int argc, char** argv)
     };
     using PMultigrid = cellwise::PMultigrid<decltype(apply7)>;
     std::unique_ptr<PMultigrid> pmg;
+#ifdef MARS_ENABLE_HYPRE
+    std::unique_ptr<cellwise::P1Amg> amg;
+#endif
     std::unique_ptr<cellwise::UnstructuredHalo> uhalo3, uhalo1;
     double *d_G3 = nullptr, *d_G1 = nullptr;
     if (unstructured && use_mg) {
@@ -703,9 +715,17 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaEventCreate(&t1));
     if (use_mg) {
         MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
-        if (unstructured)
+        if (unstructured) {
             pmg.reset(new PMultigrid(apply7, topo, d_diag, d_G3, d_G1, {uhalo.get(), uhalo3.get(), uhalo1.get()}, pre,
                                      post, coarse_steps, MPI_COMM_WORLD, stream));
+#ifdef MARS_ENABLE_HYPRE
+            if (use_amg) {
+                amg.reset(new cellwise::P1Amg(topo, d_G1, cellwise::cvfem_matrices<1>(), uhalo1.get(), MPI_COMM_WORLD,
+                                              stream));
+                pmg->set_coarse_solve([&](const double* b1, double* x1) { amg->solve(b1, x1); });
+            }
+#endif
+        }
         else
             mg.reset(new Multigrid(apply_on, make_level, {blk, d_G, d_diag}, dec, ops.zeta.data(), pre, post,
                                    stream));
@@ -757,8 +777,11 @@ int main(int argc, char** argv)
                    dec.P[2], blk.nx, blk.ny, blk.nz);
         if (use_mg && unstructured) {
             const auto& l = pmg->lambda_max();
-            printf("  p-multigrid (%d,%d), %d Chebyshev steps at p = 1, setup %.1f ms; lambda_max(P_J A) at p = 7, 3, 1:"
-                   " %.4f %.4f %.4f\n", pre, post, coarse_steps, setup_ms, l[0], l[1], l[2]);
+            char coarse[64];
+            if (use_amg) snprintf(coarse, sizeof(coarse), "one BoomerAMG V-cycle");
+            else snprintf(coarse, sizeof(coarse), "%d Chebyshev steps", coarse_steps);
+            printf("  p-multigrid (%d,%d), %s at p = 1, setup %.1f ms; lambda_max(P_J A) at p = 7, 3, 1:"
+                   " %.4f %.4f %.4f\n", pre, post, coarse, setup_ms, l[0], l[1], l[2]);
         } else if (use_mg) {
             printf("  multigrid (%d,%d) setup %.1f ms; lambda_max(P_J A) per level:", pre, post, setup_ms);
             for (double l : mg->lambda_max()) printf(" %.4f", l);
@@ -819,6 +842,9 @@ int main(int argc, char** argv)
 
     mg.reset();
     pmg.reset();
+#ifdef MARS_ENABLE_HYPRE
+    amg.reset();
+#endif
     halo.reset();
     uhalo.reset();
     uhalo3.reset();
