@@ -155,8 +155,11 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         throw std::runtime_error("pressure expansion requires explicit targets, no snapshots, audit, capture or legacy refinement");
     if (!o.pressure_failure_capture.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || o.first_step_audit))
         throw std::runtime_error("pressure failure capture requires explicit pressure targets and iterations without refinement or first-step audit");
-    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || (!o.first_step_audit && !o.controls.pressure_expansion)))
-        throw std::runtime_error("pressure profile requires first-step audit or expansion, and explicit unchanged targets without refinement");
+    const bool profile_history=o.snapshot_iterations==o.iterations && o.snapshot_iterations>0
+                               && o.field_output=="distributed";
+    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only
+        || !o.pressure_failure_capture.empty() || (!o.first_step_audit && !o.controls.pressure_expansion && !profile_history)))
+        throw std::runtime_error("pressure profile requires audit, full distributed snapshots or expansion, and explicit targets without refinement or failure capture");
     return o;
 }
 inline const char* simple_help() {
@@ -179,7 +182,7 @@ inline const char* simple_help() {
            "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
            "  --pressure-expansion 0             opt-in retained pressure pair and four correction budgets; explicit targets required\n"
-           "  --pressure-solver-profile FILE      opt-in pressure controls; requires first-step audit or expansion, and explicit tolerances\n"
+           "  --pressure-solver-profile FILE      opt-in pressure controls; requires audit, full distributed snapshots or expansion, and explicit tolerances\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

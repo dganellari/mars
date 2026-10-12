@@ -97,7 +97,8 @@ def pair_inputs(pair):
     values = options(case['arguments'])
     if 'pressure_profile' in record:
         profile = record['pressure_profile']
-        require(record.get('first_step_audit') is True)
+        require(record.get('first_step_audit') is True or
+                (profile.get('kind') == 'original_twenty_steps' and record['steps'] == STEPS))
         require(profile['sha256'] == case['pressure_solver_profile_sha256'] == digest(pair / 'pressure.profile'))
         require(values.pop('--pressure-solver-profile') == str(pair.resolve() / 'pressure.profile'))
     require(Path(mesh).resolve() == Path(record['mesh']) == Path(values['--mesh']))
@@ -115,7 +116,9 @@ def solver_arguments(pair, solver):
         '--residual-tol', '1e-6', '--mass-tol', '1e-6', '--change-tol', '1e-6',
         '--linear-cache', '1', '--halo-overlap', '1', '--field-output', 'distributed',
         '--profile', '0', '--output-prefix', str(pair / 'mars/flow')] + (
-        ['--first-step-audit', '1'] if record.get('first_step_audit', False) else [])
+        ['--first-step-audit', '1'] if record.get('first_step_audit', False) else []) + (
+        ['--pressure-expansion', '0', '--pressure-refinement', '0']
+        if record.get('pressure_profile', {}).get('kind') == 'original_twenty_steps' else [])
 
 
 def runtime_libraries(executable):
@@ -143,7 +146,7 @@ def run_files(directory, solver):
             raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
-        files += sorted(directory.glob('flow-pressure-rank-*.settings'))
+        files += sorted(directory.glob('flow-pressure-*.settings'))
     if read_json(directory.parent / 'pair.json').get('first_step_audit', False):
         files += sorted(directory.glob('*.bin'))
     require(all(p.is_file() for p in files))

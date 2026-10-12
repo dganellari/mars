@@ -1,5 +1,9 @@
 # Original-pressure first-step comparison
 
+For the follow-on bounded run at these original targets, use the
+[twenty-step original-control comparison](pressure_original_history.md).
+It runs both solvers afresh with recovery disabled and checks every snapshot.
+
 This experiment returns to the original OpenAccel pressure targets and saved
 first step. It runs only MARS. It does not use the tightened-pressure experiment
 as the reference, change momentum controls, enable correction-equation recovery,
@@ -46,7 +50,8 @@ and momentum instance retain their existing controls. Native GPU SpMV and both
 independent acceptance checks remain in effect.
 
 `--pressure-solver-profile` requires explicit pressure tolerances and either the
-one-step audit mode or opt-in [retained pressure expansion](pressure_expansion.md).
+one-step audit mode, full distributed snapshots, or opt-in
+[retained pressure expansion](pressure_expansion.md).
 The recipe below uses the audit. Rank zero reads the small settings file and broadcasts it;
 there are no added host matrix/vector computations. The audit already enables
 private field/matrix output and its device-to-host copies. Each rank also writes

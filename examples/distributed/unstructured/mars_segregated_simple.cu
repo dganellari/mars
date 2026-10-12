@@ -188,15 +188,15 @@ int execute(const SimpleOptions& o) {
             snapshot_seconds+=MPI_Wtime()-start;
         }
         if (converged || run.completed==o.iterations) break;
-        if (audit) {
+        if (audit || (!pressure_profile.empty() && o.snapshot_iterations)) {
             double io_seconds=0;
             run.advance([&](const char* stage,Array<double>&) {
                 const double io_start=MPI_Wtime();
-                if (std::string(stage)=="momentum")
+                if (audit && std::string(stage)=="momentum")
                     audit->momentum(run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data()),
                                     run.du.data(),run.velocity.data(),run.d.data());
                 else if (std::string(stage)=="raw_pressure_increment") {
-                    audit->pressure(run.graph.template view<1>(run.poisson_blocks.data(),run.poisson_rhs.data()),run.phi.data());
+                    if (audit) audit->pressure(run.graph.template view<1>(run.poisson_blocks.data(),run.poisson_rhs.data()),run.phi.data());
                     if (!pressure_profile.empty()) {
                         bool saved=true;
                         try {
@@ -204,13 +204,14 @@ int execute(const SimpleOptions& o) {
                             run.poisson_solve.solver.inspect_prepared([&](auto solver,auto amg,bool flex) {
                                 fem::pressure_settings::write(text,fem::pressure_settings::snapshot(solver,amg,flex));
                             });
-                            frozen::Writer file(o.output+"-pressure-rank-"+std::to_string(rank)+".settings");
+                            const auto step=audit?std::string{}:"step-"+std::to_string(run.completed+1)+"-";
+                            frozen::Writer file(o.output+"-pressure-"+step+"rank-"+std::to_string(rank)+".settings");
                             const auto values=text.str(); file.bytes(values.data(),values.size()); file.finish();
                         } catch (...) { saved=false; }
                         simple_collective(run.comm,saved,"private pressure settings output failed");
                     }
                 }
-                else if (std::string(stage)=="velocity") audit->finish(run.gp.data());
+                else if (audit && std::string(stage)=="velocity") audit->finish(run.gp.data());
                 io_seconds+=MPI_Wtime()-io_start;
             });
             snapshot_seconds+=io_seconds;

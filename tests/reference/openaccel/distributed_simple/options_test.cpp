@@ -32,6 +32,11 @@ int main() {
     check(!defaults.first_step_audit);
     check(parse("--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").first_step_audit);
     check(parse("--snapshot-iterations 20 --iterations 20 --field-output distributed").snapshot_iterations==20);
+    const auto history=parse("--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+                             "--iterations 20 --snapshot-iterations 20 --field-output distributed "
+                             "--pressure-expansion 0 --pressure-refinement 0");
+    check(!history.first_step_audit && !history.controls.pressure_expansion && !history.pressure_refinement
+          && history.snapshot_iterations==20 && history.pressure_solver_profile=="settings");
     const auto pressure_options=parse("--pressure-linear-rtol=1e-6 --pressure-linear-atol 0");
     check(pressure_options.pressure_tolerances && pressure_options.pressure_rtol==1e-6 && pressure_options.pressure_atol==0);
     check(pressure_options.residual==defaults.residual && pressure_options.mass==defaults.mass && pressure_options.change==defaults.change);
@@ -61,6 +66,9 @@ int main() {
         "--pressure-failure-capture private",
         "--pressure-solver-profile settings",
         "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 1 --field-output distributed",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 20 --field-output gathered",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 20 --field-output distributed --pressure-failure-capture private",
         "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --pressure-refinement 1 "
         "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
         "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --pressure-refinement 1",
