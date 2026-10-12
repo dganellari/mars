@@ -74,11 +74,11 @@ class BudgetTests(unittest.TestCase):
         record['files'] = replay.hashes([p for p in (path/'result').rglob('*') if p.is_file()] + [path/'launch-start.json'])
         (path/'replay.json').write_text(json.dumps(record))
 
-    def compare(self, status=0):
+    def compare(self, status=0, checker=None):
         output = self.root/'public.json'
         if output.exists(): output.unlink()
         args = ['compare-budget', '--capture-run', str(self.capture), '--baseline-run', str(self.root/'baseline'),
-                '--early-run', str(self.root/'early'), '--checker', str(self.checker), '--output', str(output)]
+                '--early-run', str(self.root/'early'), '--checker', str(checker or self.checker), '--output', str(output)]
         with patch.object(replay, 'loaded_libraries_match'), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(replay.main(args), status)
         public = replay.startup.read_json(output)
@@ -96,6 +96,18 @@ class BudgetTests(unittest.TestCase):
         self.assertTrue(public['both_candidates_accepted'])
         self.assertFalse(public['nonlinear_convergence_verified'])
         self.assertTrue(public['only_initial_budget_changed'])
+
+    def test_unavailable_checker_is_not_a_capture_failure(self):
+        nonexecutable = self.root/'SECRET-nonexecutable'; nonexecutable.write_text('not executable')
+        for checker in (self.root/'SECRET-missing-checker', self.root, nonexecutable):
+            with self.subTest(checker=checker), patch.object(replay, 'check_candidate') as check:
+                public = self.compare(1, checker)
+                self.assertEqual(public['failed_check'], 'checker_executable')
+                check.assert_not_called()
+
+    def test_invalid_capture_remains_a_capture_failure(self):
+        record = self.capture/'capture.json'; record.write_text('{}')
+        self.assertEqual(self.compare(1)['failed_check'], 'capture_identity')
 
     def test_failed_pair_cannot_claim_benefit(self):
         path = self.root/'early/result/expansion/rank-000000.high'

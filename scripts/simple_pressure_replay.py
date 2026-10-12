@@ -969,7 +969,10 @@ def compare(args, public):
 def compare_budget(args, public):
     public['failed_check'] = 'capture_identity'
     directory = args.capture_run.resolve(); capture = captured_record(directory)
-    checker = args.checker.resolve(strict=True); checker_hash = digest(checker)
+    public['failed_check'] = 'checker_executable'
+    checker = args.checker.resolve(strict=True)
+    require(checker.is_file() and os.access(str(checker), os.X_OK))
+    checker_hash = digest(checker)
     public.update(nonlinear_convergence_verified=False, openaccel_field_parity_verified=False,
                   performance_scope='single_replay_pair_not_scaling_or_full_flow',
                   timing_scope='rank_max_initial_solve_plus_recovery_including_audit_excluding_setup_and_file_io')

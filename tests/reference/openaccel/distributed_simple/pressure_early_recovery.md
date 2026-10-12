@@ -73,7 +73,7 @@ status=0
 python3 "$repo/scripts/simple_pressure_replay.py" compare-budget \
   --capture-run "$scratch/simple-pressure-frozen-RlGQaI/capture" \
   --baseline-run "$run/baseline" --early-run "$run/early" \
-  --checker "$repo/build-hypre/mars_simple_pressure_residual_check" \
+  --checker "$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check" \
   --output "$run/comparison-public.json" || status=$?
 cat "$run/comparison-public.json"
 printf 'Share only: %s\n' "$run/comparison-public.json"
@@ -85,6 +85,41 @@ For direct-launch inspection, each arm's private `launch-start.json` contains
 the entire command as an argument list. Its tail is the replay executable,
 `capture/system`, that arm's `gpu-reference.settings` and its new `result`
 directory. Do not rerun it in the same directory: replay output is write-once.
+
+### Recompare the completed GPU pair
+
+The original recipe pointed to the checker in the build root. CMake places it
+beside the replay under `examples/distributed/unstructured`. The comparison also
+left its failure label at `capture_identity` during checker lookup; this now
+reports `checker_executable`. Missing, nonexecutable and directory paths fail
+before candidate checks. This is a command/reporting fix, not a solver change.
+
+For `simple-pressure-budget-cQSXUJ`, reuse both completed replays. No build or
+GPU allocation is needed; the following runs only the independent comparison.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+run="$scratch/simple-pressure-budget-cQSXUJ"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only origin/cstone
+checker="$repo/build-hypre/examples/distributed/unstructured/mars_simple_pressure_residual_check"
+test -x "$checker"
+umask 077
+summary=$(mktemp -d "$scratch/simple-pressure-budget-check-XXXXXX")/public.json
+status=0
+python3 "$repo/scripts/simple_pressure_replay.py" compare-budget \
+  --capture-run "$scratch/simple-pressure-frozen-RlGQaI/capture" \
+  --baseline-run "$run/baseline" --early-run "$run/early" \
+  --checker "$checker" --output "$summary" || status=$?
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+exit "$status"
+)
+```
 
 ## Reading the result
 
