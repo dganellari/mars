@@ -273,3 +273,73 @@ printf 'Share only: %s\n' "$run/check/public.json"
 exit "$status"
 )
 ```
+
+## Longer flow after the twenty-step check
+
+`--iterations N` extends the saved iteration budget. It starts again from the
+saved zero initialization; the twenty-step CSV output is not a restart. All
+physical controls, relaxation factors, linear and nonlinear targets, rank count
+and GPU pressure settings are preserved. Retained pressure remains enabled.
+`--time-limit HH:MM:SS` changes only the saved `srun` wall-time request. Binding,
+node and task requests remain unchanged. With neither option, the original
+twenty-step recipe still applies.
+
+Every new run records the metrics CSV hash and checks the log against its rows.
+The public `convergence` section evaluates the saved nonlinear stopping targets
+and labels the last three history blocks as decreasing, increasing, flat, mixed,
+below target, or insufficient data. These labels describe the recorded history;
+they do not predict eventual convergence. No geometry, boundary names, field
+values, residual values or iteration counts are exported by this section.
+
+`run_completed` means the requested budget completed or convergence was reported
+earlier. `nonlinear_convergence_verified` additionally requires the recorded
+metrics to satisfy every stopping criterion and agree with the completion label.
+This is a check of the solver's recorded diagnostics, not an independent field
+residual evaluation. `short_run_completed` applies only to a twenty-step budget.
+Reinspection verifies the stored metrics hash and repeats the same checks.
+Old records retain their original, more limited completion check.
+
+The next bounded run uses 2000 iterations and a one-hour allocation limit. Neither
+convergence within that budget nor completion within that wall time is assumed.
+Field output remains disabled, and `openaccel_field_parity_verified` remains
+false. The ordinary snapshot comparator still rejects retained-pressure runs;
+this run must not be presented as matched OpenAccel iteration history.
+
+Run in the **MARS terminal only**, using the already-tested executable. These
+changes are Python-only; no rebuild or repeat public GPU gates are required.
+The adapter executes the captured complete `srun` command, with only its time
+limit replaced, and saves that exact command privately in `flow/launch-command.txt`.
+That file contains case arguments: keep it local. Do not wrap the adapter in
+another `srun` or launch its command a second time alongside it.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-expanded-long-XXXXXX")
+printf 'Private results: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_expanded_flow.py" \
+  --capture-run "$scratch/simple-pressure-frozen-RlGQaI/capture" \
+  --gpu-profile-pair "$scratch/simple-original-pressure-1xGpr2/pair" \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_segregated_simple" \
+  --iterations 2000 --time-limit 01:00:00 \
+  --output-dir "$run/flow" || status=$?
+if test -f "$run/flow/public.json"; then cat "$run/flow/public.json"; fi
+printf 'Share only: %s\n' "$run/flow/public.json"
+exit "$status"
+)
+```
+
+Local tests cover unchanged numerical controls, wall-time-only launcher edits,
+early convergence, completed budgets, residual trends, false convergence labels,
+missing or altered metrics, reinspection without launching, and private-data
+redaction. The longer GPU flow has not yet been run.
