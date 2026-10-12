@@ -1,5 +1,9 @@
 # Replay the rejected pressure equation
 
+For the bounded comparison of the full initial GMRES budget against earlier
+retained recovery, see [Earlier pressure recovery](pressure_early_recovery.md).
+It reuses the frozen system and measures total solve work without launching a flow.
+
 ## Preserve the pressure update that passed the audit
 
 The public `simple-pressure-correction-audit-25sfoe/comparison-public.json`

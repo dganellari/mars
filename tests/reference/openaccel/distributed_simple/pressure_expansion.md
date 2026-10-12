@@ -276,6 +276,12 @@ exit "$status"
 
 ## Longer flow after the twenty-step check
 
+The 2026-10-12 user run was interrupted after a sample showed continuing outer
+progress, frequent recovery, mixed momentum history and flat continuity.
+Nonlinear convergence and OpenAccel parity remain unverified. The recipe below
+is retained for provenance; do not repeat it unchanged. The active bounded
+experiment is [earlier pressure recovery on the frozen system](pressure_early_recovery.md).
+
 `--iterations N` extends the saved iteration budget. It starts again from the
 saved zero initialization; the twenty-step CSV output is not a restart. All
 physical controls, relaxation factors, linear and nonlinear targets, rank count
@@ -342,4 +348,4 @@ exit "$status"
 Local tests cover unchanged numerical controls, wall-time-only launcher edits,
 early convergence, completed budgets, residual trends, false convergence labels,
 missing or altered metrics, reinspection without launching, and private-data
-redaction. The longer GPU flow has not yet been run.
+redaction. The longer GPU flow was interrupted; it has no completed convergence verdict.

@@ -265,12 +265,17 @@ class ReplayTests(unittest.TestCase):
                     self.assertEqual(stop['assessment'], 'independent_residual_passed')
                     self.assertEqual(stop['backend'], 'FlexGMRES' if method else 'GMRES')
                     self.assertFalse(stop['solve_return_nonzero'])
-                    cfg.write_text(''.join('{} {:.17g}\n'.format(k,v) for k,v in report.items() if not k.startswith('result_')))
+                    metadata = {'initial_restart_cycles', 'initial_maxiter', 'initial_controls_restored',
+                                'solve_timing_version', 'solve_seconds'}
+                    cfg.write_text(''.join('{} {:.17g}\n'.format(k,v) for k,v in report.items()
+                                          if not k.startswith('result_') and k not in metadata))
                     shutil.rmtree(self.result)
                     p = subprocess.run([binary, str(self.capture), str(cfg), str(self.result)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     self.assertEqual(p.returncode, 0, p.stderr.decode())
                     self.assertTrue(self.check(self.result)['residual_passed'])
-                    self.assertEqual(replay.numeric_file(self.result/'rank-000000.report'), report)
+                    repeated = replay.numeric_file(self.result/'rank-000000.report')
+                    self.assertEqual({k: v for k, v in repeated.items() if k != 'solve_seconds'},
+                                     {k: v for k, v in report.items() if k != 'solve_seconds'})
                     shutil.rmtree(self.result)
 
     def captured_record(self, ranks=1):
@@ -1583,6 +1588,62 @@ class GpuProfileReplayTests(unittest.TestCase):
                                          else 'correction_budget_exhausted')
                         shutil.rmtree(system); shutil.rmtree(result)
 
+    def test_real_early_recovery_restores_correction_budget(self):
+        binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not binaries[0] or not checker: self.skipTest('set replay binaries and checker')
+        n = 64
+        matrix = [[2.01 if i == j else -1. if abs(i-j) == 1 else 0. for j in range(n)] for i in range(n)]
+        for binary in binaries:
+            for method in (0, 1):
+                for rtol in (1e-3, 1e-30):
+                    with self.subTest(binary=binary, method=method, rtol=rtol):
+                        system = self.root / 'early-system'; write_system(system, matrix=matrix, rtol=rtol)
+                        values = dict(self.source_values, method=method, rtol=rtol, atol=0., kdim=1,
+                                      maxiter=200, recovery_rounds=4, retain_update_expansion=1,
+                                      initial_restart_cycles=1)
+                        config = self.root / 'early.settings'; config.write_text(self.profile.text_profile(values))
+                        result = self.root / 'early-result'
+                        process = subprocess.run([binary, str(system), str(config), str(result)],
+                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        self.assertEqual(process.returncode, 0, process.stderr.decode())
+                        report = replay.numeric_file(result/'rank-000000.report')
+                        replay.initial_budget_checks([report], 1, timed=True)
+                        replay.recovery_checks([report], 4)
+                        self.assertTrue(replay.controls_match(report, values))
+                        self.assertEqual(report['result_iterations'], 1)
+                        self.assertEqual(report['maxiter'], 200)
+                        self.assertGreater(report['recovery_iterations'], report['recovery_rounds'])
+                        initial = json.loads(subprocess.check_output([checker, str(system), str(result/'initial')]))
+                        self.assertTrue(initial['residual_failed'])
+                        verdict = json.loads(subprocess.check_output([checker, str(system), str(result/'expansion'), '--expansion']))
+                        self.assertEqual(verdict['residual_passed'], rtol == 1e-3)
+                        self.assertEqual(verdict['residual_failed'], rtol == 1e-30)
+                        stop = replay.stopping_checks([report], initial)
+                        self.assertEqual(stop['iteration_limit_relation'], 'at')
+                        shutil.rmtree(system); shutil.rmtree(result)
+
+    def test_early_configuration_requires_retention_and_shorter_cap(self):
+        values, output, record = self.binding()
+        config = output / 'gpu-reference.settings'
+        for changes, valid in (({}, False), ({'recovery_rounds':4, 'retain_update_expansion':True,
+                              'expansion_version':1, 'initial_restart_cycles':1}, True)):
+            record.update(changes)
+            configured = dict(values, initial_restart_cycles=1)
+            if valid: configured.update(recovery_rounds=4, retain_update_expansion=1)
+            config.write_text(self.profile.text_profile(configured)); record['inputs'].update(replay.hashes([config]))
+            if valid: replay.checked_gpu_configuration(output, record, self.capture)
+            else:
+                with self.assertRaises(ValueError): replay.checked_gpu_configuration(output, record, self.capture)
+        for change in ({'maxiter': values['kdim']}, {'miniter': values['kdim'] + 1}):
+            source = Path(record['gpu_profile_source'])
+            modified = dict(values, **change)
+            source.write_text(self.profile.text_profile(modified))
+            config.write_text(self.profile.text_profile(dict(modified, recovery_rounds=4,
+                                                            retain_update_expansion=1, initial_restart_cycles=1)))
+            record['inputs'].update(replay.hashes([source, config]))
+            with self.assertRaises(ValueError): replay.checked_gpu_configuration(output, record, self.capture)
+
     def test_real_scalar_update_rounding_with_exact_rational_oracle(self):
         binaries = os.environ.get('MARS_TEST_PRESSURE_REPLAYS', '').split(os.pathsep)
         if not binaries[0]: self.skipTest('set MARS_TEST_PRESSURE_REPLAYS')
@@ -1733,6 +1794,33 @@ class GpuProfileReplayTests(unittest.TestCase):
                     self.assertEqual(expanded['residual_failed'], not passed)
                     self.assertTrue(all(report['expansion_step'] == report['recovery_audit_steps'] for report in reports))
                     shutil.rmtree(system); shutil.rmtree(result)
+
+    def test_real_early_recovery_mpi_when_requested(self):
+        binary = os.environ.get('MARS_TEST_PRESSURE_MPI_REPLAY')
+        checker = os.environ.get('MARS_TEST_PRESSURE_CHECKER')
+        if not binary or not checker: self.skipTest('set MPI replay and checker')
+        launcher = os.environ.get('MPIEXEC', 'mpiexec')
+        n = 64
+        matrix = [[2.01 if i == j else -1. if abs(i-j) == 1 else 0. for j in range(n)] for i in range(n)]
+        for ranks in (1, 2, 4):
+            for rtol in (1e-3, 1e-30):
+                with self.subTest(ranks=ranks, rtol=rtol):
+                    case = self.root/'early-mpi-{}-{}'.format(ranks, rtol); case.mkdir()
+                    system = case/'system'; write_system(system, ranks, matrix=matrix, rtol=rtol)
+                    values = dict(self.source_values, maxiter=200, kdim=1, rtol=rtol, atol=0.,
+                                  recovery_rounds=4, retain_update_expansion=1, initial_restart_cycles=1)
+                    config = case/'settings'; config.write_text(self.profile.text_profile(values))
+                    result = case/'result'
+                    process = subprocess.run([launcher, '-n', str(ranks), binary, str(system), str(config), str(result)],
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                    self.assertEqual(process.returncode, 0, process.stderr.decode())
+                    reports = [replay.numeric_file(replay.rank_file(result, rank, '.report')) for rank in range(ranks)]
+                    replay.initial_budget_checks(reports, 1, timed=True)
+                    replay.recovery_checks(reports, 4)
+                    self.assertTrue(all(replay.controls_match(report, values) for report in reports))
+                    verdict = json.loads(subprocess.check_output([checker, str(system), str(result/'expansion'), '--expansion']))
+                    self.assertEqual(verdict['residual_passed'], rtol == 1e-3)
+                    self.assertEqual(verdict['residual_failed'], rtol == 1e-30)
 
 
 if __name__ == '__main__':
