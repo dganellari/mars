@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import sys
@@ -221,13 +222,63 @@ def is_petsc_profile(values):
     return values.get('petsc_fgmres_bjacobi') == 1
 
 
+def public_library_name(path):
+    name = Path(path).name
+    stem = re.sub(r'\.so(?:\.[0-9]+)*$', '', name)
+    known = {'libpetsc', 'libHYPRE', 'libmpi', 'libmpich', 'libmpifort', 'libmpi_gtl_cuda',
+        'libmpi_gtl_hsa', 'libc', 'libm', 'libdl', 'librt', 'libpthread', 'libstdc++', 'libgcc_s',
+        'libgomp', 'libomp', 'libcuda', 'libcudart', 'libcusparse', 'libcublas', 'libcublasLt',
+        'libcusolver', 'libcurand', 'libcufft', 'libnvrtc', 'libnvrtc-builtins', 'libnvJitLink',
+        'libnvToolsExt', 'libnvtx3interop', 'libnetcdf', 'libhdf5', 'libhdf5_hl', 'libexodus',
+        'libz', 'libzstd', 'libsz', 'libaec', 'libcurl', 'libxml2', 'libblas', 'liblapack',
+        'libopenblas', 'libf2cblas', 'libf2clapack', 'libgfortran', 'libquadmath',
+        'libhwloc', 'libfabric', 'libpmix', 'libucp', 'libuct', 'libucs', 'libucm',
+        'libmars', 'libmars_unstructured', 'libkokkoscore', 'libkokkoscontainers', 'libkokkossimd',
+        'libtrilinos_kokkoscore', 'libtrilinos_kokkoscontainers', 'libtrilinos_kokkossimd',
+        'libmetis', 'libparmetis', 'libfmt', 'libyaml-cpp'}
+    if stem != name and (stem in known or re.fullmatch(
+            r'lib(?:mpi|mpifort)_(?:gnu(?:_[0-9]+)?|cray)|libHYPRE-[0-9.]+|ld-linux-aarch64', stem)):
+        return name
+    return defaults.library_kind(path) or 'other_runtime_library'
+
+
+def profile_library_checks(libraries, original, petsc):
+    public = dict(policy='preserve_captured_dependencies_add_petsc' if petsc else 'exact_capture',
+                  matched=False, record_valid=False)
+    if not all(isinstance(v, dict) and v and all(isinstance(p, str) and isinstance(h, str)
+            and re.fullmatch(r'[0-9a-f]{64}', h) for p, h in v.items()) for v in (libraries, original)):
+        return public
+    public['record_valid'] = True
+    changed = {path for path, value in original.items() if path in libraries and libraries[path] != value}
+    missing = set(original) - set(libraries)
+    added = set(libraries) - set(original)
+    relocated = set()
+    # Match one old object to one byte-identical object, never hide a changed object at its old path.
+    for path in sorted(missing):
+        candidates = [p for p in added if Path(p).name == Path(path).name
+                      and libraries[p] == original[path]]
+        if len(candidates) == 1:
+            relocated.add(path)
+            added.remove(candidates[0])
+    missing -= relocated
+    replaced = {p for p in missing if any(Path(q).name == Path(p).name and libraries[q] != original[p]
+                                         for q in libraries)}
+    protected = {p for p in added if defaults.library_kind(p) in ('mpi', 'hypre')}
+    petsc_count = sum(Path(path).name.startswith('libpetsc.') for path in libraries)
+    preserved = not changed and not missing
+    public.update(captured_dependencies_preserved=preserved,
+        changed_captured_libraries=sorted({public_library_name(p) for p in changed | replaced}),
+        missing_captured_libraries=sorted({public_library_name(p) for p in missing - replaced}),
+        relocated_identical_libraries=sorted({public_library_name(p) for p in relocated}),
+        additional_libraries=sorted({public_library_name(p) for p in added}),
+        additional_solver_libraries=sorted({public_library_name(p) for p in protected}),
+        petsc_library_present=petsc_count > 0, petsc_library_unique=petsc_count == 1,
+        matched=(preserved and not protected and petsc_count == 1) if petsc else libraries == original)
+    return public
+
+
 def profile_libraries_match(libraries, original, petsc):
-    if not petsc:
-        return libraries == original
-    # Adding PETSc must not replace the captured MPI, Hypre or other existing dependencies.
-    return all(libraries.get(path) == digest for path, digest in original.items()) and not any(
-        defaults.library_kind(path) in ('mpi', 'hypre') and path not in original for path in libraries) and sum(
-        Path(path).name.startswith('libpetsc.') for path in libraries) == 1
+    return profile_library_checks(libraries, original, petsc)['matched']
 
 
 def inspect_configuration(config, measured, stage):
@@ -382,13 +433,16 @@ def pair_content(baseline, pair, record, case, identity):
     return record, case
 
 
-def prepare(baseline, probe, executable, output, history=False, both_linear_solvers=False):
+def prepare(baseline, probe, executable, output, history=False, both_linear_solvers=False, public=None):
     record, case, launches, values, adaptations = baseline_data(baseline, probe)
     momentum = momentum_data(baseline, probe, launches['openaccel']) if both_linear_solvers else None
     require(executable.is_file() and os.access(str(executable), os.X_OK), 'executable_changed')
     libraries = startup.runtime_libraries(executable)
-    require(profile_libraries_match(libraries, launches['mars']['libraries'],
-            momentum is not None and is_petsc_profile(momentum[0])), 'libraries_changed')
+    checks = profile_library_checks(libraries, launches['mars']['libraries'],
+                                    momentum is not None and is_petsc_profile(momentum[0]))
+    if public is not None:
+        public['library_checks'] = checks
+    require(checks['matched'], 'libraries_changed')
     output.mkdir(mode=0o700)
     (output / 'reference').mkdir(mode=0o700)
     if history:
@@ -460,7 +514,8 @@ def run(pair, public, solver='mars'):
     expected = identity if solver == 'mars' else old
     exe = Path(expected['executable'])
     require(exe.is_file() and os.access(str(exe), os.X_OK) and digest(exe) == expected['executable_sha256'], 'executable_changed')
-    require(startup.runtime_libraries(exe) == expected['libraries'], 'libraries_changed')
+    public['library_checks'] = profile_library_checks(startup.runtime_libraries(exe), expected['libraries'], False)
+    require(public['library_checks']['matched'], 'libraries_changed')
     environment = dict(os.environ)
     for key in ('MARS_OPENACCEL_EXPORT_DIR', 'MARS_OPENACCEL_PUBLIC_FIXTURE'):
         environment.pop(key, None)
@@ -605,7 +660,7 @@ def main(argv=None):
                 with args.output.open('x') as stream:
                     public['solver_launched'] = False
                     try:
-                        prepare(*inputs)
+                        prepare(*inputs, public=public)
                         public.update(comparison_status='preparation_complete', failed_check='none')
                     except Exception as error:
                         public.update(preparation_failure(error))

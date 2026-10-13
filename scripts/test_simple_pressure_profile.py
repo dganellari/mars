@@ -292,6 +292,45 @@ class ProfileTests(unittest.TestCase):
                     self.prepare()
                 self.assertFalse(self.pair.exists())
 
+    def test_petsc_preparation_accepts_identical_library_path_aliases(self):
+        self.enable_petsc_momentum()
+        self.rebuilt_libs = {path.replace('/SYNTHETIC/lib/', '/SYNTHETIC/view/lib/'): value
+                             for path, value in self.rebuilt_libs.items()}
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+        launch.assert_not_called()
+        checks = startup.read_json(output)['library_checks']
+        self.assertTrue(checks['matched'])
+        self.assertTrue(checks['captured_dependencies_preserved'])
+        self.assertEqual(checks['relocated_identical_libraries'], ['libHYPRE.so', 'libmpi.so'])
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        profile.check_inputs(self.pair)
+
+    def test_library_failure_reports_public_dependency_names_and_keeps_baseline(self):
+        self.enable_petsc_momentum()
+        self.rebuilt_libs['/SYNTHETIC/lib/libmpi.so'] = 'd'*64
+        del self.rebuilt_libs['/SYNTHETIC/lib/libHYPRE.so']
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['failed_check'], 'libraries_changed')
+        checks = result['library_checks']
+        self.assertFalse(checks['matched'])
+        self.assertEqual(checks['changed_captured_libraries'], ['libmpi.so'])
+        self.assertEqual(checks['missing_captured_libraries'], ['libHYPRE.so'])
+        self.assertTrue(checks['petsc_library_unique'])
+        self.assertFalse(self.pair.exists())
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        self.assertNotIn('SYNTHETIC', output.read_text())
+        self.assertNotIn('d'*64, output.read_text())
+
     def test_supported_petsc_inspection_still_does_not_claim_runtime_settings(self):
         self.enable_petsc_momentum()
         public = {}; profile.inspect_profiles(self.baseline, self.probe, public)
@@ -607,6 +646,79 @@ class ProfileTests(unittest.TestCase):
              patch.object(startup,'runtime_libraries',return_value=self.libs), patch.object(startup,'launch') as launch:
             with self.assertRaisesRegex(startup.EvidenceError,'solver_environment_changed'): profile.run(self.pair,{})
             launch.assert_not_called()
+
+
+class LibraryIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.original = {'/original/libHYPRE.so': 'a'*64, '/original/libmpi.so': 'b'*64,
+                         '/original/libstdc++.so.6': 'c'*64}
+        self.current = dict(self.original, **{'/added/libpetsc.so.3.24': 'd'*64})
+
+    def test_only_petsc_addition_policy_allows_path_aliases(self):
+        moved = {p.replace('/original/', '/alias/'): value for p, value in self.current.items()}
+        self.assertTrue(profile.profile_libraries_match(moved, self.original, True))
+        self.assertFalse(profile.profile_libraries_match(moved, self.original, False))
+        self.assertFalse(profile.profile_libraries_match(moved, self.current, False))
+
+    def test_changed_bytes_are_rejected_even_if_original_bytes_are_also_loaded(self):
+        for path in self.original:
+            with self.subTest(path=path):
+                current = dict(self.current)
+                current[path] = 'e'*64
+                current[path.replace('/original/', '/copy/')] = self.original[path]
+                report = profile.profile_library_checks(current, self.original, True)
+                self.assertFalse(report['matched'])
+                self.assertEqual(report['changed_captured_libraries'], [Path(path).name])
+
+    def test_added_solver_library_or_missing_duplicate_petsc_rejected(self):
+        for changed in (
+                dict(self.current, **{'/extra/libmpi.so': 'b'*64}),
+                dict(self.current, **{'/extra/libHYPRE.so': 'a'*64}),
+                self.original,
+                dict(self.current, **{'/extra/libpetsc.so.3.24': 'd'*64})):
+            with self.subTest(changed=changed):
+                self.assertFalse(profile.profile_libraries_match(changed, self.original, True))
+
+    def test_replacement_at_another_path_reports_changed_bytes(self):
+        current = dict(self.current)
+        del current['/original/libstdc++.so.6']
+        current['/replacement/libstdc++.so.6'] = 'e'*64
+        report = profile.profile_library_checks(current, self.original, True)
+        self.assertFalse(report['matched'])
+        self.assertEqual(report['changed_captured_libraries'], ['libstdc++.so.6'])
+        self.assertEqual(report['missing_captured_libraries'], [])
+
+    def test_missing_or_ambiguous_alias_never_passes(self):
+        for path in self.original:
+            for copies in (0, 2):
+                with self.subTest(path=path, copies=copies):
+                    current = dict(self.current)
+                    del current[path]
+                    for copy_number in range(copies):
+                        current['/copy{}/{}'.format(copy_number, Path(path).name)] = self.original[path]
+                    self.assertFalse(profile.profile_libraries_match(current, self.original, True))
+
+    def test_public_report_never_exports_unknown_names_paths_or_hashes(self):
+        original = dict(self.original, **{'/PRIVATE/libPRIVATE.so': 'e'*64})
+        current = dict(self.current, **{'/PRIVATE/libPRIVATE.so': 'f'*64,
+                                       '/PRIVATE/libmpi_PRIVATE.so': '1'*64})
+        report = profile.profile_library_checks(current, original, True)
+        text = json.dumps(report)
+        self.assertFalse(report['matched'])
+        self.assertEqual(report['changed_captured_libraries'], ['other_runtime_library'])
+        self.assertEqual(report['additional_solver_libraries'], ['mpi'])
+        self.assertNotIn('PRIVATE', text)
+        self.assertNotIn('f'*64, text)
+        for name in ('libmpi_gnu_123.so.12', 'libnvtx3interop.so.1', 'libHYPRE-2.33.0.so'):
+            self.assertEqual(profile.public_library_name('/PRIVATE/' + name), name)
+
+    def test_malformed_library_records_are_not_accepted_or_exported(self):
+        for record in (None, [], {}, {'PRIVATE': 'PRIVATE'}, {123: 'a'*64}):
+            with self.subTest(record=record):
+                report = profile.profile_library_checks(record, self.original, True)
+                self.assertFalse(report['record_valid'])
+                self.assertFalse(report['matched'])
+                self.assertNotIn('PRIVATE', json.dumps(report))
 
 
 if __name__ == '__main__': unittest.main()

@@ -68,6 +68,9 @@ Run the following block in just one pane. Public gate logs may be shared;
 private solver logs, profiles and fields remain local. The existing capture
 checks permit adding PETSc libraries but reject any replacement of the recorded
 MARS MPI, Hypre or other dependencies before launching the private case.
+An existing library may move to a different installation path only if its basename
+and SHA-256 are identical and the match is unique. After preparation, the selected
+paths and hashes are frozen for launch and comparison.
 
 ```bash
 (
@@ -181,6 +184,32 @@ exit "$status"
 `preparation_complete` verifies preparation only. It does not claim that the flow
 solver ran or that fields agree. If preparation succeeds, use the new pair with
 the `run` and `compare` commands above.
+
+## A dependency differs from the saved MARS capture
+
+`libraries_changed` means the runtime probe succeeded but the rebuilt executable's
+dependency manifest does not satisfy the experiment's preservation rule. Adding
+PETSc is expected; changing an existing library's bytes or adding another MPI/Hypre
+library is not silently accepted. The generic error alone does not identify which
+condition failed.
+
+Preparation and launch reports now include `library_checks`. They name known public
+dependencies and distinguish changed bytes, missing captured libraries, identical
+files at different paths, additional MPI/Hypre dependencies, and absent or duplicate
+PETSc libraries. Installation paths, hashes and unrecognized library names are not
+exported. Unknown names appear as `other_runtime_library` (or a fixed solver-family
+label). A malformed manifest is rejected without exporting its contents.
+
+For PETSc preparation only, a unique byte-identical copy with the same basename
+can satisfy a captured dependency at a different installation path. A changed
+library at an original path still fails even if a correct copy is also present.
+Duplicate or ambiguous copies do not satisfy the check. The unchanged strict rule
+applies to Hypre-only preparation and to every launch after preparation.
+
+Use the no-rebuild retry block in the optional NVTX section below. If preparation
+still fails, share its `preparation-public.json`; it now identifies the dependency
+condition without another allocation or a separate diagnostic script. Do not edit
+the baseline records or replace their hashes to make the comparison pass.
 
 ## Optional NVTX auxiliary library
 
