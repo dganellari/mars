@@ -99,20 +99,62 @@ Updated host-adapted wrapper regressions pass with Hypre 2.33 and 3.1. An all-we
 matrix deliberately reaches the fallback to 6; GMRES and FlexGMRES both solve it
 accurately, but the unchanged profile check rejects it. A separate real Hypre 2.33
 CPU probe passes the direct and fallback cases on 1/2/4 MPI ranks, including numeric
-updates and independent residual/solution checks. The corrected CUDA gate and
-private field comparison still require the user-run validation below.
+updates and independent residual/solution checks. The corrected CUDA gate then
+passed all 16 checks on each of 1, 2 and 4 GPUs in the user-supplied results.
+Those 48 passing checks cover the public fixture; private field parity is pending.
+
+### Locating the private first-step timeout
+
+The subsequent private run reached its scheduler time limit. The public file
+checks show an initial snapshot and momentum settings on all four ranks, but no
+pressure settings or first-step snapshot. Momentum settings are written after
+the accepted momentum solve, so the unresolved interval starts after that solve
+and ends before the saved pressure result. It includes the outlet update,
+pressure assembly, packing, Hypre setup/solve and residual checks. The absence of
+a pressure settings file does not distinguish those operations.
+
+With `--first-step-audit`, the executable now flushes fixed progress labels from
+each rank. The saved-launch wrapper displays only complete, allowlisted marker
+lines, for example `MARS rank 0: hypre_setup`. The private raw log, coordinates,
+boundary names and numerical values are not copied to the terminal. Normal runs
+without that audit option do not emit these markers.
+
+| Last entered stage | Work entered before the next marker |
+| --- | --- |
+| `outlet_update` | Outlet update, boundary moments and exchange |
+| `pressure_assembly` | Pressure matrix and boundary assembly |
+| `pressure_pack` | Pack owned matrix rows and RHS |
+| `pressure_backend` / `hypre_initialize` | Enter the pressure backend and initialize Hypre |
+| `hypre_matrix` / `hypre_vectors` | Prepare Hypre matrix or vector storage |
+| `hypre_amg_configure` | Create and configure the preconditioner and Krylov solver |
+| `hypre_setup` | Hypre setup, including AMG hierarchy construction |
+| `hypre_solve` | Hypre Krylov solve |
+| `hypre_solution` / `hypre_residual` | Retrieve the candidate and check its residual |
+| `pressure_exchange` / `pressure_residual` | Exchange the candidate and check the MARS residual |
+| `pressure_audit` / `pressure_correction` | Save the pressure audit or apply the correction |
+| `first_step_complete` / `final_output` | Finish step bookkeeping or write final fields |
+
+These are host API entry markers, not GPU completion or convergence reports.
+No device synchronization, MPI collective or change to the numerical method is
+added. A missing later marker localizes the interval; it does not by itself prove
+a deadlock inside that call. The public failure summary also records
+`simple_progress_last_stage_by_rank`. `hypre_complete` and
+`flow_output_complete` mark return from the wrapper and the end of flow output;
+neither overrides a failed residual or certifies successful process exit.
+
+Local tests check partial and overlong log lines, private text rejection, failed
+child exit preservation, and the real Hypre setup/solve callback sequence. Use
+the bounded retry below to locate the timeout before changing solver controls or
+requesting a longer allocation.
 
 ## Run in the MARS terminal only
 
 Use the working MARS uenv/venv and existing PETSc-enabled build. Run the Git update
-in this terminal only. This rebuilds two MARS targets, not PETSc or Hypre.
-The public gates launch directly with `srun`. The subsequent `run` command
-executes the saved private launcher once; do not wrap it in another `srun`.
-OpenAccel is not relaunched.
-
-When retrying after the reported GPU gate failure, SIMPLE is already built and
-unchanged by the test correction. Build only `mars_distributed_matrix_cuda_gate`
-on the build line below; keep the fresh preparation and remaining commands.
+in this terminal only. Rebuild only SIMPLE for the new markers; the 48 passing
+public GPU checks do not need repeating. The `run` command executes the saved
+private launcher once with its original resource and time limits; do not wrap it
+in another `srun`. OpenAccel is not relaunched. Progress labels appear while the
+run is active; only the public JSON should be shared after a failure.
 
 ```bash
 (
@@ -127,9 +169,9 @@ umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
 cd "$repo/build-hypre"
-cmake --build . --parallel 8 --target mars_segregated_simple mars_distributed_matrix_cuda_gate
-run=$(mktemp -d "$scratch/simple-reference-amg-XXXXXX")
-printf 'Results: %s\n' "$run"
+cmake --build . --parallel 8 --target mars_segregated_simple
+run=$(mktemp -d "$scratch/simple-reference-amg-progress-XXXXXX")
+printf 'Private results: %s\n' "$run"
 
 if ! python3 "$repo/scripts/simple_pressure_profile.py" prepare \
   --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
@@ -138,26 +180,21 @@ if ! python3 "$repo/scripts/simple_pressure_profile.py" prepare \
   --output-dir "$run/pair" --both-linear-solvers --reference-amg \
   --output "$run/preparation-public.json"; then
   cat "$run/preparation-public.json"
+  printf 'Share only: %s\n' "$run/preparation-public.json"
   exit 1
 fi
-
-for np in 1 2 4; do
-  MARS_HYPRE_SPMV_VENDOR=0 srun --account=csstaff --time=00:05:00 \
-    --nodes=1 --ntasks-per-node="$np" \
-    --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
-    "$HOME/affinity/bind_numa.sh" ./mars_distributed_matrix_cuda_gate --reference-amg \
-    2>&1 | tee "$run/gate-$np.log"
-done
 
 if ! python3 "$repo/scripts/simple_pressure_profile.py" run \
   --pair "$run/pair" --output "$run/launch-public.json"; then
   cat "$run/launch-public.json"
+  printf 'Share only: %s\n' "$run/launch-public.json"
   exit 1
 fi
 if ! python3 "$repo/scripts/simple_pressure_profile.py" compare \
   --pair "$run/pair" --detail-dir "$run/private-comparison" \
   --output "$run/comparison-public.json"; then
   cat "$run/comparison-public.json"
+  printf 'Share only: %s\n' "$run/comparison-public.json"
   exit 1
 fi
 

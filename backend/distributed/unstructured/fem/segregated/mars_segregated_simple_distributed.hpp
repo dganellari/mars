@@ -242,6 +242,8 @@ struct DistributedSimpleRunner {
     std::optional<distributed::Tolerance> pressure_tolerance;
     std::optional<distributed::Tolerance> momentum_tolerance;
     std::function<void(int,bool,bool)> pressure_failure_capture;
+    std::function<void(const char*)> progress;
+    void progress_stage(const char* stage) const { if (progress) progress(stage); }
 
 private:
     bool pressure_refinement_=false;
@@ -458,9 +460,12 @@ public:
     template<int C,class System,class Solver> void solve(System& system,Solver& solver,BlockCsrView<C> view,Array<double>& increment,
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
         auto timing=profile.scope(C==3?SimpleProfile::momentum:SimpleProfile::pressure);
+        if constexpr (C==1) progress_stage("pressure_pack");
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
         // Keep a candidate on nonconvergence so both matrix representations can be checked.
+        if constexpr (C==1) progress_stage("pressure_backend");
         const bool solved=solver(system);
+        if constexpr (C==1) progress_stage("pressure_exchange");
         const auto context=[&](const char* reason) {
             return std::string(C==3?"momentum":"pressure correction")+" at SIMPLE iteration "+std::to_string(completed+1)+": "+reason;
         };
@@ -473,6 +478,7 @@ public:
         system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
+        if constexpr (C==1) progress_stage("pressure_residual");
         const auto& override_tolerance=C==1?pressure_tolerance:momentum_tolerance;
         const auto acceptance=override_tolerance.value_or(tolerance);
         auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
@@ -564,6 +570,8 @@ public:
         solve<3>(momentum,momentum_solve,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),du,false,{{d.data(),3}});
         launch(3*n,SimpleAddIncrement{state.velocity,du.data(),1});
         observe("momentum",velocity); observe("influence",d);
+        progress_stage("momentum_complete");
+        progress_stage("outlet_update");
         {
             auto timing=profile.scope(SimpleProfile::outlet);
             if(controls.pressure_expansion) {
@@ -595,6 +603,7 @@ public:
             exchange.begin({{outlet_pressure.data(),1}});
             }
         }
+        progress_stage("pressure_assembly");
         auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
         {
             auto timing=profile.scope(SimpleProfile::pressure_assembly);
@@ -605,7 +614,9 @@ public:
             launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
         }
         solve<1>(poisson,poisson_solve,ap,phi,error.host()[0]!=0,{});
+        progress_stage("pressure_audit");
         observe("raw_pressure_increment",phi);
+        progress_stage("pressure_correction");
         {
             auto timing=profile.scope(SimpleProfile::correction);
             if(controls.pressure_expansion) {

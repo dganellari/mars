@@ -170,6 +170,12 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
         auto graph=run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data());
         audit=std::make_unique<SimpleFirstStepAudit>(MPI_COMM_WORLD,o.output,run.n,run.owned_nodes,run.graph.blocks(),
                                                    raw(source_node),run.owned.data(),graph.offsets,graph.columns);
+        // Fixed stage labels locate a timeout without exposing fields or mesh data.
+        run.progress=[rank](const char* stage) {
+            std::ostringstream line; line<<"[simple-progress] rank="<<rank<<" stage="<<stage<<'\n';
+            std::cerr<<line.str()<<std::flush;
+        };
+        run.poisson_solve.solver.set_progress(run.progress);
     }
     double snapshot_seconds=0;
     const double iteration_start=MPI_Wtime();
@@ -239,12 +245,14 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
             });
             snapshot_seconds+=io_seconds;
         } else run.advance();
+        if (audit) run.progress_stage("first_step_complete");
         run.profile.record_linear(3,run.momentum_solve.solver,run.completed);
         run.profile.record_linear(1,run.poisson_solve.solver,run.completed);
     }
     if (!rank) { csv.close(); ensure(bool(csv),"metric output failed"); }
     const double iteration_seconds=MPI_Wtime()-iteration_start-snapshot_seconds;
     const double output_start=MPI_Wtime();
+    if (audit) run.progress_stage("final_output");
     if (o.field_output!="none") {
         Buffer<FieldRow> rows(run.owned_nodes);
         launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
@@ -277,6 +285,7 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
                                         <<" numeric_updates="<<max_builds[3*c+1]<<" setups="<<max_builds[3*c+2]<<'\n';
         }
     }
+    if (audit) run.progress_stage("flow_output_complete");
     return converged?0:2;
 }
 int main(int argc,char** argv) {

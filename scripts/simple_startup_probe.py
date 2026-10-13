@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 from prepare_simple_deck import load_deck, translate
-from simple_public_diagnostics import SafeParser
+from simple_public_diagnostics import SafeParser, progress_marker
 from simple_reference_messages import MessageMatcher, REFERENCE_REVISION, read_catalog
 from simple_snapshot_compare import (COMPLETION, HEADER, EvidenceError, controls, coordinates, digest,
                                      field_errors, mars_fields, node_ids, options,
@@ -303,9 +303,42 @@ class ReferenceLogState:
         return result
 
 
+class ProgressReader:
+    def __init__(self, ranks):
+        self.ranks = ranks
+        self.pending = b''
+
+    def report(self, stream):
+        # Ignore incomplete and overlong lines, including private text around a marker.
+        for fragment in iter(lambda: stream.readline(4096), b''):
+            if self.pending is not None:
+                self.pending += fragment
+                if len(self.pending) > 256:
+                    self.pending = None
+            if fragment.endswith(b'\n'):
+                if self.pending is not None:
+                    marker = progress_marker(self.pending[:-1].decode('ascii', errors='replace'))
+                    if marker is not None and marker[0] < self.ranks:
+                        print('MARS rank {}: {}'.format(*marker), flush=True)
+                self.pending = b''
+
+
+def wait_with_progress(child, path, ranks):
+    progress = ProgressReader(ranks)
+    with path.open('rb') as stream:
+        while True:
+            try:
+                code = child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                progress.report(stream)
+                continue
+            progress.report(stream)
+            return code
+
+
 def launch(pair, solver, executable, ranks, launcher, environment=None):
     pair = pair.resolve()
-    pair_inputs(pair)
+    inputs = pair_inputs(pair)
     require(1 <= ranks <= 4 and launcher)
     executable = executable.resolve()
     require(executable.is_file() and os.access(str(executable), os.X_OK))
@@ -332,7 +365,8 @@ def launch(pair, solver, executable, ranks, launcher, environment=None):
         child = subprocess.Popen(command, cwd=str(directory), env=environment,
                                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         try:
-            code = child.wait()
+            code = (wait_with_progress(child, directory / 'run.log', ranks)
+                    if solver == 'mars' and inputs.get('first_step_audit', False) else child.wait())
         except BaseException:
             child.terminate()
             try:

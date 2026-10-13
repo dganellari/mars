@@ -678,11 +678,21 @@ void explicit_pressure_profile() {
         expect_failure([&] { settings::configure_gpu_profile(pressure,bad,reference_amg); });
         settings::configure_gpu_profile(pressure,profile,reference_amg);
         pressure.enable_fixed_graph_updates();
+        std::vector<std::string> progress;
+        if (reference_amg) pressure.set_progress([&](const char* stage) { progress.emplace_back(stage); });
         for (unsigned seed:{1u,2u}) {
             std::vector<double> b,truth,x(n,0),other(n,0);
             fill_profile_system(problem,matrix,seed,b,truth);
+            progress.clear();
             check(pressure.solve(matrix,b,x,0,n,0,n,map),"profile solve rejected");
             verify(matrix,map,b,x,truth);
+            if (reference_amg) {
+                std::vector<std::string> expected={"hypre_initialize","hypre_matrix","hypre_vectors"};
+                if (seed==1) expected.push_back("hypre_amg_configure");
+                for (const char* stage:{"hypre_setup","hypre_solve","hypre_solution","hypre_residual","hypre_complete"})
+                    expected.emplace_back(stage);
+                check(progress==expected,"Hypre progress does not follow the actual setup and solve calls");
+            }
             pressure.inspect_prepared([&](auto solver,auto amg,bool flexible) {
                 const auto actual=settings::snapshot(solver,amg,flexible);
                 std::ostringstream detail;

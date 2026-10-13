@@ -54,6 +54,8 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+    void set_progress(std::function<void(const char*)> progress) { progress_=std::move(progress); }
+    void report_progress(const char* stage) const { if (progress_) progress_(stage); }
     static void initialize_hypre() { static HypreInitGuard guard; }
     void enable_gpu_aware_mpi() {
         initialize_hypre();
@@ -182,6 +184,7 @@ public:
         last_timing_ = {};
         prepare_start_ = wall_stamp();
         if (profile_) profile_start_ = profile_->stamp();
+        report_progress("hypre_initialize");
         initialize_hypre();
         configure_spmv();
 
@@ -207,11 +210,14 @@ public:
             MPI_Allreduce(&rebuild, &any_rebuild, 1, MPI_INT, MPI_MAX, comm_);
             if (!any_rebuild) {
                 if (fixed_graph_updates_) {
+                    report_progress("hypre_matrix");
                     update_matrix_values(A);
+                    report_progress("hypre_vectors");
                     if (!update_vectors(b, x)) return false;
                     if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
                     finish_prepare();
                     const double start = wall_stamp();
+                    report_progress("hypre_setup");
                     const HYPRE_Int error = useFlexGmres_
                         ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
                         : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
@@ -261,6 +267,7 @@ public:
             require_reuse(false, "fixed graph updates require the device-map overload");
         if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
+        report_progress("hypre_initialize");
         initialize_hypre();
         configure_spmv();
 
@@ -508,6 +515,7 @@ public:
     // been done.
     bool solveImpl(const Matrix& A, const Vector& b, Vector& x,
                    IndexType globalColStart, IndexType globalColEnd) {
+        report_progress("hypre_matrix");
         int rank;
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
@@ -525,6 +533,7 @@ public:
             require_reuse(parcsr_A_ != nullptr && HYPRE_GetError() == 0, "matrix preparation failed");
 
         // RHS + initial guess: pure device path.
+        report_progress("hypre_vectors");
         HYPRE_BigInt ilower = static_cast<HYPRE_BigInt>(globalDofStart_);
         HYPRE_BigInt iupper = static_cast<HYPRE_BigInt>(globalDofEnd_ - 1);
 
@@ -550,6 +559,7 @@ public:
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
         finish_prepare();
         const double setup_start = wall_stamp();
+        report_progress("hypre_amg_configure");
 
         if (verbose_ && rank == 0) std::cout << "Creating preconditioner..." << std::endl;
 
@@ -780,6 +790,7 @@ public:
         }
 
         if (verbose_ && rank == 0) std::cout << "Setting up " << krylovName << " solver..." << std::endl;
+        report_progress("hypre_setup");
         if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int setup_err = useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
@@ -898,6 +909,7 @@ public:
         auto& d_x_cast = d_x_cast_;
         if (profile_) profile_start_ = profile_->stamp();
         const double solve_start = wall_stamp();
+        report_progress("hypre_solve");
         if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int solve_err = amg_cycle_
             ? HYPRE_BoomerAMGSolve(precond_, parcsr_A_, par_b_, par_x_)
@@ -922,6 +934,7 @@ public:
         if (verbose_ && rank == 0) std::cout << "GMRES solve complete." << std::endl;
 
         // Read solution directly into device storage.
+        report_progress("hypre_solution");
         if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
             HYPRE_IJVectorGetValues(x_hypre_, m,
                                     thrust::raw_pointer_cast(d_rowGlobal.data()),
@@ -965,6 +978,7 @@ public:
 
         int    num_iterations = 0;
         double final_res_norm = 0.0;
+        report_progress("hypre_residual");
         (useFlexGmres_ ? HYPRE_FlexGMRESGetNumIterations : HYPRE_GMRESGetNumIterations)(solver_, &num_iterations);
         (useFlexGmres_ ? HYPRE_FlexGMRESGetFinalRelativeResidualNorm : HYPRE_GMRESGetFinalRelativeResidualNorm)(solver_, &final_res_norm);
         const double reported_res_norm = final_res_norm;
@@ -1088,6 +1102,7 @@ public:
         // Legacy callers also retain their magnitude safeguards.
         if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
         if (timing_enabled_) last_timing_.finish_seconds = wall_stamp() - finish_start;
+        report_progress("hypre_complete");
         return converged;
     }
 
@@ -1578,6 +1593,7 @@ private:
     thrust::device_vector<HYPRE_BigInt> d_row_global_;
     thrust::device_vector<HYPRE_Real> d_b_cast_, d_x_cast_;
     SolverProfile* profile_ = nullptr;
+    std::function<void(const char*)> progress_;
     double profile_start_ = 0;
     MPI_Comm comm_;
     int maxIter_;

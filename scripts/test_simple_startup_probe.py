@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from netCDF4 import Dataset
@@ -147,6 +147,55 @@ what(): Assertion PRIVATE failed
         self.assertEqual(result['reference_stages_seen'], ['controls_ready', 'mesh_read'])
         self.assertEqual(result['reference_progress_scope'], 'any_logged_rank')
         self.assertEqual(result['reference_error_categories'], ['assertion'])
+
+
+class ProgressTests(unittest.TestCase):
+    def test_partial_private_and_overlong_lines_never_escape(self):
+        reader = probe.ProgressReader(4)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            reader.report(io.BytesIO(b'[simple-progress] rank=0 stage=hypre_'))
+            self.assertEqual(output.getvalue(), '')
+            reader.report(io.BytesIO(b'setup\n'))
+            reader.report(io.BytesIO(b'PRIVATE\n[simple-progress] rank=1 stage=PRIVATE\n'
+                                     b'[simple-progress] rank=2 stage=hypre_solve PRIVATE\n'
+                                     b'[simple-progress] rank=4 stage=hypre_solve\n'
+                                     b'PRIVATE [simple-progress] rank=3 stage=hypre_solve\n'))
+            reader.report(io.BytesIO(b'X'*5000))
+            reader.report(io.BytesIO(b'[simple-progress] rank=3 stage=hypre_solve\n'))
+            reader.report(io.BytesIO(b'[simple-progress] rank=3 stage=hypre_residual\n'))
+        self.assertEqual(output.getvalue(), 'MARS rank 0: hypre_setup\nMARS rank 3: hypre_residual\n')
+
+    def test_only_captured_ranks_and_complete_lines_are_reported(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            probe.ProgressReader(2).report(io.BytesIO(
+                b'[simple-progress] rank=2 stage=hypre_setup\n'
+                b'[simple-progress] rank=1 stage=hypre_solve\n'
+                b'[simple-progress] rank=0 stage=hypre_complete'))
+        self.assertEqual(output.getvalue(), 'MARS rank 1: hypre_solve\n')
+
+    def test_polling_preserves_fragments_and_child_exit(self):
+        with tempfile.TemporaryDirectory() as work:
+            log = Path(work) / 'run.log'
+            log.write_bytes(b'PRIVATE\n')
+            child = Mock()
+            chunks = [b'[simple-progress] rank=0 stage=hypre_', b'setup\n',
+                      b'[simple-progress] rank=1 stage=hypre_solve\nPRIVATE\n']
+            def wait(timeout):
+                self.assertEqual(timeout, 2)
+                with log.open('ab') as stream:
+                    stream.write(chunks.pop(0))
+                if chunks:
+                    raise subprocess.TimeoutExpired('synthetic', timeout)
+                return 143
+            child.wait.side_effect = wait
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = probe.wait_with_progress(child, log, 2)
+            self.assertEqual(code, 143)
+            self.assertEqual(output.getvalue(), 'MARS rank 0: hypre_setup\nMARS rank 1: hypre_solve\n')
+            self.assertEqual(child.wait.call_count, 3)
 
 
 class StartupTests(unittest.TestCase):
@@ -351,6 +400,25 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(result['outputs_check'], 'reference_outputs')
         self.assertNotIn('private-path', json.dumps(result))
         self.assertNotIn('private-lib', json.dumps(result))
+
+    def test_failed_first_step_streams_stages_and_preserves_private_log(self):
+        pair = self.fixture.root / 'first-step-launch'
+        probe.prepare(self.fixture.case, self.fixture.reference, pair, first_step_audit=True)
+        exe = self.fixture.root / 'synthetic-solver.py'
+        content = ('PRIVATE-path-and-values\n[simple-progress] rank=0 stage=momentum_complete\n'
+                   '[simple-progress] rank=1 stage=hypre_setup\nPRIVATE-end\n')
+        exe.write_text('import sys\nsys.stdout.write(' + repr(content) + ')\nsys.exit(143)\n')
+        exe.chmod(0o700)
+        output = io.StringIO()
+        with patch.object(probe, 'runtime_libraries', return_value={'test': 'a'*64}), contextlib.redirect_stdout(output):
+            with self.assertRaisesRegex(probe.EvidenceError, '^launcher_exit$'):
+                probe.launch(pair, 'mars', exe, 2, [sys.executable])
+        self.assertEqual(output.getvalue(), 'MARS rank 0: momentum_complete\nMARS rank 1: hypre_setup\n')
+        self.assertEqual((pair / 'mars/run.log').read_text(), content)
+        record = probe.read_json(pair / 'mars/launch.json')
+        self.assertEqual(record['status'], 'failed')
+        self.assertEqual(record['exit_code'], 143)
+        self.assertEqual(record['files']['run.log'], probe.digest(pair / 'mars/run.log'))
 
     def test_explicit_child_environment_is_recorded_without_changing_parent(self):
         pair = self.fixture.root / 'child-environment'
