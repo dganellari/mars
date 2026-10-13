@@ -117,7 +117,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
     run.pressure_failure_capture={};
 }
 
-template<int C,class System> void pressure_only_case(Runner& run,System& system,CandidateSolve<C>& solver) {
+template<int C,class System> void explicit_target_case(Runner& run,System& system,CandidateSolve<C>& solver,bool explicit_target) {
     Array<double> blocks(static_cast<std::size_t>(C*C)*run.graph.blocks()),rhs(static_cast<std::size_t>(C)*run.n),increment(static_cast<std::size_t>(C)*run.n);
     blocks.zero(); rhs.zero();
     const auto a=run.graph.template view<C>(blocks.data(),rhs.data());
@@ -130,8 +130,8 @@ template<int C,class System> void pressure_only_case(Runner& run,System& system,
         solver.mode=mode; bool accepted=true;
         try { run.template solve<C>(system,solver,a,increment,false,{}); }
         catch (const std::exception&) { accepted=false; }
-        // This .25 error meets the explicit pressure atol but not momentum's default.
-        simple_collective(run.comm,accepted==(C==1 && mode==3),"pressure override changed the wrong verdict");
+        // The .25 error meets the explicit atol but still requires backend acceptance.
+        simple_collective(run.comm,accepted==(explicit_target && mode==3),"linear override changed the wrong verdict");
     }
 }
 
@@ -156,8 +156,25 @@ void pressure_configuration(Runner& run,int rank,int ranks) {
         && run.poisson_solve.absolute==.5 && !run.momentum_solve.configured
         && run.tolerance.absolute==1e-13 && run.tolerance.relative==1e-10 && !run.tolerance.maximum,
         "pressure targets not isolated from momentum");
-    pressure_only_case<1>(run,run.poisson,run.poisson_solve);
-    pressure_only_case<3>(run,run.momentum,run.momentum_solve);
+    explicit_target_case<1>(run,run.poisson,run.poisson_solve,true);
+    explicit_target_case<3>(run,run.momentum,run.momentum_solve,false);
+    auto reject_momentum=[&](bool enabled,double relative,double absolute) {
+        bool rejected=false;
+        try { run.set_momentum_tolerances(enabled,relative,absolute); }
+        catch (const std::exception&) { rejected=true; }
+        simple_collective(run.comm,rejected,"invalid momentum configuration accepted");
+    };
+    reject_momentum(true,rank==ranks-1?0:1e-6,0);
+    if (ranks>1) {
+        reject_momentum(rank==ranks-1,1e-6,0);
+        reject_momentum(true,rank==ranks-1?1e-5:1e-6,0);
+        reject_momentum(true,1e-6,rank==ranks-1?1e-5:0);
+    }
+    run.set_momentum_tolerances(true,2e-6,.5);
+    simple_collective(run.comm,run.momentum_solve.configured && run.momentum_solve.relative==2e-6
+        && run.momentum_solve.absolute==.5 && run.poisson_solve.relative==1e-6
+        && run.pressure_tolerance->relative==1e-6,"momentum targets changed pressure");
+    explicit_target_case<3>(run,run.momentum,run.momentum_solve,true);
 }
 
 template<int C> struct RefiningSolve:CandidateSolve<C> {

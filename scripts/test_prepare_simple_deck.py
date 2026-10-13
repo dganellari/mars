@@ -55,6 +55,20 @@ class DeckTests(unittest.TestCase):
         settings['coupled_navier_stokes'] = {'family': 'PETSc'}
         self.assertEqual(bridge.translate(self.doc), expected)
 
+    def test_reference_momentum_precedence_and_independence(self):
+        settings = self.control['advanced_options']['linear_solver_settings']
+        settings['default'] = dict(family='Hypre', rtol=1e-4, atol=1e-10)
+        settings['segregated_flow'] = dict(family='Hypre', rtol=2e-5, atol=0)
+        settings['coupled_navier_stokes'] = dict(family='Hypre', rtol=3e-6, atol=2e-14)
+        settings['pressure_correction'] = dict(family='Hypre', rtol=1e-7, atol=0)
+        for key, target in [('coupled_navier_stokes',3e-6), ('segregated_flow',2e-5), ('default',1e-4)]:
+            args, _ = bridge.translate(self.doc,'reference','reference')
+            values=dict(zip(args[::2],args[1::2]))
+            self.assertEqual(float(values['--momentum-linear-rtol']),target)
+            self.assertEqual(float(values['--pressure-linear-rtol']),1e-7)
+            del settings[key]
+        with self.assertRaises(bridge.Unsupported): bridge.translate(self.doc,'reference','reference')
+
     def reference_values(self):
         args, _ = bridge.translate(self.doc, pressure_linear_policy='reference')
         return dict(zip(args[::2], args[1::2]))

@@ -65,13 +65,15 @@ def controls(case_path, reference_dir, mesh, log):
     require(case['format'] == 'mars-simple-deck-v1')
     prepared = options(case['arguments'])
     mapped_prepared = dict(prepared)
-    if '--pressure-solver-profile' in mapped_prepared:
-        profile = Path(mapped_prepared.pop('--pressure-solver-profile'))
-        require(case.get('pressure_solver_profile_sha256') == digest(profile))
-        require([line.strip() for line in log if line.startswith('pressure_solver_profile=')] ==
-                ['pressure_solver_profile=explicit_gpu'])
-    else:
-        require(not any(line.startswith('pressure_solver_profile=') for line in log))
+    for stage in ('pressure', 'momentum'):
+        flag = '--' + stage + '-solver-profile'
+        label = stage + '_solver_profile='
+        if flag in mapped_prepared:
+            profile = Path(mapped_prepared.pop(flag))
+            require(case.get(stage + '_solver_profile_sha256') == digest(profile))
+            require([line.strip() for line in log if line.startswith(label)] == [label + 'explicit_gpu'])
+        else:
+            require(not any(line.startswith(label) for line in log))
     require(mesh is None or Path(prepared['--mesh']).resolve() == mesh.resolve())
     require(prepared['--mesh-format'] == 'exodus')
     # The saved preparation hash selects the reference deck without printing its name.
@@ -82,7 +84,7 @@ def controls(case_path, reference_dir, mesh, log):
     if exact or len(candidates) == 1:
         deck = (exact or candidates)[0]
         try:
-            translated, _ = translate(load_deck(deck.read_bytes()), case.get('pressure_linear_policy', 'mars'))
+            translated, _ = translate(load_deck(deck.read_bytes()), case.get('pressure_linear_policy', 'mars'), case.get('momentum_linear_policy', 'mars'))
             reference = options(translated)
             same = set(mapped_prepared) == set(reference) | {'--mesh', '--mesh-format', '--reference-length'}
             same = same and all(mapped_prepared[key] == value for key, value in reference.items())
@@ -106,14 +108,15 @@ def controls(case_path, reference_dir, mesh, log):
             actual, expected = float(values[0]), float(prepared[CONTROL_KEYS[key]])
             require(math.isfinite(actual) and math.isfinite(expected))
             require(math.isclose(actual, expected, rel_tol=1e-13, abs_tol=1e-15))
-    target = [line for line in log if line.startswith('pressure_linear_rtol=')]
-    if '--pressure-linear-rtol' in prepared:
-        require(len(target) == 1)
-        for label, flag in (('pressure_linear_rtol', '--pressure-linear-rtol'), ('pressure_linear_atol', '--pressure-linear-atol')):
-            found = re.findall(label + r'=([^\s]+)', target[0])
-            require(len(found) == 1 and float(found[0]) == float(prepared[flag]))
-    else:
-        require(not target)
+    for stage in ('pressure', 'momentum'):
+        target = [line for line in log if line.startswith(stage + '_linear_rtol=')]
+        if '--' + stage + '-linear-rtol' in prepared:
+            require(len(target) == 1)
+            for kind in ('rtol', 'atol'):
+                found = re.findall(stage + '_linear_' + kind + r'=([^\s]+)', target[0])
+                require(len(found) == 1 and float(found[0]) == float(prepared['--' + stage + '-linear-' + kind]))
+        else:
+            require(not target)
     return prepared, deck, reference_status, bool(exact)
 
 

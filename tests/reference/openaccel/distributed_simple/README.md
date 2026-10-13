@@ -26,8 +26,12 @@ pass; private first-step field parity is not established. The later public
 common-system check in [the profile notes](pressure_profile.md) found distinct
 pressure increments passing the same original residual target.
 The opt-in [retained pressure extension](pressure_expansion.md) carries a
-correction remainder through SIMPLE; its production GPU gate and full-flow
-validation remain pending.
+correction remainder through SIMPLE; its public production GPU gates passed.
+Full nonlinear convergence and OpenAccel pump field parity remain unverified.
+The [two-solver profile](pressure_profile.md#momentum-and-pressure-controls)
+also maps supported reference momentum controls instead of leaving them at
+MARS defaults. It preserves both original residual targets and records any
+GPU substitutions.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared

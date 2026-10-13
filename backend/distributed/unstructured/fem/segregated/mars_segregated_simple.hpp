@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include "mars_segregated_assembly.hpp"
 #include "mars_segregated_update.hpp"
 
@@ -77,11 +78,16 @@ MARS_SIMPLE_HD inline BoundaryAssemblyInput simple_boundary(bool momentum, Simpl
     if (x.stage==5) {
         // The full normal edge length is 3V/|A_face| = V/|A_sample|.
         // OpenAccel initializes this laminar coefficient after its first outer solve.
+        const double distance=g.volume/magnitude;
+        const double minimum=std::numeric_limits<double>::epsilon();
+        // Preserve ordinary-scale arithmetic; OpenAccel clamps the distance to SMALL.
+        const double coefficient=distance<minimum?4*c.viscosity*magnitude/minimum:
+                                                  4*c.viscosity*magnitude*magnitude/g.volume;
         for (int f=0;f<3;++f) {
             const int node=nodes[tet_face_node(face.ordinal,f)];
             input.nodes[f]=node; x.face_nodes[f]=x.nearest[f]=f;
             for (int j=0;j<3;++j) x.velocity[3*f+j]=velocity[3*node+j];
-            x.wall_coefficient[f]=wall_initialized?4*c.viscosity*magnitude*magnitude/g.volume:0;
+            x.wall_coefficient[f]=wall_initialized?coefficient:0;
         }
     }
     return input;

@@ -30,7 +30,7 @@ class HistoryTests(unittest.TestCase):
     def prepare(self):
         f = self.fixture
         with patch.object(startup, 'runtime_libraries', return_value=f.libs):
-            profile.prepare(f.baseline, f.probe, f.exe, self.pair, history=True)
+            profile.prepare(f.baseline, f.probe, f.exe, self.pair, history=True, both_linear_solvers=f.both_linear_solvers)
 
     def record(self, solver):
         f = self.fixture
@@ -89,6 +89,17 @@ class HistoryTests(unittest.TestCase):
         for step in range(1, 21):
             for rank in range(2):
                 (mars / ('flow-pressure-step-{}-rank-{}.settings'.format(step, rank))).write_text(profile.text_profile(actual))
+        if f.both_linear_solvers:
+            momentum, _, _ = profile.momentum_data(f.baseline, f.probe, startup.verified_launch(f.baseline, 'openaccel'))
+            actual = dict(momentum, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+            actual['effective_relax_1'] = actual.pop('relax_down')
+            actual['effective_relax_2'] = actual.pop('relax_up')
+            for step in range(1,21):
+                for rank in range(2):
+                    (mars / ('flow-momentum-step-{}-rank-{}.settings'.format(step,rank))).write_text(profile.text_profile(actual))
+            log=mars/'run.log'
+            log.write_text(log.read_text() + 'momentum_solver_profile=explicit_gpu\n'
+                + 'momentum_linear_rtol={} momentum_linear_atol={}\n'.format(momentum['rtol'],momentum['atol']))
         self.record('mars')
         self.record('openaccel')
 
@@ -98,6 +109,20 @@ class HistoryTests(unittest.TestCase):
         public = {}
         profile.compare(self.pair, public, details)
         return public
+
+    def test_both_profiles_verified_at_every_step_and_rank(self):
+        self.fixture.enable_momentum(); self.finish()
+        public=self.compare()
+        self.assertTrue(public['recorded_gpu_momentum_settings_verified'])
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertFalse(public['recovery_enabled'])
+        self.assertTrue(public['reference_solver_launched'])
+
+    def test_missing_momentum_history_part_fails(self):
+        self.fixture.enable_momentum(); self.finish()
+        (self.pair/'mars/flow-momentum-step-7-rank-1.settings').unlink()
+        self.record('mars')
+        with self.assertRaisesRegex(startup.EvidenceError,'runtime_profile_mismatch'): self.compare()
 
     def test_original_controls_preserved_and_no_recovery_or_audit(self):
         f = self.fixture

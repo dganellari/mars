@@ -610,6 +610,45 @@ void fill_profile_system(const dmatrix_gate::Problem& problem,Matrix& matrix,uns
     check(all_weak==(problem.options.diffusion?0:problem.nodes),"fixture strength-filter expectation changed");
 }
 
+void explicit_momentum_profile() {
+    namespace settings=mars::fem::pressure_settings;
+    dmatrix_gate::Options options; options.nx=4; options.ny=3; options.nz=2;
+    dmatrix_gate::Problem problem(3,1,options);
+    const int n=3*problem.nodes;
+    for (bool flex:{false,true}) {
+        Solver solver(0,300,1e-12); solver.setPointBlock(3); solver.setVerbose(false);
+        const auto profile=pressure_profile_fixture(flex,false);
+        settings::configure_gpu_profile(solver,profile);
+        solver.enable_fixed_graph_updates();
+        std::vector<HYPRE_BigInt> map(n); for (int i=0;i<n;++i) map[i]=i;
+        Matrix matrix; matrix.column_count=n;
+        for (unsigned seed:{1u,2u}) {
+            matrix.offsets={0}; matrix.columns.clear(); matrix.values.clear();
+            std::vector<double> b(n),truth(n),x(n,0);
+            for (int node=0;node<problem.nodes;++node) for (int c=0;c<3;++c) {
+                const int g=problem.solver_to_global[node];
+                for (int u:problem.neighbors[g]) for (int j=0;j<3;++j) {
+                    matrix.columns.push_back(3*problem.solver_node[u]+j);
+                    matrix.values.push_back(problem.value(g,u,c,j,seed));
+                }
+                matrix.offsets.push_back(matrix.columns.size());
+                b[3*node+c]=problem.product(g,c,seed,10+seed);
+                truth[3*node+c]=problem.solution(g,c,10+seed);
+            }
+            check(solver.solve(matrix,b,x,0,n,0,n,map),"explicit momentum profile solve failed");
+            verify(matrix,map,b,x,truth);
+            solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
+                std::ostringstream detail;
+                check(pressure_profile_controls_match(profile,settings::snapshot(krylov,amg,flexible),detail),
+                      "momentum profile changed after block setup");
+            });
+            check(solver.get_graph_build_count()==1 && solver.get_numeric_update_count()==int(seed),
+                  "momentum profile prevented numeric refresh");
+        }
+    }
+    std::cout<<"PASS: coupled momentum profiles, original targets and cached refresh\n";
+}
+
 void explicit_pressure_profile() {
     namespace settings=mars::fem::pressure_settings;
     // Also retain the old all-weak fixture: maxlevels alone cannot force coarsening.
@@ -722,6 +761,7 @@ int main() {
     try {
         retained_pressure_checks();
         explicit_pressure_profile();
+        explicit_momentum_profile();
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);
             setenv("MARS_HYPRE_MINITER","3",1);

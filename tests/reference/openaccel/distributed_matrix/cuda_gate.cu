@@ -11,6 +11,7 @@
 #include "gate_common.hpp"
 #include "mars_segregated_simple_distributed.hpp"
 #include "../simple_performance/pressure_profile_fixture.hpp"
+#include "../simple/wall_distance_check.hpp"
 #include <cuda_runtime.h>
 #include <iomanip>
 #include <string>
@@ -231,6 +232,11 @@ int main(int argc,char** argv) {
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile one level",18,true,1);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile multilevel",18,true,2);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile FlexGMRES",18,true,3);
+            hypre_gates<3>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU momentum profile multilevel",18,true,2);
+            hypre_gates<3>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU momentum profile FlexGMRES",18,true,3);
+            Buffer<int> wall_check(1,0);
+            mars::segregated::runtime::launch(1,WallDistanceCheck{raw(wall_check)});
+            report.result("wall distance floor and first-step initialization",all_true(download(raw(wall_check),1)[0]==1,MPI_COMM_WORLD));
             pressure_refinement_gate(MPI_COMM_WORLD,report);
             if (repetitions>0) { bench<1>(MPI_COMM_WORLD,report,repetitions); bench<3>(MPI_COMM_WORLD,report,repetitions); }
         }

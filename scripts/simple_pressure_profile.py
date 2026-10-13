@@ -34,7 +34,7 @@ DEFAULT_FILES = ('public.json', 'probe.log', 'private-provenance.json', 'private
 ERRORS = {'original_baseline_required', 'defaults_evidence', 'unsupported_gpu_profile', 'profile_identity',
           'runtime_profile_mismatch', 'executable_changed', 'libraries_changed', 'solver_environment_changed',
           'launcher_changed', 'launcher_exit', 'runtime_recovery_mismatch', 'initial_fields_mismatch',
-          'reference_pressure_log', 'history_required'}
+          'reference_pressure_log', 'history_required', 'unsupported_momentum_profile'}
 
 
 def validate(v):
@@ -124,6 +124,22 @@ def baseline_data(baseline, probe):
     return record, case, launches, values, adaptations
 
 
+def momentum_data(baseline, probe, reference):
+    try:
+        deck = startup.load_deck((baseline / 'reference/input.i').read_bytes())
+        config = pressure.resolved_solver(deck, 'coupled_navier_stokes')
+        from prepare_simple_deck import reference_momentum_target
+        solver = deck['simulation']['solver']
+        arguments = reference_momentum_target(solver['solver_control']['advanced_options']['linear_solver_settings'], solver)
+        target = options(arguments)
+        values, adaptations = resolve(config, (float(target['--momentum-linear-atol']),
+                                              float(target['--momentum-linear-rtol'])), read_defaults(probe, reference))
+        return values, adaptations, arguments
+    except Exception:
+        # Never print a private solver name or approximate a different backend.
+        raise EvidenceError('unsupported_momentum_profile')
+
+
 def pair_content(baseline, pair, record, case, identity):
     case = copy.deepcopy(case)
     record = dict(record)
@@ -136,11 +152,22 @@ def pair_content(baseline, pair, record, case, identity):
                       changed_controls=['iteration_limits', 'output_control', 'linear_system_output', 'gpu_pressure_profile'])
     case['arguments'] += ['--pressure-solver-profile', str(pair / 'pressure.profile')]
     case['pressure_solver_profile_sha256'] = identity['sha256']
+    if 'momentum' in identity:
+        _, _, arguments = momentum_data(baseline, pair / 'defaults', startup.verified_launch(baseline, 'openaccel'))
+        case['arguments'] += arguments + ['--momentum-solver-profile', str(pair / 'momentum.profile')]
+        case['momentum_linear_policy'] = 'reference'
+        case['momentum_solver_profile_sha256'] = identity['momentum']['sha256']
+        record['changed_controls'] = record['changed_controls'] + ['gpu_momentum_profile']
+        case['notes'] = [note for note in case.get('notes', []) if not note.startswith((
+            'MARS retains its momentum solver settings', 'Reference pressure residual target copied;'))] + [
+            'Both linear targets are copied; explicit GPU profiles record backend adaptations.',
+            'Nonlinear MARS convergence norms are unchanged; this compares saved iteration states.']
     return record, case
 
 
-def prepare(baseline, probe, executable, output, history=False):
+def prepare(baseline, probe, executable, output, history=False, both_linear_solvers=False):
     record, case, launches, values, adaptations = baseline_data(baseline, probe)
+    momentum = momentum_data(baseline, probe, launches['openaccel']) if both_linear_solvers else None
     require(executable.is_file() and os.access(str(executable), os.X_OK), 'executable_changed')
     libraries = startup.runtime_libraries(executable)
     require(libraries == launches['mars']['libraries'], 'libraries_changed')
@@ -161,6 +188,9 @@ def prepare(baseline, probe, executable, output, history=False):
         defaults_hashes={name: digest(output / 'defaults' / name) for name in DEFAULT_FILES},
         baseline_launch_hashes={s: digest(baseline / ('reference' if s == 'openaccel' else 'mars') / 'launch.json') for s in launches},
         executable=str(executable), executable_sha256=digest(executable), libraries=libraries)
+    if momentum is not None:
+        (output / 'momentum.profile').write_text(text_profile(momentum[0]))
+        identity['momentum'] = dict(sha256=digest(output / 'momentum.profile'), adaptations=momentum[1])
     if history:
         identity['kind'] = HISTORY
     record, case = pair_content(baseline, output, record, case, identity)
@@ -181,6 +211,10 @@ def check_inputs(pair):
                                                   for s in launches}, 'profile_identity')
     require(text_profile(values) == (pair / 'pressure.profile').read_text()
             and identity['adaptations'] == adaptations and identity['libraries'] == launches['mars']['libraries'], 'profile_identity')
+    if 'momentum' in identity:
+        momentum, changes, _ = momentum_data(baseline, pair / 'defaults', launches['openaccel'])
+        require(text_profile(momentum) == (pair / 'momentum.profile').read_text()
+                and identity['momentum'] == dict(sha256=digest(pair / 'momentum.profile'), adaptations=changes), 'profile_identity')
     old, expected_case = pair_content(baseline, pair, old, case, identity)
     require(startup.read_json(pair / 'case.json') == expected_case
             and record == dict(old, case_sha256=digest(pair / 'case.json'), pressure_profile=identity), 'profile_identity')
@@ -225,16 +259,17 @@ def run(pair, public, solver='mars'):
     check_launch(pair, baseline, old, identity, solver)
 
 
-def check_runtime(pair, ranks, values, history=False):
+def check_runtime(pair, ranks, values, history=False, stage='pressure'):
     expected = dict(values)
     expected['effective_relax_1'] = expected.pop('relax_down')
     expected['effective_relax_2'] = expected.pop('relax_up')
     expected['effective_relax_3'] = expected['coarserelax']
-    paths = sorted((pair / 'mars').glob('flow-pressure-rank-*.settings'))
-    names = ['flow-pressure-rank-{}.settings'.format(rank) for rank in range(ranks)]
+    prefix = 'flow-' + stage + '-'
+    paths = sorted((pair / 'mars').glob(prefix + 'rank-*.settings'))
+    names = [(prefix + 'rank-{}.settings').format(rank) for rank in range(ranks)]
     if history:
-        paths += sorted((pair / 'mars').glob('flow-pressure-step-*-rank-*.settings'))
-        names = ['flow-pressure-step-{}-rank-{}.settings'.format(step, rank)
+        paths += sorted((pair / 'mars').glob(prefix + 'step-*-rank-*.settings'))
+        names = [(prefix + 'step-{}-rank-{}.settings').format(step, rank)
                  for step in range(1, startup.STEPS + 1) for rank in range(ranks)]
     require({p.name for p in paths} == set(names), 'runtime_profile_mismatch')
     for name in names:
@@ -259,6 +294,9 @@ def compare(pair, public, details):
                 not any(line.startswith(('[simple-pressure-expansion]', '[simple-pressure-refinement]')) for line in lines),
                 'runtime_recovery_mismatch')
     check_runtime(pair, record['ranks'], values, history)
+    if 'momentum' in identity:
+        momentum, _, _ = momentum_data(baseline, pair / 'defaults', launches['openaccel'])
+        check_runtime(pair, record['ranks'], momentum, history, 'momentum')
     result = {}
     startup.compare(pair, result, details, reference_pair=None if history else baseline)
     check_inputs(pair)
@@ -276,6 +314,9 @@ def compare(pair, public, details):
         original_pressure_targets_preserved=True, recorded_gpu_pressure_settings_verified=True,
         gpu_adaptations=identity['adaptations'], reference_solver_launched=history,
         identical_linear_solvers_verified=False, nonlinear_convergence_verified=False)
+    if 'momentum' in identity:
+        public.update(original_momentum_targets_preserved=True, recorded_gpu_momentum_settings_verified=True,
+                      momentum_gpu_adaptations=identity['momentum']['adaptations'])
 
 
 def inspect_linear(pair, public):
@@ -304,6 +345,8 @@ def main(argv=None):
     for name in ('baseline-pair', 'defaults-probe', 'executable', 'output-dir'):
         prep.add_argument('--' + name, type=Path, required=True)
     prep.add_argument('--history', action='store_true')
+    prep.add_argument('--both-linear-solvers', action='store_true',
+                      help='Also resolve momentum from the original deck; unsupported backends/settings fail before launch')
     for action in ('run', 'compare', 'inspect-linear'):
         command = sub.add_parser(action)
         command.add_argument('--pair', type=Path, required=True)
@@ -317,8 +360,8 @@ def main(argv=None):
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='private_preflight_or_capture')
     try:
         if args.action == 'prepare':
-            prepare(args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(), args.output_dir.resolve(), args.history)
-            print('Original pressure profile prepared. No solver launched; baseline preserved.')
+            prepare(args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(), args.output_dir.resolve(), args.history, args.both_linear_solvers)
+            print('Original linear profiles prepared. No solver launched; baseline preserved.')
             return 0
         require(args.action in ('run', 'compare', 'inspect-linear'))
         with args.output.open('x') as stream:

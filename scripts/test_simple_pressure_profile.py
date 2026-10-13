@@ -27,6 +27,7 @@ def measured_defaults():
 
 class ProfileTests(unittest.TestCase):
     def setUp(self):
+        self.both_linear_solvers = False
         self.capture = fixtures.FirstStepTests()
         self.capture.setUp()
         self.addCleanup(self.capture.doCleanups)
@@ -76,7 +77,7 @@ class ProfileTests(unittest.TestCase):
 
     def prepare(self):
         with patch.object(startup, 'runtime_libraries', return_value=self.libs):
-            profile.prepare(self.baseline, self.probe, self.exe, self.pair)
+            profile.prepare(self.baseline, self.probe, self.exe, self.pair, both_linear_solvers=self.both_linear_solvers)
 
     def finish(self):
         self.prepare()
@@ -90,7 +91,38 @@ class ProfileTests(unittest.TestCase):
         actual['effective_relax_2'] = actual.pop('relax_up')
         for rank in (0, 1):
             (self.pair / 'mars' / ('flow-pressure-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
+        if self.both_linear_solvers:
+            momentum, _, _ = profile.momentum_data(self.baseline, self.pair / 'defaults', startup.verified_launch(self.baseline, 'openaccel'))
+            actual = dict(momentum, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+            actual['effective_relax_1'] = actual.pop('relax_down')
+            actual['effective_relax_2'] = actual.pop('relax_up')
+            for rank in (0, 1):
+                (self.pair / 'mars' / ('flow-momentum-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
+            log.write_text(log.read_text() + 'momentum_solver_profile=explicit_gpu\n'
+                + 'momentum_linear_rtol={} momentum_linear_atol={}\n'.format(momentum['rtol'], momentum['atol']))
         self.record()
+
+    def enable_momentum(self, family='Hypre'):
+        self.both_linear_solvers = True
+        path = self.baseline / 'reference/input.i'
+        deck = startup.load_deck(path.read_bytes())
+        config = copy.deepcopy(self.config)
+        config.update(family=family, rtol=2e-5, atol=3e-12, max_iterations=123)
+        config['options']['solver'] = dict(type='flexgmres', kdim=17)
+        deck['simulation']['solver']['solver_control']['advanced_options']['linear_solver_settings']['coupled_navier_stokes'] = config
+        path.write_text(yaml.safe_dump(deck))
+        case = startup.read_json(self.baseline / 'case.json')
+        case['deck_sha256'] = startup.digest(path)
+        (self.baseline / 'case.json').write_text(json.dumps(case))
+        record = startup.read_json(self.baseline / 'pair.json')
+        record.update(deck_sha256=case['deck_sha256'], case_sha256=startup.digest(self.baseline / 'case.json'))
+        (self.baseline / 'pair.json').write_text(json.dumps(record))
+        self.capture.refresh()
+        for directory in ('mars', 'reference'):
+            for name in ('launch-start.json', 'launch.json'):
+                path = self.baseline / directory / name
+                record = startup.read_json(path); record['libraries'] = self.libs
+                path.write_text(json.dumps(record))
 
     def record(self):
         old = self.capture.pair
@@ -103,6 +135,54 @@ class ProfileTests(unittest.TestCase):
             record.update(executable=str(self.exe), executable_sha256=startup.digest(self.exe), libraries=self.libs,
                           command=['launcher', str(self.exe)]+startup.solver_arguments(self.pair, 'mars'))
             path.write_text(json.dumps(record))
+
+    def test_both_profiles_map_distinct_controls_and_keep_reference_unchanged(self):
+        self.enable_momentum()
+        before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        self.finish()
+        _, _, pressure, identity = profile.check_inputs(self.pair)
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, startup.verified_launch(self.baseline, 'openaccel'))
+        self.assertEqual((momentum['method'],momentum['kdim'],momentum['maxiter']), (1,17,123))
+        self.assertEqual((pressure['method'],pressure['kdim'],pressure['maxiter']), (0,5,20))
+        self.assertEqual(before, {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        details=self.root/'both-details'; details.mkdir()
+        public={}; profile.compare(self.pair,public,details)
+        self.assertTrue(public['recorded_gpu_momentum_settings_verified'])
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertNotIn(str(self.root),json.dumps(public))
+
+    def test_other_momentum_backend_is_not_silently_substituted(self):
+        self.enable_momentum('PETSc')
+        with self.assertRaisesRegex(startup.EvidenceError,'unsupported_momentum_profile'):
+            self.prepare()
+        self.assertFalse(self.pair.exists())
+
+    def test_momentum_runtime_profile_and_log_are_required(self):
+        self.enable_momentum(); self.finish()
+        path=self.pair/'mars/flow-momentum-rank-1.settings'
+        path.write_text(path.read_text().replace('kdim 17\n','kdim 100\n'))
+        self.record(); details=self.root/'both-details'; details.mkdir()
+        with self.assertRaisesRegex(startup.EvidenceError,'runtime_profile_mismatch'):
+            profile.compare(self.pair,{},details)
+        path.unlink(); self.record()
+        with self.assertRaisesRegex(startup.EvidenceError,'runtime_profile_mismatch'):
+            profile.compare(self.pair,{},details)
+
+    def test_missing_or_changed_momentum_target_log_fails(self):
+        self.enable_momentum(); self.finish()
+        path=self.pair/'mars/run.log'; original=path.read_text()
+        for index, replacement in enumerate(('', 'momentum_linear_rtol=0.5 momentum_linear_atol=0')):
+            lines=[replacement if line.startswith('momentum_linear_rtol=') else line for line in original.splitlines()]
+            path.write_text('\n'.join(lines)+'\n'); self.record()
+            details=self.root/('log-details-'+str(index)); details.mkdir()
+            with self.assertRaises(ValueError): profile.compare(self.pair,{},details)
+
+    def test_changed_momentum_target_or_profile_rejected(self):
+        self.enable_momentum(); self.prepare()
+        path=self.pair/'momentum.profile'
+        path.write_text(path.read_text().replace('kdim 17\n','kdim 100\n'))
+        with self.assertRaises(ValueError): profile.check_inputs(self.pair)
 
     def test_defaults_and_two_gpu_adaptations(self):
         v, changes = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())

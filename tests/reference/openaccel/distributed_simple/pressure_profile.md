@@ -6,7 +6,7 @@ It runs both solvers afresh with recovery disabled and checks every snapshot.
 
 This experiment returns to the original OpenAccel pressure targets and saved
 first step. It runs only MARS. It does not use the tightened-pressure experiment
-as the reference, change momentum controls, enable correction-equation recovery,
+as the reference, change momentum controls by default, enable correction-equation recovery,
 or accept a failed pressure residual.
 
 The first-step assembly audit found momentum and pressure equations matching
@@ -46,7 +46,7 @@ The reference restart, method, iteration cap, default minimum iterations and
 original rtol/atol are applied to the pressure instance. OpenAccel does not
 forward its generic `min_iterations` to Hypre; the captured Hypre default is
 used. AMG remains one V-cycle with tolerance zero. The production default path
-and momentum instance retain their existing controls. Native GPU SpMV and both
+and, unless explicitly selected below, momentum instance retain their existing controls. Native GPU SpMV and both
 independent acceptance checks remain in effect.
 
 `--pressure-solver-profile` requires explicit pressure tolerances and either the
@@ -65,6 +65,61 @@ numerical environment must match the baseline. Known scalar environment controls
 are restored only in the child process. Unknown or device-binding changes stop
 before launch. Both baseline and new output hashes are checked again during
 comparison. OpenAccel runtime mounts need not be present in the MARS terminal.
+
+## Momentum and pressure controls
+
+Use `prepare --both-linear-solvers` to resolve both `coupled_navier_stokes`
+and `pressure_correction` from the original deck. Each uses the reference's
+lookup precedence: equation, `segregated_flow`, then `default`. The saved
+reference deck and fields stay unchanged. Separate files configure the two
+MARS instances; separate settings records verify every selected rank and step.
+The public result reports `original_momentum_targets_preserved` and
+`recorded_gpu_momentum_settings_verified` only after those checks pass.
+
+The supported profile is unscaled Hypre GMRES or FlexGMRES with the restricted
+BoomerAMG options above. A PETSc, Trilinos, MGR, matrix-scaling or other unsupported
+configuration stops preparation with `unsupported_momentum_profile`; it is not
+silently translated into Hypre. The previously measured reference defaults are
+reused only after their executable/library identities are checked. Identical
+CPU/GPU solvers are still not claimed: Hypre versions, row order, coarsening and
+coarse relaxation can differ.
+
+For momentum `A du = b`, `du` is a velocity increment; matrix coefficients have
+units kg/s and the RHS has units N. Both its Krylov target and the two independent
+original-system checks use `max(atol, rtol ||b||)`. Pressure retains its own target
+with RHS units kg/s. Neither target is tightened or relaxed by this mapping.
+SIMPLE equations, relaxation, update order and the zero initial fields are unchanged.
+Recovery remains disabled. MARS continues to reject failed linear solves even
+though the inspected reference wrapper discards Hypre's return code.
+
+This is an iteration-state comparison. Nonlinear MARS norms and stopping criteria
+are unchanged; the reference's diagonally normalized component RMS is a different
+quantity. Neither completion nor a profile match establishes nonlinear convergence.
+The wall coefficient now uses the reference minimum normal distance:
+`4 mu A_sample / max(h, epsilon)`, with `h = V_tet / A_sample`. The original
+arithmetic is retained for `h >= epsilon`, and the first outer step still has zero
+wall coefficient. This extreme-scale regularization difference has not been linked
+to the observed pump discrepancy.
+
+After building and passing the public gates in the block below, select
+`--both-linear-solvers` on its preparation command. Start with the saved original
+one-step reference, rather than repeating the interrupted strict-target long run:
+
+```bash
+python3 "$repo/scripts/simple_pressure_profile.py" prepare \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --executable "$exe" --output-dir "$run/pair" --both-linear-solvers
+```
+
+`--history --both-linear-solvers` additionally requires fresh OpenAccel and MARS
+captures as in [the original history recipe](pressure_original_history.md).
+Do not reuse an old settings file or launch record to represent the new mapping.
+Local validation includes the real CPU Hypre 2.33.0 and 3.1.0 regressions,
+independent algebra and wall-distance checks, and collective acceptance tests
+on 1/2/4 host ranks. These do not validate CUDA execution. The public GPU gate
+now includes coupled three-component momentum profiles and the wall-distance
+threshold check; execution of those new cases is pending.
 
 ## One block, in the MARS terminal
 

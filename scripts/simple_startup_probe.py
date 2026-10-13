@@ -93,7 +93,7 @@ def pair_inputs(pair):
     require(record['mesh_sha256'] == digest(Path(record['mesh'])))
     case = read_json(pair / 'case.json')
     mapped, mesh = translate(load_deck((pair / 'reference/input.i').read_bytes()),
-                             case.get('pressure_linear_policy', 'mars'))
+                             case.get('pressure_linear_policy', 'mars'), case.get('momentum_linear_policy', 'mars'))
     values = options(case['arguments'])
     if 'pressure_profile' in record:
         profile = record['pressure_profile']
@@ -101,6 +101,10 @@ def pair_inputs(pair):
                 (profile.get('kind') == 'original_twenty_steps' and record['steps'] == STEPS))
         require(profile['sha256'] == case['pressure_solver_profile_sha256'] == digest(pair / 'pressure.profile'))
         require(values.pop('--pressure-solver-profile') == str(pair.resolve() / 'pressure.profile'))
+        if 'momentum' in profile:
+            require(profile['momentum']['sha256'] == case['momentum_solver_profile_sha256'] == digest(pair / 'momentum.profile'))
+            require(values.pop('--momentum-solver-profile') == str(pair.resolve() / 'momentum.profile'))
+            require(case.get('momentum_linear_policy') == 'reference')
     require(Path(mesh).resolve() == Path(record['mesh']) == Path(values['--mesh']))
     require(values == dict(options(mapped), **{'--mesh': mesh, '--mesh-format': 'exodus',
                                              '--reference-length': values['--reference-length']}))
@@ -146,7 +150,7 @@ def run_files(directory, solver):
             raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
-        files += sorted(directory.glob('flow-pressure-*.settings'))
+        files += sorted(directory.glob('flow-pressure-*.settings')) + sorted(directory.glob('flow-momentum-*.settings'))
     if read_json(directory.parent / 'pair.json').get('first_step_audit', False):
         files += sorted(directory.glob('*.bin'))
     require(all(p.is_file() for p in files))
