@@ -63,7 +63,7 @@ def preparation_failure(error):
     return dict(failed_check=label, preparation_exception_kind=kind, preparation_source_locations=frames[-12:])
 
 
-def profile_violations(v):
+def profile_violations(v, reference_amg=False):
     if set(v) != KEYS:
         return ['profile_keys']
     invalid = []
@@ -75,11 +75,11 @@ def profile_violations(v):
         return sorted(invalid)
     checks = dict(method=v['method'] in (0, 1), kdim=v['kdim'] > 0, maxiter=v['maxiter'] > 0,
         miniter=v['miniter'] <= v['maxiter'], rtol=0 < v['rtol'] < 1, atol=v['atol'] >= 0,
-        coarsentype=v['coarsentype'] == 8, interptype=v['interptype'] == 6,
+        coarsentype=v['coarsentype'] == (10 if reference_amg else 8), interptype=v['interptype'] == 6,
         numfunctions=v['numfunctions'] == 1, cycletype=v['cycletype'] == 1,
         keeptranspose=v['keeptranspose'] in (0, 1), maxlevels=v['maxlevels'] > 0,
         maxcoarsesize=v['maxcoarsesize'] > 0, mincoarsesize=v['mincoarsesize'] <= v['maxcoarsesize'],
-        numpaths=v['numpaths'] > 0, coarserelax=v['coarserelax'] == 18)
+        numpaths=v['numpaths'] > 0, coarserelax=v['coarserelax'] == (9 if reference_amg else 18))
     checks.update((k, v[k] == 0) for k in ('relaxorder', 'aggnumlevels', 'nodal', 'nodaldiag', 'fcycle'))
     checks.update((k, v[k] in (6, 13, 14, 18)) for k in ('relaxtype', 'relax_down', 'relax_up'))
     checks.update((k, v[k] > 0) for k in ('numsweeps', 'sweeps_1', 'sweeps_2', 'sweeps_3'))
@@ -87,8 +87,8 @@ def profile_violations(v):
     return sorted(k for k, passed in checks.items() if not passed)
 
 
-def validate(v):
-    require(not profile_violations(v), 'unsupported_gpu_profile')
+def validate(v, reference_amg=False):
+    require(not profile_violations(v, reference_amg), 'unsupported_gpu_profile')
 
 
 def read_defaults(directory, reference):
@@ -123,7 +123,7 @@ def read_defaults(directory, reference):
     return projection['defaults']
 
 
-def resolved_values(config, target, measured):
+def resolved_values(config, target, measured, reference_amg=False):
     explicit = reference_controls(config, target)
     v = {key: measured['amg_' + name] for key, name in DEFAULT_KEYS.items()}
     method = 'flexgmres' if explicit['method'] else 'gmres'
@@ -136,18 +136,18 @@ def resolved_values(config, target, measured):
     if 'numsweeps' in explicit:
         v.update(sweeps_1=v['numsweeps'], sweeps_2=v['numsweeps'], sweeps_3=1)
     changes = []
-    if v['coarsentype'] == 10:
+    if not reference_amg and v['coarsentype'] == 10:
         v['coarsentype'] = 8
         changes.append('hmis_to_device_pmis')
-    if v['coarserelax'] == 9:
+    if not reference_amg and v['coarserelax'] == 9:
         v['coarserelax'] = 18
         changes.append('coarse_direct_to_device_l1_jacobi')
     return v, changes
 
 
-def resolve(config, target, measured):
-    values, changes = resolved_values(config, target, measured)
-    validate(values)
+def resolve(config, target, measured, reference_amg=False):
+    values, changes = resolved_values(config, target, measured, reference_amg)
+    validate(values, reference_amg)
     return values, changes
 
 
@@ -376,14 +376,14 @@ def text_profile(values):
     return ''.join('{} {:.17g}\n'.format(k, values[k]) for k in sorted(values))
 
 
-def baseline_data(baseline, probe):
+def baseline_data(baseline, probe, reference_amg=False):
     record, case, launches = pressure.baseline_records(baseline)
     require('pressure_experiment' not in record and 'pressure_profile' not in record
             and launches['mars']['ranks'] == launches['openaccel']['ranks'], 'original_baseline_required')
     require(launches['mars']['environment'].get('MARS_HYPRE_SPMV_VENDOR', '0') == '0', 'unsupported_gpu_profile')
     config, arguments = settings.saved_configuration(baseline)
     target = (float(arguments['--pressure-linear-atol']), float(arguments['--pressure-linear-rtol']))
-    values, adaptations = resolve(config, target, read_defaults(probe, launches['openaccel']))
+    values, adaptations = resolve(config, target, read_defaults(probe, launches['openaccel']), reference_amg)
     return record, case, launches, values, adaptations
 
 
@@ -418,6 +418,9 @@ def pair_content(baseline, pair, record, case, identity):
                       changed_controls=['iteration_limits', 'output_control', 'linear_system_output', 'gpu_pressure_profile'])
     case['arguments'] += ['--pressure-solver-profile', str(pair / 'pressure.profile')]
     case['pressure_solver_profile_sha256'] = identity['sha256']
+    if identity.get('pressure_amg_mode') == 'reference':
+        case['arguments'] += ['--pressure-amg-mode', 'reference']
+        record['changed_controls'] = record['changed_controls'] + ['reference_pressure_amg']
     if 'momentum' in identity:
         _, _, arguments = momentum_data(baseline, pair / 'defaults', startup.verified_launch(baseline, 'openaccel'))
         case['arguments'] += arguments + ['--momentum-solver-profile', str(pair / 'momentum.profile')]
@@ -430,11 +433,15 @@ def pair_content(baseline, pair, record, case, identity):
             'MARS retains its momentum solver settings', 'Reference pressure residual target copied;'))] + [
             'Both linear targets are copied; explicit GPU profiles record backend adaptations.',
             'Nonlinear MARS convergence norms are unchanged; this compares saved iteration states.']
+        if identity.get('pressure_amg_mode') == 'reference':
+            case['notes'][-2] = ('Both linear targets are copied; reference pressure AMG permits '
+                                 'Hypre host staging for HMIS and the direct coarse solve.')
     return record, case
 
 
-def prepare(baseline, probe, executable, output, history=False, both_linear_solvers=False, public=None):
-    record, case, launches, values, adaptations = baseline_data(baseline, probe)
+def prepare(baseline, probe, executable, output, history=False, both_linear_solvers=False, public=None, reference_amg=False):
+    require(not reference_amg or (not history and both_linear_solvers), 'unsupported_gpu_profile')
+    record, case, launches, values, adaptations = baseline_data(baseline, probe, reference_amg)
     momentum = momentum_data(baseline, probe, launches['openaccel']) if both_linear_solvers else None
     require(executable.is_file() and os.access(str(executable), os.X_OK), 'executable_changed')
     libraries = startup.runtime_libraries(executable)
@@ -460,6 +467,10 @@ def prepare(baseline, probe, executable, output, history=False, both_linear_solv
         defaults_hashes={name: digest(output / 'defaults' / name) for name in DEFAULT_FILES},
         baseline_launch_hashes={s: digest(baseline / ('reference' if s == 'openaccel' else 'mars') / 'launch.json') for s in launches},
         executable=str(executable), executable_sha256=digest(executable), libraries=libraries)
+    if reference_amg:
+        identity['pressure_amg_mode'] = 'reference'
+        if public is not None:
+            public.update(pressure_amg_mode='reference', hypre_host_staging_permitted=True)
     if momentum is not None:
         (output / 'momentum.profile').write_text(text_profile(momentum[0]))
         identity['momentum'] = dict(sha256=digest(output / 'momentum.profile'), adaptations=momentum[1])
@@ -475,10 +486,13 @@ def check_inputs(pair):
     record = startup.pair_inputs(pair)
     identity = record['pressure_profile']
     require(identity['schema'] == SCHEMA and identity.get('kind') in (None, HISTORY), 'profile_identity')
+    require('pressure_amg_mode' not in identity or (identity['pressure_amg_mode'] == 'reference'
+            and 'kind' not in identity and 'momentum' in identity), 'profile_identity')
+    reference_amg = identity.get('pressure_amg_mode') == 'reference'
     baseline = Path(identity['reference_pair'])
     require(digest(baseline / 'pair.json') == identity['reference_pair_sha256'], 'profile_identity')
     require(identity['defaults_hashes'] == {name: digest(pair / 'defaults' / name) for name in DEFAULT_FILES}, 'defaults_evidence')
-    old, case, launches, values, adaptations = baseline_data(baseline, pair / 'defaults')
+    old, case, launches, values, adaptations = baseline_data(baseline, pair / 'defaults', reference_amg)
     require(identity['baseline_launch_hashes'] == {s: digest(baseline / ('reference' if s == 'openaccel' else 'mars') / 'launch.json')
                                                   for s in launches}, 'profile_identity')
     require(text_profile(values) == (pair / 'pressure.profile').read_text()
@@ -599,7 +613,10 @@ def compare(pair, public, details):
                 ('velocity_max_scaled', 'velocity_rms_scaled', 'pressure_max_scaled', 'pressure_rms_scaled')})
                 for row in saved['snapshots']])
     public.update(comparison_status='completed', failed_check='none', comparison=result,
-        original_pressure_targets_preserved=True, recorded_gpu_pressure_settings_verified=True,
+        original_pressure_targets_preserved=True, recorded_pressure_settings_verified=True,
+        recorded_gpu_pressure_settings_verified=identity.get('pressure_amg_mode') != 'reference',
+        pressure_amg_mode=identity.get('pressure_amg_mode', 'device'),
+        hypre_host_staging_permitted=identity.get('pressure_amg_mode') == 'reference',
         gpu_adaptations=identity['adaptations'], reference_solver_launched=history,
         identical_linear_solvers_verified=False, nonlinear_convergence_verified=False)
     if 'momentum' in identity:
@@ -635,6 +652,8 @@ def main(argv=None):
     prep.add_argument('--history', action='store_true')
     prep.add_argument('--both-linear-solvers', action='store_true',
                       help='Also resolve momentum from the original deck; unsupported backends/settings fail before launch')
+    prep.add_argument('--reference-amg', action='store_true',
+                      help='Keep reference HMIS and direct coarse solve, permitting Hypre CPU work; requires both linear solvers and a first-step audit')
     prep.add_argument('--output', type=Path,
                       help='Write a public preparation report, including a safe failure location; no solver is launched')
     inspect = sub.add_parser('inspect-profiles')
@@ -660,7 +679,7 @@ def main(argv=None):
                 with args.output.open('x') as stream:
                     public['solver_launched'] = False
                     try:
-                        prepare(*inputs, public=public)
+                        prepare(*inputs, public=public, reference_amg=args.reference_amg)
                         public.update(comparison_status='preparation_complete', failed_check='none')
                     except Exception as error:
                         public.update(preparation_failure(error))
@@ -668,7 +687,7 @@ def main(argv=None):
                     stream.write('\n')
                 print('Pressure preparation status written. No solver launched; share only the public JSON.')
                 return 0 if public['comparison_status'] == 'preparation_complete' else 1
-            prepare(*inputs)
+            prepare(*inputs, reference_amg=args.reference_amg)
             print('Original linear profiles prepared. No solver launched; baseline preserved.')
             return 0
         require(args.action in ('run', 'compare', 'inspect-linear', 'inspect-profiles'))

@@ -22,6 +22,9 @@ int main() {
     check(!defaults.pressure_refinement);
     check(defaults.pressure_failure_capture.empty());
     check(defaults.pressure_solver_profile.empty());
+    check(defaults.pressure_amg_mode=="device");
+    check(parse("--pressure-amg-mode reference --pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+                "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").pressure_amg_mode=="reference");
     check(defaults.momentum_solver_profile.empty() && !defaults.momentum_tolerances);
     const auto momentum=parse("--momentum-solver-profile momentum.profile --momentum-linear-rtol 1e-5 --momentum-linear-atol 2e-14 "
                               "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed");
@@ -74,6 +77,10 @@ int main() {
     check(!SimpleBoundaryNames{"feed","exit",{"outer wall","OUTER_WALL"}}.valid());
     check(options.iterations==20 && options.report==2);
     for (const char* args:{"--rho nan","--rho inf","--rho -1","--mu 0","--inlet-velocity 0","--outlet-pressure inf",
+        "--pressure-amg-mode unknown", "--pressure-amg-mode reference",
+        "--pressure-amg-mode reference --pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+        "--iterations 20 --snapshot-iterations 20 --field-output distributed",
+        "--pressure-amg-mode reference --first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
         "--momentum-solver-profile settings", "--momentum-linear-rtol 1e-6", "--momentum-linear-atol 0",
         "--momentum-linear-rtol 0 --momentum-linear-atol 0", "--momentum-linear-rtol 1 --momentum-linear-atol 0",
         "--momentum-linear-rtol nan --momentum-linear-atol 0", "--momentum-linear-rtol 1e-6 --momentum-linear-atol -1",

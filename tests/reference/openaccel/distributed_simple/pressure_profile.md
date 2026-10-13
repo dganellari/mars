@@ -32,6 +32,10 @@ Two explicit substitutions keep matrix/vector work on the GPU:
 | HMIS coarsening (10) | PMIS (8) |
 | Coarse Gaussian elimination (9) | l1-Jacobi (18) |
 
+The opt-in [reference AMG first-step comparison](reference_amg.md) removes these
+two substitutions and permits Hypre's host staging. It keeps both original linear
+targets and requires the selected coarse solver to remain active after setup.
+
 The source basis is OpenAccel `src/solver/HYPRE/ContextHYPRE.h` at public revision
 `0d69041ba1afda63e9e4328d9e0d9834bba37756`, and Hypre 2.33.0/3.1.0:
 `parcsr_ls/par_coarsen.c` stages HMIS data on host;

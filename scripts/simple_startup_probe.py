@@ -103,6 +103,9 @@ def pair_inputs(pair):
                 (profile.get('kind') == 'original_twenty_steps' and record['steps'] == STEPS))
         require(profile['sha256'] == case['pressure_solver_profile_sha256'] == digest(pair / 'pressure.profile'))
         require(values.pop('--pressure-solver-profile') == str(pair.resolve() / 'pressure.profile'))
+        if 'pressure_amg_mode' in profile:
+            require(profile['pressure_amg_mode'] == 'reference' and record.get('first_step_audit') is True)
+            require(values.pop('--pressure-amg-mode') == 'reference')
         if 'momentum' in profile:
             require(profile['momentum']['sha256'] == case['momentum_solver_profile_sha256'] == digest(pair / 'momentum.profile'))
             require(values.pop('--momentum-solver-profile') == str(pair.resolve() / 'momentum.profile'))

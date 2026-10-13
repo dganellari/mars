@@ -31,6 +31,7 @@ def measured_defaults():
 class ProfileTests(unittest.TestCase):
     def setUp(self):
         self.both_linear_solvers = False
+        self.reference_amg = False
         self.capture = fixtures.FirstStepTests()
         self.capture.setUp()
         self.addCleanup(self.capture.doCleanups)
@@ -80,13 +81,16 @@ class ProfileTests(unittest.TestCase):
 
     def prepare(self):
         with patch.object(startup, 'runtime_libraries', return_value=getattr(self, 'rebuilt_libs', self.libs)):
-            profile.prepare(self.baseline, self.probe, self.exe, self.pair, both_linear_solvers=self.both_linear_solvers)
+            profile.prepare(self.baseline, self.probe, self.exe, self.pair,
+                            both_linear_solvers=self.both_linear_solvers, reference_amg=self.reference_amg)
 
     def prepare_cli(self, output):
         arguments = ['prepare', '--baseline-pair', str(self.baseline), '--defaults-probe', str(self.probe),
                      '--executable', str(self.exe), '--output-dir', str(self.pair), '--output', str(output)]
         if self.both_linear_solvers:
             arguments.append('--both-linear-solvers')
+        if self.reference_amg:
+            arguments.append('--reference-amg')
         return profile.main(arguments)
 
     def test_preparation_report_passes_without_launching_or_changing_baseline(self):
@@ -177,9 +181,10 @@ class ProfileTests(unittest.TestCase):
         shutil.copytree(self.baseline / 'mars', self.pair / 'mars')
         for name in ('launch.json', 'launch-start.json'): (self.pair / 'mars' / name).unlink()
         log = self.pair / 'mars/run.log'
-        log.write_text(log.read_text()+'\npressure_solver_profile=explicit_gpu\n')
+        mode = 'reference_amg_host_staging' if self.reference_amg else 'explicit_gpu'
+        log.write_text(log.read_text()+'\npressure_solver_profile=' + mode + '\n')
         _, _, values, _ = profile.check_inputs(self.pair)
-        actual = dict(values, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+        actual = dict(values, hypre_release=23300, effective_levels=3, effective_relax_3=values['coarserelax'])
         actual['effective_relax_1'] = actual.pop('relax_down')
         actual['effective_relax_2'] = actual.pop('relax_up')
         for rank in (0, 1):
@@ -555,6 +560,95 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual((v['method'], v['kdim'], v['miniter'], v['maxiter']), (1, 31, 0, 123))
         self.assertEqual((v['relax_down'], v['relax_up'], v['sweeps_1'], v['sweeps_3']), (6, 6, 2, 1))
         self.assertEqual(changes, ['coarse_direct_to_device_l1_jacobi'])
+
+    def test_reference_amg_changes_only_the_two_deliberate_substitutions(self):
+        device, _ = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())
+        reference, changes = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults(), True)
+        self.assertEqual(changes, [])
+        self.assertEqual({k for k in device if reference[k] != device[k]}, {'coarsentype', 'coarserelax'})
+        self.assertEqual((reference['coarsentype'], reference['coarserelax']), (10, 9))
+        with self.assertRaises(startup.EvidenceError): profile.validate(reference)
+        with self.assertRaises(startup.EvidenceError): profile.validate(device, True)
+        for key, value in [('coarsentype', 6), ('coarserelax', 99), ('rtol', 0), ('kdim', 0)]:
+            with self.subTest(key=key), self.assertRaises(startup.EvidenceError):
+                profile.validate(dict(reference, **{key: value}), True)
+
+    def test_reference_amg_preparation_requires_first_step_and_both_profiles(self):
+        with patch.object(startup, 'runtime_libraries') as libraries, patch.object(startup, 'launch') as launch:
+            for history, both in ((True, True), (False, False)):
+                with self.assertRaises(startup.EvidenceError):
+                    profile.prepare(self.baseline, self.probe, self.exe, self.pair,
+                                    history=history, both_linear_solvers=both, reference_amg=True)
+            libraries.assert_not_called()
+            launch.assert_not_called()
+        self.assertFalse(self.pair.exists())
+
+    def test_reference_amg_petsc_capture_preserves_equations_targets_and_baseline(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        self.finish()
+        _, launches, values, identity = profile.check_inputs(self.pair)
+        self.assertEqual((values['coarsentype'], values['coarserelax'], values['rtol'], values['atol']), (10, 9, 1e-4, 1e-10))
+        self.assertEqual(identity['adaptations'], [])
+        self.assertEqual(identity['pressure_amg_mode'], 'reference')
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        detail = self.root / 'comparison'; detail.mkdir()
+        public = {}
+        profile.compare(self.pair, public, detail)
+        self.assertTrue(public['hypre_host_staging_permitted'])
+        self.assertTrue(public['recorded_pressure_settings_verified'])
+        self.assertFalse(public['recorded_gpu_pressure_settings_verified'])
+        self.assertTrue(public['original_pressure_targets_preserved'])
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertTrue(all(public['comparison']['first_step_stage_matches'].values()))
+        self.assertFalse(public['reference_solver_launched'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_reference_amg_preparation_reports_host_staging_before_launch(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        output = self.root / 'public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+            launch.assert_not_called()
+        public = startup.read_json(output)
+        self.assertEqual(public['pressure_amg_mode'], 'reference')
+        self.assertTrue(public['hypre_host_staging_permitted'])
+        self.assertFalse(public['solver_launched'])
+
+    def test_reference_amg_ignoring_the_coarse_choice_or_mode_fails_comparison(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        self.finish()
+        detail = self.root / 'comparison'; detail.mkdir()
+        path = self.pair / 'mars/flow-pressure-rank-1.settings'
+        original = path.read_text()
+        path.write_text(original.replace('effective_relax_3 9\n', 'effective_relax_3 18\n'))
+        self.record()
+        with self.assertRaisesRegex(startup.EvidenceError, 'runtime_profile_mismatch'):
+            profile.compare(self.pair, {}, detail)
+        path.write_text(original)
+        log = self.pair / 'mars/run.log'
+        log.write_text(log.read_text().replace('reference_amg_host_staging', 'explicit_gpu'))
+        self.record()
+        with self.assertRaises(ValueError): profile.compare(self.pair, {}, detail)
+
+    def test_reference_amg_mode_cannot_change_in_saved_arguments(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        self.prepare()
+        path = self.pair / 'case.json'
+        case = startup.read_json(path)
+        args = case['arguments']
+        args[args.index('--pressure-amg-mode')+1] = 'device'
+        path.write_text(json.dumps(case))
+        pair_record = self.pair / 'pair.json'
+        record = startup.read_json(pair_record)
+        record['case_sha256'] = startup.digest(path)
+        pair_record.write_text(json.dumps(record))
+        with self.assertRaises(ValueError): profile.check_inputs(self.pair)
 
     def test_unsupported_or_malformed_controls_fail(self):
         good, _ = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())

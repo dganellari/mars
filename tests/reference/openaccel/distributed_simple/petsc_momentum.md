@@ -5,6 +5,10 @@ for momentum, with no other PETSc options. SIMPLE can now use that backend
 through `MARS_ENABLE_PETSC=ON` and `--momentum-backend petsc`. Hypre remains
 the default, and pressure keeps its separately verified Hypre profile.
 
+If the first discrepancy remains at the pressure increment after this alignment,
+use the [reference AMG first-step comparison](reference_amg.md) to retain the
+reference coarsening and coarse solver at the original tolerances.
+
 This adds a linear backend to the existing momentum equation `A du = b`.
 The nodal Tet4 CVFEM velocity increment `du` has units m/s; matrix coefficients
 have units kg/s and `b` has units N. Assembly, boundary terms, shifted quadrature,

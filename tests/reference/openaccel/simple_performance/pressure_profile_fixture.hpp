@@ -1,13 +1,13 @@
 #pragma once
 #include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
 
-inline mars::fem::pressure_settings::Values pressure_profile_fixture(bool flex=false,bool one_level=false) {
+inline mars::fem::pressure_settings::Values pressure_profile_fixture(bool flex=false,bool one_level=false,bool reference_amg=false) {
     return {{"method",flex?1.:0.},{"kdim",5},{"miniter",0},{"maxiter",200},{"rtol",1e-10},{"atol",1e-13},
-        {"coarsentype",8},{"interptype",6},{"relaxorder",0},{"pmax",4},{"maxlevels",one_level?1.:25.},
+        {"coarsentype",reference_amg?10.:8.},{"interptype",6},{"relaxorder",0},{"pmax",4},{"maxlevels",one_level?1.:25.},
         {"mincoarsesize",0},{"maxcoarsesize",9},{"numfunctions",1},{"coarsencutfactor",0},{"cycletype",1},
         {"fcycle",0},{"strongthreshold",.25},{"truncfactor",0},{"jacobitruncthreshold",.01},{"maxrowsum",.9},
         {"aggnumlevels",0},{"agginterptype",4},{"aggtruncfactor",0},{"numpaths",1},{"keeptranspose",0},
-        {"nodal",0},{"nodaldiag",0},{"relaxtype",6},{"coarserelax",18},{"numsweeps",1},
+        {"nodal",0},{"nodaldiag",0},{"relaxtype",6},{"coarserelax",reference_amg?9.:18.},{"numsweeps",1},
         {"relax_down",13},{"relax_up",14},{"sweeps_1",1},{"sweeps_2",1},{"sweeps_3",1}};
 }
 

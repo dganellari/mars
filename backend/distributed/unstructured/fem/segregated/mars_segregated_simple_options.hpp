@@ -40,6 +40,7 @@ struct SimpleOptions {
     std::string mesh,output,field_output="gathered";
     std::string pressure_failure_capture;
     std::string pressure_solver_profile;
+    std::string pressure_amg_mode="device";
     std::string momentum_solver_profile;
     std::string momentum_backend="hypre";
     SimpleControls controls;
@@ -69,6 +70,7 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         else if (key=="--output-prefix") o.output=value;
         else if (key=="--pressure-failure-capture") o.pressure_failure_capture=value;
         else if (key=="--pressure-solver-profile") o.pressure_solver_profile=value;
+        else if (key=="--pressure-amg-mode") o.pressure_amg_mode=value;
         else if (key=="--momentum-solver-profile") o.momentum_solver_profile=value;
         else if (key=="--momentum-backend") o.momentum_backend=value;
         else if (key=="--field-output") {
@@ -166,6 +168,9 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         throw std::runtime_error("snapshots require field output, iterations covering the requested range, and no setup-only or profiling");
     if (o.first_step_audit && (o.iterations!=1 || o.snapshot_iterations!=1 || o.field_output!="distributed" || o.setup_only || o.profile))
         throw std::runtime_error("first-step audit requires one iteration, one snapshot interval and distributed field output without profiling");
+    if ((o.pressure_amg_mode!="device" && o.pressure_amg_mode!="reference")
+        || (o.pressure_amg_mode=="reference" && (!o.first_step_audit || o.pressure_solver_profile.empty())))
+        throw std::runtime_error("reference AMG requires a first-step audit and an explicit pressure profile");
     if (o.controls.pressure_expansion && (!o.pressure_tolerances || o.pressure_refinement || o.first_step_audit
         || o.snapshot_iterations || !o.pressure_failure_capture.empty() || o.setup_only))
         throw std::runtime_error("pressure expansion requires explicit targets, no snapshots, audit, capture or legacy refinement");
@@ -206,6 +211,7 @@ inline const char* simple_help() {
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
            "  --pressure-expansion 0             opt-in retained pressure pair and four correction budgets; explicit targets required\n"
            "  --pressure-solver-profile FILE      opt-in pressure controls; requires audit, full distributed snapshots or expansion, and explicit tolerances\n"
+           "  --pressure-amg-mode device|reference  default device; reference permits Hypre CPU work in a first-step audit\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

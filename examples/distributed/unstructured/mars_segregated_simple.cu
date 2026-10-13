@@ -16,7 +16,7 @@
 using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
-fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::string& path,double relative,double absolute,bool hypre=true) {
+fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::string& path,double relative,double absolute,bool hypre=true,bool reference_amg=false) {
     int rank=0; MPI_Comm_rank(comm,&rank);
     std::string text;
     bool valid=true;
@@ -39,10 +39,10 @@ fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::stri
     try {
         std::istringstream input(text);
         profile=fem::pressure_settings::read(input);
-        if (hypre) fem::pressure_settings::validate_gpu_profile(profile);
+        if (hypre) fem::pressure_settings::validate_gpu_profile(profile,reference_amg);
         valid=profile.at("rtol")==relative && profile.at("atol")==absolute;
     } catch (...) { valid=false; }
-    simple_collective(comm,valid,"invalid GPU linear profile or changed linear targets");
+    simple_collective(comm,valid,"invalid linear profile or changed linear targets");
     return profile;
 }
 
@@ -92,7 +92,8 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
     using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve,MomentumSolve>;
     constexpr bool hypre_momentum=std::is_same_v<MomentumSolve<3>,HypreSimpleSolve<3>>;
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
-    const auto pressure_profile=read_solver_profile(MPI_COMM_WORLD,o.pressure_solver_profile,o.pressure_rtol,o.pressure_atol);
+    const bool reference_amg=o.pressure_amg_mode=="reference";
+    const auto pressure_profile=read_solver_profile(MPI_COMM_WORLD,o.pressure_solver_profile,o.pressure_rtol,o.pressure_atol,true,reference_amg);
     const auto momentum_profile=read_solver_profile(MPI_COMM_WORLD,o.momentum_solver_profile,o.momentum_rtol,o.momentum_atol,hypre_momentum);
     simple_output_preflight(MPI_COMM_WORLD,o.output,o.field_output);
     const double setup_start=MPI_Wtime();
@@ -113,7 +114,7 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
         if constexpr (hypre_momentum) fem::pressure_settings::configure_gpu_profile(run.momentum_solve.solver,momentum_profile);
         else run.momentum_solve.solver.configure(momentum_profile);
     }
-    if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile);
+    if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile,reference_amg);
     run.set_pressure_refinement(o.pressure_refinement);
     prepare_pressure_capture(run,o.pressure_failure_capture);
     run.profile.configure(o.profile,o.profile_warmup);
@@ -146,7 +147,8 @@ template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const S
         if (o.pressure_tolerances)
             std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol
                      <<" pressure_acceptance=max(atol,rtol*rhs_norm)\n";
-        if (!pressure_profile.empty()) std::cout<<"pressure_solver_profile=explicit_gpu\n";
+        if (!pressure_profile.empty()) std::cout<<"pressure_solver_profile="
+            <<(reference_amg?"reference_amg_host_staging":"explicit_gpu")<<'\n';
         if (o.momentum_tolerances)
             std::cout<<"momentum_linear_rtol="<<o.momentum_rtol<<" momentum_linear_atol="<<o.momentum_atol
                      <<" momentum_acceptance=max(atol,rtol*rhs_norm)\n";
