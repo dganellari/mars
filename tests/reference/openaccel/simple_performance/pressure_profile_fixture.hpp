@@ -1,10 +1,15 @@
 #pragma once
 #include "../../../../backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
 
-inline mars::fem::pressure_settings::Values pressure_profile_fixture(bool flex=false,bool one_level=false,bool reference_amg=false) {
+inline mars::fem::pressure_settings::Values pressure_profile_fixture(bool flex=false,bool one_level=false,int reference_rows=0) {
+    const bool reference_amg=reference_rows!=0;
+    if (reference_amg && (reference_rows<2 || one_level))
+        throw std::runtime_error("reference AMG fixture needs at least two fine rows and two levels");
+    // Stop after one genuine reduction, before small coarse graphs lose their strong edges.
+    const int max_coarse=reference_amg?reference_rows-1:9;
     return {{"method",flex?1.:0.},{"kdim",5},{"miniter",0},{"maxiter",200},{"rtol",1e-10},{"atol",1e-13},
         {"coarsentype",reference_amg?10.:8.},{"interptype",6},{"relaxorder",0},{"pmax",4},{"maxlevels",one_level?1.:25.},
-        {"mincoarsesize",0},{"maxcoarsesize",9},{"numfunctions",1},{"coarsencutfactor",0},{"cycletype",1},
+        {"mincoarsesize",0},{"maxcoarsesize",double(max_coarse)},{"numfunctions",1},{"coarsencutfactor",0},{"cycletype",1},
         {"fcycle",0},{"strongthreshold",.25},{"truncfactor",0},{"jacobitruncthreshold",.01},{"maxrowsum",.9},
         {"aggnumlevels",0},{"agginterptype",4},{"aggtruncfactor",0},{"numpaths",1},{"keeptranspose",0},
         {"nodal",0},{"nodaldiag",0},{"relaxtype",6},{"coarserelax",reference_amg?9.:18.},{"numsweeps",1},
@@ -32,8 +37,8 @@ inline bool pressure_profile_controls_match(const mars::fem::pressure_settings::
     return matches;
 }
 
-inline bool pressure_profile_levels_match(const mars::fem::pressure_settings::Values& actual,bool one_level) {
+inline bool pressure_profile_levels_match(const mars::fem::pressure_settings::Values& actual,bool one_level,bool reference_amg=false) {
     const auto found=actual.find("effective_levels");
     if (found==actual.end() || !std::isfinite(found->second) || found->second!=std::floor(found->second)) return false;
-    return one_level?found->second==1:found->second>1;
+    return one_level?found->second==1:reference_amg?found->second==2:found->second>1;
 }

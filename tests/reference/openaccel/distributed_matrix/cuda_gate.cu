@@ -39,7 +39,7 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         solver.enable_fixed_graph_updates();
     }
     const bool reference_amg=profile_mode>=4;
-    const auto profile=pressure_profile_fixture(profile_mode==3 || profile_mode==5,profile_mode==1,reference_amg);
+    const auto profile=pressure_profile_fixture(profile_mode==3 || profile_mode==5,profile_mode==1,reference_amg?C*p.nodes:0);
     if (profile_mode) mars::fem::pressure_settings::configure_gpu_profile(solver,profile,reference_amg);
     GhostExchange exchange(p,l,rank);
     for (unsigned round:{1u,2u}) {   // round 2: new values, RHS and solution; same structure
@@ -53,17 +53,20 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
             solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
                 const auto actual=mars::fem::pressure_settings::snapshot(krylov,amg,flexible);
                 controls_match=pressure_profile_controls_match(profile,actual,control_detail);
-                levels_match=pressure_profile_levels_match(actual,profile_mode==1);
+                levels_match=pressure_profile_levels_match(actual,profile_mode==1,reference_amg);
+                level_detail<<"round="<<round<<" expected="<<(profile_mode==1?"1":reference_amg?"2":">1")
+                            <<" actual="<<actual.at("effective_levels");
                 if (reference_amg) {
                     auto* data=reinterpret_cast<hypre_ParAMGData*>(amg);
                     const int levels=hypre_ParAMGDataNumLevels(data);
                     auto* matrices=hypre_ParAMGDataAArray(data);
                     auto* coarse=levels>0 && matrices?matrices[levels-1]:nullptr;
+                    const auto coarse_rows=coarse?hypre_ParCSRMatrixGlobalNumRows(coarse):0;
+                    levels_match=levels_match && coarse_rows>0 && coarse_rows<C*p.nodes;
+                    level_detail<<" coarse_rows="<<coarse_rows<<" cutoff="<<profile.at("maxcoarsesize");
                     host_coarse=coarse && (hypre_ParCSRMatrixNumRows(coarse)==0
                         || (hypre_ParAMGDataGEMemoryLocation(data)==HYPRE_MEMORY_HOST && hypre_ParAMGDataAMat(data)));
                 }
-                level_detail<<"round="<<round<<" expected="<<(profile_mode==1?"1":">1")
-                            <<" actual="<<actual.at("effective_levels");
             });
             // Synthetic settings are public; print the failing rank's values as well.
             if (!controls_match) std::cerr<<"rank "<<rank<<" "<<tag<<control_detail.str()<<'\n';

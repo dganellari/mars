@@ -671,7 +671,7 @@ void explicit_pressure_profile() {
         setenv("MARS_HYPRE_MINITER","3",1);
         Solver pressure(0,300,1e-12),momentum(0,300,1e-12);
         pressure.setVerbose(false); momentum.setVerbose(false);
-        const auto profile=pressure_profile_fixture(flex,one_level,reference_amg);
+        const auto profile=pressure_profile_fixture(flex,one_level,reference_amg?n:0);
         auto bad=profile; bad["coarserelax"]=reference_amg?18:9;
         expect_failure([&] { settings::configure_gpu_profile(pressure,bad,reference_amg); });
         bad=profile; bad["miniter"]=201;
@@ -689,9 +689,11 @@ void explicit_pressure_profile() {
                 const bool matches=pressure_profile_controls_match(profile,actual,detail);
                 if (!matches) std::cerr<<detail.str()<<'\n';
                 check(flexible==flex && matches,"pressure profile not applied after setup");
-                check(pressure_profile_levels_match(actual,one_level || !diffusion),"pressure profile hierarchy depth incorrect");
+                check(pressure_profile_levels_match(actual,one_level || !diffusion,reference_amg),"pressure profile hierarchy depth incorrect");
                 if (reference_amg && diffusion && !one_level) {
                     auto* data=reinterpret_cast<hypre_ParAMGData*>(amg);
+                    const auto coarse_rows=hypre_ParCSRMatrixGlobalNumRows(hypre_ParAMGDataAArray(data)[1]);
+                    check(coarse_rows>0 && coarse_rows<n,"reference fixture did not reduce the fine grid");
                     check(hypre_ParAMGDataGEMemoryLocation(data)==HYPRE_MEMORY_HOST
                           && hypre_ParAMGDataAMat(data),"reference coarse solve was not prepared on host");
                 }
@@ -729,6 +731,43 @@ void explicit_pressure_profile() {
     }
     unsetenv("MARS_HYPRE_FLEXGMRES"); setenv("MARS_HYPRE_MINITER","0",1);
     std::cout<<"PASS: pressure profiles, one/multiple levels, GMRES/FlexGMRES and cached updates\n";
+}
+
+void reference_amg_fallback() {
+#if HYPRE_RELEASE_NUMBER >= 23300
+    namespace settings=mars::fem::pressure_settings;
+    dmatrix_gate::Problem problem(1,1,{});
+    const int n=problem.nodes;
+    Matrix matrix;
+    std::vector<HYPRE_BigInt> map(n+1);
+    for (int i=0;i<n;++i) map[i]=n-1-i;
+    map.back()=-1;
+    for (bool flex:{false,true}) {
+        Solver solver(0,300,1e-12); solver.setVerbose(false);
+        const auto profile=pressure_profile_fixture(flex,false,n);
+        settings::configure_gpu_profile(solver,profile,true);
+        solver.enable_fixed_graph_updates();
+        for (unsigned seed:{1u,2u}) {
+            std::vector<double> rhs,truth,x(n,0);
+            fill_profile_system(problem,matrix,seed,rhs,truth);
+            check(solver.solve(matrix,rhs,x,0,n,0,n,map),"fallback fixture solve failed");
+            verify(matrix,map,rhs,x,truth);
+            solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
+                const auto actual=settings::snapshot(krylov,amg,flexible);
+                std::ostringstream detail;
+                check(actual.at("coarserelax")==9 && actual.at("effective_relax_3")==6
+                    && actual.at("effective_levels")==1,"all-weak fixture did not reach the documented fallback");
+                check(!pressure_profile_controls_match(profile,actual,detail)
+                    && detail.str().find("effective_relax_3")!=std::string::npos,
+                    "accurate fallback was mistaken for the requested direct solve");
+                check(!pressure_profile_levels_match(actual,false,true),"uncoarsened fixture passed the two-level check");
+                check(!hypre_ParAMGDataAMat(reinterpret_cast<hypre_ParAMGData*>(amg)),
+                    "fallback unexpectedly prepared a direct coarse matrix");
+            });
+        }
+    }
+    std::cout<<"PASS: accurate GMRES/FlexGMRES fallback to coarse smoother 6 still fails the reference profile check\n";
+#endif
 }
 
 void retained_pressure_checks() {
@@ -774,6 +813,7 @@ int main() {
     try {
         retained_pressure_checks();
         explicit_pressure_profile();
+        reference_amg_fallback();
         explicit_momentum_profile();
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);

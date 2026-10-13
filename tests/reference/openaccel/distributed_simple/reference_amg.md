@@ -69,8 +69,38 @@ the first-step audit. These local checks do not validate CUDA execution or MPI.
 The focused CUDA gate below checks the actual controls, more than one level,
 host coarse preparation, independently known solutions, exchanged ghosts and
 numeric refresh for both Krylov methods. It runs on 1, 2 and 4 GPUs before the
-private comparison. A failed gate stops the recipe. CUDA/MPI execution and the
-new field comparison remain unvalidated until those user-run results arrive.
+private comparison. A failed gate stops the recipe.
+
+### Coarse-grid cutoff in the public gate
+
+The first GPU run passed all 16 checks on one rank. On two ranks, GMRES and all
+independent residual/solution checks passed, but the first FlexGMRES setup used
+effective coarse smoother 6 instead of 9; its numeric refresh used 9 again.
+The gate correctly rejected that setup. Under the supplied recipe, this stops
+before the four-rank gate and private flow launch.
+
+[Hypre 2.33 setup](https://github.com/hypre-space/hypre/blob/v2.33.0/src/parcsr_ls/par_amg_setup.c)
+replaces a direct coarse solver with the generic smoother if another coarsening
+attempt produces no coarse points or retains every point. Each new setup restores
+the user-requested coarse solver first. A multilevel hierarchy therefore does not
+prove that the direct solve remained active. The output identifies this fallback;
+it does not identify which of those two coarsening conditions occurred.
+
+The synthetic reference-AMG fixture now uses a cutoff of `N-1` rows (`119` for
+its public 120-row system), rather than copying the reference cutoff of 9.
+The connected fine graph must genuinely shrink once. The gate requires exactly
+two levels, `0 < coarse_rows < N`, actual coarse solver 9 and prepared host direct
+storage. This tests the direct-solve path before a small coarse graph can lose its
+strong couplings. Residual, known-solution, ghost and numeric-refresh checks remain
+unchanged. The private profile still uses its original cutoff, and its strict
+post-setup check still rejects an effective solver other than 9.
+
+Updated host-adapted wrapper regressions pass with Hypre 2.33 and 3.1. An all-weak
+matrix deliberately reaches the fallback to 6; GMRES and FlexGMRES both solve it
+accurately, but the unchanged profile check rejects it. A separate real Hypre 2.33
+CPU probe passes the direct and fallback cases on 1/2/4 MPI ranks, including numeric
+updates and independent residual/solution checks. The corrected CUDA gate and
+private field comparison still require the user-run validation below.
 
 ## Run in the MARS terminal only
 
@@ -79,6 +109,10 @@ in this terminal only. This rebuilds two MARS targets, not PETSc or Hypre.
 The public gates launch directly with `srun`. The subsequent `run` command
 executes the saved private launcher once; do not wrap it in another `srun`.
 OpenAccel is not relaunched.
+
+When retrying after the reported GPU gate failure, SIMPLE is already built and
+unchanged by the test correction. Build only `mars_distributed_matrix_cuda_gate`
+on the build line below; keep the fresh preparation and remaining commands.
 
 ```bash
 (
