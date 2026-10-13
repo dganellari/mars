@@ -158,6 +158,98 @@ class ProfileTests(unittest.TestCase):
             self.prepare()
         self.assertFalse(self.pair.exists())
 
+    def test_inspection_reports_backend_without_touching_or_launching_case(self):
+        self.enable_momentum('PETSc')
+        before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'inspection.json'
+        with patch.object(startup, 'launch') as launch, patch.object(startup, 'runtime_libraries') as libraries:
+            code = profile.main(['inspect-profiles', '--baseline-pair', str(self.baseline),
+                                 '--defaults-probe', str(self.probe), '--output', str(output)])
+        self.assertEqual(code, 0)
+        launch.assert_not_called(); libraries.assert_not_called()
+        result = json.loads(output.read_text())
+        self.assertFalse(result['both_profiles_supported'])
+        self.assertEqual(result['profiles']['momentum']['family'], 'petsc')
+        self.assertEqual(result['profiles']['momentum']['failed_component'], 'family')
+        self.assertTrue(result['profiles']['pressure']['mapping_supported'])
+        self.assertFalse(result['solver_launched'])
+        self.assertNotIn(str(self.root), output.read_text())
+        self.assertEqual(before, {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        self.assertFalse(self.pair.exists())
+
+    def test_inspection_agrees_with_supported_profile_preparation(self):
+        self.enable_momentum()
+        public = {}; profile.inspect_profiles(self.baseline, self.probe, public)
+        self.assertTrue(public['both_profiles_supported'])
+        for stage in ('momentum', 'pressure'):
+            self.assertEqual(public['profiles'][stage]['failed_component'], 'none')
+        self.prepare()
+
+    def test_inspection_identifies_every_unsupported_gpu_control(self):
+        config = copy.deepcopy(self.config)
+        config['options']['precond'].update(NumFunctions=3, Nodal=1, CoarsenType=7)
+        result = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertEqual(result['unsupported_gpu_controls'], ['coarsentype', 'nodal', 'numfunctions'])
+        self.assertEqual(result['failed_component'], 'gpu_controls')
+        with self.assertRaises(ValueError): profile.resolve(config, (1e-10, 1e-4), measured_defaults())
+
+    def test_inspection_distinguishes_scaling_method_preconditioner_and_options(self):
+        cases = [({'normalize_matrix': True}, 'normalize_matrix'),
+                 ({'diagonal_scaling': True}, 'diagonal_scaling'),
+                 ({'options': []}, 'options_structure'),
+                 ({'options': {'solver': []}}, 'options_structure'),
+                 ({'options': {'solver': {'type': 'mgr'}, 'precond': {'type': 'boomeramg'}}}, 'solver'),
+                 ({'options': {'solver': {'type': 'gmres'}}}, 'preconditioner'),
+                 ({'options': {'solver': {'type': 'gmres'}, 'precond': {'type': 'mgr'}}}, 'preconditioner'),
+                 ({'options': {'solver': {'type': 'gmres', 'PRIVATE_KEY': 'SECRET_VALUE'},
+                              'precond': {'type': 'boomeramg'}}}, 'option_keys'),
+                 ({'rtol': -1}, 'residual_target_or_solver_definition')]
+        for change, component in cases:
+            with self.subTest(component=component):
+                result = profile.inspect_configuration(dict(self.config, **change), measured_defaults(), 'momentum')
+                self.assertEqual(result['failed_component'], component)
+                self.assertFalse(result['mapping_supported'])
+                self.assertNotIn('PRIVATE_KEY', json.dumps(result))
+                self.assertNotIn('SECRET_VALUE', json.dumps(result))
+
+    def test_inspection_withholds_arbitrary_names_values_and_exceptions(self):
+        config = copy.deepcopy(self.config)
+        config.update(family='SECRET_FAMILY', rtol='SECRET_TARGET')
+        config['options']['solver']['type'] = 'SECRET_METHOD'
+        config['options']['precond']['type'] = 'SECRET_PRECONDITIONER'
+        result = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertEqual(result['family'], 'other_or_invalid')
+        self.enable_momentum()
+        output = self.root / 'inspection.json'
+        with patch.object(profile, 'read_defaults', side_effect=RuntimeError('SECRET_EXCEPTION')):
+            code = profile.main(['inspect-profiles', '--baseline-pair', str(self.baseline),
+                                 '--defaults-probe', str(self.probe), '--output', str(output)])
+        self.assertEqual(code, 1)
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertEqual(json.loads(output.read_text())['comparison_status'], 'invalid_evidence')
+
+    def test_inspection_rejects_changed_baseline_or_defaults_evidence(self):
+        self.enable_momentum()
+        path = self.baseline / 'reference/input.i'; original = path.read_bytes()
+        path.write_bytes(original + b'\n')
+        with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+        path.write_bytes(original)
+        path = self.probe / 'public.json'
+        data = json.loads(path.read_text()); data['version'] = '0.0.0'; path.write_text(json.dumps(data))
+        with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+
+    def test_inspection_rejects_inputs_changed_during_read(self):
+        self.enable_momentum()
+        real = profile.inspect_configuration
+        def modified(*args):
+            result = real(*args)
+            path = self.baseline / 'reference/input.i'
+            path.write_bytes(path.read_bytes() + b'\n')
+            return result
+        with patch.object(profile, 'inspect_configuration', side_effect=modified):
+            with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+
     def test_momentum_runtime_profile_and_log_are_required(self):
         self.enable_momentum(); self.finish()
         path=self.pair/'mars/flow-momentum-rank-1.settings'

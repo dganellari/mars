@@ -37,21 +37,32 @@ ERRORS = {'original_baseline_required', 'defaults_evidence', 'unsupported_gpu_pr
           'reference_pressure_log', 'history_required', 'unsupported_momentum_profile'}
 
 
-def validate(v):
-    require(set(v) == KEYS, 'unsupported_gpu_profile')
+def profile_violations(v):
+    if set(v) != KEYS:
+        return ['profile_keys']
+    invalid = []
     for k, value in v.items():
-        require(type(value) in (int, float) and math.isfinite(value), 'unsupported_gpu_profile')
-        if k not in REAL_KEYS:
-            require(value == int(value) and 0 <= value < 2**31, 'unsupported_gpu_profile')
-    require(v['method'] in (0, 1) and v['kdim'] > 0 and v['maxiter'] > 0 and v['miniter'] <= v['maxiter']
-        and 0 < v['rtol'] < 1 and v['atol'] >= 0 and v['coarsentype'] == 8 and v['interptype'] == 6
-        and v['relaxorder'] == v['aggnumlevels'] == v['nodal'] == v['nodaldiag'] == v['fcycle'] == 0
-        and v['numfunctions'] == v['cycletype'] == 1 and v['keeptranspose'] in (0, 1)
-        and v['maxlevels'] > 0 and v['maxcoarsesize'] > 0 and v['mincoarsesize'] <= v['maxcoarsesize']
-        and v['numpaths'] > 0 and v['coarserelax'] == 18
-        and all(v[k] in (6, 13, 14, 18) for k in ('relaxtype', 'relax_down', 'relax_up'))
-        and all(v[k] > 0 for k in ('numsweeps', 'sweeps_1', 'sweeps_2', 'sweeps_3'))
-        and all(0 <= v[k] <= 1 for k in REAL_KEYS - {'rtol', 'atol'}), 'unsupported_gpu_profile')
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or (k not in REAL_KEYS and not (value == int(value) and 0 <= value < 2**31))):
+            invalid.append(k)
+    if invalid:
+        return sorted(invalid)
+    checks = dict(method=v['method'] in (0, 1), kdim=v['kdim'] > 0, maxiter=v['maxiter'] > 0,
+        miniter=v['miniter'] <= v['maxiter'], rtol=0 < v['rtol'] < 1, atol=v['atol'] >= 0,
+        coarsentype=v['coarsentype'] == 8, interptype=v['interptype'] == 6,
+        numfunctions=v['numfunctions'] == 1, cycletype=v['cycletype'] == 1,
+        keeptranspose=v['keeptranspose'] in (0, 1), maxlevels=v['maxlevels'] > 0,
+        maxcoarsesize=v['maxcoarsesize'] > 0, mincoarsesize=v['mincoarsesize'] <= v['maxcoarsesize'],
+        numpaths=v['numpaths'] > 0, coarserelax=v['coarserelax'] == 18)
+    checks.update((k, v[k] == 0) for k in ('relaxorder', 'aggnumlevels', 'nodal', 'nodaldiag', 'fcycle'))
+    checks.update((k, v[k] in (6, 13, 14, 18)) for k in ('relaxtype', 'relax_down', 'relax_up'))
+    checks.update((k, v[k] > 0) for k in ('numsweeps', 'sweeps_1', 'sweeps_2', 'sweeps_3'))
+    checks.update((k, 0 <= v[k] <= 1) for k in REAL_KEYS - {'rtol', 'atol'})
+    return sorted(k for k, passed in checks.items() if not passed)
+
+
+def validate(v):
+    require(not profile_violations(v), 'unsupported_gpu_profile')
 
 
 def read_defaults(directory, reference):
@@ -86,7 +97,7 @@ def read_defaults(directory, reference):
     return projection['defaults']
 
 
-def resolve(config, target, measured):
+def resolved_values(config, target, measured):
     explicit = reference_controls(config, target)
     v = {key: measured['amg_' + name] for key, name in DEFAULT_KEYS.items()}
     method = 'flexgmres' if explicit['method'] else 'gmres'
@@ -105,8 +116,88 @@ def resolve(config, target, measured):
     if v['coarserelax'] == 9:
         v['coarserelax'] = 18
         changes.append('coarse_direct_to_device_l1_jacobi')
-    validate(v)
     return v, changes
+
+
+def resolve(config, target, measured):
+    values, changes = resolved_values(config, target, measured)
+    validate(values)
+    return values, changes
+
+
+def inspect_configuration(config, measured, stage):
+    from prepare_simple_deck import reference_linear_target
+
+    def label(value, allowed):
+        value = value.lower() if isinstance(value, str) else ''
+        return value if value in allowed else 'other_or_invalid'
+
+    report = dict(mapping_supported=False, failed_component='definition')
+    if not isinstance(config, dict):
+        return report
+    outer = config.get('options', {})
+    report.update(family=label(config.get('family'), {'hypre', 'petsc', 'trilinos', 'amgsolver', 'gmres'}),
+        normalize_matrix_requested=config.get('normalize_matrix', False) is not False,
+        diagonal_scaling_requested=config.get('diagonal_scaling', False) is not False)
+    report['failed_component'] = 'options_structure'
+    if not isinstance(outer, dict):
+        return report
+    try:
+        solver = settings.lower_options(outer.get('solver', {}))
+        precond = settings.lower_options(outer.get('precond', {}))
+    except ValueError:
+        return report
+    supported_amg = {key for key, _, _ in settings.AMG.values() if key} | set(settings.AMG_LIBRARY)
+    report.update(solver=label(solver.get('type', 'gmres'), {'gmres', 'flexgmres', 'boomeramg', 'mgr'}),
+        preconditioner=label(precond.get('type', 'none'), {'none', 'boomeramg', 'mgr'}),
+        unrecognized_option_keys_present=bool(set(outer) - {'solver', 'precond'}
+            or set(solver) - {'type', 'kdim', 'printlevel', 'logging'}
+            or set(precond) - supported_amg - {'type', 'printlevel', 'logging', 'maxiter', 'tol'}))
+    for component, passed in (
+            ('family', report['family'] == 'hypre'),
+            ('normalize_matrix', not report['normalize_matrix_requested']),
+            ('diagonal_scaling', not report['diagonal_scaling_requested']),
+            ('solver', report['solver'] in ('gmres', 'flexgmres')),
+            ('preconditioner', report['preconditioner'] == 'boomeramg'),
+            ('option_keys', not report['unrecognized_option_keys_present'])):
+        if not passed:
+            report['failed_component'] = component
+            return report
+    report['failed_component'] = 'residual_target_or_solver_definition'
+    try:
+        arguments = options(reference_linear_target({'equation': config}, {}, 'equation', stage))
+        target = tuple(float(arguments['--' + stage + '-linear-' + key]) for key in ('atol', 'rtol'))
+    except ValueError:
+        return report
+    report['failed_component'] = 'reference_options'
+    try:
+        values, changes = resolved_values(config, target, measured)
+    except ValueError:
+        return report
+    report['unsupported_gpu_controls'] = profile_violations(values)
+    report['gpu_adaptations'] = changes
+    report['mapping_supported'] = not report['unsupported_gpu_controls']
+    report['failed_component'] = 'none' if report['mapping_supported'] else 'gpu_controls'
+    return report
+
+
+def inspect_profiles(baseline, probe, public):
+    before = pressure.baseline_records(baseline)
+    measured = read_defaults(probe, before[2]['openaccel'])
+    deck = startup.load_deck((baseline / 'reference/input.i').read_bytes())
+    reports = {}
+    for stage, equation in (('momentum', 'coupled_navier_stokes'), ('pressure', 'pressure_correction')):
+        try:
+            config = pressure.resolved_solver(deck, equation)
+        except (ValueError, KeyError, TypeError):
+            reports[stage] = dict(mapping_supported=False, failed_component='definition')
+        else:
+            reports[stage] = inspect_configuration(config, measured, stage)
+    require(pressure.baseline_records(baseline) == before
+            and read_defaults(probe, before[2]['openaccel']) == measured, 'profile_identity')
+    public.update(comparison_status='inspection_complete', failed_check='none', profiles=reports,
+        both_profiles_supported=all(r['mapping_supported'] for r in reports.values()),
+        solver_launched=False, scope='saved_configuration_mapping_not_runtime_or_field_parity')
 
 
 def text_profile(values):
@@ -347,6 +438,9 @@ def main(argv=None):
     prep.add_argument('--history', action='store_true')
     prep.add_argument('--both-linear-solvers', action='store_true',
                       help='Also resolve momentum from the original deck; unsupported backends/settings fail before launch')
+    inspect = sub.add_parser('inspect-profiles')
+    for name in ('baseline-pair', 'defaults-probe', 'output'):
+        inspect.add_argument('--' + name, type=Path, required=True)
     for action in ('run', 'compare', 'inspect-linear'):
         command = sub.add_parser(action)
         command.add_argument('--pair', type=Path, required=True)
@@ -363,18 +457,20 @@ def main(argv=None):
             prepare(args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(), args.output_dir.resolve(), args.history, args.both_linear_solvers)
             print('Original linear profiles prepared. No solver launched; baseline preserved.')
             return 0
-        require(args.action in ('run', 'compare', 'inspect-linear'))
+        require(args.action in ('run', 'compare', 'inspect-linear', 'inspect-profiles'))
         with args.output.open('x') as stream:
             try:
-                pair = args.pair.resolve()
-                if args.action == 'run':
+                if args.action == 'inspect-profiles':
+                    inspect_profiles(args.baseline_pair.resolve(), args.defaults_probe.resolve(), public)
+                elif args.action == 'run':
+                    pair = args.pair.resolve()
                     run(pair, public, args.solver)
                     public.update(comparison_status='capture_complete', failed_check='none')
                 elif args.action == 'inspect-linear':
-                    inspect_linear(pair, public)
+                    inspect_linear(args.pair.resolve(), public)
                 else:
                     args.detail_dir.mkdir(mode=0o700)
-                    compare(pair, public, args.detail_dir)
+                    compare(args.pair.resolve(), public, args.detail_dir)
             except Exception as error:
                 public['failed_check'] = str(error) if isinstance(error, EvidenceError) and str(error) in ERRORS else 'private_preflight_or_capture'
                 if args.action == 'run':
@@ -385,7 +481,7 @@ def main(argv=None):
             json.dump(public, stream, indent=2, sort_keys=True, allow_nan=False)
             stream.write('\n')
         print('Pressure profile status written. Share only the public JSON.')
-        return 0 if public['comparison_status'] in ('completed', 'capture_complete') else 1
+        return 0 if public['comparison_status'] in ('completed', 'capture_complete', 'inspection_complete') else 1
     except Exception as error:
         label = str(error) if isinstance(error, EvidenceError) and str(error) in ERRORS else 'private_preflight_or_capture'
         print('ERROR: pressure profile failed (' + label + ').', file=sys.stderr)

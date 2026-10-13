@@ -84,6 +84,39 @@ reused only after their executable/library identities are checked. Identical
 CPU/GPU solvers are still not claimed: Hypre versions, row order, coarsening and
 coarse relaxation can differ.
 
+If preparation reports `unsupported_momentum_profile`, inspect the saved
+configuration before rebuilding or allocating GPUs:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-linear-support-XXXXXX")
+run_status=0
+python3 "$repo/scripts/simple_pressure_profile.py" inspect-profiles \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --output "$run/public.json" || run_status=$?
+cat "$run/public.json"
+printf 'Share only: %s\n' "$run/public.json"
+exit "$run_status"
+)
+```
+
+The report covers both equations. It exports known backend/method names, scaling
+flags and the first rejected component; GPU restrictions list every failing
+control in the checked profile. Unknown names, numeric values, lookup names and
+exception messages are withheld. The same GPU validator is used by preparation
+and inspection. Saved case, launch and defaults evidence is checked before and
+after inspection; neither solver nor the runtime library loader is launched.
+`inspection_complete` means the check finished. `both_profiles_supported` states
+whether these settings can be mapped; neither field establishes solver convergence
+or field agreement. This command works in the MARS terminal without mounting the
+OpenAccel environment.
+
 For momentum `A du = b`, `du` is a velocity increment; matrix coefficients have
 units kg/s and the RHS has units N. Both its Krylov target and the two independent
 original-system checks use `max(atol, rtol ||b||)`. Pressure retains its own target
