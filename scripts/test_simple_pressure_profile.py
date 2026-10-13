@@ -102,13 +102,15 @@ class ProfileTests(unittest.TestCase):
                 + 'momentum_linear_rtol={} momentum_linear_atol={}\n'.format(momentum['rtol'], momentum['atol']))
         self.record()
 
-    def enable_momentum(self, family='Hypre'):
+    def enable_momentum(self, family='Hypre', solver_options=None):
         self.both_linear_solvers = True
         path = self.baseline / 'reference/input.i'
         deck = startup.load_deck(path.read_bytes())
         config = copy.deepcopy(self.config)
         config.update(family=family, rtol=2e-5, atol=3e-12, max_iterations=123)
         config['options']['solver'] = dict(type='flexgmres', kdim=17)
+        if solver_options is not None:
+            config['options'] = solver_options
         deck['simulation']['solver']['solver_control']['advanced_options']['linear_solver_settings']['coupled_navier_stokes'] = config
         path.write_text(yaml.safe_dump(deck))
         case = startup.read_json(self.baseline / 'case.json')
@@ -159,7 +161,7 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(self.pair.exists())
 
     def test_inspection_reports_backend_without_touching_or_launching_case(self):
-        self.enable_momentum('PETSc')
+        self.enable_momentum('PETSc', dict(ksp_type='fgmres', pc_type='bjacobi', sub_pc_type='ilu'))
         before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
         output = self.root / 'inspection.json'
         with patch.object(startup, 'launch') as launch, patch.object(startup, 'runtime_libraries') as libraries:
@@ -171,11 +173,69 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(result['both_profiles_supported'])
         self.assertEqual(result['profiles']['momentum']['family'], 'petsc')
         self.assertEqual(result['profiles']['momentum']['failed_component'], 'family')
+        self.assertEqual(result['profiles']['momentum']['solver'], 'fgmres')
+        self.assertEqual(result['profiles']['momentum']['preconditioner'], 'bjacobi')
+        self.assertEqual(result['profiles']['momentum']['declared_petsc_options']['sub_pc_type'], 'ilu')
         self.assertTrue(result['profiles']['pressure']['mapping_supported'])
         self.assertFalse(result['solver_launched'])
         self.assertNotIn(str(self.root), output.read_text())
         self.assertEqual(before, {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
         self.assertFalse(self.pair.exists())
+
+    def test_petsc_inspection_uses_flat_options_and_context_tolerance_order(self):
+        config = dict(family='PETSc', rtol=1e-6, atol=1e-16, max_iterations=20,
+            options=dict(ksp_type='FGMRES', pc_type='BJACOBI', sub_pc_type='ILU',
+                ksp_pc_side='right', ksp_norm_type='unpreconditioned',
+                ksp_gmres_restart=17, ksp_rtol='1e-10', ksp_atol='1e-20', ksp_max_it=999))
+        report = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertEqual(report['solver'], 'fgmres')
+        self.assertEqual(report['preconditioner'], 'bjacobi')
+        self.assertEqual(report['declared_petsc_options']['sub_pc_type'], 'ilu')
+        self.assertEqual(report['declared_petsc_options']['ksp_pc_side'], 'right')
+        self.assertEqual(report['declared_petsc_options']['ksp_norm_type'], 'unpreconditioned')
+        self.assertEqual(report['tolerance_source'], 'context_after_KSPSetFromOptions')
+        self.assertFalse(report['mapping_supported'])
+        self.assertFalse(report['runtime_settings_verified'])
+        self.assertFalse(report['unrecognized_option_keys_present'])
+        self.assertEqual(report['declared_control_names'], ['ksp_atol', 'ksp_gmres_restart', 'ksp_max_it', 'ksp_rtol'])
+        for number in ('999', '1e-10', '1e-20'):
+            self.assertNotIn(number, json.dumps(report))
+
+    def test_petsc_omissions_are_not_replaced_by_hypre_defaults(self):
+        for raw in ({}, dict(solver=dict(type='gmres'), precond=dict(type='boomeramg'))):
+            report = profile.inspect_petsc_options(dict(options=raw))
+            self.assertEqual(report['solver'], 'unspecified')
+            self.assertEqual(report['preconditioner'], 'unspecified')
+            self.assertEqual(report['declared_petsc_options'], {})
+        report = profile.inspect_configuration(dict(family='Trilinos'), measured_defaults(), 'momentum')
+        self.assertEqual(report['solver'], 'unresolved')
+        self.assertEqual(report['preconditioner'], 'unresolved')
+
+    def test_petsc_option_names_and_values_follow_reference_case_conversion(self):
+        report = profile.inspect_petsc_options(dict(options={'KSP_TYPE': 'GMRES', 'PC_TYPE': 'HYPRE',
+            'PC_HYPRE_TYPE': 'BOOMERAMG', 'MAT_TYPE': 'MPIAIJCUSPARSE', 'VEC_TYPE': 'CUDA'}))
+        self.assertEqual(report['declared_petsc_options'], dict(ksp_type='gmres', pc_type='hypre',
+            pc_hypre_type='boomeramg', mat_type='mpiaijcusparse', vec_type='cuda'))
+        self.assertTrue(report['options_structure_valid'])
+
+    def test_petsc_inspection_withholds_private_keys_values_and_viewer_paths(self):
+        report = profile.inspect_petsc_options(dict(options=dict(ksp_type='SECRET_METHOD',
+            pc_type='SECRET_PC', SECRET_KEY='SECRET_VALUE', ksp_view='/SECRET/FILE',
+            sub_pc_factor_mat_solver_type='SECRET_BACKEND', ksp_gmres_restart=987654)))
+        self.assertTrue(report['unrecognized_option_keys_present'])
+        self.assertIn('ksp_view', report['declared_control_names'])
+        self.assertEqual(report['solver'], 'other_or_invalid')
+        self.assertEqual(report['preconditioner'], 'other_or_invalid')
+        self.assertNotIn('SECRET', json.dumps(report))
+        self.assertNotIn('987654', json.dumps(report))
+
+    def test_petsc_malformed_or_case_colliding_options_are_not_certified(self):
+        for raw in ([], {'ksp_type': 'gmres', 'KSP_TYPE': 'fgmres'}, {7: 'SECRET'},
+                    {'pc_type': {'SECRET': 'SECRET'}}, {'ksp_type': None}):
+            report = profile.inspect_petsc_options(dict(options=raw))
+            self.assertFalse(report['options_structure_valid'])
+            self.assertFalse(report['runtime_settings_verified'])
+            self.assertNotIn('SECRET', json.dumps(report))
 
     def test_inspection_agrees_with_supported_profile_preparation(self):
         self.enable_momentum()

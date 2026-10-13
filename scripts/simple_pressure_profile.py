@@ -125,6 +125,62 @@ def resolve(config, target, measured):
     return values, changes
 
 
+PETSC_METHODS = {'gmres', 'fgmres', 'lgmres', 'cg', 'fcg', 'bcgs', 'ibcgs', 'bcgsl',
+                 'richardson', 'chebyshev', 'preonly', 'minres', 'gcr', 'lsqr', 'lsmr'}
+PETSC_PRECONDITIONERS = {'none', 'jacobi', 'bjacobi', 'pbjacobi', 'vpbjacobi', 'sor',
+                         'ilu', 'icc', 'lu', 'cholesky', 'asm', 'gasm', 'gamg', 'hypre',
+                         'mg', 'fieldsplit', 'redundant', 'composite', 'svd', 'ksp', 'shell'}
+PETSC_ENUMS = dict(ksp_type=PETSC_METHODS, pc_type=PETSC_PRECONDITIONERS,
+    sub_ksp_type=PETSC_METHODS, sub_pc_type=PETSC_PRECONDITIONERS,
+    sub_sub_ksp_type=PETSC_METHODS, sub_sub_pc_type=PETSC_PRECONDITIONERS,
+    ksp_norm_type={'none', 'preconditioned', 'unpreconditioned', 'natural'},
+    ksp_pc_side={'left', 'right', 'symmetric'},
+    pc_hypre_type={'boomeramg', 'ams', 'ads', 'euclid', 'pilut', 'ilu'},
+    pc_asm_type={'basic', 'restrict', 'interpolate', 'none'},
+    pc_factor_mat_solver_type={'petsc', 'mumps', 'superlu', 'superlu_dist', 'cusparse', 'mkl_pardiso'},
+    sub_pc_factor_mat_solver_type={'petsc', 'mumps', 'superlu', 'superlu_dist', 'cusparse', 'mkl_pardiso'},
+    mat_type={'aij', 'seqaij', 'mpiaij', 'aijcusparse', 'seqaijcusparse', 'mpiaijcusparse',
+              'baij', 'seqbaij', 'mpibaij', 'aijkokkos', 'seqaijkokkos', 'mpiaijkokkos'},
+    vec_type={'standard', 'seq', 'mpi', 'cuda', 'seqcuda', 'mpicuda', 'kokkos', 'seqkokkos', 'mpikokkos'})
+PETSC_CONTROL_NAMES = {'ksp_rtol', 'ksp_atol', 'ksp_divtol', 'ksp_max_it', 'ksp_min_it',
+    'ksp_gmres_restart', 'ksp_gmres_modifiedgramschmidt', 'ksp_gmres_classicalgramschmidt',
+    'ksp_gmres_cgs_refinement_type', 'ksp_initial_guess_nonzero', 'ksp_converged_use_initial_residual_norm',
+    'ksp_converged_use_min_initial_residual_norm', 'ksp_converged_maxits', 'ksp_error_if_not_converged',
+    'pc_factor_levels', 'pc_factor_fill', 'pc_factor_mat_ordering_type', 'pc_factor_shift_type',
+    'pc_factor_shift_amount', 'pc_asm_overlap', 'pc_bjacobi_blocks', 'sub_pc_factor_levels',
+    'sub_pc_factor_fill', 'sub_pc_factor_mat_ordering_type', 'sub_pc_factor_shift_type',
+    'sub_pc_factor_shift_amount', 'sub_ksp_rtol', 'sub_ksp_atol', 'sub_ksp_max_it',
+    'ksp_monitor', 'ksp_monitor_true_residual', 'ksp_view', 'ksp_converged_reason', 'options_left'}
+
+
+def inspect_petsc_options(config):
+    # ContextPETSc lowercases flat option keys/values before PetscOptionsSetValue.
+    # Omission is unresolved here: do not substitute Hypre or PETSc defaults.
+    report = dict(solver='unspecified', preconditioner='unspecified',
+        option_scope='declared_petsc_options_not_runtime_settings',
+        runtime_settings_verified=False, tolerance_source='context_after_KSPSetFromOptions',
+        minimum_iterations_forwarded_by_context=False, options_structure_valid=False)
+    raw = config.get('options', {})
+    if not isinstance(raw, dict):
+        return report
+    options = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or key.lower() in options:
+            return report
+        options[key.lower()] = value
+    report.update(options_structure_valid=all(type(v) in (str, int, float, bool) for v in options.values()),
+        unrecognized_option_keys_present=bool(set(options) - set(PETSC_ENUMS) - PETSC_CONTROL_NAMES),
+        declared_control_names=sorted(set(options) & PETSC_CONTROL_NAMES),
+        declared_petsc_options={})
+    for key, allowed in PETSC_ENUMS.items():
+        if key in options:
+            value = options[key].lower() if isinstance(options[key], str) else ''
+            report['declared_petsc_options'][key] = value if value in allowed else 'other_or_invalid'
+    report['solver'] = report['declared_petsc_options'].get('ksp_type', 'unspecified')
+    report['preconditioner'] = report['declared_petsc_options'].get('pc_type', 'unspecified')
+    return report
+
+
 def inspect_configuration(config, measured, stage):
     from prepare_simple_deck import reference_linear_target
 
@@ -139,6 +195,13 @@ def inspect_configuration(config, measured, stage):
     report.update(family=label(config.get('family'), {'hypre', 'petsc', 'trilinos', 'amgsolver', 'gmres'}),
         normalize_matrix_requested=config.get('normalize_matrix', False) is not False,
         diagonal_scaling_requested=config.get('diagonal_scaling', False) is not False)
+    if report['family'] != 'hypre':
+        report['failed_component'] = 'family'
+        if report['family'] == 'petsc':
+            report.update(inspect_petsc_options(config))
+        else:
+            report.update(solver='unresolved', preconditioner='unresolved')
+        return report
     report['failed_component'] = 'options_structure'
     if not isinstance(outer, dict):
         return report

@@ -117,6 +117,28 @@ whether these settings can be mapped; neither field establishes solver convergen
 or field agreement. This command works in the MARS terminal without mounting the
 OpenAccel environment.
 
+For `family: PETSc`, the inspector reads the flat `ksp_*`, `pc_*`, `sub_*`,
+`mat_type` and `vec_type` options. It does not read Hypre's nested
+`options.solver`/`options.precond` mappings as PETSc settings. Omitted PETSc method
+and preconditioner types are reported as `unspecified`, not as GMRES/none.
+Known declared option names and categorical values are exported; numeric values,
+viewer paths and unrecognized names remain private. `runtime_settings_verified`
+stays false: this is a source-based inspection, not a query of a live PETSc object.
+The earlier generic inspector's GMRES/none labels for non-Hypre families were
+not valid evidence and must not be used to choose a momentum algorithm.
+
+In the inspected OpenAccel revision, `ContextPETSc.h::setOptions_` lowercases
+the flat options before passing them to PETSc. `createKSP_` calls
+`KSPSetFromOptions`, then overrides rtol, atol and the iteration cap with the
+equation context's values; its generic minimum-iteration setting is not forwarded.
+PETSc's stopping norm may be preconditioned, depending on KSP configuration;
+see [KSPSetTolerances](https://petsc.org/release/manualpages/KSP/KSPSetTolerances/).
+Matching tolerance numbers alone would therefore not establish the same stopping
+test as MARS's unpreconditioned check. MARS SIMPLE currently has no PETSc momentum
+backend. Inspection continues to reject that family instead of substituting Hypre.
+The confirmed mixed PETSc-momentum/Hypre-pressure reference explains preparation's
+family rejection; it does not establish the cause of the observed field difference.
+
 For momentum `A du = b`, `du` is a velocity increment; matrix coefficients have
 units kg/s and the RHS has units N. Both its Krylov target and the two independent
 original-system checks use `max(atol, rtol ||b||)`. Pressure retains its own target
