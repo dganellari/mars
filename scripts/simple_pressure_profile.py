@@ -35,6 +35,31 @@ ERRORS = {'original_baseline_required', 'defaults_evidence', 'unsupported_gpu_pr
           'runtime_profile_mismatch', 'executable_changed', 'libraries_changed', 'solver_environment_changed',
           'launcher_changed', 'launcher_exit', 'runtime_recovery_mismatch', 'initial_fields_mismatch',
           'reference_pressure_log', 'history_required', 'unsupported_momentum_profile'}
+ERRORS |= startup.PREPARATION_ERRORS | pressure.ERRORS
+
+
+def preparation_failure(error):
+    # Report only fixed categories and locations in our public source, never locals or exception text.
+    root = Path(__file__).resolve().parent
+    sources = {str(root / name): name for name in (
+        'simple_pressure_profile.py', 'simple_pressure_probe.py', 'simple_pressure_settings.py',
+        'simple_startup_probe.py', 'simple_snapshot_compare.py', 'simple_hypre_defaults.py',
+        'simple_pressure_replay.py', 'prepare_simple_deck.py')}
+    frames = []
+    trace = error.__traceback__
+    while trace is not None:
+        name = sources.get(str(Path(trace.tb_frame.f_code.co_filename).resolve()))
+        if name is not None:
+            frames.append(dict(source=name, line=trace.tb_lineno))
+        trace = trace.tb_next
+    kind = next((label for cls, label in (
+        (EvidenceError, 'evidence_check'), (ImportError, 'import_error'),
+        (FileNotFoundError, 'file_missing'), (FileExistsError, 'output_exists'),
+        (PermissionError, 'permission_denied'), (OSError, 'os_error'),
+        (ValueError, 'value_error'), (KeyError, 'key_error'), (TypeError, 'type_error'))
+        if isinstance(error, cls)), 'other')
+    label = str(error) if isinstance(error, EvidenceError) and str(error) in ERRORS else 'private_preflight_or_capture'
+    return dict(failed_check=label, preparation_exception_kind=kind, preparation_source_locations=frames[-12:])
 
 
 def profile_violations(v):
@@ -555,6 +580,8 @@ def main(argv=None):
     prep.add_argument('--history', action='store_true')
     prep.add_argument('--both-linear-solvers', action='store_true',
                       help='Also resolve momentum from the original deck; unsupported backends/settings fail before launch')
+    prep.add_argument('--output', type=Path,
+                      help='Write a public preparation report, including a safe failure location; no solver is launched')
     inspect = sub.add_parser('inspect-profiles')
     for name in ('baseline-pair', 'defaults-probe', 'output'):
         inspect.add_argument('--' + name, type=Path, required=True)
@@ -571,7 +598,22 @@ def main(argv=None):
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='private_preflight_or_capture')
     try:
         if args.action == 'prepare':
-            prepare(args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(), args.output_dir.resolve(), args.history, args.both_linear_solvers)
+            inputs = (args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(),
+                      args.output_dir.resolve(), args.history, args.both_linear_solvers)
+            if args.output is not None:
+                # Reserve the report first so an old result cannot be mistaken for this attempt.
+                with args.output.open('x') as stream:
+                    public['solver_launched'] = False
+                    try:
+                        prepare(*inputs)
+                        public.update(comparison_status='preparation_complete', failed_check='none')
+                    except Exception as error:
+                        public.update(preparation_failure(error))
+                    json.dump(public, stream, indent=2, sort_keys=True, allow_nan=False)
+                    stream.write('\n')
+                print('Pressure preparation status written. No solver launched; share only the public JSON.')
+                return 0 if public['comparison_status'] == 'preparation_complete' else 1
+            prepare(*inputs)
             print('Original linear profiles prepared. No solver launched; baseline preserved.')
             return 0
         require(args.action in ('run', 'compare', 'inspect-linear', 'inspect-profiles'))

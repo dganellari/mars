@@ -106,11 +106,15 @@ for np in 1 2 4; do
     "$HOME/affinity/bind_numa.sh" ./mars_simple_petsc_momentum_gate \
     2>&1 | tee "$run/public-gates/petsc-$np.log"
 done
+prepare_status=0
 python3 "$repo/scripts/simple_pressure_profile.py" prepare \
   --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
   --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
   --executable "$repo/build-hypre/examples/distributed/unstructured/mars_segregated_simple" \
-  --output-dir "$run/pair" --both-linear-solvers
+  --output-dir "$run/pair" --both-linear-solvers \
+  --output "$run/preparation-public.json" || prepare_status=$?
+cat "$run/preparation-public.json"
+if (( prepare_status != 0 )); then exit "$prepare_status"; fi
 run_status=0
 python3 "$repo/scripts/simple_pressure_profile.py" run \
   --pair "$run/pair" --output "$run/launch-public.json" || run_status=$?
@@ -134,3 +138,46 @@ For local CPU development, configure the standalone `distributed_matrix`
 test directory with `MARS_ENABLE_PETSC=ON`, `MARS_PETSC_ROOT` and (for an
 uninstalled build) `MARS_PETSC_ARCH`. Build `mars_simple_petsc_momentum_gate`
 and run `ctest -R marsPetscMomentumHost`. Production SIMPLE requires CUDA PETSc.
+
+## Preparation fails after the GPU gate passes
+
+`private_preflight_or_capture` alone does not identify the failed check. Retry
+preparation with `--output` to write a public JSON report. It preserves all input
+and library checks and exports only fixed error categories and file/line locations
+in the public Python source. Exception messages, private paths, values and frame
+locals are not exported. Missing reports are errors; existing reports are never
+overwritten. A failed attempt may leave a partial private pair, so use a new
+directory instead of editing or deleting the previous evidence.
+
+This step needs the MARS environment and existing executable, but no rebuild,
+GPU allocation or repeat of passing GPU gates. Kokkos's `OMP_PROC_BIND` warning
+in a completed gate does not identify a Python preparation failure. Keep the
+recorded solver environment intact while locating the failed check.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+run=$(mktemp -d "$scratch/simple-petsc-preparation-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_pressure_profile.py" prepare \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_segregated_simple" \
+  --output-dir "$run/pair" --both-linear-solvers \
+  --output "$run/public.json" || status=$?
+cat "$run/public.json"
+printf 'Share only: %s\n' "$run/public.json"
+exit "$status"
+)
+```
+
+`preparation_complete` verifies preparation only. It does not claim that the flow
+solver ran or that fields agree. If preparation succeeds, use the new pair with
+the `run` and `compare` commands above.

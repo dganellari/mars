@@ -1,11 +1,14 @@
 """Synthetic first-step fields and saved runtime records; no private data."""
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import yaml
 import simple_pressure_profile as profile
@@ -78,6 +81,96 @@ class ProfileTests(unittest.TestCase):
     def prepare(self):
         with patch.object(startup, 'runtime_libraries', return_value=getattr(self, 'rebuilt_libs', self.libs)):
             profile.prepare(self.baseline, self.probe, self.exe, self.pair, both_linear_solvers=self.both_linear_solvers)
+
+    def prepare_cli(self, output):
+        arguments = ['prepare', '--baseline-pair', str(self.baseline), '--defaults-probe', str(self.probe),
+                     '--executable', str(self.exe), '--output-dir', str(self.pair), '--output', str(output)]
+        if self.both_linear_solvers:
+            arguments.append('--both-linear-solvers')
+        return profile.main(arguments)
+
+    def test_preparation_report_passes_without_launching_or_changing_baseline(self):
+        self.enable_petsc_momentum()
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['comparison_status'], 'preparation_complete')
+        self.assertEqual(result['failed_check'], 'none')
+        self.assertFalse(result['solver_launched'])
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        profile.check_inputs(self.pair)
+
+    def test_preparation_reports_real_library_preflight_failure_without_paths(self):
+        output = self.root / 'preparation-public.json'
+        loader = SimpleNamespace(returncode=0, stdout=b'libSECRET.so => not found\n')
+        with patch.object(startup.subprocess, 'run', return_value=loader), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['failed_check'], 'runtime_libraries_unresolved')
+        self.assertEqual(result['preparation_exception_kind'], 'evidence_check')
+        self.assertIn('simple_startup_probe.py', [v['source'] for v in result['preparation_source_locations']])
+        self.assertFalse(result['solver_launched'])
+        self.assertFalse(self.pair.exists())
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertNotIn(str(self.root), output.read_text())
+
+    def test_preparation_reports_missing_saved_file_before_runtime_check(self):
+        (self.baseline / 'mars/launch.json').unlink()
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries') as libraries, patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        libraries.assert_not_called(); launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['comparison_status'], 'invalid_evidence')
+        self.assertEqual(result['preparation_exception_kind'], 'file_missing')
+        self.assertFalse(self.pair.exists())
+        self.assertNotIn(str(self.root), output.read_text())
+
+    def test_preparation_reports_malformed_defaults_without_key_contents(self):
+        self.write('private-provenance.json', {'SECRET_PRIVATE_KEY': 'SECRET_PRIVATE_VALUE'})
+        output = self.root / 'preparation-public.json'
+        self.assertEqual(self.prepare_cli(output), 1)
+        result = startup.read_json(output)
+        self.assertEqual(result['preparation_exception_kind'], 'key_error')
+        self.assertTrue(result['preparation_source_locations'])
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertFalse(self.pair.exists())
+
+    def test_preparation_report_never_overwrites_existing_evidence(self):
+        output = self.root / 'preparation-public.json'
+        output.write_text('EXISTING REPORT')
+        with patch.object(profile, 'prepare') as prepare, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.prepare_cli(output), 1)
+        prepare.assert_not_called()
+        self.assertEqual(output.read_text(), 'EXISTING REPORT')
+
+    def test_preparation_reports_existing_pair_and_keeps_it(self):
+        self.prepare()
+        before = {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.libs):
+            self.assertEqual(self.prepare_cli(output), 1)
+        self.assertEqual(startup.read_json(output)['preparation_exception_kind'], 'output_exists')
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
+
+    def test_preparation_trace_omits_unknown_source_and_exception_text(self):
+        def private_failure(*args):
+            exec(compile('raise RuntimeError("SECRET_PRIVATE_MESSAGE")', '/SECRET_PRIVATE_PATH/hook.py', 'exec'))
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', side_effect=private_failure):
+            self.assertEqual(self.prepare_cli(output), 1)
+        result = startup.read_json(output)
+        self.assertEqual(result['preparation_exception_kind'], 'other')
+        self.assertTrue(result['preparation_source_locations'])
+        self.assertTrue(all(v['source'] == 'simple_pressure_profile.py' for v in result['preparation_source_locations']))
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertNotIn(str(self.root), output.read_text())
 
     def finish(self):
         self.prepare()
