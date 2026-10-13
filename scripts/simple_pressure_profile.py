@@ -33,7 +33,8 @@ DEFAULT_FILES = ('public.json', 'probe.log', 'private-provenance.json', 'private
                  'compile.exit', 'probe.exit')
 ERRORS = {'original_baseline_required', 'defaults_evidence', 'unsupported_gpu_profile', 'profile_identity',
           'runtime_profile_mismatch', 'executable_changed', 'libraries_changed', 'solver_environment_changed',
-          'launcher_changed', 'launcher_exit', 'runtime_recovery_mismatch', 'initial_fields_mismatch'}
+          'launcher_changed', 'launcher_exit', 'runtime_recovery_mismatch', 'initial_fields_mismatch',
+          'reference_pressure_log', 'history_required'}
 
 
 def validate(v):
@@ -277,6 +278,25 @@ def compare(pair, public, details):
         identical_linear_solvers_verified=False, nonlinear_convergence_verified=False)
 
 
+def inspect_linear(pair, public):
+    from simple_pressure_log import inspect_pressure_log
+    baseline, launches, values, identity = check_inputs(pair)
+    require(identity.get('kind') == HISTORY, 'history_required')
+    records = {solver: check_launch(pair, baseline, launches[solver], identity, solver)
+               for solver in ('mars', 'openaccel')}
+    check_runtime(pair, records['mars']['ranks'], values, history=True)
+    checks = inspect_pressure_log((pair / 'reference/run.log').read_text(errors='replace'),
+                                  startup.STEPS, values['rtol'], values['atol'], int(values['maxiter']))
+    # Recheck hashed evidence after reading the log; this command never launches a solver.
+    require(check_inputs(pair) == (baseline, launches, values, identity), 'profile_identity')
+    for solver in records:
+        require(check_launch(pair, baseline, launches[solver], identity, solver) == records[solver], 'profile_identity')
+    public.update(comparison_status='completed', failed_check='none', experiment=HISTORY,
+                  solver_launched=False, reference_pressure_log_checks=checks,
+                  original_pressure_targets_preserved=True, nonlinear_convergence_verified=False,
+                  openaccel_field_parity_verified=False)
+
+
 def main(argv=None):
     parser = SafeParser(description=__doc__)
     sub = parser.add_subparsers(dest='action')
@@ -284,13 +304,13 @@ def main(argv=None):
     for name in ('baseline-pair', 'defaults-probe', 'executable', 'output-dir'):
         prep.add_argument('--' + name, type=Path, required=True)
     prep.add_argument('--history', action='store_true')
-    for action in ('run', 'compare'):
+    for action in ('run', 'compare', 'inspect-linear'):
         command = sub.add_parser(action)
         command.add_argument('--pair', type=Path, required=True)
         command.add_argument('--output', type=Path, required=True)
         if action == 'compare':
             command.add_argument('--detail-dir', type=Path, required=True)
-        else:
+        elif action == 'run':
             command.add_argument('--solver', choices=('mars', 'openaccel'), default='mars')
     args = parser.parse_args(argv)
     os.umask(0o077)
@@ -300,13 +320,15 @@ def main(argv=None):
             prepare(args.baseline_pair.resolve(), args.defaults_probe.resolve(), args.executable.resolve(), args.output_dir.resolve(), args.history)
             print('Original pressure profile prepared. No solver launched; baseline preserved.')
             return 0
-        require(args.action in ('run', 'compare'))
+        require(args.action in ('run', 'compare', 'inspect-linear'))
         with args.output.open('x') as stream:
             try:
                 pair = args.pair.resolve()
                 if args.action == 'run':
                     run(pair, public, args.solver)
                     public.update(comparison_status='capture_complete', failed_check='none')
+                elif args.action == 'inspect-linear':
+                    inspect_linear(pair, public)
                 else:
                     args.detail_dir.mkdir(mode=0o700)
                     compare(pair, public, args.detail_dir)

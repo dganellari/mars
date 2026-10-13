@@ -141,7 +141,7 @@ measurement is requested by these blocks.
 ## Local checks
 
 ```bash
-PYTHONPATH=scripts python3 -m unittest test_simple_pressure_history \
+PYTHONPATH=scripts python3 -m unittest test_simple_pressure_log test_simple_pressure_history \
   test_simple_pressure_profile test_simple_startup_probe test_simple_pressure_probe
 ```
 
@@ -151,3 +151,70 @@ initial-field mismatch, enabled recovery, runtime selection and failed launches.
 The C++ options gate checks the supported snapshot/profile combination and
 rejects partial coverage, gathered output and failure-capture combinations.
 CUDA compilation and the real twenty-step runs remain user-executed gates.
+
+## Inspect the saved reference pressure solves
+
+The reference Hypre wrapper calls Setup and Solve without checking their return
+codes and uses the resulting candidate. Finishing twenty steps therefore does
+not establish that every reference pressure solve met its target. This source
+finding does not establish that a particular saved run failed.
+
+`inspect-linear` checks the existing history records and reads the pressure
+reports in the hashed reference log. It launches no solver, changes no evidence,
+and requires no build or GPU allocation. Use either terminal with the working
+Python dependencies; do not update the shared checkout from both terminals.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-original-linear-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_pressure_profile.py" inspect-linear \
+  --pair "$scratch/simple-original-history-Ahbn3u/pair" \
+  --output "$run/public.json" || status=$?
+cat "$run/public.json"
+printf 'Share only: %s\n' "$run/public.json"
+exit "$status"
+)
+```
+
+The inspected source is OpenAccel root `0d69041ba1afda63e9e4328d9e0d9834bba37756`
+with solver submodule `e351ba5eeaf3537dcc53d0aba09a8347f0a44cd0`:
+`src/solver/HYPRE/ContextHYPRE.h` discards callback return codes,
+`src/solver/linearSolverContext.h` recomputes initial/final residuals, and
+`src/equation/linearSystem.h` prints their RMS with three significant digits.
+The pressure system starts from zero. With no matrix normalization or diagonal
+scaling (required by this history), the initial/final RMS ratio equals the
+corresponding L2 ratio. The absolute RMS allowance is `atol/sqrt(N)`, where
+`N` is the number of scalar unknowns. The inspection does not read or export
+`N`: it uses `atol` as a conservative upper bound because `N >= 1`.
+
+The parser brackets each printed value by half its last decimal unit and emits
+only fixed classifications, iteration numbers and booleans. Missing, duplicated
+or unsupported reports fail validation. The rounded `Drop` column and outer
+`Conv.` hint are not used as linear-solver verdicts.
+
+- `printed_target_exceeded`: even the most favorable printed rounding and
+  absolute allowance cannot meet the recorded target. Investigate the reference
+  linear solve before treating that trajectory as an adequately solved reference.
+- `printed_relative_target_met`: the whole printed interval meets the relative
+  target. This shows no logged target violation; different accepted increments
+  can still cause different finite-iteration trajectories.
+- `inconclusive_absolute_tolerance_or_print_rounding`: this log cannot resolve
+  the target check. It is neither a pass nor a failure.
+
+Iteration-cap flags are reported separately: reaching a cap alone does not prove
+residual failure. These are checks of rounded, ordinary FP64 residuals already
+printed by OpenAccel, not independent residual recomputation, certified rounding
+bounds for `b-A*x`, backend convergence verification, or nonlinear convergence.
+The command's successful exit means inspection completed, not field parity or
+pressure convergence; read `reference_pressure_log_checks` for those limited
+results.

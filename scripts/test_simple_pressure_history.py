@@ -1,6 +1,7 @@
 """Twenty-step comparisons on synthetic fields; no private case data."""
 import copy
 import csv
+import io
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ import simple_pressure_profile as profile
 import simple_startup_probe as startup
 from simple_snapshot_compare import options
 import test_simple_pressure_profile as fixtures
+from test_simple_pressure_log import report
 
 
 class HistoryTests(unittest.TestCase):
@@ -132,6 +134,73 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(public['pressure_residuals_recomputed_at_every_step'])
         self.assertNotIn(str(self.root), json.dumps(public))
         self.assertNotIn('first_step_stage_matches', public['comparison'])
+
+    def pressure_log(self, end='1.23e-08'):
+        path = self.pair / 'reference/run.log'
+        path.write_text(''.join(report(step=i, end=end) for i in range(1, 21)) + 'Simulation is complete\n')
+        self.record('openaccel')
+        return path
+
+    def test_saved_pressure_inspection_does_not_launch_or_load_runtime(self):
+        self.finish()
+        self.pressure_log(end='1.23e-04')
+        public = {}
+        with patch.object(startup, 'launch', side_effect=AssertionError('no launch')), \
+             patch.object(startup, 'runtime_libraries', side_effect=AssertionError('no runtime query')):
+            profile.inspect_linear(self.pair, public)
+        self.assertEqual(public['comparison_status'], 'completed')
+        self.assertTrue(public['reference_pressure_log_checks']['any_printed_target_exceeded'])
+        self.assertFalse(public['solver_launched'])
+        self.assertFalse(public['nonlinear_convergence_verified'])
+        self.assertFalse(public['openaccel_field_parity_verified'])
+        self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_inspection_checks_log_hash_and_all_pressure_settings(self):
+        self.finish()
+        path = self.pressure_log()
+        original = path.read_text()
+        path.write_text(original + 'changed\n')
+        with self.assertRaises(ValueError): profile.inspect_linear(self.pair, {})
+        path.write_text(original)
+        (self.pair / 'mars/flow-pressure-step-20-rank-1.settings').unlink()
+        self.record('mars')
+        with self.assertRaisesRegex(startup.EvidenceError, 'runtime_profile_mismatch'):
+            profile.inspect_linear(self.pair, {})
+
+    def test_inspection_cli_preserves_evidence_and_existing_output(self):
+        self.finish()
+        self.pressure_log()
+        before = {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+        output = self.root / 'linear-public.json'
+        args = ['inspect-linear', '--pair', str(self.pair), '--output', str(output)]
+        self.assertEqual(profile.main(args), 0)
+        public = startup.read_json(output)
+        self.assertTrue(public['reference_pressure_log_checks']['all_printed_relative_targets_met'])
+        saved = output.read_bytes()
+        self.assertEqual(profile.main(args), 1)
+        self.assertEqual(saved, output.read_bytes())
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
+
+    def test_inspection_cli_unknown_format_fails_without_private_text(self):
+        self.finish()
+        self.pressure_log(end='PRIVATE_ERROR_TEXT')
+        output = self.root / 'linear-invalid.json'
+        with patch('sys.stdout', new_callable=io.StringIO) as out, patch('sys.stderr', new_callable=io.StringIO) as err:
+            code = profile.main(['inspect-linear', '--pair', str(self.pair), '--output', str(output)])
+        public = startup.read_json(output)
+        self.assertEqual(code, 1)
+        self.assertEqual(public['comparison_status'], 'invalid_evidence')
+        self.assertEqual(public['failed_check'], 'reference_pressure_log')
+        self.assertNotIn('PRIVATE_ERROR_TEXT', out.getvalue() + err.getvalue() + output.read_text())
+
+    def test_inspection_requires_original_twenty_step_history(self):
+        self.prepare()
+        values = profile.check_inputs(self.pair)
+        identity = dict(values[-1])
+        del identity['kind']
+        with patch.object(profile, 'check_inputs', return_value=values[:-1] + (identity,)), \
+             self.assertRaisesRegex(startup.EvidenceError, 'history_required'):
+            profile.inspect_linear(self.pair, {})
 
     def test_late_field_difference_is_reported_without_exact_field_values(self):
         self.finish()
