@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -24,7 +25,8 @@ SCHEMA = 'mars-simple-startup-v1'
 PREPARATION_ERRORS = {'saved_case_format', 'saved_deck_identity', 'saved_control_identity',
                       'saved_mesh_path', 'reference_length', 'modified_controls', 'launcher_exit',
                       'runtime_library_probe', 'runtime_libraries_unresolved',
-                      'runtime_library_paths', 'runtime_library_unreadable', 'reference_outputs'}
+                      'runtime_library_paths', 'runtime_library_unreadable',
+                      'runtime_library_metadata', 'reference_outputs'}
 
 
 def read_json(path):
@@ -127,15 +129,51 @@ def solver_arguments(pair, solver):
         if record.get('pressure_profile', {}).get('kind') == 'original_twenty_steps' else [])
 
 
+def verify_optional_libraries(executable, paths, missing, env):
+    reader = shutil.which('readelf') or shutil.which('llvm-readelf')
+    require(reader is not None, 'runtime_library_metadata')
+    auxiliary, required = set(), set()
+    for path in sorted(set([str(executable)] + paths)):
+        try:
+            result = subprocess.run([reader, '-dW', path], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError:
+            raise EvidenceError('runtime_library_metadata')
+        text = result.stdout.decode('utf-8', errors='replace')
+        require(result.returncode == 0 and not result.stderr and
+                'Dynamic section at offset' in text and '(NULL)' in text,
+                'runtime_library_metadata')
+        for line in text.splitlines():
+            tag = re.search(r'\((NEEDED|FILTER|AUXILIARY)\)', line)
+            if tag:
+                name = re.search(r'\[([^\]\r\n]+)\]\s*$', line)
+                require(name is not None, 'runtime_library_metadata')
+                (auxiliary if tag[1] == 'AUXILIARY' else required).add(name[1])
+    # An optional provider may also be required by another loaded object.
+    required |= {Path(name).name for name in required}
+    require(missing <= auxiliary and not any(name in required or Path(name).name in required
+            for name in missing), 'runtime_libraries_unresolved')
+
+
 def runtime_libraries(executable):
+    env = dict(os.environ, LC_ALL='C')
     try:
-        result = subprocess.run(['ldd', str(executable)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        result = subprocess.run(['ldd', str(executable)], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except OSError:
         raise EvidenceError('runtime_library_probe')
     text = result.stdout.decode('utf-8', errors='replace')
-    require('not found' not in text, 'runtime_libraries_unresolved')
+    missing = set()
+    for line in text.splitlines():
+        if 'not found' in line:
+            match = re.fullmatch(r'\s*(\S+)\s+=>\s+not found\s*', line)
+            require(match is not None, 'runtime_libraries_unresolved')
+            missing.add(match[1])
     require(result.returncode == 0, 'runtime_library_probe')
     paths = re.findall(r'(?:=>\s+|^\s*)(/\S+)\s+\(', text, re.M)
+    if missing:
+        require(paths, 'runtime_libraries_unresolved')
+        verify_optional_libraries(executable, paths, missing, env)
     require(paths, 'runtime_library_paths')
     try:
         return dict((p, digest(Path(p))) for p in paths)

@@ -181,3 +181,64 @@ exit "$status"
 `preparation_complete` verifies preparation only. It does not claim that the flow
 solver ran or that fields agree. If preparation succeeds, use the new pair with
 the `run` and `compare` commands above.
+
+## Optional NVTX auxiliary library
+
+The Daint ELF inspection identified `visibility=hidden` as a `DT_AUXILIARY`
+entry in `libnvtx3interop.so.1` for both executables. This is an optional provider;
+its absence does not prevent loading that library. The preparation check previously
+rejected every `not found` line, including this one. The build command that created
+the NVTX entry has not been established.
+
+Preparation now verifies missing names against ELF dynamic tags in the executable
+and every resolved library. It permits only `AUXILIARY` names that no object also
+lists as `NEEDED` or `FILTER`. Symbol-version errors, unknown missing names, failed
+loader probes and incomplete metadata still stop preparation. The exceptional
+path needs `readelf` or `llvm-readelf`; missing or unreadable metadata reports
+`runtime_library_metadata`. There is no exception for a particular library name.
+Every resolved library remains hashed, including an auxiliary provider if present.
+See the [GNU linker description of auxiliary libraries](https://sourceware.org/binutils/docs/ld/Options.html).
+
+This Python-only correction needs no rebuild or repeat of passing GPU gates.
+Run this block in the MARS terminal with the existing environment. Preparation,
+one saved MARS launch and comparison execute in that order; OpenAccel's saved
+reference is reused. Preparation failures stop before allocation.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-petsc-retry-XXXXXX")
+printf 'Private results: %s\n' "$run"
+
+status=0
+python3 "$repo/scripts/simple_pressure_profile.py" prepare \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --executable "$repo/build-hypre/examples/distributed/unstructured/mars_segregated_simple" \
+  --output-dir "$run/pair" --both-linear-solvers \
+  --output "$run/preparation-public.json" || status=$?
+cat "$run/preparation-public.json"
+if (( status != 0 )); then exit "$status"; fi
+
+python3 "$repo/scripts/simple_pressure_profile.py" run \
+  --pair "$run/pair" --output "$run/launch-public.json" || status=$?
+cat "$run/launch-public.json"
+if (( status != 0 )); then exit "$status"; fi
+
+python3 "$repo/scripts/simple_pressure_profile.py" compare \
+  --pair "$run/pair" --detail-dir "$run/private-comparison" \
+  --output "$run/comparison-public.json" || status=$?
+cat "$run/comparison-public.json"
+printf 'Share only: %s\n' "$run/comparison-public.json"
+exit "$status"
+)
+```

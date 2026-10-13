@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -445,6 +446,125 @@ class StartupTests(unittest.TestCase):
         output = ('libfoo => ' + str(library) + ' (0x0)\n').encode()
         with patch.object(probe.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)):
             self.assertEqual(probe.runtime_libraries(library), {str(library): probe.digest(library)})
+
+
+class RuntimeLibraryTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        self.exe = self.root / 'flow'
+        self.nvtx = self.root / 'libnvtx3interop.so.1'
+        self.other = self.root / 'libother.so.1'
+        for path in (self.exe, self.nvtx, self.other):
+            path.write_bytes(path.name.encode())
+        self.ldd = ('libnvtx3interop.so.1 => {} (0x1000)\n'
+                    'libother.so.1 => {} (0x2000)\n'
+                    'visibility=hidden => not found\n').format(self.nvtx, self.other).encode()
+        self.ldd_code = 0
+        self.metadata = {
+            str(self.exe): self.dynamic(('NEEDED', self.nvtx.name), ('NEEDED', self.other.name)),
+            str(self.nvtx): self.dynamic(('AUXILIARY', 'visibility=hidden')),
+            str(self.other): self.dynamic(),
+        }
+
+    @staticmethod
+    def dynamic(*entries):
+        text = 'Dynamic section at offset 0x1000 contains {} entries:\n'.format(len(entries) + 1)
+        tags = dict(NEEDED='0000000000000001', FILTER='000000007fffffff', AUXILIARY='000000007ffffffd')
+        labels = dict(NEEDED='Shared library', FILTER='Filter library', AUXILIARY='Auxiliary library')
+        for tag, name in entries:
+            text += ' 0x{} ({}) {}: [{}]\n'.format(tags[tag], tag, labels[tag], name)
+        text += ' 0x0000000000000000 (NULL) 0x0\n'
+        return subprocess.CompletedProcess([], 0, text.encode(), b'')
+
+    def tool(self, args, **kwargs):
+        self.assertEqual(kwargs['env']['LC_ALL'], 'C')
+        if args[0] == 'ldd':
+            return subprocess.CompletedProcess(args, self.ldd_code, self.ldd)
+        self.assertEqual(args[:2], ['/synthetic/readelf', '-dW'])
+        return self.metadata[args[2]]
+
+    def libraries(self):
+        with patch.object(probe.shutil, 'which', return_value='/synthetic/readelf'), \
+             patch.object(probe.subprocess, 'run', side_effect=self.tool):
+            return probe.runtime_libraries(self.exe)
+
+    def test_missing_auxiliary_is_optional_and_loaded_libraries_are_hashed(self):
+        self.assertEqual(self.libraries(), {str(p): probe.digest(p) for p in (self.nvtx, self.other)})
+
+    def test_optional_rule_is_not_a_library_name_exception(self):
+        self.ldd = self.ldd.replace(b'visibility=hidden', b'libalternative.so')
+        self.metadata[str(self.nvtx)] = self.dynamic(('AUXILIARY', 'libalternative.so'))
+        self.assertEqual(set(self.libraries()), {str(self.nvtx), str(self.other)})
+
+    def test_auxiliary_also_required_by_another_object_is_rejected(self):
+        for tag in ('NEEDED', 'FILTER'):
+            for name in ('visibility=hidden', '/other/visibility=hidden'):
+                with self.subTest(tag=tag, name=name):
+                    self.metadata[str(self.other)] = self.dynamic((tag, name))
+                    with self.assertRaisesRegex(probe.EvidenceError, '^runtime_libraries_unresolved$'):
+                        self.libraries()
+
+    def test_other_missing_library_is_not_hidden_by_optional_entry(self):
+        self.ldd += b'librequired.so => not found\n'
+        self.metadata[str(self.other)] = self.dynamic(('NEEDED', 'librequired.so'))
+        with self.assertRaisesRegex(probe.EvidenceError, '^runtime_libraries_unresolved$'):
+            self.libraries()
+
+    def test_unaccounted_missing_name_is_rejected(self):
+        self.metadata[str(self.nvtx)] = self.dynamic(('AUXILIARY', 'different.so'))
+        with self.assertRaisesRegex(probe.EvidenceError, '^runtime_libraries_unresolved$'):
+            self.libraries()
+
+    def test_symbol_version_or_other_not_found_error_is_rejected(self):
+        original = self.ldd
+        for extra in (b"flow: version `PRIVATE' not found (required by PRIVATE)\n",
+                      b'PRIVATE: something not found\n'):
+            with self.subTest(extra=extra):
+                self.ldd = original + extra
+                with self.assertRaisesRegex(probe.EvidenceError, '^runtime_libraries_unresolved$'):
+                    self.libraries()
+
+    def test_nonzero_ldd_exit_is_rejected_even_with_optional_entry(self):
+        self.ldd_code = 1
+        with self.assertRaisesRegex(probe.EvidenceError, '^runtime_library_probe$'):
+            self.libraries()
+
+    def test_missing_reader_is_rejected(self):
+        with patch.object(probe.shutil, 'which', return_value=None), \
+             patch.object(probe.subprocess, 'run', side_effect=self.tool):
+            with self.assertRaisesRegex(probe.EvidenceError, '^runtime_library_metadata$'):
+                probe.runtime_libraries(self.exe)
+
+    def test_failed_or_incomplete_metadata_is_rejected(self):
+        good = self.dynamic(('AUXILIARY', 'visibility=hidden')).stdout
+        for output, code, error in (
+                (good, 1, b''), (good, 0, b'PRIVATE warning'), (b'', 0, b''),
+                (b'There is no dynamic section in this file.\n', 0, b''),
+                (good.replace(b'[visibility=hidden]', b'PRIVATE invalid name'), 0, b''),
+                (good.replace(b'(NULL)', b'(UNKNOWN)'), 0, b'')):
+            with self.subTest(output=output, code=code, error=error):
+                self.metadata[str(self.nvtx)] = subprocess.CompletedProcess([], code, output, error)
+                with self.assertRaisesRegex(probe.EvidenceError, '^runtime_library_metadata$'):
+                    self.libraries()
+
+    def test_reader_execution_error_hides_paths(self):
+        def failure(args, **kwargs):
+            if args[0] == 'ldd':
+                return self.tool(args, **kwargs)
+            raise OSError('PRIVATE tool path')
+        with patch.object(probe.shutil, 'which', return_value='/synthetic/readelf'), \
+             patch.object(probe.subprocess, 'run', side_effect=failure):
+            with self.assertRaisesRegex(probe.EvidenceError, '^runtime_library_metadata$'):
+                probe.runtime_libraries(self.exe)
+
+    def test_present_auxiliary_provider_is_hashed_too(self):
+        provider = self.root / 'visibility=hidden'
+        provider.write_bytes(b'optional implementation')
+        self.ldd = self.ldd.replace(b'visibility=hidden => not found',
+                                   ('visibility=hidden => {} (0x3000)'.format(provider)).encode())
+        self.assertEqual(self.libraries(), {str(p): probe.digest(p) for p in (self.nvtx, self.other, provider)})
 
 
 if __name__ == '__main__':
