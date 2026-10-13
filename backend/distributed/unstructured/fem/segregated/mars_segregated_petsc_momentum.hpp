@@ -17,6 +17,18 @@
 
 namespace mars::segregated::runtime {
 
+// NVCC requires kernel argument types to be accessible outside the solver class.
+template<class GlobalId> struct PetscCoordinateRows {
+    const int* offsets; const int* columns; const GlobalId* map;
+    PetscInt first; PetscInt *row,*column;
+#if defined(__CUDACC__)
+    __host__ __device__
+#endif
+    void operator()(int i) const {
+        for (int j=offsets[i];j<offsets[i+1];++j) { row[j]=first+i; column[j]=PetscInt(map[columns[j]]); }
+    }
+};
+
 // The reference's two flat options leave all other KSP/PC choices at PETSc defaults.
 // Keep this adapter restricted to that profile; do not approximate other PETSc PCs.
 class PetscMomentumSolver {
@@ -167,16 +179,6 @@ private:
         if (b_) check(VecDestroy(&b_));
         if (matrix_) check(MatDestroy(&matrix_));
     }
-    template<class GlobalId> struct CoordinateRows {
-        const int* offsets; const int* columns; const GlobalId* map;
-        PetscInt first; PetscInt *row,*column;
-#if defined(__CUDACC__)
-        __host__ __device__
-#endif
-        void operator()(int i) const {
-            for (int j=offsets[i];j<offsets[i+1];++j) { row[j]=first+i; column[j]=PetscInt(map[columns[j]]); }
-        }
-    };
     template<class System> void build(const System& system) {
         const auto range=system.hypre_rows();
         require(range.end-range.begin==system.rows() && system.rows()>0 && range.column_begin==0
@@ -190,7 +192,7 @@ private:
         const auto* map=distributed::raw(system.solver_dof_map());
         using GlobalId=std::remove_cv_t<std::remove_pointer_t<decltype(map)>>;
         int faults=0;
-        distributed::apply(rows_,CoordinateRows<GlobalId>{offsets_,columns_,map,PetscInt(range.begin),
+        distributed::apply(rows_,PetscCoordinateRows<GlobalId>{offsets_,columns_,map,PetscInt(range.begin),
             distributed::raw(row),distributed::raw(column)},0,faults);
         system.synchronize(faults); require(!faults,"PETSc momentum graph conversion failed");
         // PETSc stages these indices on host internally during graph setup.
