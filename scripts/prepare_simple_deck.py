@@ -142,11 +142,19 @@ def reference_linear_target(settings, solver, equation, stage):
         config = solver.get(name)
         require(isinstance(config, dict), path + '.lookup', 'named linear solver not found')
     family = config.get('family')
-    require(isinstance(family, str) and family.lower() == 'hypre', path + '.family', 'requires Hypre')
+    petsc_momentum = isinstance(family, str) and family.lower() == 'petsc' and stage == 'momentum'
+    require(isinstance(family, str) and (family.lower() == 'hypre' or petsc_momentum),
+            path + '.family', 'requires Hypre or the supported PETSc momentum profile')
     for key in ('normalize_matrix', 'diagonal_scaling'):
         require(config.get(key, False) is False, path + '.' + key, 'requires false or omission')
     solver_type = 'gmres'
-    if 'options' in config:
+    if petsc_momentum:
+        raw = config.get('options')
+        require(isinstance(raw, dict) and len(raw) == 2 and all(isinstance(k, str) and isinstance(v, str) for k, v in raw.items()),
+                path + '.options', 'requires exactly ksp_type fgmres and pc_type bjacobi')
+        require({k.lower(): v.lower() for k, v in raw.items()} == dict(ksp_type='fgmres', pc_type='bjacobi'),
+                path + '.options', 'requires exactly ksp_type fgmres and pc_type bjacobi')
+    elif 'options' in config:
         options = config['options']
         require(isinstance(options, dict) and isinstance(options.get('solver'), dict),
                 path + '.options', 'requires a solver mapping')

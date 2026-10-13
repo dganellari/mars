@@ -76,7 +76,7 @@ class ProfileTests(unittest.TestCase):
         (self.probe / name).write_text(json.dumps(value))
 
     def prepare(self):
-        with patch.object(startup, 'runtime_libraries', return_value=self.libs):
+        with patch.object(startup, 'runtime_libraries', return_value=getattr(self, 'rebuilt_libs', self.libs)):
             profile.prepare(self.baseline, self.probe, self.exe, self.pair, both_linear_solvers=self.both_linear_solvers)
 
     def finish(self):
@@ -93,12 +93,18 @@ class ProfileTests(unittest.TestCase):
             (self.pair / 'mars' / ('flow-pressure-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
         if self.both_linear_solvers:
             momentum, _, _ = profile.momentum_data(self.baseline, self.pair / 'defaults', startup.verified_launch(self.baseline, 'openaccel'))
-            actual = dict(momentum, hypre_release=23300, effective_levels=3, effective_relax_3=18)
-            actual['effective_relax_1'] = actual.pop('relax_down')
-            actual['effective_relax_2'] = actual.pop('relax_up')
+            petsc = profile.is_petsc_profile(momentum)
+            if petsc:
+                actual = dict(momentum, petsc_release=32400, restart=30, divergence_tolerance=1e4,
+                    local_blocks=1, sub_preonly=1, sub_ilu_levels=0, right_preconditioning=1,
+                    unpreconditioned_norm=1, device=1)
+            else:
+                actual = dict(momentum, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+                actual['effective_relax_1'] = actual.pop('relax_down')
+                actual['effective_relax_2'] = actual.pop('relax_up')
             for rank in (0, 1):
                 (self.pair / 'mars' / ('flow-momentum-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
-            log.write_text(log.read_text() + 'momentum_solver_profile=explicit_gpu\n'
+            log.write_text(log.read_text() + 'momentum_solver_profile=' + ('petsc_fgmres_bjacobi' if petsc else 'explicit_gpu') + '\n'
                 + 'momentum_linear_rtol={} momentum_linear_atol={}\n'.format(momentum['rtol'], momentum['atol']))
         self.record()
 
@@ -134,7 +140,7 @@ class ProfileTests(unittest.TestCase):
         for name in ('launch-start.json', 'launch.json'):
             path = self.pair / 'mars' / name
             record = startup.read_json(path)
-            record.update(executable=str(self.exe), executable_sha256=startup.digest(self.exe), libraries=self.libs,
+            record.update(executable=str(self.exe), executable_sha256=startup.digest(self.exe), libraries=getattr(self, 'rebuilt_libs', self.libs),
                           command=['launcher', str(self.exe)]+startup.solver_arguments(self.pair, 'mars'))
             path.write_text(json.dumps(record))
 
@@ -160,6 +166,71 @@ class ProfileTests(unittest.TestCase):
             self.prepare()
         self.assertFalse(self.pair.exists())
 
+    def enable_petsc_momentum(self):
+        self.enable_momentum('PETSc', dict(ksp_type='fgmres', pc_type='bjacobi'))
+        self.rebuilt_libs = dict(self.libs, **{'/SYNTHETIC/lib/libpetsc.so.3.24': 'c'*64})
+
+    def test_petsc_profile_preserves_targets_and_compares_fresh_capture(self):
+        self.enable_petsc_momentum()
+        self.finish()
+        _, _, pressure, identity = profile.check_inputs(self.pair)
+        self.assertNotIn('petsc_fgmres_bjacobi', pressure)
+        case = startup.read_json(self.pair / 'case.json')
+        self.assertEqual(case['momentum_backend'], 'petsc')
+        self.assertEqual(profile.options(case['arguments'])['--momentum-backend'], 'petsc')
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, {})
+        self.assertEqual(momentum, dict(petsc_fgmres_bjacobi=1, rtol=2e-5, atol=3e-12, maxiter=123))
+        public = {}
+        details = self.root / 'details-petsc'; details.mkdir()
+        profile.compare(self.pair, public, details)
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertTrue(public['recorded_gpu_momentum_settings_verified'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertTrue(public['comparison']['mapped_controls_verified'])
+        self.assertEqual(identity['libraries'], self.rebuilt_libs)
+
+    def test_petsc_profile_requires_library_without_replacing_captured_mpi(self):
+        self.enable_petsc_momentum()
+        for libraries in (self.libs, dict(self.rebuilt_libs, **{'/SYNTHETIC/lib/libmpi.so': 'd'*64}),
+                          dict(self.rebuilt_libs, **{'/OTHER/lib/libmpi.so': 'b'*64})):
+            with self.subTest(libraries=libraries):
+                self.rebuilt_libs = libraries
+                with self.assertRaisesRegex(startup.EvidenceError, 'libraries_changed'):
+                    self.prepare()
+                self.assertFalse(self.pair.exists())
+
+    def test_supported_petsc_inspection_still_does_not_claim_runtime_settings(self):
+        self.enable_petsc_momentum()
+        public = {}; profile.inspect_profiles(self.baseline, self.probe, public)
+        self.assertTrue(public['both_profiles_supported'])
+        self.assertEqual(public['profiles']['momentum']['required_build'], 'cuda_petsc')
+        self.assertFalse(public['profiles']['momentum']['runtime_settings_verified'])
+        self.assertFalse(public['solver_launched'])
+
+    def test_petsc_runtime_profile_rejects_changed_inner_solver_or_target(self):
+        self.enable_petsc_momentum(); self.finish()
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, {})
+        path = self.pair / 'mars/flow-momentum-rank-1.settings'
+        original = path.read_text()
+        for key, value in (('sub_preonly', 0), ('sub_ilu_levels', 1), ('local_blocks', 2),
+                           ('unpreconditioned_norm', 0), ('right_preconditioning', 0), ('device', 0),
+                           ('rtol', 1e-3), ('maxiter', 124), ('petsc_release', 32300)):
+            actual = dict(line.split() for line in original.splitlines())
+            actual[key] = value
+            path.write_text(''.join('{} {}\n'.format(k, v) for k, v in actual.items()))
+            with self.subTest(key=key), self.assertRaisesRegex(startup.EvidenceError, 'runtime_profile_mismatch'):
+                profile.check_runtime(self.pair, 2, momentum, stage='momentum')
+        path.write_text(original)
+
+    def test_petsc_profile_rejects_extra_options_scaling_and_invalid_cap(self):
+        base = dict(family='PETSc', options=dict(ksp_type='fgmres', pc_type='bjacobi'))
+        for change in (dict(options=dict(ksp_type='gmres', pc_type='bjacobi')),
+                       dict(options=dict(ksp_type='fgmres', pc_type='bjacobi', sub_pc_type='ilu')),
+                       dict(diagonal_scaling=True), dict(normalize_matrix=True), dict(max_iterations=0),
+                       dict(max_iterations=True), dict(max_iterations=1.5), dict(max_iterations=float('nan'))):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                profile.petsc_momentum_values(dict(base, **change))
+
     def test_inspection_reports_backend_without_touching_or_launching_case(self):
         self.enable_momentum('PETSc', dict(ksp_type='fgmres', pc_type='bjacobi', sub_pc_type='ilu'))
         before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
@@ -172,7 +243,7 @@ class ProfileTests(unittest.TestCase):
         result = json.loads(output.read_text())
         self.assertFalse(result['both_profiles_supported'])
         self.assertEqual(result['profiles']['momentum']['family'], 'petsc')
-        self.assertEqual(result['profiles']['momentum']['failed_component'], 'family')
+        self.assertEqual(result['profiles']['momentum']['failed_component'], 'petsc_profile')
         self.assertEqual(result['profiles']['momentum']['solver'], 'fgmres')
         self.assertEqual(result['profiles']['momentum']['preconditioner'], 'bjacobi')
         self.assertEqual(result['profiles']['momentum']['declared_petsc_options']['sub_pc_type'], 'ilu')

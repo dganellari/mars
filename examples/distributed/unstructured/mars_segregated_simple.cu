@@ -5,6 +5,9 @@
 #include "mars_segregated_pressure_capture.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
+#ifdef MARS_SIMPLE_PETSC
+#include "mars_segregated_petsc_momentum.hpp"
+#endif
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -13,9 +16,7 @@
 using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
-using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
-
-fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::string& path,double relative,double absolute) {
+fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::string& path,double relative,double absolute,bool hypre=true) {
     int rank=0; MPI_Comm_rank(comm,&rank);
     std::string text;
     bool valid=true;
@@ -38,14 +39,14 @@ fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::stri
     try {
         std::istringstream input(text);
         profile=fem::pressure_settings::read(input);
-        fem::pressure_settings::validate_gpu_profile(profile);
+        if (hypre) fem::pressure_settings::validate_gpu_profile(profile);
         valid=profile.at("rtol")==relative && profile.at("atol")==absolute;
     } catch (...) { valid=false; }
     simple_collective(comm,valid,"invalid GPU linear profile or changed linear targets");
     return profile;
 }
 
-void prepare_pressure_capture(Runner& run,const std::string& directory) {
+template<class Runner> void prepare_pressure_capture(Runner& run,const std::string& directory) {
     int rank=0; MPI_Comm_rank(run.comm,&rank);
     int size=rank==0?int(directory.size()):0;
     ensure(MPI_Bcast(&size,1,MPI_INT,0,run.comm)==MPI_SUCCESS,"capture option reduction failed");
@@ -87,10 +88,12 @@ void prepare_pressure_capture(Runner& run,const std::string& directory) {
     };
 }
 
-int execute(const SimpleOptions& o) {
+template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const SimpleOptions& o) {
+    using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve,MomentumSolve>;
+    constexpr bool hypre_momentum=std::is_same_v<MomentumSolve<3>,HypreSimpleSolve<3>>;
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
     const auto pressure_profile=read_solver_profile(MPI_COMM_WORLD,o.pressure_solver_profile,o.pressure_rtol,o.pressure_atol);
-    const auto momentum_profile=read_solver_profile(MPI_COMM_WORLD,o.momentum_solver_profile,o.momentum_rtol,o.momentum_atol);
+    const auto momentum_profile=read_solver_profile(MPI_COMM_WORLD,o.momentum_solver_profile,o.momentum_rtol,o.momentum_atol,hypre_momentum);
     simple_output_preflight(MPI_COMM_WORLD,o.output,o.field_output);
     const double setup_start=MPI_Wtime();
     int nodes=0;
@@ -106,7 +109,10 @@ int execute(const SimpleOptions& o) {
     auto& run=*runner;
     run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
     run.set_momentum_tolerances(o.momentum_tolerances,o.momentum_rtol,o.momentum_atol);
-    if (!momentum_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.momentum_solve.solver,momentum_profile);
+    if (!momentum_profile.empty()) {
+        if constexpr (hypre_momentum) fem::pressure_settings::configure_gpu_profile(run.momentum_solve.solver,momentum_profile);
+        else run.momentum_solve.solver.configure(momentum_profile);
+    }
     if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile);
     run.set_pressure_refinement(o.pressure_refinement);
     prepare_pressure_capture(run,o.pressure_failure_capture);
@@ -144,7 +150,7 @@ int execute(const SimpleOptions& o) {
         if (o.momentum_tolerances)
             std::cout<<"momentum_linear_rtol="<<o.momentum_rtol<<" momentum_linear_atol="<<o.momentum_atol
                      <<" momentum_acceptance=max(atol,rtol*rhs_norm)\n";
-        if (!momentum_profile.empty()) std::cout<<"momentum_solver_profile=explicit_gpu\n";
+        if (!momentum_profile.empty()) std::cout<<"momentum_solver_profile="<<(hypre_momentum?"explicit_gpu":"petsc_fgmres_bjacobi")<<'\n';
     }
     if (o.profile) {
         char host[MPI_MAX_PROCESSOR_NAME]; int length=0,device=0;
@@ -210,10 +216,15 @@ int execute(const SimpleOptions& o) {
                     bool saved=true;
                     try {
                         std::ostringstream text;
-                        auto& linear=name=="momentum"?run.momentum_solve.solver:run.poisson_solve.solver;
-                        linear.inspect_prepared([&](auto solver,auto amg,bool flex) {
-                            fem::pressure_settings::write(text,fem::pressure_settings::snapshot(solver,amg,flex));
-                        });
+                        auto hypre_settings=[&](auto& linear) {
+                            linear.inspect_prepared([&](auto solver,auto amg,bool flex) {
+                                fem::pressure_settings::write(text,fem::pressure_settings::snapshot(solver,amg,flex));
+                            });
+                        };
+                        if (name=="momentum") {
+                            if constexpr (hypre_momentum) hypre_settings(run.momentum_solve.solver);
+                            else run.momentum_solve.solver.write_settings(text);
+                        } else hypre_settings(run.poisson_solve.solver);
                         const auto step=audit?std::string{}:"step-"+std::to_string(run.completed+1)+"-";
                         const auto equation=name=="momentum"?"momentum":"pressure";
                         frozen::Writer file(o.output+"-"+equation+"-"+step+"rank-"+std::to_string(rank)+".settings");
@@ -286,7 +297,23 @@ int main(int argc,char** argv) {
         }
     }
     int result=1;
-    try { result=execute(parsed); }
+    try {
+        if (parsed.momentum_backend=="petsc") {
+#ifdef MARS_SIMPLE_PETSC
+            // Do not pass MARS command-line options to PETSc or read a user's petscrc.
+            int petsc_argc=2;
+            char name[]="mars_segregated_simple",skip[]="-skip_petscrc";
+            char* petsc_args[]={name,skip,nullptr}; char** petsc_argv=petsc_args;
+            if (PetscInitialize(&petsc_argc,&petsc_argv,nullptr,nullptr)
+                || PetscOptionsClear(nullptr)
+                || PetscPushErrorHandler(PetscReturnErrorHandler,nullptr)) throw std::runtime_error("PETSc initialization failed");
+            result=execute<PetscSimpleSolve>(parsed);
+            if (PetscFinalize()) throw std::runtime_error("PETSc finalization failed");
+#else
+            throw std::runtime_error("PETSc momentum was not built; enable MARS_ENABLE_PETSC with a CUDA PETSc installation");
+#endif
+        } else result=execute(parsed);
+    }
     catch (const std::exception& e) { std::cerr<<"ERROR: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }
     MPI_Bcast(&result,1,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Finalize();

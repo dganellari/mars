@@ -41,6 +41,7 @@ struct SimpleOptions {
     std::string pressure_failure_capture;
     std::string pressure_solver_profile;
     std::string momentum_solver_profile;
+    std::string momentum_backend="hypre";
     SimpleControls controls;
     SimpleBoundaryNames boundaries;
     int iterations=2000,report=10,profile_warmup=10,snapshot_iterations=0;
@@ -69,6 +70,7 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         else if (key=="--pressure-failure-capture") o.pressure_failure_capture=value;
         else if (key=="--pressure-solver-profile") o.pressure_solver_profile=value;
         else if (key=="--momentum-solver-profile") o.momentum_solver_profile=value;
+        else if (key=="--momentum-backend") o.momentum_backend=value;
         else if (key=="--field-output") {
             if (value!="gathered" && value!="distributed" && value!="none")
                 throw std::runtime_error("--field-output expects gathered, distributed or none");
@@ -147,6 +149,10 @@ inline SimpleOptions simple_options(int argc,char** argv) {
     }
     o.pressure_tolerances=seen.count("--pressure-linear-rtol")!=0;
     o.momentum_tolerances=seen.count("--momentum-linear-rtol")!=0;
+    if (o.momentum_backend!="hypre" && o.momentum_backend!="petsc")
+        throw std::runtime_error("momentum backend must be hypre or petsc");
+    if (o.momentum_backend=="petsc" && o.momentum_solver_profile.empty())
+        throw std::runtime_error("PETSc momentum requires an explicit solver profile");
     if (o.momentum_tolerances!=(seen.count("--momentum-linear-atol")!=0)
         || !(o.momentum_rtol>0 && o.momentum_rtol<1 && o.momentum_atol>=0))
         throw std::runtime_error("momentum linear tolerances require both 0<rtol<1 and atol>=0");
@@ -195,6 +201,7 @@ inline const char* simple_help() {
            "  --momentum-linear-rtol R --momentum-linear-atol A   optional pair; max(A,R*||b||)\n"
            "    Sets momentum Krylov and both true residual targets independently of pressure.\n"
            "  --momentum-solver-profile FILE      opt-in GPU controls; requires audit or full distributed snapshots and explicit targets\n"
+           "  --momentum-backend hypre|petsc      default hypre; PETSc requires a CUDA-enabled PETSc build and its explicit profile\n"
            "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
            "  --pressure-expansion 0             opt-in retained pressure pair and four correction budgets; explicit targets required\n"

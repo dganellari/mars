@@ -32,6 +32,9 @@ The [two-solver profile](pressure_profile.md#momentum-and-pressure-controls)
 also maps supported reference momentum controls instead of leaving them at
 MARS defaults. It preserves both original residual targets and records any
 GPU substitutions.
+The optional [PETSc momentum backend](petsc_momentum.md) supports the reference's
+FGMRES/block-Jacobi profile while pressure stays in Hypre. Its synthetic CPU tests
+pass on 1/2/4 ranks; CUDA execution and pump agreement remain unverified.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared

@@ -76,10 +76,13 @@ MARS instances; separate settings records verify every selected rank and step.
 The public result reports `original_momentum_targets_preserved` and
 `recorded_gpu_momentum_settings_verified` only after those checks pass.
 
-The supported profile is unscaled Hypre GMRES or FlexGMRES with the restricted
-BoomerAMG options above. A PETSc, Trilinos, MGR, matrix-scaling or other unsupported
-configuration stops preparation with `unsupported_momentum_profile`; it is not
-silently translated into Hypre. The previously measured reference defaults are
+Pressure supports unscaled Hypre GMRES or FlexGMRES with the restricted
+BoomerAMG options above. Momentum also supports the exact flat PETSc profile
+`ksp_type: fgmres`, `pc_type: bjacobi` through an optional CUDA PETSc backend;
+use the [PETSc build and comparison recipe](petsc_momentum.md) for that case.
+Other PETSc options, Trilinos, MGR, matrix scaling or unsupported combinations
+stop preparation with `unsupported_momentum_profile`; they are not silently
+translated into Hypre. The previously measured reference Hypre defaults are
 reused only after their executable/library identities are checked. Identical
 CPU/GPU solvers are still not claimed: Hypre versions, row order, coarsening and
 coarse relaxation can differ.
@@ -134,10 +137,12 @@ equation context's values; its generic minimum-iteration setting is not forwarde
 PETSc's stopping norm may be preconditioned, depending on KSP configuration;
 see [KSPSetTolerances](https://petsc.org/release/manualpages/KSP/KSPSetTolerances/).
 Matching tolerance numbers alone would therefore not establish the same stopping
-test as MARS's unpreconditioned check. MARS SIMPLE currently has no PETSc momentum
-backend. Inspection continues to reject that family instead of substituting Hypre.
-The confirmed mixed PETSc-momentum/Hypre-pressure reference explains preparation's
-family rejection; it does not establish the cause of the observed field difference.
+test as MARS's unpreconditioned check. The supported FGMRES/BJacobi path uses
+PETSc's default right preconditioning and unpreconditioned norm, verifies these
+after setup, and preserves the reference rtol/atol/cap. The formerly missing
+PETSc backend explained preparation's family rejection; this did not establish
+the cause of the observed field difference. GPU execution and field agreement
+still require the public gate and private comparison in the PETSc recipe.
 
 For momentum `A du = b`, `du` is a velocity increment; matrix coefficients have
 units kg/s and the RHS has units N. Both its Krylov target and the two independent

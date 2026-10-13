@@ -105,6 +105,8 @@ def pair_inputs(pair):
             require(profile['momentum']['sha256'] == case['momentum_solver_profile_sha256'] == digest(pair / 'momentum.profile'))
             require(values.pop('--momentum-solver-profile') == str(pair.resolve() / 'momentum.profile'))
             require(case.get('momentum_linear_policy') == 'reference')
+            if case.get('momentum_backend') == 'petsc':
+                require(values.pop('--momentum-backend') == 'petsc')
     require(Path(mesh).resolve() == Path(record['mesh']) == Path(values['--mesh']))
     require(values == dict(options(mapped), **{'--mesh': mesh, '--mesh-format': 'exodus',
                                              '--reference-length': values['--reference-length']}))

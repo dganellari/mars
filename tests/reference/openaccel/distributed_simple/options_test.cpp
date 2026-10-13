@@ -27,6 +27,12 @@ int main() {
                               "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed");
     check(momentum.momentum_tolerances && momentum.momentum_rtol==1e-5 && momentum.momentum_atol==2e-14);
     check(!momentum.pressure_tolerances && momentum.pressure_solver_profile.empty());
+    check(defaults.momentum_backend=="hypre");
+    check(parse("--momentum-backend petsc --momentum-solver-profile momentum.profile --momentum-linear-rtol 1e-5 --momentum-linear-atol 0 "
+                "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").momentum_backend=="petsc");
+    for (const auto* args:{"--momentum-backend unknown","--momentum-backend petsc"}) {
+        bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; } check(rejected);
+    }
     check(!defaults.controls.pressure_expansion);
     check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0").controls.pressure_expansion);
     check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --pressure-solver-profile settings").controls.pressure_expansion);

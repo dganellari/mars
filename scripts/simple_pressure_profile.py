@@ -181,6 +181,30 @@ def inspect_petsc_options(config):
     return report
 
 
+def petsc_momentum_values(config):
+    from prepare_simple_deck import reference_linear_target
+    arguments = reference_linear_target({'momentum': config}, {}, 'momentum', 'momentum')
+    target = options(arguments)
+    maximum = config.get('max_iterations', 20)
+    require(type(maximum) in (int, float) and math.isfinite(maximum) and maximum == int(maximum)
+            and 1 <= maximum <= 2147483647, 'unsupported_momentum_profile')
+    return dict(petsc_fgmres_bjacobi=1, rtol=float(target['--momentum-linear-rtol']),
+                atol=float(target['--momentum-linear-atol']), maxiter=int(maximum)), arguments
+
+
+def is_petsc_profile(values):
+    return values.get('petsc_fgmres_bjacobi') == 1
+
+
+def profile_libraries_match(libraries, original, petsc):
+    if not petsc:
+        return libraries == original
+    # Adding PETSc must not replace the captured MPI, Hypre or other existing dependencies.
+    return all(libraries.get(path) == digest for path, digest in original.items()) and not any(
+        defaults.library_kind(path) in ('mpi', 'hypre') and path not in original for path in libraries) and sum(
+        Path(path).name.startswith('libpetsc.') for path in libraries) == 1
+
+
 def inspect_configuration(config, measured, stage):
     from prepare_simple_deck import reference_linear_target
 
@@ -199,6 +223,15 @@ def inspect_configuration(config, measured, stage):
         report['failed_component'] = 'family'
         if report['family'] == 'petsc':
             report.update(inspect_petsc_options(config))
+            if stage == 'momentum':
+                report['failed_component'] = 'petsc_profile'
+                try:
+                    petsc_momentum_values(config)
+                except (ValueError, KeyError, TypeError):
+                    pass
+                else:
+                    report.update(mapping_supported=True, failed_component='none',
+                        required_build='cuda_petsc', gpu_adaptations=['aij_to_device_aijcusparse', 'local_ilu_to_device_cusparse'])
         else:
             report.update(solver='unresolved', preconditioner='unresolved')
         return report
@@ -282,6 +315,9 @@ def momentum_data(baseline, probe, reference):
     try:
         deck = startup.load_deck((baseline / 'reference/input.i').read_bytes())
         config = pressure.resolved_solver(deck, 'coupled_navier_stokes')
+        if str(config.get('family', '')).lower() == 'petsc':
+            values, arguments = petsc_momentum_values(config)
+            return values, ['aij_to_device_aijcusparse', 'local_ilu_to_device_cusparse'], arguments + ['--momentum-backend', 'petsc']
         from prepare_simple_deck import reference_momentum_target
         solver = deck['simulation']['solver']
         arguments = reference_momentum_target(solver['solver_control']['advanced_options']['linear_solver_settings'], solver)
@@ -310,6 +346,8 @@ def pair_content(baseline, pair, record, case, identity):
         _, _, arguments = momentum_data(baseline, pair / 'defaults', startup.verified_launch(baseline, 'openaccel'))
         case['arguments'] += arguments + ['--momentum-solver-profile', str(pair / 'momentum.profile')]
         case['momentum_linear_policy'] = 'reference'
+        if '--momentum-backend' in arguments:
+            case['momentum_backend'] = 'petsc'
         case['momentum_solver_profile_sha256'] = identity['momentum']['sha256']
         record['changed_controls'] = record['changed_controls'] + ['gpu_momentum_profile']
         case['notes'] = [note for note in case.get('notes', []) if not note.startswith((
@@ -324,7 +362,8 @@ def prepare(baseline, probe, executable, output, history=False, both_linear_solv
     momentum = momentum_data(baseline, probe, launches['openaccel']) if both_linear_solvers else None
     require(executable.is_file() and os.access(str(executable), os.X_OK), 'executable_changed')
     libraries = startup.runtime_libraries(executable)
-    require(libraries == launches['mars']['libraries'], 'libraries_changed')
+    require(profile_libraries_match(libraries, launches['mars']['libraries'],
+            momentum is not None and is_petsc_profile(momentum[0])), 'libraries_changed')
     output.mkdir(mode=0o700)
     (output / 'reference').mkdir(mode=0o700)
     if history:
@@ -364,11 +403,14 @@ def check_inputs(pair):
     require(identity['baseline_launch_hashes'] == {s: digest(baseline / ('reference' if s == 'openaccel' else 'mars') / 'launch.json')
                                                   for s in launches}, 'profile_identity')
     require(text_profile(values) == (pair / 'pressure.profile').read_text()
-            and identity['adaptations'] == adaptations and identity['libraries'] == launches['mars']['libraries'], 'profile_identity')
+            and identity['adaptations'] == adaptations, 'profile_identity')
+    petsc = False
     if 'momentum' in identity:
         momentum, changes, _ = momentum_data(baseline, pair / 'defaults', launches['openaccel'])
+        petsc = is_petsc_profile(momentum)
         require(text_profile(momentum) == (pair / 'momentum.profile').read_text()
                 and identity['momentum'] == dict(sha256=digest(pair / 'momentum.profile'), adaptations=changes), 'profile_identity')
+    require(profile_libraries_match(identity['libraries'], launches['mars']['libraries'], petsc), 'profile_identity')
     old, expected_case = pair_content(baseline, pair, old, case, identity)
     require(startup.read_json(pair / 'case.json') == expected_case
             and record == dict(old, case_sha256=digest(pair / 'case.json'), pressure_profile=identity), 'profile_identity')
@@ -415,9 +457,11 @@ def run(pair, public, solver='mars'):
 
 def check_runtime(pair, ranks, values, history=False, stage='pressure'):
     expected = dict(values)
-    expected['effective_relax_1'] = expected.pop('relax_down')
-    expected['effective_relax_2'] = expected.pop('relax_up')
-    expected['effective_relax_3'] = expected['coarserelax']
+    petsc = is_petsc_profile(values)
+    if not petsc:
+        expected['effective_relax_1'] = expected.pop('relax_down')
+        expected['effective_relax_2'] = expected.pop('relax_up')
+        expected['effective_relax_3'] = expected['coarserelax']
     prefix = 'flow-' + stage + '-'
     paths = sorted((pair / 'mars').glob(prefix + 'rank-*.settings'))
     names = [(prefix + 'rank-{}.settings').format(rank) for rank in range(ranks)]
@@ -431,6 +475,16 @@ def check_runtime(pair, ranks, values, history=False, stage='pressure'):
         parsed = [line.split() for line in lines]
         require(all(len(row) == 2 for row in parsed), 'runtime_profile_mismatch')
         actual = {k: float(v) for k, v in parsed}
+        if petsc:
+            extra = {'petsc_release', 'restart', 'divergence_tolerance', 'local_blocks', 'sub_preonly',
+                     'sub_ilu_levels', 'right_preconditioning', 'unpreconditioned_norm', 'device'}
+            require(len(actual) == len(parsed) and set(actual) == set(expected) | extra
+                    and all(math.isfinite(v) for v in actual.values()) and all(actual[k] == v for k, v in expected.items())
+                    and actual['local_blocks'] == 1 and actual['sub_preonly'] == 1 and actual['sub_ilu_levels'] == 0
+                    and actual['right_preconditioning'] == 1 and actual['unpreconditioned_norm'] == 1 and actual['device'] == 1
+                    and actual['restart'] >= 1 and actual['divergence_tolerance'] > 1
+                    and actual['petsc_release'] >= 32400, 'runtime_profile_mismatch')
+            continue
         require(len(actual) == len(parsed) and set(actual) == set(expected) | {'hypre_release', 'effective_levels'}
                 and all(math.isfinite(v) for v in actual.values()) and all(actual[k] == v for k, v in expected.items())
                 and actual['effective_levels'] >= 1, 'runtime_profile_mismatch')

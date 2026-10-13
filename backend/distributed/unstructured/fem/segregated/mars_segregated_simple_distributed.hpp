@@ -208,7 +208,7 @@ template<int C> struct HypreSimpleSolve {
 };
 #endif
 
-template<class Matrix,class GlobalId,template<int> class Solve>
+template<class Matrix,class GlobalId,template<int> class Solve,template<int> class MomentumSolve=Solve>
 struct DistributedSimpleRunner {
     MPI_Comm comm;
     int n,e,b,completed=0,limiter_iteration=-1,owned_nodes,owned_elements,owned_faces;
@@ -230,7 +230,7 @@ struct DistributedSimpleRunner {
     Array<double> momentum_blocks,momentum_rhs,poisson_blocks,poisson_rhs,du,phi;
     distributed::OwnedRowSystem<3,Matrix,GlobalId> momentum;
     distributed::OwnedRowSystem<1,Matrix,GlobalId> poisson;
-    Solve<3> momentum_solve; Solve<1> poisson_solve;
+    MomentumSolve<3> momentum_solve; Solve<1> poisson_solve;
     distributed::FieldExchange exchange;
     SimpleProfile profile;
 #ifdef MARS_REPLAY_CUDA
@@ -264,7 +264,7 @@ public:
     }
 
 private:
-    template<int C> void set_linear_tolerances(bool enabled,double relative,double absolute,Solve<C>& solver,
+    template<int C,class LinearSolve> void set_linear_tolerances(bool enabled,double relative,double absolute,LinearSolve& solver,
                                              std::optional<distributed::Tolerance>& target) {
         simple_collective(comm,completed==0 && std::isfinite(relative) && std::isfinite(absolute)
             && relative>0 && relative<1 && absolute>=0,"invalid or late linear tolerances");

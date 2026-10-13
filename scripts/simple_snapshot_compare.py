@@ -71,9 +71,13 @@ def controls(case_path, reference_dir, mesh, log):
         if flag in mapped_prepared:
             profile = Path(mapped_prepared.pop(flag))
             require(case.get(stage + '_solver_profile_sha256') == digest(profile))
-            require([line.strip() for line in log if line.startswith(label)] == [label + 'explicit_gpu'])
+            backend = 'petsc_fgmres_bjacobi' if stage == 'momentum' and prepared.get('--momentum-backend') == 'petsc' else 'explicit_gpu'
+            require([line.strip() for line in log if line.startswith(label)] == [label + backend])
         else:
             require(not any(line.startswith(label) for line in log))
+    if '--momentum-backend' in mapped_prepared:
+        require(mapped_prepared.pop('--momentum-backend') == 'petsc' and case.get('momentum_backend') == 'petsc'
+                and '--momentum-solver-profile' in prepared)
     require(mesh is None or Path(prepared['--mesh']).resolve() == mesh.resolve())
     require(prepared['--mesh-format'] == 'exodus')
     # The saved preparation hash selects the reference deck without printing its name.
