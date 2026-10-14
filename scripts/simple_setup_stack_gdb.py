@@ -33,8 +33,13 @@ FUNCTIONS = frozenset(SETUP_FUNCTIONS + (
                             'Send', 'Sendrecv', 'Comm_split')))
 BOOL_KEYS = ('setup_entry_seen', 'setup_return_seen', 'return_watch_available',
              'interrupt_seen', 'unexpected_signal_seen', 'inferior_alive',
-             'inferior_exit_seen', 'inferior_exit_nonzero', 'debugger_error', 'unwind_incomplete')
-LIST_KEYS = ('main_thread_functions', 'other_thread_functions')
+             'inferior_exit_seen', 'inferior_exit_nonzero', 'debugger_error', 'unwind_incomplete',
+             'main_thread_stopped', 'main_thread_frame_readable')
+STACK_ERRORS = frozenset(('thread_list', 'thread_state', 'thread_not_stopped', 'thread_switch',
+                          'newest_frame', 'no_frames', 'frame_name', 'older_frame', 'unwind_reason',
+                          'unwind_stopped', 'frame_limit', 'main_thread_missing'))
+LIST_VALUES = dict(main_thread_functions=FUNCTIONS, other_thread_functions=FUNCTIONS,
+                   stack_errors=STACK_ERRORS)
 
 
 def write_json(path, value):
@@ -47,44 +52,86 @@ def write_json(path, value):
 
 
 def safe_report(value):
-    if (not isinstance(value, dict) or set(value) != set(BOOL_KEYS + LIST_KEYS)
+    if (not isinstance(value, dict) or set(value) != set(BOOL_KEYS) | set(LIST_VALUES)
             or any(type(value[k]) is not bool for k in BOOL_KEYS)
             or any(not isinstance(value[k], list) or len(value[k]) > 256
-                   or any(not isinstance(s, str) or s not in FUNCTIONS for s in value[k])
-                   for k in LIST_KEYS)):
+                   or any(not isinstance(s, str) or s not in allowed for s in value[k])
+                   for k, allowed in LIST_VALUES.items())):
         raise ValueError('invalid stack report')
-    return {k: value[k] for k in BOOL_KEYS + LIST_KEYS}
+    return {k: value[k] for k in BOOL_KEYS + tuple(LIST_VALUES)}
 
 
 def stack_functions(gdb):
-    main, others, incomplete = [], set(), False
-    for thread in gdb.selected_inferior().threads():
+    result = dict(main_thread_functions=[], other_thread_functions=[], main_thread_stopped=False,
+                  main_thread_frame_readable=False)
+    others, errors, main_seen = set(), set(), False
+    # GDB 13.2 exports these reasons but not FRAME_UNWIND_FIRST_ERROR.
+    normal_reasons = {getattr(gdb, name) for name in
+                      ('FRAME_UNWIND_NO_REASON', 'FRAME_UNWIND_OUTERMOST') if hasattr(gdb, name)}
+    try:
+        threads = gdb.selected_inferior().threads()
+    except Exception:
+        threads = ()
+        errors.add('thread_list')
+    for thread in threads:
+        names, is_main, stage = [], False, 'thread_state'
         try:
+            is_main = thread.num == 1
+            main_seen |= is_main
+            stopped = bool(thread.is_stopped())
+            if is_main:
+                result['main_thread_stopped'] = stopped
+            if not stopped:
+                errors.add('thread_not_stopped')
+                continue
+            stage = 'thread_switch'
             thread.switch()
-            frame, names = gdb.newest_frame(), []
+            stage = 'newest_frame'
+            frame = gdb.newest_frame()
+            if frame is None:
+                errors.add('no_frames')
             for _ in range(256):
                 if frame is None:
                     break
-                name = frame.name()
-                if name in FUNCTIONS:
-                    names.append(name)
-                incomplete |= frame.unwind_stop_reason() >= gdb.FRAME_UNWIND_FIRST_ERROR
-                frame = frame.older()
-            incomplete |= frame is not None
-            if thread.num == 1:
-                main = names
+                try:
+                    name = frame.name()
+                    if is_main and isinstance(name, str) and name:
+                        result['main_thread_frame_readable'] = True
+                    if name in FUNCTIONS:
+                        names.append(name)
+                except Exception:
+                    errors.add('frame_name')
+                stage = 'older_frame'
+                older = frame.older()
+                try:
+                    # Asking for the older frame first lets GDB establish the stop reason.
+                    if frame.unwind_stop_reason() not in normal_reasons:
+                        errors.add('unwind_stopped')
+                except Exception:
+                    errors.add('unwind_reason')
+                frame = older
+            if frame is not None:
+                errors.add('frame_limit')
+        except Exception:
+            errors.add(stage)
+        finally:
+            # A later unreadable frame must not discard the frames already captured.
+            if is_main:
+                result['main_thread_functions'] = names
             else:
                 others.update(names)
-        except Exception:
-            incomplete = True
-    return main, sorted(others), incomplete
+    if not main_seen:
+        errors.add('main_thread_missing')
+    result.update(other_thread_functions=sorted(others), stack_errors=sorted(errors),
+                  unwind_incomplete=bool(errors))
+    return result
 
 
 def capture(gdb, config):
     output = Path(config['directory'])
     rank, ranks = config['rank'], config['ranks']
     report = dict.fromkeys(BOOL_KEYS, False)
-    report.update(main_thread_functions=[], other_thread_functions=[])
+    report.update({key: [] for key in LIST_VALUES})
 
     class Entry(gdb.Breakpoint):
         def stop(self):
@@ -138,9 +185,7 @@ def capture(gdb, config):
             execute('continue')
         report['inferior_alive'] = gdb.selected_inferior().pid != 0
         if report['inferior_alive']:
-            main, other, incomplete = stack_functions(gdb)
-            report.update(main_thread_functions=main, other_thread_functions=other,
-                          unwind_incomplete=incomplete)
+            report.update(stack_functions(gdb))
     except Exception:
         report['debugger_error'] = True
     finally:

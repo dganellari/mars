@@ -20,7 +20,14 @@ import test_simple_pressure_profile as fixtures
 
 def report(**changes):
     value = dict.fromkeys(sampler.BOOL_KEYS, False)
-    value.update(main_thread_functions=[], other_thread_functions=[])
+    value.update({key: [] for key in sampler.LIST_VALUES})
+    value.update(changes)
+    return value
+
+
+def readable_report(**changes):
+    value = report(interrupt_seen=True, inferior_alive=True, main_thread_stopped=True,
+                   main_thread_frame_readable=True)
     value.update(changes)
     return value
 
@@ -40,7 +47,9 @@ class Frame:
 
 
 class FakeGdb:
-    FRAME_UNWIND_FIRST_ERROR = 2
+    # These are the normal Python exports in GDB 13.2; FIRST_ERROR is not exported.
+    FRAME_UNWIND_NO_REASON = 0
+    FRAME_UNWIND_OUTERMOST = 2
 
     def __init__(self, mode='sample'):
         self.mode, self.commands, self.points = mode, [], []
@@ -59,7 +68,8 @@ class FakeGdb:
 
         self.Breakpoint = Breakpoint
         self.FinishBreakpoint = Breakpoint
-        self.threads = [SimpleNamespace(num=i, switch=lambda i=i: setattr(self, 'selected', i))
+        self.threads = [SimpleNamespace(num=i, switch=lambda i=i: setattr(self, 'selected', i),
+                                       is_stopped=lambda: True)
                         for i in (1, 2)]
         self.frames = {
             1: Frame('MPI_Waitall', Frame('SECRET_PUMP_FUNCTION',
@@ -103,26 +113,92 @@ class StackTests(unittest.TestCase):
 
     def test_only_literal_function_names_are_exported(self):
         gdb = FakeGdb()
-        main, other, incomplete = sampler.stack_functions(gdb)
-        self.assertEqual(main, ['MPI_Waitall', 'hypre_BoomerAMGCoarsenRuge', 'hypre_BoomerAMGSetup'])
-        self.assertEqual(other, ['cudaEventSynchronize'])
-        self.assertFalse(incomplete)
-        self.assertNotIn('SECRET', json.dumps((main, other)))
+        self.assertFalse(hasattr(gdb, 'FRAME_UNWIND_FIRST_ERROR'))
+        gdb.frames[1]._older._older._older.reason = gdb.FRAME_UNWIND_OUTERMOST
+        value = sampler.stack_functions(gdb)
+        self.assertEqual(value['main_thread_functions'],
+                         ['MPI_Waitall', 'hypre_BoomerAMGCoarsenRuge', 'hypre_BoomerAMGSetup'])
+        self.assertEqual(value['other_thread_functions'], ['cudaEventSynchronize'])
+        self.assertFalse(value['unwind_incomplete'])
+        self.assertTrue(value['main_thread_stopped'])
+        self.assertTrue(value['main_thread_frame_readable'])
+        self.assertNotIn('SECRET', json.dumps(value))
 
     def test_unknown_names_and_raw_extra_keys_cannot_cross_export(self):
         for value in (report(main_thread_functions=['PRIVATE']), dict(report(), raw='PRIVATE'),
                       report(setup_entry_seen='PRIVATE'), report(other_thread_functions=['MPI_Wait PRIVATE']),
-                      report(main_thread_functions=['MPI_Wait'] * 257)):
+                      report(main_thread_functions=['MPI_Wait'] * 257), report(stack_errors=['PRIVATE']),
+                      report(stack_errors=['MPI_Wait']), report(main_thread_stopped=1)):
             with self.assertRaisesRegex(ValueError, 'invalid stack report'):
                 sampler.safe_report(value)
 
     def test_broken_unwind_is_explicit(self):
         gdb = FakeGdb()
         gdb.frames[1].reason = 3
-        self.assertTrue(sampler.stack_functions(gdb)[2])
-        gdb.frames[1] = SimpleNamespace(name=Mock(side_effect=RuntimeError('SECRET')))
-        self.assertTrue(sampler.stack_functions(gdb)[2])
+        self.assertEqual(sampler.stack_functions(gdb)['stack_errors'], ['unwind_stopped'])
+        gdb.frames[1].name = Mock(side_effect=RuntimeError('SECRET'))
+        value = sampler.stack_functions(gdb)
+        self.assertTrue(value['unwind_incomplete'])
+        self.assertIn('frame_name', value['stack_errors'])
+        self.assertIn('hypre_BoomerAMGSetup', value['main_thread_functions'])
         gdb.frames[1].name.assert_called_once()
+        self.assertNotIn('SECRET', json.dumps(value))
+
+    def test_partial_unwind_keeps_names_collected_before_exception(self):
+        gdb = FakeGdb()
+        gdb.frames[1]._older._older.older = Mock(side_effect=RuntimeError('PRIVATE'))
+        gdb.frames[2]._older.older = Mock(side_effect=RuntimeError('PRIVATE'))
+        value = sampler.stack_functions(gdb)
+        self.assertEqual(value['main_thread_functions'], ['MPI_Waitall', 'hypre_BoomerAMGCoarsenRuge'])
+        self.assertEqual(value['other_thread_functions'], ['cudaEventSynchronize'])
+        self.assertEqual(value['stack_errors'], ['older_frame'])
+        self.assertTrue(value['unwind_incomplete'])
+        self.assertNotIn('PRIVATE', json.dumps(value))
+
+    def test_reason_failure_does_not_stop_frame_name_collection(self):
+        gdb = FakeGdb()
+        gdb.frames[1].unwind_stop_reason = Mock(side_effect=AttributeError('PRIVATE'))
+        value = sampler.stack_functions(gdb)
+        self.assertEqual(value['main_thread_functions'],
+                         ['MPI_Waitall', 'hypre_BoomerAMGCoarsenRuge', 'hypre_BoomerAMGSetup'])
+        self.assertEqual(value['stack_errors'], ['unwind_reason'])
+        self.assertTrue(value['unwind_incomplete'])
+
+    def test_stop_reason_is_checked_after_attempting_unwind(self):
+        gdb = FakeGdb()
+        frame = Frame('MPI_Wait')
+        def older():
+            frame.reason = 3
+            return None
+        frame.older = older
+        gdb.frames[1] = frame
+        self.assertEqual(sampler.stack_functions(gdb)['stack_errors'], ['unwind_stopped'])
+
+    def test_running_main_thread_is_not_read(self):
+        gdb = FakeGdb()
+        gdb.threads[0].is_stopped = lambda: False
+        gdb.threads[0].switch = Mock()
+        value = sampler.stack_functions(gdb)
+        gdb.threads[0].switch.assert_not_called()
+        self.assertEqual(value['main_thread_functions'], [])
+        self.assertFalse(value['main_thread_stopped'])
+        self.assertFalse(value['main_thread_frame_readable'])
+        self.assertEqual(value['stack_errors'], ['thread_not_stopped'])
+
+    def test_missing_frames_and_missing_main_thread_are_distinct(self):
+        gdb = FakeGdb()
+        gdb.frames[1] = None
+        self.assertEqual(sampler.stack_functions(gdb)['stack_errors'], ['no_frames'])
+        gdb.threads = gdb.threads[1:]
+        self.assertEqual(sampler.stack_functions(gdb)['stack_errors'], ['main_thread_missing'])
+
+    def test_frame_limit_keeps_bounded_partial_stack(self):
+        gdb = FakeGdb()
+        gdb.frames[1]._older = gdb.frames[1]
+        value = sampler.stack_functions(gdb)
+        self.assertEqual(len(value['main_thread_functions']), 256)
+        self.assertEqual(value['stack_errors'], ['frame_limit'])
+        sampler.safe_report(report(**value))
 
     def test_setup_sample_and_normal_return_are_distinct(self):
         for mode in ('sample', 'return', 'before_setup', 'exit', 'error'):
@@ -286,13 +362,21 @@ class SavedCaseTests(unittest.TestCase):
         self.assertEqual(public['failed_check'], 'debugger_unavailable')
 
     def test_failed_debugger_self_test_never_allocates_gpus(self):
-        public = {}
-        with patch.object(trace.shutil, 'which', return_value='/gdb'), \
-                patch.object(trace, 'debugger', return_value=report(debugger_error=True)), \
-                patch.object(trace.subprocess, 'Popen') as launch:
-            self.assertEqual(trace.run(self.pair, self.root / 'trace', public), 1)
-        launch.assert_not_called()
-        self.assertFalse(public['debugger_self_test_passed'])
+        cases = (None, report(debugger_error=True),
+                 report(interrupt_seen=True, inferior_alive=True, unwind_incomplete=True),
+                 readable_report(unwind_incomplete=True, stack_errors=['older_frame']),
+                 readable_report(main_thread_stopped=False),
+                 readable_report(main_thread_frame_readable=False),
+                 readable_report(unexpected_signal_seen=True))
+        for i, check in enumerate(cases):
+            public = {}
+            with self.subTest(i=i), patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                    patch.object(trace, 'debugger', return_value=check), \
+                    patch.object(trace.subprocess, 'Popen') as launch:
+                self.assertEqual(trace.run(self.pair, self.root / ('trace-' + str(i)), public), 1)
+            launch.assert_not_called()
+            self.assertFalse(public['debugger_self_test_passed'])
+            self.assertEqual(public['debugger_self_test_stack'], check)
 
     def test_success_aggregates_only_validated_rank_stacks(self):
         output, public = self.root / 'trace', {}
@@ -303,18 +387,49 @@ class SavedCaseTests(unittest.TestCase):
             config = trace.read_json(directory / 'launch-input.json')
             for rank in range(config['ranks']):
                 sampler.write_json(directory / ('stack-{}.json'.format(rank)),
-                                   report(setup_entry_seen=True, interrupt_seen=True, inferior_alive=True,
-                                          main_thread_functions=['hypre_BoomerAMGCoarsenRuge']))
+                                   readable_report(setup_entry_seen=True,
+                                                   main_thread_functions=['hypre_BoomerAMGCoarsenRuge']))
             return Mock(wait=Mock(return_value=0))
 
         with patch.object(trace.shutil, 'which', return_value='/gdb'), \
-                patch.object(trace, 'debugger', return_value=report(interrupt_seen=True, inferior_alive=True)), \
+                patch.object(trace, 'debugger', return_value=readable_report()), \
                 patch.object(trace.subprocess, 'Popen', side_effect=launch):
             self.assertEqual(trace.run(self.pair, output, public), 0)
         self.assertTrue(public['all_rank_stacks_present'])
+        self.assertTrue(public['all_rank_stacks_usable'])
         self.assertEqual(public['comparison_status'], 'diagnostic_complete')
         self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
         self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_unreadable_partial_and_missing_reports_never_claim_complete(self):
+        cases = (
+            (report(setup_entry_seen=True, inferior_alive=True, interrupt_seen=True, unwind_incomplete=True),
+             0, 'diagnostic_incomplete', 'stack_unreadable'),
+            (readable_report(), 0, 'diagnostic_incomplete', 'stack_unreadable'),
+            (readable_report(main_thread_functions=['MPI_Wait'], unwind_incomplete=True,
+                             stack_errors=['older_frame']), 0, 'diagnostic_partial', 'stack_unwind'),
+            (readable_report(main_thread_functions=['MPI_Wait'], unexpected_signal_seen=True),
+             0, 'diagnostic_incomplete', 'stack_unreadable'),
+            (None, 0, 'diagnostic_incomplete', 'rank_stack_capture'),
+            (readable_report(main_thread_functions=['MPI_Wait']),
+             255, 'diagnostic_incomplete', 'rank_stack_capture'),
+        )
+        for i, (value, code, status, failure) in enumerate(cases):
+            def launch(command, **kwargs):
+                directory = Path(kwargs['cwd'])
+                ranks = trace.read_json(directory / 'launch-input.json')['ranks']
+                if value is not None:
+                    for rank in range(ranks):
+                        sampler.write_json(directory / ('stack-{}.json'.format(rank)), value)
+                return Mock(wait=Mock(return_value=code))
+            public = {}
+            with self.subTest(i=i), patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                    patch.object(trace, 'debugger', return_value=readable_report()), \
+                    patch.object(trace.subprocess, 'Popen', side_effect=launch), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(trace.run(self.pair, self.root / ('trace-' + str(i)), public), 1)
+            self.assertEqual(public['comparison_status'], status)
+            self.assertEqual(public['failed_check'], failure)
 
     def test_changed_library_or_protected_environment_refuses_before_launch(self):
         for mode in ('library', 'environment'):

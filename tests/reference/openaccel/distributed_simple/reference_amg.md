@@ -162,8 +162,10 @@ Only the output prefix changes, and GDB is inserted between the binding script
 and the executable. It does not modify saved evidence or run OpenAccel. No build
 or repeat of the public GPU gates is needed.
 
-The script first verifies GDB's Python support, child debugging and timed
-interruption on `/bin/sleep` without requesting GPU resources. Under the saved
+The script first verifies GDB's Python support, child debugging, timed interruption
+and readable stopped frames on `/bin/sleep` without requesting GPU resources. An
+unreadable or incomplete self-test stack refuses the GPU launch and exports only
+fixed failure labels. Under the saved
 launcher, each rank stops at the first Hypre GMRES/FlexGMRES setup call. It samples
 after 30 seconds in setup, or at setup return if that occurs first. If setup is
 not reached, it samples after 120 seconds of execution. Each rank has a five-minute
@@ -179,6 +181,22 @@ the private directory. The sampler uses GDB's
 and a [finish breakpoint](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Finish-Breakpoints-in-Python.html).
 Missing symbols or an incomplete unwind can limit what the snapshot establishes.
 It samples host stacks, not GPU kernels, and a single sample cannot prove deadlock.
+
+The first user-run sample (`simple-setup-stack-4Z9YlY`) reached setup on all four
+ranks and did not observe its return before interruption. Its empty function lists
+do not locate an internal call. The original sampler used
+`FRAME_UNWIND_FIRST_ERROR`, which the
+[GDB 13.2 Python exports](https://gnu.googlesource.com/binutils-gdb/+/refs/tags/gdb-13.2-release/gdb/python/py-frame.c)
+omit, and discarded collected names when a later API call failed. The release API
+reproduces the empty-list symptom locally; the cluster debugger version was not
+recorded, so this does not establish its exact failure cause.
+
+The sampler now uses the exported normal stop reasons and preserves partial
+frames. `stack_errors` contains only fixed API-stage labels, never exception text.
+Unreadable main-thread stacks produce `stack_unreadable`; usable but incomplete
+unwinds produce `diagnostic_partial`. Neither is `diagnostic_complete`. An observed
+setup return can also locate the stop when no allowlisted caller remains on the
+stack. This corrects the earlier success label, not the unresolved setup slowdown.
 
 Run in the MARS terminal only, without an outer `srun`:
 
@@ -208,8 +226,11 @@ exit "$status"
 
 Local synthetic tests exercise setup entry, return, interruption, MPI-rank capture
 coordination, watchdog cleanup, output filtering and preserved saved arguments.
-GDB and GPU execution are user-side checks; the preflight refuses a GPU launch
-when the debugger self-test fails. This is diagnosis, not a numerical fix.
+They also cover the GDB 13.2 API without the missing sentinel, retained partial
+frames, unreadable self-test refusal and incomplete-capture status. The user-run
+sample verified debugger launch, setup entry and timed interruption; the corrected
+frame collection still requires the bounded retry. This is diagnosis, not a
+numerical fix.
 
 ## Earlier one-step progress recipe
 

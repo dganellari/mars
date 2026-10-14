@@ -134,11 +134,16 @@ def run(pair, output, public):
     test = directory / 'self-test'
     test.mkdir()
     public.update(failed_check='debugger_self_test')
-    # Check Python support, ptrace and timed interruption before requesting GPUs.
+    # Require readable stopped frames as well as interruption before requesting GPUs.
     check = debugger(gdb, ['/bin/sleep', '60'], test, 0, 1, environment, self_test=True)
     public['debugger_self_test_passed'] = (check is not None and check['interrupt_seen']
-                                          and check['inferior_alive'] and not check['debugger_error'])
+                                          and check['inferior_alive'] and not check['debugger_error']
+                                          and not check['unexpected_signal_seen']
+                                          and check['main_thread_stopped']
+                                          and check['main_thread_frame_readable']
+                                          and not check['unwind_incomplete'])
     if not public['debugger_self_test_passed']:
+        public['debugger_self_test_stack'] = check
         return 1
     config = directory / 'launch-input.json'
     write_json(config, dict(gdb=gdb, solver_command=command, directory=str(directory), ranks=ranks,
@@ -176,11 +181,21 @@ def run(pair, output, public):
     _, _, _, _, after = saved_command(pair, directory, {})
     if after != identity:
         return 1
-    complete = public['all_rank_stacks_present'] and all(
-        not r['debugger_error'] for r in public['rank_stacks'].values())
-    public.update(comparison_status='diagnostic_complete' if complete else 'diagnostic_incomplete',
-                  failed_check='none' if complete else 'rank_stack_capture')
-    return 0 if complete else 1
+    reports = list(public['rank_stacks'].values())
+    public['all_rank_stacks_usable'] = public['all_rank_stacks_present'] and all(
+        r['inferior_alive'] and not r['debugger_error'] and not r['unexpected_signal_seen']
+        and r['main_thread_stopped'] and r['main_thread_frame_readable']
+        and (bool(r['main_thread_functions']) or r['setup_return_seen']) for r in reports)
+    if code != 0 or not public['all_rank_stacks_present'] or any(r['debugger_error'] for r in reports):
+        public.update(comparison_status='diagnostic_incomplete', failed_check='rank_stack_capture')
+    elif not public['all_rank_stacks_usable']:
+        public.update(comparison_status='diagnostic_incomplete', failed_check='stack_unreadable')
+    elif any(r['unwind_incomplete'] for r in reports):
+        public.update(comparison_status='diagnostic_partial', failed_check='stack_unwind')
+    else:
+        public.update(comparison_status='diagnostic_complete', failed_check='none')
+        return 0
+    return 1
 
 
 def main(argv=None):
