@@ -163,11 +163,13 @@ and the executable. It does not modify saved evidence or run OpenAccel. No build
 or repeat of the public GPU gates is needed.
 
 The script first verifies GDB's Python support, child debugging, timed interruption
-and readable stopped frames on `/bin/sleep` without requesting GPU resources. An
-unreadable or incomplete self-test stack refuses the GPU launch and exports only
-fixed failure labels. Under the saved
-launcher, each rank stops at the first Hypre GMRES/FlexGMRES setup call. It samples
-after 30 seconds in setup, or at setup return if that occurs first. If setup is
+and readable stopped frames on `/bin/sleep` without requesting GPU resources.
+Unreadable frames or API failures refuse the GPU launch. A reported unwind stop
+after reading named frames permits sampling, with the incomplete self-test stack
+retained in the public report and a visible warning. The preflight checks frame
+reading, not a complete backtrace of `/bin/sleep`.
+Under the saved launcher, each rank stops at the first Hypre GMRES/FlexGMRES setup
+call. It samples after 30 seconds in setup, or at setup return if that occurs first. If setup is
 not reached, it samples after 120 seconds of execution. Each rank has a five-minute
 watchdog, including debugger initialization and waiting for the other snapshots;
 the saved scheduler limit is unchanged. Queue time is outside this watchdog.
@@ -193,10 +195,21 @@ recorded, so this does not establish its exact failure cause.
 
 The sampler now uses the exported normal stop reasons and preserves partial
 frames. `stack_errors` contains only fixed API-stage labels, never exception text.
+`unwind_stop_reasons` distinguishes GDB's reported unavailable registers/memory,
+frame-ID failures, missing saved PC and memory errors using fixed labels. Unknown
+reasons remain `unknown`; the obsolete normal end marker `UNWIND_NULL_ID` is not
+treated as an error.
 Unreadable main-thread stacks produce `stack_unreadable`; usable but incomplete
 unwinds produce `diagnostic_partial`. Neither is `diagnostic_complete`. An observed
 setup return can also locate the stop when no allowlisted caller remains on the
 stack. This corrects the earlier success label, not the unresolved setup slowdown.
+
+The next user-run preflight (`simple-setup-stack-pqs4ki`) successfully interrupted
+the sleep process and read stopped frame names, but reported `unwind_stopped`.
+No GPU job was launched. Requiring a complete unwind rejected this useful frame
+reading capability. The corrected preflight permits that specific limitation;
+it still rejects frame/API failures and keeps partial solver captures distinct
+from complete ones. The earlier report does not identify the exact unwind reason.
 
 Run in the MARS terminal only, without an outer `srun`:
 
@@ -228,8 +241,9 @@ Local synthetic tests exercise setup entry, return, interruption, MPI-rank captu
 coordination, watchdog cleanup, output filtering and preserved saved arguments.
 They also cover the GDB 13.2 API without the missing sentinel, retained partial
 frames, unreadable self-test refusal and incomplete-capture status. The user-run
-sample verified debugger launch, setup entry and timed interruption; the corrected
-frame collection still requires the bounded retry. This is diagnosis, not a
+samples verified debugger launch, setup entry, timed interruption and frame-name
+reading. A readable partial self-test now permits the bounded retry, but useful
+solver stack names still require user-side validation. This is diagnosis, not a
 numerical fix.
 
 ## Earlier one-step progress recipe

@@ -49,7 +49,13 @@ class Frame:
 class FakeGdb:
     # These are the normal Python exports in GDB 13.2; FIRST_ERROR is not exported.
     FRAME_UNWIND_NO_REASON = 0
+    FRAME_UNWIND_NULL_ID = 1
     FRAME_UNWIND_OUTERMOST = 2
+    FRAME_UNWIND_UNAVAILABLE = 3
+    FRAME_UNWIND_INNER_ID = 4
+    FRAME_UNWIND_SAME_ID = 5
+    FRAME_UNWIND_NO_SAVED_PC = 6
+    FRAME_UNWIND_MEMORY_ERROR = 7
 
     def __init__(self, mode='sample'):
         self.mode, self.commands, self.points = mode, [], []
@@ -128,7 +134,8 @@ class StackTests(unittest.TestCase):
         for value in (report(main_thread_functions=['PRIVATE']), dict(report(), raw='PRIVATE'),
                       report(setup_entry_seen='PRIVATE'), report(other_thread_functions=['MPI_Wait PRIVATE']),
                       report(main_thread_functions=['MPI_Wait'] * 257), report(stack_errors=['PRIVATE']),
-                      report(stack_errors=['MPI_Wait']), report(main_thread_stopped=1)):
+                      report(stack_errors=['MPI_Wait']), report(main_thread_stopped=1),
+                      report(unwind_stop_reasons=['PRIVATE']), report(unwind_stop_reasons=[3])):
             with self.assertRaisesRegex(ValueError, 'invalid stack report'):
                 sampler.safe_report(value)
 
@@ -143,6 +150,18 @@ class StackTests(unittest.TestCase):
         self.assertIn('hypre_BoomerAMGSetup', value['main_thread_functions'])
         gdb.frames[1].name.assert_called_once()
         self.assertNotIn('SECRET', json.dumps(value))
+
+    def test_unwind_reasons_are_fixed_labels_and_legacy_end_is_normal(self):
+        cases = [(name, getattr(FakeGdb, 'FRAME_UNWIND_' + name)) for name in sampler.UNWIND_ERRORS]
+        cases += [('unknown', 1000), ('normal', FakeGdb.FRAME_UNWIND_NULL_ID)]
+        for name, reason in cases:
+            with self.subTest(name=name):
+                gdb = FakeGdb()
+                gdb.frames[1]._older._older._older.reason = reason
+                value = sampler.stack_functions(gdb)
+                self.assertEqual(value['unwind_stop_reasons'], [] if name == 'normal' else [name.lower()])
+                self.assertEqual(value['unwind_incomplete'], name != 'normal')
+                sampler.safe_report(report(**value))
 
     def test_partial_unwind_keeps_names_collected_before_exception(self):
         gdb = FakeGdb()
@@ -365,9 +384,12 @@ class SavedCaseTests(unittest.TestCase):
         cases = (None, report(debugger_error=True),
                  report(interrupt_seen=True, inferior_alive=True, unwind_incomplete=True),
                  readable_report(unwind_incomplete=True, stack_errors=['older_frame']),
+                 readable_report(unwind_incomplete=True, stack_errors=['unwind_reason']),
+                 readable_report(unwind_incomplete=True, stack_errors=['unwind_stopped', 'frame_name']),
+                 readable_report(unwind_incomplete=True),
                  readable_report(main_thread_stopped=False),
                  readable_report(main_thread_frame_readable=False),
-                 readable_report(unexpected_signal_seen=True))
+                 readable_report(unexpected_signal_seen=True), readable_report(interrupt_seen=False))
         for i, check in enumerate(cases):
             public = {}
             with self.subTest(i=i), patch.object(trace.shutil, 'which', return_value='/gdb'), \
@@ -377,6 +399,46 @@ class SavedCaseTests(unittest.TestCase):
             launch.assert_not_called()
             self.assertFalse(public['debugger_self_test_passed'])
             self.assertEqual(public['debugger_self_test_stack'], check)
+
+    def test_readable_partial_self_test_allows_capture_without_hiding_incomplete_unwind(self):
+        gdb = FakeGdb('before_setup')
+        gdb.threads = gdb.threads[:1]
+        gdb.frames[1] = Frame('clock_nanosleep', reason=gdb.FRAME_UNWIND_UNAVAILABLE)
+        control = self.root / 'control'
+        control.mkdir()
+        sampler.capture(gdb, dict(directory=str(control), rank=0, ranks=1, self_test=True))
+        check = sampler.safe_report(trace.read_json(control / 'stack-0.json'))
+        self.assertTrue(check['main_thread_frame_readable'])
+        self.assertTrue(check['unwind_incomplete'])
+        self.assertEqual(check['main_thread_functions'], [])
+        self.assertEqual(check['stack_errors'], ['unwind_stopped'])
+
+        def launch(command, **kwargs):
+            directory = Path(kwargs['cwd'])
+            ranks = trace.read_json(directory / 'launch-input.json')['ranks']
+            for rank in range(ranks):
+                sampler.write_json(directory / ('stack-{}.json'.format(rank)),
+                                   readable_report(setup_entry_seen=True,
+                                                   main_thread_functions=['hypre_BoomerAMGCoarsenRuge'],
+                                                   unwind_incomplete=True, stack_errors=['unwind_stopped'],
+                                                   unwind_stop_reasons=['unavailable']))
+            return Mock(wait=Mock(return_value=0))
+
+        public, stream = {}, io.StringIO()
+        with patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                patch.object(trace, 'debugger', return_value=check), \
+                patch.object(trace.subprocess, 'Popen', side_effect=launch) as launched, \
+                contextlib.redirect_stdout(stream):
+            self.assertEqual(trace.run(self.pair, self.root / 'trace', public), 1)
+        launched.assert_called_once()
+        self.assertTrue(public['debugger_self_test_passed'])
+        self.assertEqual(public['debugger_self_test_stack'], check)
+        self.assertTrue(public['solver_launch_requested'])
+        self.assertTrue(public['all_rank_stacks_usable'])
+        self.assertEqual(public['comparison_status'], 'diagnostic_partial')
+        self.assertEqual(public['failed_check'], 'stack_unwind')
+        self.assertIn('the self-test unwind is partial', stream.getvalue())
+        self.assertNotIn('clock_nanosleep', json.dumps(public))
 
     def test_success_aggregates_only_validated_rank_stacks(self):
         output, public = self.root / 'trace', {}

@@ -38,8 +38,10 @@ BOOL_KEYS = ('setup_entry_seen', 'setup_return_seen', 'return_watch_available',
 STACK_ERRORS = frozenset(('thread_list', 'thread_state', 'thread_not_stopped', 'thread_switch',
                           'newest_frame', 'no_frames', 'frame_name', 'older_frame', 'unwind_reason',
                           'unwind_stopped', 'frame_limit', 'main_thread_missing'))
+UNWIND_ERRORS = ('UNAVAILABLE', 'INNER_ID', 'SAME_ID', 'NO_SAVED_PC', 'MEMORY_ERROR')
 LIST_VALUES = dict(main_thread_functions=FUNCTIONS, other_thread_functions=FUNCTIONS,
-                   stack_errors=STACK_ERRORS)
+                   stack_errors=STACK_ERRORS,
+                   unwind_stop_reasons=frozenset(name.lower() for name in UNWIND_ERRORS) | {'unknown'})
 
 
 def write_json(path, value):
@@ -64,10 +66,13 @@ def safe_report(value):
 def stack_functions(gdb):
     result = dict(main_thread_functions=[], other_thread_functions=[], main_thread_stopped=False,
                   main_thread_frame_readable=False)
-    others, errors, main_seen = set(), set(), False
+    others, errors, stops, main_seen = set(), set(), set(), False
     # GDB 13.2 exports these reasons but not FRAME_UNWIND_FIRST_ERROR.
     normal_reasons = {getattr(gdb, name) for name in
-                      ('FRAME_UNWIND_NO_REASON', 'FRAME_UNWIND_OUTERMOST') if hasattr(gdb, name)}
+                      ('FRAME_UNWIND_NO_REASON', 'FRAME_UNWIND_NULL_ID', 'FRAME_UNWIND_OUTERMOST')
+                      if hasattr(gdb, name)}
+    stop_names = {getattr(gdb, 'FRAME_UNWIND_' + name): name.lower() for name in UNWIND_ERRORS
+                  if hasattr(gdb, 'FRAME_UNWIND_' + name)}
     try:
         threads = gdb.selected_inferior().threads()
     except Exception:
@@ -105,8 +110,10 @@ def stack_functions(gdb):
                 older = frame.older()
                 try:
                     # Asking for the older frame first lets GDB establish the stop reason.
-                    if frame.unwind_stop_reason() not in normal_reasons:
+                    reason = frame.unwind_stop_reason()
+                    if reason not in normal_reasons:
                         errors.add('unwind_stopped')
+                        stops.add(stop_names.get(reason, 'unknown'))
                 except Exception:
                     errors.add('unwind_reason')
                 frame = older
@@ -123,7 +130,7 @@ def stack_functions(gdb):
     if not main_seen:
         errors.add('main_thread_missing')
     result.update(other_thread_functions=sorted(others), stack_errors=sorted(errors),
-                  unwind_incomplete=bool(errors))
+                  unwind_stop_reasons=sorted(stops), unwind_incomplete=bool(errors))
     return result
 
 

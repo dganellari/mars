@@ -134,17 +134,21 @@ def run(pair, output, public):
     test = directory / 'self-test'
     test.mkdir()
     public.update(failed_check='debugger_self_test')
-    # Require readable stopped frames as well as interruption before requesting GPUs.
+    # Reading stopped frames does not require unwinding the whole program stack.
     check = debugger(gdb, ['/bin/sleep', '60'], test, 0, 1, environment, self_test=True)
+    public['debugger_self_test_stack'] = check
+    public['debugger_self_test_scope'] = 'stopped_named_frames_not_complete_unwind'
     public['debugger_self_test_passed'] = (check is not None and check['interrupt_seen']
                                           and check['inferior_alive'] and not check['debugger_error']
                                           and not check['unexpected_signal_seen']
                                           and check['main_thread_stopped']
                                           and check['main_thread_frame_readable']
-                                          and not check['unwind_incomplete'])
+                                          and not (set(check['stack_errors']) - {'unwind_stopped'})
+                                          and (not check['unwind_incomplete'] or bool(check['stack_errors'])))
     if not public['debugger_self_test_passed']:
-        public['debugger_self_test_stack'] = check
         return 1
+    if check['unwind_incomplete']:
+        print('GDB can read stopped frames; the self-test unwind is partial.', flush=True)
     config = directory / 'launch-input.json'
     write_json(config, dict(gdb=gdb, solver_command=command, directory=str(directory), ranks=ranks,
                            pair=str(pair), executable_identity=identity))
