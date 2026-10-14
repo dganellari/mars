@@ -22,9 +22,10 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def debugger(gdb, command, directory, rank, ranks, environment, self_test=False):
+def debugger(gdb, command, directory, rank, ranks, environment, self_test=False, communication_progress=False):
     config = directory / ('gdb-{}.json'.format(rank))
-    write_json(config, dict(directory=str(directory), rank=rank, ranks=ranks, self_test=self_test))
+    write_json(config, dict(directory=str(directory), rank=rank, ranks=ranks, self_test=self_test,
+                           communication_progress=communication_progress))
     env = dict(environment, SIMPLE_SETUP_STACK_CONFIG=str(config))
     argv = [gdb, '-nx', '-nh', '-batch', '-iex', 'set auto-load off',
             '-x', str(GDB_SCRIPT), '--args'] + command
@@ -33,7 +34,7 @@ def debugger(gdb, command, directory, rank, ranks, environment, self_test=False)
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         begin = time.monotonic()
         deadline, hard_deadline = begin + 30, begin + (20 if self_test else 300)
-        running = entered = interrupted = captured = False
+        running = entered = interrupted = captured = resumed = False
         try:
             while child.poll() is None:
                 now = time.monotonic()
@@ -43,10 +44,16 @@ def debugger(gdb, command, directory, rank, ranks, environment, self_test=False)
                 if not entered and (directory / ('entered-{}'.format(rank))).exists():
                     entered = True
                     deadline = now + 30
+                if communication_progress and not resumed and (directory / ('resumed-{}'.format(rank))).exists():
+                    resumed = True
+                    interrupted = False
+                    deadline = now + 15
+                first_saved = communication_progress and (directory / ('first-{}.json'.format(rank))).is_file()
                 captured |= (directory / ('stack-{}.json'.format(rank))).is_file()
-                if now >= hard_deadline or (interrupted and not captured and now >= deadline + 20):
+                if now >= hard_deadline or (interrupted and not captured and (not first_saved or resumed)
+                                           and now >= deadline + 20):
                     break
-                if not interrupted and not captured and now >= deadline:
+                if not interrupted and not captured and not (first_saved and not resumed) and now >= deadline:
                     child.send_signal(signal.SIGINT)
                     interrupted = True
                 time.sleep(.1)
@@ -65,7 +72,8 @@ def rank_run(config_path):
     if not 0 <= rank < config['ranks'] <= 4:
         raise ValueError('rank outside diagnostic scope')
     report = debugger(config['gdb'], config['solver_command'], Path(config['directory']),
-                      rank, config['ranks'], os.environ)
+                      rank, config['ranks'], os.environ,
+                      communication_progress=config.get('communication_progress', False))
     # A deliberately killed inferior is not a failed CFD convergence test.
     return 0 if report is not None and not report['debugger_error'] else 1
 
@@ -112,6 +120,8 @@ def wait_with_progress(child, directory, ranks):
             code = None
         for rank in range(ranks):
             for name, label in (('running-{}', 'debugger running'), ('entered-{}', 'Hypre setup entered'),
+                                ('first-{}.json', 'first communication sample saved'),
+                                ('resumed-{}', 'resumed for second communication sample'),
                                 ('stack-{}.json', 'stack saved')):
                 path = directory / name.format(rank)
                 if path not in seen and path.is_file():
@@ -121,7 +131,38 @@ def wait_with_progress(child, directory, ranks):
             return code
 
 
-def run(pair, output, public):
+def communication_report(path, final_stack):
+    value = read_json(path)
+    if (not isinstance(value, dict) or set(value) != {'first', 'final', 'two_samples_taken', 'peer_samples_present'}
+            or any(type(value[k]) is not bool for k in ('two_samples_taken', 'peer_samples_present'))
+            or not isinstance(value['first'], dict) or set(value['first']) != {'stack', 'exchange'}):
+        raise ValueError('invalid communication report')
+    first_stack = safe_report(value['first']['stack'])
+    first, last = value['first']['exchange'], value['final']
+    for counts in (first, last):
+        if (not isinstance(counts, dict) or set(counts) != {'entered', 'returned', 'tracking_complete'}
+                or type(counts['tracking_complete']) is not bool
+                or any(type(counts[k]) is not int or counts[k] < 0 for k in ('entered', 'returned'))
+                or counts['returned'] > counts['entered']):
+            raise ValueError('invalid communication counters')
+    if any(last[k] < first[k] for k in ('entered', 'returned')):
+        raise ValueError('communication counters moved backwards')
+    usable = value['two_samples_taken'] and all(
+        s['inferior_alive'] and s['main_thread_stopped'] and s['main_thread_frame_readable']
+        and not s['debugger_error'] and not s['unexpected_signal_seen'] and not s['unwind_incomplete']
+        and (s['interrupt_seen'] or s['setup_return_seen']) for s in (first_stack, final_stack))
+    tracked = first['tracking_complete'] and last['tracking_complete']
+    return dict(first_main_thread_functions=first_stack['main_thread_functions'],
+                two_samples_taken=value['two_samples_taken'], two_samples_usable=usable,
+                peer_samples_present=value['peer_samples_present'], exchange_tracking_complete=tracked,
+                exchange_entry_seen=last['entered'] > 0, exchange_return_seen=last['returned'] > 0,
+                exchange_advanced_between_samples=(any(last[k] > first[k] for k in ('entered', 'returned'))
+                                                   if tracked and usable else None),
+                exchange_active_at_first_sample=(first['entered'] > first['returned'] if tracked else None),
+                exchange_active_at_final_sample=(last['entered'] > last['returned'] if tracked else None))
+
+
+def run(pair, output, public, communication_progress=False):
     output.mkdir(mode=0o700)
     directory = output / 'private'
     directory.mkdir(mode=0o700)
@@ -151,7 +192,8 @@ def run(pair, output, public):
         print('GDB can read stopped frames; the self-test unwind is partial.', flush=True)
     config = directory / 'launch-input.json'
     write_json(config, dict(gdb=gdb, solver_command=command, directory=str(directory), ranks=ranks,
-                           pair=str(pair), executable_identity=identity))
+                           pair=str(pair), executable_identity=identity,
+                           communication_progress=communication_progress))
     argv = launcher + [sys.executable, str(HERE), '_rank', str(config)]
     with (directory / 'launch-command.txt').open('x') as stream:
         stream.write(' '.join(shlex.quote(word) for word in argv) + '\n')
@@ -180,6 +222,12 @@ def run(pair, output, public):
         path = directory / ('stack-{}.json'.format(rank))
         if path.is_file():
             public['rank_stacks'][str(rank)] = safe_report(read_json(path))
+    if communication_progress:
+        public.update(failed_check='communication_reports', communication_progress={})
+        for rank, stack in public['rank_stacks'].items():
+            public['communication_progress'][rank] = communication_report(
+                directory / ('exchange-{}.json'.format(rank)), stack)
+        public['communication_scope'] = 'host_exchange_entry_return_between_samples_not_deadlock_proof'
     public['all_rank_stacks_present'] = len(public['rank_stacks']) == ranks
     public['failed_check'] = 'saved_case_recheck'
     _, _, _, _, after = saved_command(pair, directory, {})
@@ -196,6 +244,11 @@ def run(pair, output, public):
         public.update(comparison_status='diagnostic_incomplete', failed_check='stack_unreadable')
     elif any(r['unwind_incomplete'] for r in reports):
         public.update(comparison_status='diagnostic_partial', failed_check='stack_unwind')
+    elif communication_progress and any(
+            not c['exchange_tracking_complete'] or not c['peer_samples_present']
+            or (not c['two_samples_usable'] and not any(r['setup_return_seen'] for r in reports))
+            for c in public['communication_progress'].values()):
+        public.update(comparison_status='diagnostic_partial', failed_check='communication_tracking')
     else:
         public.update(comparison_status='diagnostic_complete', failed_check='none')
         return 0
@@ -214,6 +267,8 @@ def main(argv=None):
     parser = SafeParser(description=__doc__)
     parser.add_argument('--pair', required=True, type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
+    parser.add_argument('--communication-progress', action='store_true',
+                        help='Track host exchange entry/return and take a second sample after all ranks resume.')
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     public = dict(schema=SCHEMA, comparison_status='diagnostic_incomplete',
@@ -225,7 +280,7 @@ def main(argv=None):
         print('STOP: use a new diagnostic output directory. Existing evidence was not changed.')
         return 1
     try:
-        status = run(args.pair.resolve(), output, public)
+        status = run(args.pair.resolve(), output, public, args.communication_progress)
     except KeyboardInterrupt:
         public.update(failed_check='interrupted')
     except Exception:

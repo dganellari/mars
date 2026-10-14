@@ -16,6 +16,15 @@ FUNCTIONS = frozenset(SETUP_FUNCTIONS + (
     'hypre_BoomerAMGBuildExtInterp', 'hypre_BoomerAMGBuildExtInterpDevice',
     'hypre_BoomerAMGBuildExtPIInterp', 'hypre_BoomerAMGBuildExtPIInterpHost',
     'hypre_BoomerAMGBuildExtPIInterpDevice', 'hypre_BoomerAMGBuildModExtInterp',
+    'hypre_ParCSRMatrixGenerateFFFCDevice', 'hypre_ParCSRMatrixGenerateFFFCDevice_core',
+    'hypre_MatvecCommPkgCreate', 'hypre_ParCSRCommPkgCreateApart',
+    'hypre_ParCSRCommPkgCreateApart_core', 'hypre_ParCSRMatrixCreateAssumedPartition',
+    'hypre_AssumedPartitionCreate', 'hypre_LocateAssumedPartition',
+    'hypre_DataExchangeList', 'hypre_RangeFillResponseIJDetermineRecvProcs',
+    'hypre_FillResponseIJDetermineSendProcs', 'hypre_ParCSRFindExtendCommPkg',
+    'hypre_ParCSRMatrixExtractBExtDevice', 'hypre_ParCSRMatrixExtractBExtDeviceInit',
+    'hypre_ParCSRMatrixExtractBExtDeviceWait', 'hypre_ParCSRMatMatDevice',
+    'hypre_ParCSRMatrixCompressOffdMapDevice', 'hypre_BoomerAMGInterpTruncationDevice',
     'hypre_BoomerAMGBuildModExtPIInterp', 'hypre_BoomerAMGBuildCoarseOperator',
     'hypre_BoomerAMGBuildCoarseOperatorKT', 'hypre_ParCSRMatrixRAP',
     'hypre_ParCSRMatrixRAPKT', 'hypre_ParCSRMatrixRAPKTDevice',
@@ -30,7 +39,8 @@ FUNCTIONS = frozenset(SETUP_FUNCTIONS + (
 ) + tuple(prefix + operation for prefix in ('MPI_', 'PMPI_', 'hypre_MPI_')
           for operation in ('Barrier', 'Wait', 'Waitall', 'Waitany', 'Test', 'Testall',
                             'Allreduce', 'Allgather', 'Allgatherv', 'Bcast', 'Recv',
-                            'Send', 'Sendrecv', 'Comm_split')))
+                            'Send', 'Sendrecv', 'Comm_split', 'Iprobe', 'Probe',
+                            'Irecv', 'Isend', 'Issend')))
 BOOL_KEYS = ('setup_entry_seen', 'setup_return_seen', 'return_watch_available',
              'interrupt_seen', 'unexpected_signal_seen', 'inferior_alive',
              'inferior_exit_seen', 'inferior_exit_nonzero', 'debugger_error', 'unwind_incomplete',
@@ -139,6 +149,23 @@ def capture(gdb, config):
     rank, ranks = config['rank'], config['ranks']
     report = dict.fromkeys(BOOL_KEYS, False)
     report.update({key: [] for key in LIST_VALUES})
+    progress = config.get('communication_progress', False) and not config['self_test']
+    exchange = dict(entered=0, returned=0, tracking_complete=True)
+    exchange_stop = [False]
+
+    class ExchangeReturned(gdb.FinishBreakpoint):
+        def stop(self):
+            exchange['returned'] += 1
+            return False
+
+        def out_of_scope(self):
+            exchange['tracking_complete'] = False
+
+    class ExchangeEntered(gdb.Breakpoint):
+        def stop(self):
+            exchange['entered'] += 1
+            exchange_stop[0] = True
+            return True
 
     class Entry(gdb.Breakpoint):
         def stop(self):
@@ -169,6 +196,20 @@ def capture(gdb, config):
         except KeyboardInterrupt:
             report['interrupt_seen'] = True
 
+    def advance():
+        while True:
+            exchange_stop[0] = False
+            execute('continue')
+            if not exchange_stop[0]:
+                return
+            # GDB forbids adding breakpoints inside a Breakpoint.stop callback.
+            try:
+                ExchangeReturned(internal=True)
+            except Exception:
+                exchange['tracking_complete'] = False
+            if report['interrupt_seen'] or report['unexpected_signal_seen'] or report['inferior_exit_seen']:
+                return
+
     try:
         for command in ('set confirm off', 'set pagination off', 'set breakpoint pending on',
                         'set print frame-arguments none', 'set startup-with-shell off',
@@ -189,16 +230,45 @@ def capture(gdb, config):
                 # Sampling still works when a stripped frame cannot be watched on return.
                 pass
             (output / ('entered-{}'.format(rank))).touch()
-            execute('continue')
+            if progress:
+                try:
+                    exchange_point = ExchangeEntered('hypre_DataExchangeList', internal=True)
+                    exchange['tracking_complete'] = not exchange_point.pending
+                except Exception:
+                    exchange['tracking_complete'] = False
+            advance()
         report['inferior_alive'] = gdb.selected_inferior().pid != 0
         if report['inferior_alive']:
             report.update(stack_functions(gdb))
+        if progress:
+            # Save only names and counters; never inspect arguments, buffers or local variables.
+            first = dict(stack=safe_report(report), exchange=dict(exchange))
+            write_json(output / ('first-{}.json'.format(rank)), first)
+            deadline = time.monotonic() + 60
+            paths = [output / ('first-{}.json'.format(i)) for i in range(ranks)]
+            while not all(p.is_file() for p in paths) and time.monotonic() < deadline:
+                time.sleep(.2)
+            peers = [safe_report(json.loads(p.read_text())['stack']) for p in paths] if all(p.is_file() for p in paths) else []
+            resume = len(peers) == ranks and all(
+                p['setup_entry_seen'] and not p['setup_return_seen'] and p['inferior_alive']
+                and p['interrupt_seen'] and not p['unexpected_signal_seen'] and not p['debugger_error']
+                and p['main_thread_stopped'] and p['main_thread_frame_readable'] for p in peers)
+            if resume:
+                report['interrupt_seen'] = False
+                (output / ('resumed-{}'.format(rank))).touch()
+                advance()
+                report['inferior_alive'] = gdb.selected_inferior().pid != 0
+                if report['inferior_alive']:
+                    report.update(stack_functions(gdb))
+            write_json(output / ('exchange-{}.json'.format(rank)), dict(
+                first=first, final=dict(exchange), two_samples_taken=resume,
+                peer_samples_present=len(peers) == ranks))
     except Exception:
         report['debugger_error'] = True
     finally:
         write_json(output / ('stack-{}.json'.format(rank)), safe_report(report))
         # Do not kill one MPI rank until the others have saved their stacks.
-        deadline = time.monotonic() + 130
+        deadline = time.monotonic() + (60 if progress else 130)
         while not all((output / ('stack-{}.json'.format(i))).is_file() for i in range(ranks)):
             if time.monotonic() >= deadline:
                 break

@@ -211,6 +211,55 @@ reading capability. The corrected preflight permits that specific limitation;
 it still rejects frame/API failures and keeps partial solver captures distinct
 from complete ones. The earlier report does not identify the exact unwind reason.
 
+### Interpolation communication: two samples from one launch
+
+The user-run `simple-setup-stack-VMpVen/trace/public.json` has usable, complete
+host stacks on all four ranks. Each is inside
+`hypre_BoomerAMGBuildExtPIInterpDevice`; ranks 0 and 1 are in
+`hypre_MPI_Testall`, rank 3 in `hypre_MPI_Test`. Setup has not returned.
+This locates the sampled delay before the pressure solve. It does not establish
+an indefinite deadlock or identify rank 2 as its cause.
+
+In the inspected Hypre 2.33 source, calls to those two polling wrappers occur in
+[`hypre_DataExchangeList`](https://github.com/hypre-space/hypre/blob/v2.33.0/src/utilities/exchange_data.c).
+Its contact, response and termination buffers are on the host. Interpolation
+reaches this protocol while constructing communication packages for derived
+matrices; see
+[`new_commpkg.c`](https://github.com/hypre-space/hypre/blob/v2.33.0/src/parcsr_mv/new_commpkg.c)
+and [`par_lr_interp_device.c`](https://github.com/hypre-space/hypre/blob/v2.33.0/src/parcsr_ls/par_lr_interp_device.c).
+The source and stacks support a host communication discovery interval, not a
+diagnosis of GPU-buffer transport failure. MARS's preceding halo exchange is
+completed before pressure setup, and uses distinct tags. These observations do
+not rule out corrupted communication metadata or another earlier defect.
+
+The first filter omitted the internal discovery helpers and `MPI_Iprobe`.
+The extended literal allowlist exposes them without exporting arguments or data.
+`--communication-progress` also watches entry and return of
+`hypre_DataExchangeList`. After the first sample, all ranks save their stacks
+before any resumes. A second sample follows 15 seconds after resuming each rank.
+If any rank has returned from setup, exited or failed to stop cleanly, the group
+does not resume. The five-minute watchdog and original scheduler limit remain.
+
+The public `communication_progress` report contains first-sample function names
+and fixed flags; `rank_stacks` contains the final sample. Exchange counters stay
+private. With usable samples and complete tracking:
+
+- `exchange_advanced_between_samples=true` means an exchange entered or returned
+  between samples, even when both stacks show the same function names.
+- `false` with both `exchange_active_*` flags true means the watched exchange
+  did not return during the interval. It does not prove that MPI made no internal
+  progress, that other work stopped, or that the wait is permanent.
+- `null` means the diagnostic cannot establish progress. Missing return watches,
+  unreadable frames or a peer timeout remain incomplete evidence.
+
+GDB changes timing, so this is not a performance measurement. Entry breakpoints
+stop briefly; return watches are created after their callbacks have returned,
+as required by the
+[GDB breakpoint API](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Breakpoints-In-Python.html).
+The numerical method, original targets, executable, libraries and launcher are
+unchanged. No MARS rebuild, OpenAccel run or full nonlinear run is needed.
+The following command supersedes the single-sample recipe for this delay.
+
 Run in the MARS terminal only, without an outer `srun`:
 
 ```bash
@@ -225,12 +274,12 @@ python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
 umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
-run=$(mktemp -d "$scratch/simple-setup-stack-XXXXXX")
+run=$(mktemp -d "$scratch/simple-setup-communication-XXXXXX")
 printf 'Private diagnostic directory: %s\n' "$run"
 status=0
 python3 "$repo/scripts/simple_setup_stack.py" \
   --pair "$scratch/simple-reference-amg-progress-lFwAtd/pair" \
-  --output-dir "$run/trace" || status=$?
+  --output-dir "$run/trace" --communication-progress || status=$?
 cat "$run/trace/public.json"
 printf 'Share only: %s\n' "$run/trace/public.json"
 exit "$status"
@@ -241,10 +290,11 @@ Local synthetic tests exercise setup entry, return, interruption, MPI-rank captu
 coordination, watchdog cleanup, output filtering and preserved saved arguments.
 They also cover the GDB 13.2 API without the missing sentinel, retained partial
 frames, unreadable self-test refusal and incomplete-capture status. The user-run
-samples verified debugger launch, setup entry, timed interruption and frame-name
-reading. A readable partial self-test now permits the bounded retry, but useful
-solver stack names still require user-side validation. This is diagnosis, not a
-numerical fix.
+samples verified debugger launch, setup entry, timed interruption and usable
+Hypre stack names. Synthetic communication checks cover unchanged versus
+advancing exchanges with identical stacks, peer coordination, early setup return,
+missing return watches, watchdog deadlines and privacy. Actual exchange tracking
+still requires user-side validation. This is diagnosis, not a numerical fix.
 
 ## Earlier one-step progress recipe
 

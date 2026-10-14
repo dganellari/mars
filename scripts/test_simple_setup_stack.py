@@ -67,6 +67,10 @@ class FakeGdb:
 
         class Breakpoint:
             def __init__(self, *args, **kwargs):
+                if getattr(owner, 'in_stop', False):
+                    raise AssertionError('breakpoint changed inside stop callback')
+                self.spec = args[0] if args else None
+                self.pending = False
                 owner.points.append(self)
 
             def delete(self):
@@ -111,6 +115,41 @@ class FakeGdb:
             self.alive = False
 
 
+class CommunicationGdb(FakeGdb):
+    def __init__(self, advance=False, setup_returns=False):
+        super().__init__()
+        self.continues, self.samples = 0, 0
+        self.actions = iter(['entry', 'sample'] + (['return_entry'] if advance else [])
+                            + ['setup_return' if setup_returns else 'sample'])
+        self.frames[1] = Frame('PMPI_Iprobe', Frame('hypre_DataExchangeList',
+            Frame('hypre_ParCSRCommPkgCreateApart_core', Frame('hypre_MatvecCommPkgCreate',
+            Frame('hypre_ParCSRMatrixGenerateFFFCDevice_core', Frame('hypre_BoomerAMGBuildExtPIInterpDevice'))))))
+
+    def execute(self, command):
+        if command != 'continue':
+            return super().execute(command)
+        self.commands.append(command)
+        self.continues += 1
+        entry = next(p for p in self.points if p.spec == 'hypre_DataExchangeList')
+        action = next(self.actions)
+        if self.samples == 1:
+            getattr(self, 'assert_continues', lambda: None)()
+        self.in_stop = True
+        try:
+            if action in ('entry', 'return_entry'):
+                if action == 'return_entry':
+                    self.points[-1].stop()
+                entry.stop()
+                return
+            if action == 'setup_return':
+                next(p for p in self.points if type(p).__name__ == 'Returned').stop()
+                return
+        finally:
+            self.in_stop = False
+        self.samples += 1
+        raise KeyboardInterrupt()
+
+
 class StackTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -138,6 +177,118 @@ class StackTests(unittest.TestCase):
                       report(unwind_stop_reasons=['PRIVATE']), report(unwind_stop_reasons=[3])):
             with self.assertRaisesRegex(ValueError, 'invalid stack report'):
                 sampler.safe_report(value)
+
+    def test_communication_helpers_are_literal_names_not_argument_text(self):
+        gdb = CommunicationGdb()
+        value = sampler.stack_functions(gdb)
+        self.assertEqual(value['main_thread_functions'], [
+            'PMPI_Iprobe', 'hypre_DataExchangeList', 'hypre_ParCSRCommPkgCreateApart_core',
+            'hypre_MatvecCommPkgCreate', 'hypre_ParCSRMatrixGenerateFFFCDevice_core',
+            'hypre_BoomerAMGBuildExtPIInterpDevice'])
+        for name in ('hypre_DataExchangeList PRIVATE', 'hypre_PrivateMesh', 'MPI_Test PRIVATE'):
+            with self.assertRaises(ValueError):
+                sampler.safe_report(report(main_thread_functions=[name]))
+
+    def test_progress_distinguishes_same_named_stack_with_completed_exchanges(self):
+        for advance in (False, True):
+            directory = self.root / str(advance)
+            directory.mkdir()
+            gdb = CommunicationGdb(advance=advance)
+            sampler.capture(gdb, dict(directory=str(directory), rank=0, ranks=1,
+                                     self_test=False, communication_progress=True))
+            final = trace.read_json(directory / 'stack-0.json')
+            value = trace.communication_report(directory / 'exchange-0.json', final)
+            self.assertTrue(value['two_samples_usable'])
+            self.assertTrue(value['exchange_tracking_complete'])
+            self.assertEqual(value['exchange_advanced_between_samples'], advance)
+            self.assertEqual(value['first_main_thread_functions'], final['main_thread_functions'])
+            self.assertTrue(value['exchange_active_at_first_sample'])
+            self.assertTrue(value['exchange_active_at_final_sample'])
+            self.assertNotIn('entered', value)
+            self.assertNotIn('returned', value)
+            self.assertNotIn('SECRET', json.dumps(value))
+
+    def test_second_sample_can_observe_setup_return(self):
+        gdb = CommunicationGdb(advance=True, setup_returns=True)
+        sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=1,
+                                 self_test=False, communication_progress=True))
+        final = trace.read_json(self.root / 'stack-0.json')
+        self.assertTrue(final['setup_return_seen'])
+        self.assertFalse(final['interrupt_seen'])
+        self.assertTrue(trace.communication_report(self.root / 'exchange-0.json', final)['two_samples_usable'])
+
+    def test_all_ranks_must_save_first_sample_before_any_resume(self):
+        gdb = CommunicationGdb()
+
+        def peer(_):
+            self.assertEqual(gdb.samples, 1)
+            self.assertNotIn('kill', gdb.commands)
+            first = trace.read_json(self.root / 'first-0.json')
+            sampler.write_json(self.root / 'first-1.json', first)
+            # The peer's final report also lets cleanup finish without waiting.
+            sampler.write_json(self.root / 'stack-1.json', first['stack'])
+            gdb.assert_continues = lambda: self.assertTrue((self.root / 'first-1.json').exists())
+
+        with patch.object(sampler.time, 'sleep', side_effect=peer):
+            sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=2,
+                                     self_test=False, communication_progress=True))
+        self.assertEqual(gdb.samples, 2)
+
+    def test_returned_peer_prevents_resuming_into_a_flow_run(self):
+        first = dict(stack=readable_report(setup_entry_seen=True, setup_return_seen=True), exchange={})
+        sampler.write_json(self.root / 'first-1.json', first)
+        sampler.write_json(self.root / 'stack-1.json', first['stack'])
+        gdb = CommunicationGdb()
+        sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=2,
+                                 self_test=False, communication_progress=True))
+        value = trace.communication_report(self.root / 'exchange-0.json', trace.read_json(self.root / 'stack-0.json'))
+        self.assertEqual(gdb.samples, 1)
+        self.assertFalse(value['two_samples_taken'])
+        self.assertIsNone(value['exchange_advanced_between_samples'])
+
+    def test_missing_peer_times_out_without_resuming(self):
+        gdb = CommunicationGdb()
+        with patch.object(sampler.time, 'monotonic', side_effect=(0, 61, 61, 122)):
+            sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=2,
+                                     self_test=False, communication_progress=True))
+        value = trace.communication_report(self.root / 'exchange-0.json', trace.read_json(self.root / 'stack-0.json'))
+        self.assertEqual(gdb.samples, 1)
+        self.assertFalse(value['peer_samples_present'])
+        self.assertFalse(value['two_samples_taken'])
+        self.assertIsNone(value['exchange_advanced_between_samples'])
+        self.assertIn('kill', gdb.commands)
+
+    def test_unavailable_return_tracking_is_inconclusive(self):
+        gdb = CommunicationGdb()
+        old = gdb.FinishBreakpoint
+        class Unavailable(old):
+            def __init__(self, *args, **kwargs):
+                if type(self).__name__ == 'ExchangeReturned':
+                    raise RuntimeError('PRIVATE')
+                super().__init__(*args, **kwargs)
+        gdb.FinishBreakpoint = Unavailable
+        sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=1,
+                                 self_test=False, communication_progress=True))
+        value = trace.communication_report(self.root / 'exchange-0.json', trace.read_json(self.root / 'stack-0.json'))
+        self.assertFalse(value['exchange_tracking_complete'])
+        self.assertIsNone(value['exchange_advanced_between_samples'])
+        self.assertNotIn('PRIVATE', json.dumps(value))
+
+    def test_communication_report_refuses_untrusted_counters_and_partial_samples(self):
+        counts = dict(entered=2, returned=1, tracking_complete=True)
+        value = dict(first=dict(stack=readable_report(), exchange=counts), final=dict(counts),
+                     two_samples_taken=True, peer_samples_present=True)
+        path = self.root / 'exchange.json'
+        for final in (dict(counts, entered='PRIVATE'), dict(counts, entered=True),
+                      dict(counts, returned=3), dict(counts, entered=1, returned=0),
+                      dict(counts, raw='PRIVATE')):
+            path.write_text(json.dumps(dict(value, final=final)))
+            with self.assertRaises(ValueError):
+                trace.communication_report(path, readable_report())
+        path.write_text(json.dumps(value))
+        result = trace.communication_report(path, readable_report(unwind_incomplete=True))
+        self.assertFalse(result['two_samples_usable'])
+        self.assertIsNone(result['exchange_advanced_between_samples'])
 
     def test_broken_unwind_is_explicit(self):
         gdb = FakeGdb()
@@ -280,6 +431,36 @@ class StackTests(unittest.TestCase):
                 patch.object(trace.os, 'killpg') as kill:
             self.assertIsNone(trace.debugger('/gdb', ['/solver'], self.root, 0, 1, {}))
         kill.assert_called_once_with(123, signal.SIGKILL)
+
+    def test_watchdog_waits_for_peers_then_times_second_interrupt_from_resume(self):
+        child = Mock(pid=123)
+        child.poll.return_value = None
+        clock = iter((0, 0, 31, 60, 61, 76))
+        signals = []
+
+        def now():
+            value = next(clock)
+            if value == 61:
+                (self.root / 'resumed-0').touch()
+            return value
+
+        def interrupted(sig):
+            signals.append(sig)
+            if len(signals) == 1:
+                (self.root / 'first-0.json').write_text('{}')
+            else:
+                self.assertTrue((self.root / 'resumed-0').exists())
+                sampler.write_json(self.root / 'stack-0.json', readable_report())
+                child.poll.return_value = 0
+
+        child.send_signal.side_effect = interrupted
+        with patch.object(trace.subprocess, 'Popen', return_value=child), \
+                patch.object(trace.time, 'monotonic', side_effect=now), \
+                patch.object(trace.time, 'sleep'), patch.object(trace.os, 'killpg') as kill:
+            value = trace.debugger('/gdb', ['/solver'], self.root, 0, 2, {}, communication_progress=True)
+        self.assertTrue(value['interrupt_seen'])
+        self.assertEqual(signals, [signal.SIGINT, signal.SIGINT])
+        kill.assert_not_called()
 
     def test_real_child_receives_only_a_timed_interrupt_and_private_output(self):
         child = self.root / 'fake-gdb'
@@ -462,6 +643,34 @@ class SavedCaseTests(unittest.TestCase):
         self.assertEqual(public['comparison_status'], 'diagnostic_complete')
         self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
         self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_communication_capture_exports_progress_without_counters_or_paths(self):
+        for tracking in (True, False):
+            def launch(command, **kwargs):
+                directory = Path(kwargs['cwd'])
+                config = trace.read_json(directory / 'launch-input.json')
+                self.assertTrue(config['communication_progress'])
+                for rank in range(config['ranks']):
+                    stack = readable_report(setup_entry_seen=True, main_thread_functions=['hypre_DataExchangeList'])
+                    sampler.write_json(directory / ('stack-{}.json'.format(rank)), stack)
+                    sampler.write_json(directory / ('exchange-{}.json'.format(rank)), dict(
+                        first=dict(stack=stack, exchange=dict(entered=123, returned=122, tracking_complete=tracking)),
+                        final=dict(entered=124, returned=123, tracking_complete=tracking),
+                        two_samples_taken=True, peer_samples_present=True))
+                return Mock(wait=Mock(return_value=0))
+
+            public = {}
+            with patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                    patch.object(trace, 'debugger', return_value=readable_report()), \
+                    patch.object(trace.subprocess, 'Popen', side_effect=launch), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(trace.run(self.pair, self.root / str(tracking), public, True), 0 if tracking else 1)
+            self.assertEqual(public['failed_check'], 'none' if tracking else 'communication_tracking')
+            self.assertEqual(public['comparison_status'], 'diagnostic_complete' if tracking else 'diagnostic_partial')
+            for progress in public['communication_progress'].values():
+                self.assertEqual(progress['exchange_advanced_between_samples'], True if tracking else None)
+            self.assertNotIn('123', json.dumps(public))
+            self.assertNotIn(str(self.root), json.dumps(public))
 
     def test_unreadable_partial_and_missing_reports_never_claim_complete(self):
         cases = (
