@@ -1,0 +1,330 @@
+"""Synthetic debugger and saved-case checks; no private geometry or cluster launch."""
+
+import contextlib
+import io
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+import simple_setup_stack as trace
+import simple_setup_stack_gdb as sampler
+import simple_startup_probe as startup
+import test_simple_pressure_profile as fixtures
+
+
+def report(**changes):
+    value = dict.fromkeys(sampler.BOOL_KEYS, False)
+    value.update(main_thread_functions=[], other_thread_functions=[])
+    value.update(changes)
+    return value
+
+
+class Frame:
+    def __init__(self, name, older=None, reason=0):
+        self._name, self._older, self.reason = name, older, reason
+
+    def name(self):
+        return self._name
+
+    def older(self):
+        return self._older
+
+    def unwind_stop_reason(self):
+        return self.reason
+
+
+class FakeGdb:
+    FRAME_UNWIND_FIRST_ERROR = 2
+
+    def __init__(self, mode='sample'):
+        self.mode, self.commands, self.points = mode, [], []
+        self.alive, self.selected = True, None
+        self.events = SimpleNamespace(cont=SimpleNamespace(connect=Mock()),
+                                      stop=SimpleNamespace(connect=Mock()),
+                                      exited=SimpleNamespace(connect=Mock()))
+        owner = self
+
+        class Breakpoint:
+            def __init__(self, *args, **kwargs):
+                owner.points.append(self)
+
+            def delete(self):
+                pass
+
+        self.Breakpoint = Breakpoint
+        self.FinishBreakpoint = Breakpoint
+        self.threads = [SimpleNamespace(num=i, switch=lambda i=i: setattr(self, 'selected', i))
+                        for i in (1, 2)]
+        self.frames = {
+            1: Frame('MPI_Waitall', Frame('SECRET_PUMP_FUNCTION',
+                     Frame('hypre_BoomerAMGCoarsenRuge', Frame('hypre_BoomerAMGSetup')))),
+            2: Frame('SECRET_OTHER_THREAD', Frame('cudaEventSynchronize'))}
+
+    def selected_inferior(self):
+        return SimpleNamespace(pid=123 if self.alive else 0,
+                               threads=lambda: self.threads if self.alive else [])
+
+    def newest_frame(self):
+        return self.frames[self.selected]
+
+    def execute(self, command):
+        self.commands.append(command)
+        if command == 'run':
+            self.events.cont.connect.call_args[0][0](None)
+            if self.mode == 'before_setup':
+                raise KeyboardInterrupt()
+            if self.mode == 'error':
+                raise RuntimeError('PRIVATE_PATH_AND_VALUES')
+            if self.mode == 'exit':
+                self.alive = False
+                self.events.exited.connect.call_args[0][0](SimpleNamespace(exit_code=127))
+            else:
+                self.points[0].stop()
+        elif command == 'continue':
+            if self.mode == 'return':
+                self.points[-1].stop()
+            else:
+                raise KeyboardInterrupt()
+        elif command == 'kill':
+            self.alive = False
+
+
+class StackTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+
+    def test_only_literal_function_names_are_exported(self):
+        gdb = FakeGdb()
+        main, other, incomplete = sampler.stack_functions(gdb)
+        self.assertEqual(main, ['MPI_Waitall', 'hypre_BoomerAMGCoarsenRuge', 'hypre_BoomerAMGSetup'])
+        self.assertEqual(other, ['cudaEventSynchronize'])
+        self.assertFalse(incomplete)
+        self.assertNotIn('SECRET', json.dumps((main, other)))
+
+    def test_unknown_names_and_raw_extra_keys_cannot_cross_export(self):
+        for value in (report(main_thread_functions=['PRIVATE']), dict(report(), raw='PRIVATE'),
+                      report(setup_entry_seen='PRIVATE'), report(other_thread_functions=['MPI_Wait PRIVATE']),
+                      report(main_thread_functions=['MPI_Wait'] * 257)):
+            with self.assertRaisesRegex(ValueError, 'invalid stack report'):
+                sampler.safe_report(value)
+
+    def test_broken_unwind_is_explicit(self):
+        gdb = FakeGdb()
+        gdb.frames[1].reason = 3
+        self.assertTrue(sampler.stack_functions(gdb)[2])
+        gdb.frames[1] = SimpleNamespace(name=Mock(side_effect=RuntimeError('SECRET')))
+        self.assertTrue(sampler.stack_functions(gdb)[2])
+        gdb.frames[1].name.assert_called_once()
+
+    def test_setup_sample_and_normal_return_are_distinct(self):
+        for mode in ('sample', 'return', 'before_setup', 'exit', 'error'):
+            with self.subTest(mode=mode):
+                directory = self.root / mode
+                directory.mkdir()
+                gdb = FakeGdb(mode)
+                sampler.capture(gdb, dict(directory=str(directory), rank=0, ranks=1, self_test=False))
+                value = sampler.safe_report(trace.read_json(directory / 'stack-0.json'))
+                self.assertEqual(value['setup_entry_seen'], mode in ('sample', 'return'))
+                self.assertEqual(value['setup_return_seen'], mode == 'return')
+                self.assertEqual(value['interrupt_seen'], mode in ('sample', 'before_setup'))
+                self.assertEqual(value['debugger_error'], mode == 'error')
+                self.assertEqual(value['inferior_exit_seen'], mode == 'exit')
+                self.assertEqual(value['inferior_exit_nonzero'], mode == 'exit')
+                self.assertNotIn('PRIVATE', json.dumps(value))
+                self.assertNotIn('SECRET', json.dumps(value))
+                self.assertFalse(gdb.alive)
+                self.assertEqual(gdb.commands[-1], 'quit')
+                self.assertIn('unset environment SIMPLE_SETUP_STACK_CONFIG', gdb.commands)
+
+    def test_no_rank_is_killed_before_other_stack_is_saved(self):
+        gdb = FakeGdb()
+
+        def other_rank(_):
+            self.assertNotIn('kill', gdb.commands)
+            self.assertTrue((self.root / 'stack-0.json').exists())
+            sampler.write_json(self.root / 'stack-1.json', report())
+
+        with patch.object(sampler.time, 'sleep', side_effect=other_rank):
+            sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=2, self_test=False))
+        self.assertIn('kill', gdb.commands)
+
+    def test_watchdog_interrupts_gdb_and_keeps_raw_output_private(self):
+        child = Mock(pid=123)
+        child.poll.side_effect = [None, None, None, 0, 0]
+
+        def interrupted(sig):
+            self.assertEqual(sig, signal.SIGINT)
+            sampler.write_json(self.root / 'stack-0.json', report(interrupt_seen=True, inferior_alive=True))
+
+        child.send_signal.side_effect = interrupted
+        with patch.object(trace.subprocess, 'Popen', return_value=child) as popen, \
+                patch.object(trace.time, 'monotonic', side_effect=[0, 0, 31, 32]), \
+                patch.object(trace.time, 'sleep'), patch.object(trace.os, 'killpg') as kill:
+            value = trace.debugger('/gdb', ['/solver', '--secret', 'PRIVATE'], self.root, 0, 1, {})
+        self.assertTrue(value['interrupt_seen'])
+        self.assertEqual(popen.call_args[0][0][-3:], ['/solver', '--secret', 'PRIVATE'])
+        self.assertEqual(Path(popen.call_args[1]['stdout'].name), self.root / 'debugger-0.log')
+        self.assertEqual(popen.call_args[1]['stderr'], trace.subprocess.STDOUT)
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        child.send_signal.assert_called_once()
+        kill.assert_not_called()
+
+    def test_unresponsive_debugger_is_killed_at_hard_deadline(self):
+        child = Mock(pid=123)
+        child.poll.return_value = None
+        with patch.object(trace.subprocess, 'Popen', return_value=child), \
+                patch.object(trace.time, 'monotonic', side_effect=[0, 301]), \
+                patch.object(trace.os, 'killpg') as kill:
+            self.assertIsNone(trace.debugger('/gdb', ['/solver'], self.root, 0, 1, {}))
+        kill.assert_called_once_with(123, signal.SIGKILL)
+
+    def test_real_child_receives_only_a_timed_interrupt_and_private_output(self):
+        child = self.root / 'fake-gdb'
+        child.write_text('#!' + sys.executable + '\n' + '''
+import json, os, signal, time
+from pathlib import Path
+with open(os.environ['SIMPLE_SETUP_STACK_CONFIG']) as stream:
+    config = json.load(stream)
+root = Path(config['directory'])
+value = ''' + repr(report(interrupt_seen=True, inferior_alive=True)) + '''
+def interrupted(sig, frame):
+    (root / 'stack-0.json').write_text(json.dumps(value))
+    raise SystemExit(0)
+signal.signal(signal.SIGINT, interrupted)
+(root / 'running-0').touch()
+print('PRIVATE_RAW_DEBUGGER_TEXT', flush=True)
+while True:
+    time.sleep(.1)
+''')
+        child.chmod(0o700)
+        value = trace.debugger(str(child), ['/unused'], self.root, 0, 1, os.environ, self_test=True)
+        self.assertTrue(value['interrupt_seen'])
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        self.assertIn('PRIVATE_RAW_DEBUGGER_TEXT', (self.root / 'debugger-0.log').read_text())
+
+    def test_missing_finish_breakpoint_still_allows_stack_sampling(self):
+        gdb = FakeGdb()
+        class Unavailable(gdb.Breakpoint):
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError('PRIVATE')
+        gdb.FinishBreakpoint = Unavailable
+        sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=1, self_test=False))
+        value = trace.read_json(self.root / 'stack-0.json')
+        self.assertTrue(value['setup_entry_seen'])
+        self.assertTrue(value['interrupt_seen'])
+        self.assertFalse(value['return_watch_available'])
+        self.assertFalse(value['debugger_error'])
+
+    def test_existing_output_is_not_modified(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(trace.main(['--pair', '/unused', '--output-dir', str(self.root)]), 1)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_live_progress_uses_fixed_markers_only(self):
+        (self.root / 'running-0').touch()
+        (self.root / 'entered-0').write_text('PRIVATE 123')
+        child = Mock()
+        child.wait.side_effect = [trace.subprocess.TimeoutExpired('PRIVATE', 1), 0]
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            self.assertEqual(trace.wait_with_progress(child, self.root, 1), 0)
+        self.assertEqual(stream.getvalue(), 'MARS rank 0: debugger running\nMARS rank 0: Hypre setup entered\n')
+
+
+class SavedCaseTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = fixtures.ProfileTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.reference_amg = True
+        self.fixture.enable_petsc_momentum()
+        self.fixture.prepare()
+        self.root, self.pair = self.fixture.root, self.fixture.pair
+        baseline = self.fixture.baseline / 'mars'
+        for name in ('launch.json', 'launch-start.json'):
+            path = baseline / name
+            value = startup.read_json(path)
+            value['command'][0] = 'srun'
+            path.write_text(json.dumps(value))
+        # Reprepare after updating the synthetic saved launcher identity.
+        import shutil
+        shutil.rmtree(self.pair)
+        self.fixture.prepare()
+        self.libs = patch.object(startup, 'runtime_libraries', return_value=self.fixture.rebuilt_libs)
+        self.libs.start()
+        self.addCleanup(self.libs.stop)
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def test_saved_controls_and_binding_are_preserved_except_output_prefix(self):
+        directory = self.root / 'new'
+        public = {}
+        launcher, command, environment, ranks, identity = trace.saved_command(self.pair, directory, public)
+        expected = startup.solver_arguments(self.pair, 'mars')
+        expected[expected.index('--output-prefix') + 1] = str(directory / 'flow')
+        self.assertEqual(command, [identity['executable']] + expected)
+        self.assertEqual(launcher[0], 'srun')
+        self.assertEqual(environment, {})
+        self.assertTrue(public['library_checks']['matched'])
+        self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_missing_debugger_never_launches_solver(self):
+        public = {}
+        with patch.object(trace.shutil, 'which', return_value=None), \
+                patch.object(trace.subprocess, 'Popen') as launch:
+            self.assertEqual(trace.run(self.pair, self.root / 'trace', public), 1)
+        launch.assert_not_called()
+        self.assertEqual(public['failed_check'], 'debugger_unavailable')
+
+    def test_failed_debugger_self_test_never_allocates_gpus(self):
+        public = {}
+        with patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                patch.object(trace, 'debugger', return_value=report(debugger_error=True)), \
+                patch.object(trace.subprocess, 'Popen') as launch:
+            self.assertEqual(trace.run(self.pair, self.root / 'trace', public), 1)
+        launch.assert_not_called()
+        self.assertFalse(public['debugger_self_test_passed'])
+
+    def test_success_aggregates_only_validated_rank_stacks(self):
+        output, public = self.root / 'trace', {}
+        before = {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+
+        def launch(command, **kwargs):
+            directory = Path(kwargs['cwd'])
+            config = trace.read_json(directory / 'launch-input.json')
+            for rank in range(config['ranks']):
+                sampler.write_json(directory / ('stack-{}.json'.format(rank)),
+                                   report(setup_entry_seen=True, interrupt_seen=True, inferior_alive=True,
+                                          main_thread_functions=['hypre_BoomerAMGCoarsenRuge']))
+            return Mock(wait=Mock(return_value=0))
+
+        with patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                patch.object(trace, 'debugger', return_value=report(interrupt_seen=True, inferior_alive=True)), \
+                patch.object(trace.subprocess, 'Popen', side_effect=launch):
+            self.assertEqual(trace.run(self.pair, output, public), 0)
+        self.assertTrue(public['all_rank_stacks_present'])
+        self.assertEqual(public['comparison_status'], 'diagnostic_complete')
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
+        self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_changed_library_or_protected_environment_refuses_before_launch(self):
+        for mode in ('library', 'environment'):
+            with self.subTest(mode=mode), patch.object(trace.subprocess, 'Popen') as launch:
+                context = (patch.object(startup, 'runtime_libraries', return_value={}) if mode == 'library'
+                           else patch.dict(os.environ, {'MARS_PRIVATE_UNKNOWN': 'PRIVATE'}))
+                with context, self.assertRaises(startup.EvidenceError):
+                    trace.saved_command(self.pair, self.root / mode, {})
+                launch.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

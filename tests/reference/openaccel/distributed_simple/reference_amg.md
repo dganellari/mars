@@ -143,11 +143,78 @@ a deadlock inside that call. The public failure summary also records
 neither overrides a failed residual or certifies successful process exit.
 
 Local tests check partial and overlong log lines, private text rejection, failed
-child exit preservation, and the real Hypre setup/solve callback sequence. Use
-the bounded retry below to locate the timeout before changing solver controls or
-requesting a longer allocation.
+child exit preservation, and the real Hypre setup/solve callback sequence.
 
-## Run in the MARS terminal only
+### Setup timeout: bounded stack capture
+
+The public `simple-reference-amg-progress-lFwAtd/launch-public.json` reports a
+scheduler time limit and last stage `hypre_setup` on all four ranks. Library
+checks pass, with no reported CUDA error or linear rejection. This narrows the
+interval to setup, before the pressure solve. It does not prove a deadlock or
+identify a particular AMG operation. The marker also precedes a possible wrapper
+barrier and includes the post-setup collective check before the next marker.
+GMRES setup allocates Krylov workspace before calling AMG; HMIS and coarse solver
+9 then include CPU work. Increasing the Krylov iteration cap cannot help here.
+
+Use the following diagnostic instead of repeating the quiet one-step run.
+It reuses the existing executable, case, controls, binding and saved launcher.
+Only the output prefix changes, and GDB is inserted between the binding script
+and the executable. It does not modify saved evidence or run OpenAccel. No build
+or repeat of the public GPU gates is needed.
+
+The script first verifies GDB's Python support, child debugging and timed
+interruption on `/bin/sleep` without requesting GPU resources. Under the saved
+launcher, each rank stops at the first Hypre GMRES/FlexGMRES setup call. It samples
+after 30 seconds in setup, or at setup return if that occurs first. If setup is
+not reached, it samples after 120 seconds of execution. Each rank has a five-minute
+watchdog, including debugger initialization and waiting for the other snapshots;
+the saved scheduler limit is unchanged. Queue time is outside this watchdog.
+
+**This diagnostic deliberately stops the solver.** A complete diagnostic is not
+a completed CFD run. Only exact, allowlisted library function names and fixed
+status flags are exported; no frame arguments, locals, addresses, source paths,
+geometry or field values are exported. Raw debugger and solver output stays in
+the private directory. The sampler uses GDB's
+[frame-name API](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Frames-In-Python.html)
+and a [finish breakpoint](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Finish-Breakpoints-in-Python.html).
+Missing symbols or an incomplete unwind can limit what the snapshot establishes.
+It samples host stacks, not GPU kernels, and a single sample cannot prove deadlock.
+
+Run in the MARS terminal only, without an outer `srun`:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-setup-stack-XXXXXX")
+printf 'Private diagnostic directory: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_setup_stack.py" \
+  --pair "$scratch/simple-reference-amg-progress-lFwAtd/pair" \
+  --output-dir "$run/trace" || status=$?
+cat "$run/trace/public.json"
+printf 'Share only: %s\n' "$run/trace/public.json"
+exit "$status"
+)
+```
+
+Local synthetic tests exercise setup entry, return, interruption, MPI-rank capture
+coordination, watchdog cleanup, output filtering and preserved saved arguments.
+GDB and GPU execution are user-side checks; the preflight refuses a GPU launch
+when the debugger self-test fails. This is diagnosis, not a numerical fix.
+
+## Earlier one-step progress recipe
+
+The setup-stack diagnostic above supersedes this recipe for the reported timeout.
+Keep this recipe for a normal first-step comparison once its cause is addressed.
 
 Use the working MARS uenv/venv and existing PETSc-enabled build. Run the Git update
 in this terminal only. Rebuild only SIMPLE for the new markers; the 48 passing
