@@ -293,8 +293,53 @@ frames, unreadable self-test refusal and incomplete-capture status. The user-run
 samples verified debugger launch, setup entry, timed interruption and usable
 Hypre stack names. Synthetic communication checks cover unchanged versus
 advancing exchanges with identical stacks, peer coordination, early setup return,
-missing return watches, watchdog deadlines and privacy. Actual exchange tracking
-still requires user-side validation. This is diagnosis, not a numerical fix.
+missing return watches, watchdog deadlines and privacy. The subsequent user-run
+coordinated capture verified entry/return tracking and two usable samples on all
+four ranks. This is diagnosis, not a numerical fix.
+
+## Inspect the saved exchange sequence without a new run
+
+The user-run coordinated capture found all four ranks still inside
+`hypre_DataExchangeList`, reached through `hypre_ParCSRMatrixGenerateFFFCDevice`
+and communication-package creation. No exchange entry or return occurred between
+samples on any rank. This locates an unfinished host exchange while building
+interpolation; it does not establish its cause or indefinite deadlock.
+
+Compare the already saved private counters before another GPU allocation:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-setup-sequence-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_setup_stack.py" \
+  --inspect-dir "$scratch/simple-setup-communication-GEDu2q/trace" \
+  --output-dir "$run/check" || status=$?
+cat "$run/check/public.json"
+printf 'Share only: %s\n' "$run/check/public.json"
+exit "$status"
+)
+```
+
+This reads only the saved stack/counter records and their public summary. It
+does not inspect fields, load the solver libraries, start GDB or launch a solver.
+It needs no build, GPU allocation or scientific Python packages. The original
+records are unchanged; counters and arbitrary source text stay private.
+
+`same_observed_exchange_ordinal: false` means the tracked call sequences differ
+across ranks. It is a reason to inspect call ordering, not proof that particular
+MPI tags or communicators differ. A true value rules out this ordinal difference
+only: neither matching ordinals nor matching stacks prove identical protocol
+phases or communicators. Missing records, inconsistent summaries, incomplete
+tracking, nested active exchanges or progress during the interval remain
+invalid or inconclusive. No solver settings should be changed from this flag alone.
 
 ## Earlier one-step progress recipe
 

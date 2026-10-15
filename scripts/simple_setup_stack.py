@@ -132,7 +132,10 @@ def wait_with_progress(child, directory, ranks):
 
 
 def communication_report(path, final_stack):
-    value = read_json(path)
+    return communication_value(read_json(path), final_stack)
+
+
+def communication_value(value, final_stack):
     if (not isinstance(value, dict) or set(value) != {'first', 'final', 'two_samples_taken', 'peer_samples_present'}
             or any(type(value[k]) is not bool for k in ('two_samples_taken', 'peer_samples_present'))
             or not isinstance(value['first'], dict) or set(value['first']) != {'stack', 'exchange'}):
@@ -160,6 +163,61 @@ def communication_report(path, final_stack):
                                                    if tracked and usable else None),
                 exchange_active_at_first_sample=(first['entered'] > first['returned'] if tracked else None),
                 exchange_active_at_final_sample=(last['entered'] > last['returned'] if tracked else None))
+
+
+def inspect_communication(source, output, public):
+    # Reuse the stopped records; inspecting them must never start GDB or the solver.
+    public.update(comparison_status='invalid_evidence', failed_check='saved_communication_records',
+                  scope='saved_exchange_ordinals_not_communicator_or_protocol_phase_identity',
+                  intentional_stop=False, saved_reports_consistent=False)
+    if source == output or source in output.parents:
+        raise ValueError('output overlaps evidence')
+    output.mkdir(mode=0o700)
+    saved = read_json(source / 'public.json')
+    ranks = saved.get('ranks_expected')
+    if (saved.get('schema') != SCHEMA or saved.get('comparison_status') != 'diagnostic_complete'
+            or saved.get('failed_check') != 'none' or type(ranks) is not int or not 1 <= ranks <= 4):
+        raise ValueError('incomplete saved capture')
+    keys = {str(i) for i in range(ranks)}
+    if any(not isinstance(saved.get(k), dict) or set(saved[k]) != keys
+           for k in ('rank_stacks', 'communication_progress')):
+        raise ValueError('missing rank reports')
+    entries, unchanged, usable, active = [], [], [], []
+    for rank in range(ranks):
+        directory = source / 'private'
+        stack = safe_report(read_json(directory / ('stack-{}.json'.format(rank))))
+        value = read_json(directory / ('exchange-{}.json'.format(rank)))
+        progress = communication_value(value, stack)
+        first_stack = safe_report(value['first']['stack'])
+        if (stack != saved['rank_stacks'][str(rank)]
+                or progress != saved['communication_progress'][str(rank)]
+                or value['first'] != read_json(directory / ('first-{}.json'.format(rank)))):
+            raise ValueError('saved reports disagree')
+        first, last = value['first']['exchange'], value['final']
+        usable.append(progress['two_samples_usable'] and progress['peer_samples_present']
+                      and progress['exchange_tracking_complete']
+                      and all(s['setup_entry_seen'] and not s['setup_return_seen']
+                              and 'hypre_DataExchangeList' in s['main_thread_functions']
+                              for s in (first_stack, stack)))
+        active.append(all(c['entered'] - c['returned'] == 1 for c in (first, last)))
+        unchanged.append(first == last)
+        entries.append(last['entered'])
+    public.update(saved_reports_consistent=True, all_rank_samples_usable=all(usable),
+                  single_active_exchange_per_rank=all(active),
+                  no_rank_completed_or_entered_exchange_between_samples=all(unchanged),
+                  multiple_ranks=ranks > 1, same_observed_exchange_ordinal=None,
+                  protocol_phase_verified=False, communicator_identity_verified=False,
+                  assessment='inconclusive')
+    if not all(usable) or not all(active) or not all(unchanged):
+        public.update(comparison_status='inspection_inconclusive', failed_check='stationary_exchange_required')
+        return 1
+    same = len(set(entries)) == 1
+    public.update(comparison_status='inspection_complete', failed_check='none',
+                  same_observed_exchange_ordinal=same,
+                  assessment=('single_rank_exchange' if ranks == 1 else
+                              'same_observed_exchange_ordinal' if same else
+                              'different_observed_exchange_ordinals'))
+    return 0
 
 
 def run(pair, output, public, communication_progress=False):
@@ -265,11 +323,16 @@ def main(argv=None):
             return 1
     from simple_public_diagnostics import SafeParser
     parser = SafeParser(description=__doc__)
-    parser.add_argument('--pair', required=True, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--pair', type=Path)
+    mode.add_argument('--inspect-dir', type=Path,
+                      help='Compare saved exchange ordinals across ranks without launching a solver.')
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--communication-progress', action='store_true',
                         help='Track host exchange entry/return and take a second sample after all ranks resume.')
     args = parser.parse_args(argv)
+    if args.inspect_dir is not None and args.communication_progress:
+        parser.error('inspection cannot launch communication sampling')
     output = args.output_dir.resolve()
     public = dict(schema=SCHEMA, comparison_status='diagnostic_incomplete',
                   failed_check='output_directory', solver_launched=False,
@@ -280,7 +343,10 @@ def main(argv=None):
         print('STOP: use a new diagnostic output directory. Existing evidence was not changed.')
         return 1
     try:
-        status = run(args.pair.resolve(), output, public, args.communication_progress)
+        if args.inspect_dir is not None:
+            status = inspect_communication(args.inspect_dir.resolve(), output, public)
+        else:
+            status = run(args.pair.resolve(), output, public, args.communication_progress)
     except KeyboardInterrupt:
         public.update(failed_check='interrupted')
     except Exception:
@@ -288,7 +354,8 @@ def main(argv=None):
         pass
     if output.is_dir() and not (output / 'public.json').exists():
         write_json(output / 'public.json', public)
-    print('Setup diagnostic finished. Share only public.json; raw debugger output stays private.')
+    print(('Saved communication inspection finished. No solver launched. ' if args.inspect_dir is not None else
+           'Setup diagnostic finished. ') + 'Share only public.json; raw debugger output stays private.')
     return status
 
 

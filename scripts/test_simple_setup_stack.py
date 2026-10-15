@@ -712,5 +712,113 @@ class SavedCaseTests(unittest.TestCase):
                 launch.assert_not_called()
 
 
+class SavedCommunicationTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.source = self.root / 'capture'
+        self.private = self.source / 'private'
+        self.private.mkdir(parents=True)
+
+    def fixture(self, entries=(12345, 12345, 12345, 12345), change=None):
+        saved = dict(schema=trace.SCHEMA, comparison_status='diagnostic_complete', failed_check='none',
+                     ranks_expected=len(entries), rank_stacks={}, communication_progress={})
+        for rank, entered in enumerate(entries):
+            stack = readable_report(setup_entry_seen=True, main_thread_functions=['hypre_DataExchangeList'])
+            counts = dict(entered=entered, returned=entered - 1, tracking_complete=True)
+            value = dict(first=dict(stack=stack, exchange=dict(counts)), final=dict(counts),
+                         two_samples_taken=True, peer_samples_present=True)
+            if change:
+                change(rank, value, stack)
+            trace.write_json(self.private / ('first-{}.json'.format(rank)), value['first'])
+            trace.write_json(self.private / ('exchange-{}.json'.format(rank)), value)
+            trace.write_json(self.private / ('stack-{}.json'.format(rank)), stack)
+            saved['rank_stacks'][str(rank)] = stack
+            saved['communication_progress'][str(rank)] = trace.communication_value(value, stack)
+        # An unrelated private string must never be copied into the output.
+        saved['private_extra'] = 'SECRET_CASE_NAME'
+        trace.write_json(self.source / 'public.json', saved)
+
+    def inspect(self):
+        output = self.root / 'inspection'
+        before = {p: p.read_bytes() for p in self.source.rglob('*') if p.is_file()}
+        with patch.object(trace, 'run', side_effect=AssertionError('solver launch')), \
+                patch.object(trace, 'debugger', side_effect=AssertionError('debugger launch')), \
+                contextlib.redirect_stdout(io.StringIO()) as console:
+            code = trace.main(['--inspect-dir', str(self.source), '--output-dir', str(output)])
+        self.assertEqual(before, {p: p.read_bytes() for p in self.source.rglob('*') if p.is_file()})
+        result = trace.read_json(output / 'public.json')
+        text = json.dumps(result) + console.getvalue()
+        for private in ('12345', '12346', 'SECRET', str(self.source)):
+            self.assertNotIn(private, text)
+        self.assertFalse(result['solver_launched'])
+        return code, result
+
+    def test_matching_ordinals_do_not_claim_protocol_identity(self):
+        self.fixture()
+        code, result = self.inspect()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['assessment'], 'same_observed_exchange_ordinal')
+        self.assertTrue(result['same_observed_exchange_ordinal'])
+        self.assertFalse(result['protocol_phase_verified'])
+        self.assertFalse(result['communicator_identity_verified'])
+
+    def test_different_ordinals_are_reported_without_counts(self):
+        self.fixture((12345, 12345, 12346, 12346))
+        code, result = self.inspect()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['assessment'], 'different_observed_exchange_ordinals')
+        self.assertFalse(result['same_observed_exchange_ordinal'])
+
+    def test_tracking_loss_is_inconclusive(self):
+        self.fixture(change=lambda rank, value, stack: value['final'].update(tracking_complete=False))
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertIsNone(result['same_observed_exchange_ordinal'])
+
+    def test_advancing_exchange_is_not_compared_as_stationary(self):
+        self.fixture(change=lambda rank, value, stack: value['final'].update(entered=12346, returned=12345))
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['no_rank_completed_or_entered_exchange_between_samples'])
+
+    def test_nested_exchanges_are_inconclusive(self):
+        def nested(rank, value, stack):
+            value['first']['exchange']['returned'] -= 1
+            value['final']['returned'] -= 1
+        self.fixture(change=nested)
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['single_active_exchange_per_rank'])
+
+    def test_missing_rank_record_is_invalid(self):
+        self.fixture()
+        (self.private / 'exchange-3.json').unlink()
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['saved_reports_consistent'])
+
+    def test_changed_public_report_is_invalid(self):
+        self.fixture()
+        path = self.source / 'public.json'
+        value = trace.read_json(path)
+        value['communication_progress']['0']['exchange_advanced_between_samples'] = True
+        path.write_text(json.dumps(value))
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['saved_reports_consistent'])
+
+    def test_duplicate_first_record_must_match(self):
+        self.fixture()
+        path = self.private / 'first-0.json'
+        value = trace.read_json(path)
+        value['exchange']['entered'] += 1
+        path.write_text(json.dumps(value))
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['saved_reports_consistent'])
+
+
 if __name__ == '__main__':
     unittest.main()
