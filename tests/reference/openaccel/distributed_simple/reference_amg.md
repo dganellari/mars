@@ -341,6 +341,82 @@ phases or communicators. Missing records, inconsistent summaries, incomplete
 tracking, nested active exchanges or progress during the interval remain
 invalid or inconclusive. No solver settings should be changed from this flag alone.
 
+## Identify the unfinished protocol stage
+
+The saved sequence inspection reports the same observed exchange ordinal on all
+four ranks, with no entry or return between samples. It does not identify the
+exchange's `rnum`, communicator or pending requests. Do not change the pressure
+algorithm on that evidence alone.
+
+The opt-in `--protocol-trace` records host message-call metadata during Hypre
+setup. It distinguishes contact replies, child completion notices and parent
+release, and checks whether matching sends were observed and returned. The
+tracer forwards the original arguments to the already loaded, captured Hypre
+library. Message buffers are never read or modified. Peer identifiers, tags,
+request counters and raw traces stay private; only fixed checks are exported.
+
+This diagnostic adds noncollective communicator queries and private file writes,
+so it changes timing. A completed send does not prove receipt, and an absent
+observed call is not proof of a lost message. Matching call contexts require the
+same ordinal and `rnum`, with all traced communication on `MPI_COMM_WORLD`.
+Untracked requests, unsupported contexts, missing hooks and incomplete records
+remain inconclusive. This is not a performance measurement or deadlock proof.
+
+Run this once in the **MARS terminal**. It compiles only a small host interposer
+from the captured Hypre 2.33 headers and the existing build's MPI configuration;
+MARS does not need rebuilding. The generated exchange declaration comes from
+the installed header, without including CUDA internals in the host compiler.
+The interposer's MPI libraries must match the saved case. An existing
+`LD_PRELOAD` is refused. GDB itself and its sleep self-test are not preloaded.
+
+The saved launcher, binding, executable and solver controls are preserved. The
+existing timed setup sample, coordinated stop and five-minute debugger watchdog
+bound the launch. No outer `srun`, OpenAccel rerun or repeat of public GPU gates
+is needed.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-setup-protocol-XXXXXX")
+printf 'Private diagnostic directory: %s\n' "$run"
+status=0
+python3 "$repo/scripts/simple_setup_stack.py" \
+  --pair "$scratch/simple-reference-amg-progress-lFwAtd/pair" \
+  --output-dir "$run/trace" \
+  --protocol-trace --build-cache "$repo/build-hypre/CMakeCache.txt" || status=$?
+cat "$run/trace/public.json"
+printf 'Share only: %s\n' "$run/trace/public.json"
+exit "$status"
+)
+```
+
+`protocol_checks.rank_waits` locates each rank's observed wait. For contact
+replies, `matching_contacts_received` separates contacts that reached their
+destination from replies whose send call was not observed. The send-call flags
+describe all receives in the current group; they do not identify which
+individual request remains incomplete. Numerical controls and message contents
+are outside this diagnostic. If setup returns during sampling, the stack report
+retains that fact; no unfinished protocol is claimed.
+
+Local tests cover missing replies, unreceived contacts, unreturned sends,
+different rounds/communicators, completed waits, truncation, privacy, build
+refusal and inferior-only preload. The standalone public
+`simple_performance/setup_protocol_check.cpp` fixture builds a tridiagonal host
+matrix and runs HMIS/interpolation setup. The interposer was compiled with
+warnings as errors and exercised with real CPU Hypre 2.33/OpenMPI on 1, 2 and 4
+local ranks. Every setup completed and its exchange records passed parsing.
+This does not validate the Linux preload or CUDA/Cray execution; the bounded
+user-run diagnostic supplies that evidence.
+
 ## Earlier one-step progress recipe
 
 The setup-stack diagnostic above supersedes this recipe for the reported timeout.

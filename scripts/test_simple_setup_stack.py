@@ -156,6 +156,28 @@ class StackTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
 
+    def test_protocol_preload_is_set_on_inferior_before_run(self):
+        libraries = dict(preload='/private/trace.so', hypre='/private/libHYPRE.so')
+        gdb = FakeGdb()
+        sampler.capture(gdb, dict(directory=str(self.root), rank=0, ranks=1, self_test=False,
+                                 protocol_library=libraries))
+        expected = ('set environment LD_PRELOAD /private/trace.so',
+                    'set environment MARS_SETUP_PROTOCOL_HYPRE /private/libHYPRE.so',
+                    'set environment MARS_SETUP_PROTOCOL_DIR ' + str(self.root))
+        for command in expected:
+            self.assertLess(gdb.commands.index(command), gdb.commands.index('run'))
+
+    def test_protocol_preload_rejects_gdb_commands_and_self_test(self):
+        for i, (preload, self_test) in enumerate((('/private/trace.so\nrun', False),
+                                                 ('/private/trace.so', True))):
+            directory = self.root / str(i)
+            directory.mkdir()
+            gdb = FakeGdb()
+            sampler.capture(gdb, dict(directory=str(directory), rank=0, ranks=1, self_test=self_test,
+                            protocol_library=dict(preload=preload, hypre='/private/libHYPRE.so')))
+            self.assertNotIn('run', gdb.commands)
+            self.assertTrue(trace.read_json(directory / 'stack-0.json')['debugger_error'])
+
     def test_only_literal_function_names_are_exported(self):
         gdb = FakeGdb()
         self.assertFalse(hasattr(gdb, 'FRAME_UNWIND_FIRST_ERROR'))
@@ -552,6 +574,46 @@ class SavedCaseTests(unittest.TestCase):
         self.assertEqual(environment, {})
         self.assertTrue(public['library_checks']['matched'])
         self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_protocol_trace_stays_out_of_debugger_and_self_test_environment(self):
+        import simple_setup_protocol as protocol
+        libraries = dict(preload='/private/trace.so', hypre='/private/libHYPRE.so')
+
+        def launch(command, **kwargs):
+            self.assertNotIn('LD_PRELOAD', kwargs['env'])
+            directory = Path(kwargs['cwd'])
+            config = trace.read_json(directory / 'launch-input.json')
+            self.assertEqual(config['protocol_library'], libraries)
+            self.assertFalse(config['communication_progress'])
+            for rank in range(config['ranks']):
+                sampler.write_json(directory / ('stack-{}.json'.format(rank)), readable_report(
+                    setup_entry_seen=True, main_thread_functions=['hypre_DataExchangeList']))
+            return Mock(wait=Mock(return_value=0))
+
+        for complete in (True, False):
+            public = {}
+            assessment = 'protocol_waits_located' if complete else 'incomplete_trace'
+            with patch.object(trace.shutil, 'which', return_value='/gdb'), \
+                    patch.object(trace, 'debugger', return_value=readable_report()) as control, \
+                    patch.object(trace.subprocess, 'Popen', side_effect=launch), \
+                    patch.object(protocol, 'prepare', return_value=libraries), \
+                    patch.object(protocol, 'recheck'), \
+                    patch.object(protocol, 'report', return_value=dict(assessment=assessment)):
+                self.assertEqual(trace.run(self.pair, self.root / str(complete), public,
+                                 protocol_trace=True, build_cache=self.root / 'CMakeCache.txt'), 0 if complete else 1)
+            self.assertTrue(control.call_args[1]['self_test'])
+            self.assertNotIn('protocol_library', control.call_args[1])
+            self.assertEqual(public['failed_check'], 'none' if complete else 'protocol_trace')
+            self.assertNotIn('/private', json.dumps(public))
+
+    def test_protocol_compile_failure_never_launches_solver(self):
+        import simple_setup_protocol as protocol
+        public = {}
+        with patch.object(protocol, 'prepare', side_effect=ValueError('PRIVATE')), \
+                patch.object(trace.subprocess, 'Popen') as launch, self.assertRaises(ValueError):
+            trace.run(self.pair, self.root / 'failed', public, protocol_trace=True,
+                      build_cache=self.root / 'CMakeCache.txt')
+        launch.assert_not_called()
 
     def test_missing_debugger_never_launches_solver(self):
         public = {}

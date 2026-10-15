@@ -22,10 +22,11 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def debugger(gdb, command, directory, rank, ranks, environment, self_test=False, communication_progress=False):
+def debugger(gdb, command, directory, rank, ranks, environment, self_test=False, communication_progress=False,
+             protocol_library=None):
     config = directory / ('gdb-{}.json'.format(rank))
     write_json(config, dict(directory=str(directory), rank=rank, ranks=ranks, self_test=self_test,
-                           communication_progress=communication_progress))
+                           communication_progress=communication_progress, protocol_library=protocol_library))
     env = dict(environment, SIMPLE_SETUP_STACK_CONFIG=str(config))
     argv = [gdb, '-nx', '-nh', '-batch', '-iex', 'set auto-load off',
             '-x', str(GDB_SCRIPT), '--args'] + command
@@ -73,7 +74,8 @@ def rank_run(config_path):
         raise ValueError('rank outside diagnostic scope')
     report = debugger(config['gdb'], config['solver_command'], Path(config['directory']),
                       rank, config['ranks'], os.environ,
-                      communication_progress=config.get('communication_progress', False))
+                      communication_progress=config.get('communication_progress', False),
+                      protocol_library=config.get('protocol_library'))
     # A deliberately killed inferior is not a failed CFD convergence test.
     return 0 if report is not None and not report['debugger_error'] else 1
 
@@ -220,12 +222,18 @@ def inspect_communication(source, output, public):
     return 0
 
 
-def run(pair, output, public, communication_progress=False):
+def run(pair, output, public, communication_progress=False, protocol_trace=False, build_cache=None):
     output.mkdir(mode=0o700)
     directory = output / 'private'
     directory.mkdir(mode=0o700)
     public.update(failed_check='saved_case_preflight')
     launcher, command, environment, ranks, identity = saved_command(pair, directory, public)
+    protocol_library = None
+    if protocol_trace:
+        import simple_setup_protocol as protocol
+        public['failed_check'] = 'protocol_prepare'
+        protocol_library = protocol.prepare(directory, identity, build_cache, environment, public)
+        public.update(diagnostic_preload_used=True, extra_noncollective_comm_queries=True)
     public.update(failed_check='debugger_unavailable')
     gdb = shutil.which('gdb')
     if gdb is None:
@@ -251,7 +259,7 @@ def run(pair, output, public, communication_progress=False):
     config = directory / 'launch-input.json'
     write_json(config, dict(gdb=gdb, solver_command=command, directory=str(directory), ranks=ranks,
                            pair=str(pair), executable_identity=identity,
-                           communication_progress=communication_progress))
+                           communication_progress=communication_progress, protocol_library=protocol_library))
     argv = launcher + [sys.executable, str(HERE), '_rank', str(config)]
     with (directory / 'launch-command.txt').open('x') as stream:
         stream.write(' '.join(shlex.quote(word) for word in argv) + '\n')
@@ -286,6 +294,10 @@ def run(pair, output, public, communication_progress=False):
             public['communication_progress'][rank] = communication_report(
                 directory / ('exchange-{}.json'.format(rank)), stack)
         public['communication_scope'] = 'host_exchange_entry_return_between_samples_not_deadlock_proof'
+    if protocol_trace:
+        public['failed_check'] = 'protocol_recheck'
+        protocol.recheck(directory)
+        public['protocol_checks'] = protocol.report(directory, ranks)
     public['all_rank_stacks_present'] = len(public['rank_stacks']) == ranks
     public['failed_check'] = 'saved_case_recheck'
     _, _, _, _, after = saved_command(pair, directory, {})
@@ -307,6 +319,8 @@ def run(pair, output, public, communication_progress=False):
             or (not c['two_samples_usable'] and not any(r['setup_return_seen'] for r in reports))
             for c in public['communication_progress'].values()):
         public.update(comparison_status='diagnostic_partial', failed_check='communication_tracking')
+    elif protocol_trace and public['protocol_checks']['assessment'] != 'protocol_waits_located':
+        public.update(comparison_status='diagnostic_partial', failed_check='protocol_trace')
     else:
         public.update(comparison_status='diagnostic_complete', failed_check='none')
         return 0
@@ -330,9 +344,16 @@ def main(argv=None):
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--communication-progress', action='store_true',
                         help='Track host exchange entry/return and take a second sample after all ranks resume.')
+    parser.add_argument('--protocol-trace', action='store_true',
+                        help='Trace host message calls privately; message payloads are never read.')
+    parser.add_argument('--build-cache', type=Path, help='MARS CMakeCache.txt for compiling the metadata tracer.')
     args = parser.parse_args(argv)
-    if args.inspect_dir is not None and args.communication_progress:
+    if args.inspect_dir is not None and (args.communication_progress or args.protocol_trace):
         parser.error('inspection cannot launch communication sampling')
+    if args.protocol_trace and (args.communication_progress or args.build_cache is None):
+        parser.error('protocol tracing needs a build cache and separate sampling')
+    if args.build_cache is not None and not args.protocol_trace:
+        parser.error('build cache requires protocol tracing')
     output = args.output_dir.resolve()
     public = dict(schema=SCHEMA, comparison_status='diagnostic_incomplete',
                   failed_check='output_directory', solver_launched=False,
@@ -346,7 +367,8 @@ def main(argv=None):
         if args.inspect_dir is not None:
             status = inspect_communication(args.inspect_dir.resolve(), output, public)
         else:
-            status = run(args.pair.resolve(), output, public, args.communication_progress)
+            status = run(args.pair.resolve(), output, public, args.communication_progress,
+                         args.protocol_trace, args.build_cache.resolve() if args.build_cache else None)
     except KeyboardInterrupt:
         public.update(failed_check='interrupted')
     except Exception:

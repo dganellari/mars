@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import time
 
 
@@ -215,6 +216,16 @@ def capture(gdb, config):
                         'set print frame-arguments none', 'set startup-with-shell off',
                         'set disable-randomization off', 'unset environment SIMPLE_SETUP_STACK_CONFIG'):
             gdb.execute(command)
+        if config.get('protocol_library'):
+            libraries = config['protocol_library']
+            if (not isinstance(libraries, dict) or set(libraries) != {'preload', 'hypre'}
+                    or config['self_test'] or not all(isinstance(p, str) and re.fullmatch(r'/[A-Za-z0-9_./-]+', p)
+                        for p in (libraries['preload'], libraries['hypre'], str(output)))):
+                raise ValueError('unsupported preload path')
+            # Set only the inferior environment, not GDB's own dynamic libraries.
+            gdb.execute('set environment LD_PRELOAD ' + libraries['preload'])
+            gdb.execute('set environment MARS_SETUP_PROTOCOL_HYPRE ' + libraries['hypre'])
+            gdb.execute('set environment MARS_SETUP_PROTOCOL_DIR ' + str(output))
         gdb.events.cont.connect(running)
         gdb.events.stop.connect(stopped)
         gdb.events.exited.connect(exited)
