@@ -450,3 +450,47 @@ def emit_dss(p=7):
         "  return",
         "}",
         ""])
+
+
+def emit_dss_precond(p=7, az=True, zz=True):
+    """The Jacobi preconditioner of the cell-wise solver as one mir.dss with an
+    epilogue: z = 0 on Dirichlet copies, DSS(q) / diag elsewhere, and with az / zz
+    the per-element partials of <a, z> and <z, z>, each node counted once (the
+    epilogue of unstructured_precondition_kernel in mars_cellwise_topology.hpp)."""
+    base = [n for n, _ in DSS_ARGS if n != "out"]
+    flags = [("counting", "i32"), ("edge_dirichlet", "i8"), ("vert_dirichlet", "i8")]
+    copies = [("diag", "f64")] + ([("a", "f64")] if az else [])
+    nred = int(az) + int(zz)
+    outs = [("z", "f64")] + ([("partials", "f64")] if nred else [])
+    args = [(n, t) for n, t in DSS_ARGS if n != "out"] + flags + copies + outs
+    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args)
+    types = ", ".join(f"memref<?x{t}>" for _, t in args)
+    name = f"precond_p{p}" + ("_az" if az else "") + ("_zz" if zz else "")
+    body = ["  %zero = arith.constant 0.0 : f64",
+            "  %one = arith.constant 1.0 : f64",
+            "  %q = arith.divf %sum, %diag_t : f64",
+            "  %v = arith.select %dir, %zero, %q : f64",
+            "  %w = arith.select %cnt, %one, %zero : f64"]
+    ys = ["%v"]
+    if az:
+        body += ["  %av = arith.mulf %a_t, %v : f64", "  %avw = arith.mulf %av, %w : f64"]
+        ys.append("%avw")
+    if zz:
+        body += ["  %vv = arith.mulf %v, %v : f64", "  %vvw = arith.mulf %vv, %w : f64"]
+        ys.append("%vvw")
+    bargs = "%sum: f64, %dir: i1, %cnt: i1, %diag_t: f64" + (", %a_t: f64" if az else "")
+    partials = " partials(%partials)" if nred else ""
+    return "\n".join([
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"  mir.dss ins(%values, %ghost) elements(%elements) faces(%face_nbr, %face_code)",
+        f"          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
+        f"          flags(%counting, %edge_dirichlet, %vert_dirichlet)",
+        f"          copies({', '.join('%' + n for n, _ in copies)}) outs(%z){partials}",
+        f"          {{degree = {p} : i64, reductions = {nred} : i64}} : {types} epilogue {{",
+        f"  ^bb0({bargs}):",
+        *["  " + line for line in body],
+        f"    mir.yield {', '.join(ys)} : {', '.join(['f64'] * len(ys))}",
+        "  }",
+        "  return",
+        "}",
+        ""])

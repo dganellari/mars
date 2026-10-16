@@ -53,11 +53,6 @@ namespace cellwise {
 
 // ---- tables ----------------------------------------------------------------------------
 
-// Entity bits of an element's 32-bit masks (counting copies, Dirichlet entities): face f
-// at bit f, edge k at kEdgeBit + k, corner c at kVertexBit + c, interior nodes at
-// kInteriorBit. The gather kernel loads each entity's descriptor on the lane with the
-// same number, so one ballot gives the Dirichlet mask.
-constexpr int kEdgeBit = 8, kVertexBit = 20, kInteriorBit = 31;
 
 // One rank's tables over its elements: its own (local) elements first, then the ghost
 // elements of other ranks that share a vertex with them (none on one rank). Copies are
@@ -462,36 +457,6 @@ template <int P>
 constexpr int face_nodes = (P - 1) * (P - 1);
 template <int P>
 constexpr int edge_nodes = P - 1;
-
-// The local entity that holds node (a, b, c): kind 0 interior, 1 face, 2 edge, 3 corner,
-// and its local number (f, k or c).
-struct LocalEntity {
-    int kind, index;
-};
-
-template <int P = kP>
-__device__ inline LocalEntity local_entity(int a, int b, int c)
-{
-    const int x[3] = {a, b, c};
-    int on = 0;
-    for (int k = 0; k < 3; ++k) on += (x[k] == 0 || x[k] == P);
-    if (on == 0) return {0, 0};
-    if (on == 3) return {3, corner_from_bits(x[0] == P, x[1] == P, x[2] == P)};
-    int axis = 0, o0, o1;
-    if (on == 1) {
-        while (x[axis] != 0 && x[axis] != P) ++axis;
-        return {1, axis * 2 + (x[axis] == P)};
-    }
-    while (x[axis] == 0 || x[axis] == P) ++axis;   // the edge runs along the free axis
-    other_axes(axis, o0, o1);
-    return {2, axis * 4 + (x[o0] == P) * 2 + (x[o1] == P)};
-}
-
-__device__ inline int entity_bit(const LocalEntity& le)
-{
-    if (le.kind == 0) return kInteriorBit;
-    return (le.kind == 1 ? 0 : (le.kind == 2 ? kEdgeBit : kVertexBit)) + le.index;
-}
 
 // ---- gather form: every copy sums its own node ------------------------------------
 //

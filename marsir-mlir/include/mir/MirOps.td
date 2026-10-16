@@ -174,8 +174,8 @@ def Mir_FluxOp : Mir_Op<"flux",
   }];
 }
 
-def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, HasParent<"FluxOp">]> {
-  let summary = "terminator yielding the per-point result of a mir.qfunction";
+def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp"]>]> {
+  let summary = "terminator of mir.flux (per-point result) and mir.dss (epilogue results)";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
   // Zero-operand builder (defined in MirOps.cpp) so SingleBlockImplicitTerminator
@@ -187,7 +187,7 @@ def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, HasParent<"FluxOp">]> {
 // mir.dss : direct stiffness summation on element-local (cell-wise) vectors.
 //===----------------------------------------------------------------------===//
 
-def Mir_DssOp : Mir_Op<"dss"> {
+def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
   let summary = "direct stiffness summation on element-local hex vectors";
   let description = [{
     Every element-local copy of a node gets the sum over all copies of that
@@ -211,10 +211,29 @@ def Mir_DssOp : Mir_Op<"dss"> {
       vert_of[e*8+c], vert_off, vert_ent
                           corner stars; entries element*8 + corner
 
-    Example (p = 7):
-      mir.dss ins(%u, %ghost) elements(%ids) faces(%fn, %fc)
+    Without an epilogue, outs is one array that receives the sums.
+
+    With an epilogue (what the hand kernels pass to for_each_copy_sum as
+    `visit`), the region runs for every written copy t with
+      (sum, dirichlet: i1, counted: i1, copies[0][t], copies[1][t], ...)
+    and yields one value per `outs` array (stored at t) followed by
+    `reductions` terms. Each term is summed over the copies of an element, and
+    the sums go to partials[w * reductions + j] for the w-th listed element:
+    reductions without atomics, in a fixed order. `dirichlet` and `counted`
+    need flags(counting, edge_dirichlet, vert_dirichlet): counting[e] has bit b
+    set when element e holds the counting copy of its entity with bit b (faces
+    0-5, edges 8-19, corners 20-27, interior 31), so a sum over counted copies
+    takes every node once.
+
+    Example (the Jacobi preconditioner with <a, z> and <z, z>):
+      mir.dss ins(%q, %ghost) elements(%ids) faces(%fn, %fc)
               edges(%eo, %eoff, %eent) vertices(%vo, %voff, %vent)
-              outs(%y) {degree = 7 : i64} : memref<?xf64>, ...
+              flags(%cnt, %edir, %vdir) copies(%diag, %a) outs(%z)
+              partials(%part) {degree = 7 : i64, reductions = 2 : i64}
+              : memref<?xf64>, ... epilogue {
+      ^bb0(%s: f64, %d: i1, %c: i1, %dg: f64, %a: f64):
+        ... mir.yield %z, %az, %zz : f64, f64, f64
+      }
   }];
 
   let arguments = (ins
@@ -229,16 +248,24 @@ def Mir_DssOp : Mir_Op<"dss"> {
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_of,
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_off,
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_ent,
-      Arg<MemRefRankOf<[F64], [1]>, "summed copies", [MemWrite]>:$out,
-      I64Attr:$degree);
+      Arg<Variadic<AnyMemRef>, "counting, edge_dirichlet, vert_dirichlet", [MemRead]>:$flags,
+      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy epilogue inputs", [MemRead]>:$copies,
+      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      I64Attr:$degree,
+      DefaultValuedAttr<I64Attr, "0">:$reductions);
+  let regions = (region AnyRegion:$epilogue);
 
   let assemblyFormat = [{
     `ins` `(` $values `,` $ghost `)` `elements` `(` $elements `)`
     `faces` `(` $face_nbr `,` $face_code `)`
     `edges` `(` $edge_of `,` $edge_off `,` $edge_ent `)`
     `vertices` `(` $vert_of `,` $vert_off `,` $vert_ent `)`
-    `outs` `(` $out `)` attr-dict `:` type(operands)
+    (`flags` `(` $flags^ `)`)? (`copies` `(` $copies^ `)`)?
+    `outs` `(` $outs `)` (`partials` `(` $partials^ `)`)?
+    attr-dict `:` type(operands) (`epilogue` $epilogue^)?
   }];
+  let hasVerifier = 1;
 }
 
 #endif // MIR_OPS

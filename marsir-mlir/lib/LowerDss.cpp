@@ -24,6 +24,13 @@
 // Summation order is the hand kernel's, so the results are bit-identical: a
 // face node is own + other, a star sum starts from 0 and adds the entries in
 // order, four loads in flight at a time.
+//
+// With an epilogue (the hand kernels' `visit`), two more phases:
+//   scf.parallel over the 32 entity bits, reducing with OR: the element's
+//     Dirichlet mask (mapped onto lanes this is the hand kernel's ballot)
+//   the write-back runs the epilogue on every copy, stores its per-copy results
+//     and reduces its terms over the element with scf.reduce; the element's
+//     sums go to partials[w * reductions + j].
 
 #include "mir/MirOps.h"
 #include "mir/MirPasses.h"
@@ -35,6 +42,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -54,6 +62,7 @@ struct HexTables {
   std::vector<int8_t> face_map;   // [64][F]: frame codes (own | other << 3), own q -> other's q
   std::vector<int16_t> edge_l;    // [12][n]: local node of edge k at position t
   std::vector<int16_t> corner_l;  // [8]
+  std::vector<int8_t> bit;        // [n^3]: entity bit of every local node
 };
 
 // Same loops as build_hex_tables<P> in mars_cellwise_topology.hpp.
@@ -76,6 +85,8 @@ HexTables buildTables() {
     t.edge_l.push_back((int16_t)cw::edge_node<P>(i / n, i % n));
   for (int c = 0; c < 8; ++c)
     t.corner_l.push_back((int16_t)cw::corner_node<P>(c));
+  for (int l = 0; l < n * n * n; ++l)
+    t.bit.push_back((int8_t)cw::entity_bit(cw::local_entity<P>(l / (n * n), (l / n) % n, l % n)));
   return t;
 }
 
@@ -119,8 +130,10 @@ struct Emit {
 // The operands of one mir.dss, plus the tables and sizes its lowering derives.
 struct Dss {
   int P, n, n3, F, Ed;
-  Value values, ghost, faceNbr, faceCode, edgeOf, edgeOff, edgeEnt, vertOf, vertOff, vertEnt, out;
-  Value faceL, faceMap, edgeL, cornerL;   // constant globals
+  Value values, ghost, faceNbr, faceCode, edgeOf, edgeOff, edgeEnt, vertOf, vertOff, vertEnt;
+  SmallVector<Value> outs, copies;
+  Value counting, edgeDir, vertDir, partials;   // with an epilogue
+  Value faceL, faceMap, edgeL, cornerL, bit;   // constant globals
   Value localValues;                      // size(values): copies past it are ghosts
 
   // Copy i (index): a local copy or a ghost copy.
@@ -226,7 +239,16 @@ LogicalResult lowerOne(mir::DssOp op) {
   d.vertOf = op.getVertOf();
   d.vertOff = op.getVertOff();
   d.vertEnt = op.getVertEnt();
-  d.out = op.getOut();
+  d.outs.assign(op.getOuts().begin(), op.getOuts().end());
+  d.copies.assign(op.getCopies().begin(), op.getCopies().end());
+  Region *epilogue = op.getEpilogue().empty() ? nullptr : &op.getEpilogue();
+  const int64_t reductions = op.getReductions();
+  if (epilogue) {
+    d.counting = op.getFlags()[0];
+    d.edgeDir = op.getFlags()[1];
+    d.vertDir = op.getFlags()[2];
+    d.partials = op.getPartials();
+  }
   const std::string tag = "__mir_dss_p" + std::to_string(P);
   if (d.F > 0) {
     d.faceL = constantTable(b, mod, loc, tag + "_face_l", b.getI16Type(), widen(tables.face_l));
@@ -234,6 +256,8 @@ LogicalResult lowerOne(mir::DssOp op) {
   }
   d.edgeL = constantTable(b, mod, loc, tag + "_edge_l", b.getI16Type(), widen(tables.edge_l));
   d.cornerL = constantTable(b, mod, loc, tag + "_corner_l", b.getI16Type(), widen(tables.corner_l));
+  if (epilogue)
+    d.bit = constantTable(b, mod, loc, tag + "_bit", b.getI8Type(), widen(tables.bit));
   d.localValues = b.create<memref::DimOp>(loc, d.values, 0);
   Value count = b.create<memref::DimOp>(loc, op.getElements(), 0);
   Value elements = op.getElements();
@@ -246,6 +270,26 @@ LogicalResult lowerOne(mir::DssOp op) {
         [&](OpBuilder &pb, Location pl, ValueRange iv) { body(pb, pl, iv[0]); });
     par->setAttr("mir.lanes", ob.getUnitAttr());
   };
+  // The same with reductions: body returns one term per init value, combined
+  // with `combine`; returns the reduced values.
+  auto reduceLanes = [&](OpBuilder &ob, Location l, int64_t trips, ValueRange inits,
+                         function_ref<Value(OpBuilder &, Location, Value, Value)> combine,
+                         function_ref<SmallVector<Value>(OpBuilder &, Location, Value)> body) {
+    Emit y{ob, l};
+    auto par = ob.create<scf::ParallelOp>(
+        l, ValueRange{y.idx(0)}, ValueRange{y.idx(trips)}, ValueRange{y.idx(1)}, inits,
+        [&](OpBuilder &pb, Location pl, ValueRange iv, ValueRange) {
+          const SmallVector<Value> terms = body(pb, pl, iv[0]);
+          auto red = pb.create<scf::ReduceOp>(pl, terms);
+          for (unsigned i = 0; i < terms.size(); ++i) {
+            Block &blk = red.getReductions()[i].front();
+            OpBuilder rb = OpBuilder::atBlockEnd(&blk);
+            rb.create<scf::ReduceReturnOp>(pl, combine(rb, pl, blk.getArgument(0), blk.getArgument(1)));
+          }
+        });
+    par->setAttr("mir.lanes", ob.getUnitAttr());
+    return SmallVector<Value>(par.getResults());
+  };
 
   auto elementLoop = b.create<scf::ParallelOp>(
       loc, ValueRange{x.idx(0)}, ValueRange{count}, ValueRange{x.idx(1)},
@@ -257,6 +301,65 @@ LogicalResult lowerOne(mir::DssOp op) {
         auto stage = eb.create<memref::AllocaOp>(
             l, MemRefType::get({(int64_t)d.n * d.n * (d.n + 1)}, eb.getF64Type()));
         stage->setAttr("mir.scratch", eb.getUnitAttr());
+
+        // The element's Dirichlet mask: bit b set when entity b is a Dirichlet entity.
+        Value dmask;
+        if (epilogue)
+          dmask = reduceLanes(
+              eb, l, 32, ValueRange{y.i32(0)},
+              [](OpBuilder &rb, Location rl, Value a, Value c) -> Value { return rb.create<arith::OrIOp>(rl, a, c); },
+              [&](OpBuilder &pb, Location pl, Value slotIv) -> SmallVector<Value> {
+                Emit z{pb, pl};
+                const Value bit = z.toI32(slotIv), mask = z.i32(0x7fffffff), zero = z.i32(0);
+                auto nonzero01 = [&](Emit &t, Value v8) {
+                  const Value v = t.b.create<arith::ExtUIOp>(t.loc, t.b.getI32Type(), v8);
+                  return t.select(t.b.create<arith::CmpIOp>(t.loc, arith::CmpIPredicate::ne, v, t.i32(0)), t.i32(1),
+                                  t.i32(0));
+                };
+                auto corner = [&](OpBuilder &cb, Location cl) {
+                  Emit t{cb, cl};
+                  const Value c = t.sub(bit, t.i32(cw::kVertexBit));
+                  auto inRange = cb.create<arith::AndIOp>(
+                      cl, cb.create<arith::CmpIOp>(cl, arith::CmpIPredicate::sge, c, zero), t.lt(c, t.i32(8)));
+                  auto r = cb.create<scf::IfOp>(
+                      cl, inRange,
+                      [&](OpBuilder &tb, Location tl) {
+                        Emit u{tb, tl};
+                        const Value g = u.toIndex(u.load(d.vertOf, u.add(u.mul(e, u.idx(8)), u.toIndex(c))));
+                        tb.create<scf::YieldOp>(tl, nonzero01(u, u.load(d.vertDir, g)));
+                      },
+                      [&](OpBuilder &fb, Location fl) { fb.create<scf::YieldOp>(fl, Emit{fb, fl}.i32(0)); });
+                  cb.create<scf::YieldOp>(cl, r.getResult(0));
+                };
+                auto edge = [&](OpBuilder &cb, Location cl) {
+                  Emit t{cb, cl};
+                  const Value k = t.sub(bit, t.i32(cw::kEdgeBit));
+                  auto inRange = cb.create<arith::AndIOp>(
+                      cl, cb.create<arith::CmpIOp>(cl, arith::CmpIPredicate::sge, k, zero), t.lt(k, t.i32(12)));
+                  auto r = cb.create<scf::IfOp>(
+                      cl, inRange,
+                      [&](OpBuilder &tb, Location tl) {
+                        Emit u{tb, tl};
+                        const Value own = u.load(d.edgeOf, u.add(u.mul(e, u.idx(12)), u.toIndex(k)));
+                        tb.create<scf::YieldOp>(tl, nonzero01(u, u.load(d.edgeDir, u.toIndex(u.band(own, mask)))));
+                      },
+                      corner);
+                  cb.create<scf::YieldOp>(cl, r.getResult(0));
+                };
+                auto isDirichlet = pb.create<scf::IfOp>(
+                    pl, z.lt(bit, z.i32(6)),
+                    [&](OpBuilder &tb, Location tl) {
+                      Emit u{tb, tl};
+                      const Value code = tb.create<arith::ExtUIOp>(
+                          tl, tb.getI32Type(), u.load(d.faceCode, u.add(u.mul(e, u.idx(6)), u.toIndex(bit))));
+                      const Value high = tb.create<arith::ShRUIOp>(tl, code, u.i32(6));
+                      tb.create<scf::YieldOp>(tl, u.select(tb.create<arith::CmpIOp>(tl, arith::CmpIPredicate::ne,
+                                                                                    high, u.i32(0)),
+                                                           u.i32(1), u.i32(0)));
+                    },
+                    edge);
+                return {pb.create<arith::ShLIOp>(pl, isDirichlet.getResult(0), bit).getResult()};
+              })[0];
 
         lanes(eb, l, d.n3, [&](OpBuilder &pb, Location pl, Value node) {
           Emit z{pb, pl};
@@ -334,10 +437,44 @@ LogicalResult lowerOne(mir::DssOp op) {
               });
         });
 
-        lanes(eb, l, d.n3, [&](OpBuilder &pb, Location pl, Value node) {
-          Emit z{pb, pl};
-          z.store(z.load(stage, d.slot(z, node)), d.out, z.add(base, node));
-        });
+        if (!epilogue) {
+          lanes(eb, l, d.n3, [&](OpBuilder &pb, Location pl, Value node) {
+            Emit z{pb, pl};
+            z.store(z.load(stage, d.slot(z, node)), d.outs[0], z.add(base, node));
+          });
+          return;
+        }
+        const Value countingBits = y.load(d.counting, e);
+        SmallVector<Value> zeros(reductions, y.f64(0.0));
+        const SmallVector<Value> sums = reduceLanes(
+            eb, l, d.n3, zeros,
+            [](OpBuilder &rb, Location rl, Value a, Value c) -> Value { return rb.create<arith::AddFOp>(rl, a, c); },
+            [&](OpBuilder &pb, Location pl, Value node) -> SmallVector<Value> {
+              Emit z{pb, pl};
+              const Value t = z.add(base, node);
+              const Value bit = z.entry(d.bit, z.toI32(node));
+              auto flag = [&](Value word) {
+                const Value one = z.i32(1);
+                return pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::ne,
+                                                z.band(pb.create<arith::ShRUIOp>(pl, word, bit), one), z.i32(0))
+                    .getResult();
+              };
+              IRMapping map;
+              Block &body = epilogue->front();
+              map.map(body.getArgument(0), z.load(stage, d.slot(z, node)));
+              map.map(body.getArgument(1), flag(dmask));
+              map.map(body.getArgument(2), flag(countingBits));
+              for (unsigned j = 0; j < d.copies.size(); ++j) map.map(body.getArgument(3 + j), z.load(d.copies[j], t));
+              for (Operation &bop : body.without_terminator()) pb.clone(bop, map);
+              auto yield = cast<mir::YieldOp>(body.getTerminator());
+              for (unsigned j = 0; j < d.outs.size(); ++j) z.store(map.lookup(yield.getOperand(j)), d.outs[j], t);
+              SmallVector<Value> terms;
+              for (unsigned j = d.outs.size(); j < yield.getNumOperands(); ++j)
+                terms.push_back(map.lookup(yield.getOperand(j)));
+              return terms;
+            });
+        for (int64_t j = 0; j < reductions; ++j)
+          y.store(sums[j], d.partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
       });
   elementLoop->setAttr("mir.elements", b.getUnitAttr());
   op.erase();

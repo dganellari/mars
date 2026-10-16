@@ -10,7 +10,8 @@
 //   gpu.block_id x        -> call @mir_emu_block()       (y, z -> 0)
 //   gpu.grid_dim x        -> call @mir_emu_grid()        (y, z -> 1)
 //   gpu.block_dim x       -> 32                          (y, z -> 1)
-//   gpu.shuffle idx f64   -> call @mir_emu_shfl(v, src)
+//   gpu.shuffle f64/i32   -> call @mir_emu_shfl(v, src) / @mir_emu_shfl_i32(v, src),
+//                            src = offset (idx) or lane ^ offset (xor)
 //   gpu.barrier           -> call @mir_emu_barrier()
 //   nvgpu.mma.sync m8n8k4 -> call @mir_emu_mma(a, b, c0, c1), @mir_emu_mma_hi()
 //   {mir.workgroup} arg   -> memref.get_global of one process-wide buffer. The
@@ -76,6 +77,7 @@ struct EmulateWarpPass
     declare("mir_emu_grid", {}, {idx});
     declare("mir_emu_barrier", {}, {});
     declare("mir_emu_shfl", {f64, i32}, {f64});
+    declare("mir_emu_shfl_i32", {i32, i32}, {i32});
     declare("mir_emu_mma", {f64, f64, f64, f64}, {f64});
     declare("mir_emu_mma_hi", {}, {f64});
 
@@ -117,13 +119,19 @@ struct EmulateWarpPass
                                     loc, t.getDimension() == gpu::Dimension::x ? 32 : 1)
                                    .getResult());
         } else if (auto s = dyn_cast<gpu::ShuffleOp>(op)) {
-          if (s.getMode() != gpu::ShuffleMode::IDX ||
-              !s.getValue().getType().isF64()) {
-            s.emitOpError("mir-emulate-warp: only f64 idx shuffles are emulated");
+          const bool isF64 = s.getValue().getType().isF64();
+          if ((s.getMode() != gpu::ShuffleMode::IDX && s.getMode() != gpu::ShuffleMode::XOR) ||
+              (!isF64 && !s.getValue().getType().isInteger(32))) {
+            s.emitOpError("mir-emulate-warp: only idx/xor shuffles of f64/i32 are emulated");
             return signalPassFailure();
           }
-          Value r = call("mir_emu_shfl", {f64}, {s.getValue(), s.getOffset()})
-                        .getResult(0);
+          Value src = s.getOffset();
+          if (s.getMode() == gpu::ShuffleMode::XOR) {
+            Value lane = b.create<arith::IndexCastOp>(loc, i32, call("mir_emu_lane", {idx}, {}).getResult(0));
+            src = b.create<arith::XOrIOp>(loc, lane, src);
+          }
+          Value r = isF64 ? call("mir_emu_shfl", {f64}, {s.getValue(), src}).getResult(0)
+                          : call("mir_emu_shfl_i32", {i32}, {s.getValue(), src}).getResult(0);
           s.getShuffleResult().replaceAllUsesWith(r);
           s.getValid().replaceAllUsesWith(
               b.create<arith::ConstantIntOp>(loc, 1, 1).getResult());

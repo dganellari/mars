@@ -22,7 +22,12 @@
 // (marsir-mlir/test/dss_gpu_pipeline.py) in every check above, which must give the
 // same bits as the hand-written kernel on every copy, and time the two.
 //
-// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file]
+// --precond-ptx <precond_p7_az_zz_sm90.ptx>: the generated Jacobi preconditioner with
+// <a, z> and <z, z> against unstructured_precondition_kernel<true, true> on the rotated
+// cube: z must have the same bits; the dot products agree to rounding (the two kernels
+// reduce in different orders). Times the two.
+//
+// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file] [--precond-ptx file]
 // (several ranks need GPU-aware MPI: on Cray MPICH, MPICH_GPU_SUPPORT_ENABLED=1)
 
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_dss.hpp"
@@ -235,6 +240,24 @@ float time_ms(int reps, F&& f)
     return ms / reps;
 }
 
+// Inputs of the preconditioner check: diag in [1, 2], a in [-1, 1].
+__global__ void precond_inputs_kernel(double* diag, double* a, long long n)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= n) return;
+    diag[t] = 1.5 + 0.5 * sin(0.37 * (double)t);
+    a[t] = cos(0.11 * (double)t);
+}
+
+double host_sum(const thrust::device_vector<double>& v, long long count, int stride, int j)
+{
+    std::vector<double> h(count * stride);
+    thrust::copy(v.begin(), v.begin() + count * stride, h.begin());
+    double s = 0.0;
+    for (long long i = 0; i < count; ++i) s += h[i * stride + j];
+    return s;
+}
+
 int bits_differ(const double* a, const double* b, long long n)
 {
     thrust::device_vector<int> count(1, 0);
@@ -243,7 +266,7 @@ int bits_differ(const double* a, const double* b, long long n)
     return count[0];
 }
 
-bool one_rank(int ne, int reps, marsir::DssPtx* gen)
+bool one_rank(int ne, int reps, marsir::DssPtx* gen, marsir::PrecondPtx* pre)
 {
     const long long E = (long long)ne * ne * ne, n = E * kN3, NG = (long long)ne * kP + 1;
     Mesh plain, rotated;
@@ -301,6 +324,33 @@ bool one_rank(int ne, int reps, marsir::DssPtx* gen)
     row("structured gather", ms_struct);
     row("unstructured, plain", ms_plain);
     row("unstructured, rotated", ms_rot);
+
+    if (pre) {
+        thrust::device_vector<double> diag(n), a(n), z_hand(n), z_gen(n), part_gen(2 * E);
+        thrust::device_vector<double> part_hand(2 * std::max<long long>(E, 1 << 14));
+        precond_inputs_kernel<<<grid_of(n), kThreads>>>(raw(diag), raw(a), n);
+        input_kernel<<<grid_of(n), kThreads>>>(nullptr, raw(rotated.gid), n, raw(in));
+        const UnstructuredJacobi jacobi{view(rotated.topo), raw(diag), nullptr};
+        auto hand = [&] { return jacobi.operator()<true, true>(raw(in), raw(z_hand), raw(a), raw(part_hand), 0); };
+        auto generated = [&] {
+            pre->run(raw(in), nullptr, raw(z_gen), raw(diag), raw(a), raw(part_gen), rotated.topo, ElementList{nullptr, E});
+        };
+        const int blocks = hand();
+        generated();
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        const int bd = bits_differ(raw(z_gen), raw(z_hand), n);
+        double rel = 0.0;
+        for (int j = 0; j < 2; ++j) {
+            const double h = host_sum(part_hand, blocks, 2, j), g = host_sum(part_gen, E, 2, j);
+            rel = std::max(rel, fabs(g - h) / fabs(h));
+            printf("  preconditioner dot %d: hand %.17g, MARSIR %.17g\n", j, h, g);
+        }
+        printf("  MARSIR preconditioner vs hand kernel: %d copies of z differ in any bit, dots differ by %.1e\n", bd,
+               rel);
+        ok &= bd == 0 && rel < 1e-12;
+        row("preconditioner+dots, hand", time_ms(reps, [&] { hand(); }));
+        row("preconditioner+dots, MARSIR", time_ms(reps, generated));
+    }
     if (!gen) return ok;
 
     thrust::device_vector<double> out_gen(n);
@@ -403,10 +453,12 @@ int main(int argc, char** argv)
     }
     int ne = 8, reps = 20;
     const char* dss_ptx = nullptr;
+    const char* precond_ptx = nullptr;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--dss-ptx")) dss_ptx = argv[i + 1];
+        else if (!strcmp(argv[i], "--precond-ptx")) precond_ptx = argv[i + 1];
         else { if (rank == 0) fprintf(stderr, "unknown option %s\n", argv[i]); MPI_Finalize(); return 1; }
     }
     if (size > 1) {   // device pointers go to MPI: MPICH needs GPU support switched on
@@ -435,8 +487,10 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaDeviceSynchronize());
 
     std::unique_ptr<marsir::DssPtx> gen(dss_ptx ? new marsir::DssPtx(dss_ptx, kP) : nullptr);
+    std::unique_ptr<marsir::PrecondPtx> pre(precond_ptx ? new marsir::PrecondPtx(precond_ptx, kP) : nullptr);
     if (gen && rank == 0) printf("MARSIR DSS %s\n", dss_ptx);
-    const bool ok = size == 1 ? one_rank(ne, reps, gen.get())
+    if (pre && rank == 0) printf("MARSIR preconditioner %s\n", precond_ptx);
+    const bool ok = size == 1 ? one_rank(ne, reps, gen.get(), pre.get())
                               : several_ranks(ne, reps, MPI_COMM_WORLD, gen.get());
     if (rank == 0) printf("UNSTRUCTURED DSS: %s\n", ok ? "PASS" : "FAIL");
     MPI_Finalize();

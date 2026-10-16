@@ -57,6 +57,7 @@ struct Barrier {
 struct Warp {
     Barrier bar;
     double xchg[kLanes];
+    int32_t xchg_i32[kLanes];
     double A[8][4], B[4][8], C[8][8];
 };
 Warp* warp = nullptr;
@@ -106,6 +107,16 @@ double mir_emu_shfl(double v, int32_t src)
     warp->bar.arrive_and_wait();
     const double r = warp->xchg[src & (kLanes - 1)];
     warp->bar.arrive_and_wait();   // nobody overwrites xchg before all have read
+    return r;
+}
+
+int32_t mir_emu_shfl_i32(int32_t v, int32_t src)
+{
+    HiddenExchange hidden;
+    warp->xchg_i32[tlLane] = v;
+    warp->bar.arrive_and_wait();
+    const int32_t r = warp->xchg_i32[src & (kLanes - 1)];
+    warp->bar.arrive_and_wait();
     return r;
 }
 

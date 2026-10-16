@@ -15,6 +15,12 @@
 // copies must stay untouched (NaN). Each with one block per element and with 3
 // blocks that stride over the list.
 //
+// -DMIR_DSS_PRECOND: the preconditioner kernel (mlir_ir.emit_dss_precond, Jacobi
+// with <a, z> and <z, z>) instead, with random Dirichlet entities and counting
+// bits: z must match unstructured_precondition_kernel's formula bit for bit, and
+// each element's partials the kernel's reduction order (lane L sums the copies
+// L, L + 32, ...; then an xor-shuffle tree over the 32 lanes).
+//
 // Build + run: python3 test/dss_gpu_pipeline.py [p] --emulate [--emu-tsan]
 #include <cmath>
 #include <cstdint>
@@ -39,7 +45,13 @@
 using D64 = Desc<double>;
 using D32 = Desc<int32_t>;
 using D8 = Desc<int8_t>;
+#ifdef MIR_DSS_PRECOND
+#define MIR_PRECOND_FN MIR_CAT(MIR_CAT(_mlir_ciface_precond_p, MIR_DSS_P), _az_zz)
+extern "C" void MIR_PRECOND_FN(D64*, D64*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, D32*, D8*, D8*, D64*,
+                               D64*, D64*, D64*);
+#else
 extern "C" void MIR_DSS_FN(D64*, D64*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, D64*);
+#endif
 
 namespace {
 
@@ -57,6 +69,9 @@ struct Mesh {
     std::vector<double> values, ghost;
     std::vector<int32_t> face_nbr, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent;
     std::vector<int8_t> face_code;
+    std::vector<int32_t> counting;              // preconditioner only
+    std::vector<int8_t> edge_dir, vert_dir;
+    std::vector<double> diag, a;
 
     double value(long long i) const { return i < (long long)values.size() ? values[i] : ghost[i - values.size()]; }
 };
@@ -98,6 +113,12 @@ Mesh random_mesh(long long E, long long G, unsigned seed)
         m.edge_of.push_back(g);
     }
     for (long long i = 0; i < E * 8; ++i) m.vert_of.push_back((int32_t)uni(0, verts - 1));
+    for (long long e = 0; e < E; ++e) m.counting.push_back((int32_t)((uint32_t)uni(0, 0xfffffff) | (1u << cw::kInteriorBit)));
+    for (long long g = 0; g < edges; ++g) m.edge_dir.push_back((int8_t)(uni(0, 3) == 0 ? uni(1, 2) : 0));
+    for (long long g = 0; g < verts; ++g) m.vert_dir.push_back((int8_t)(uni(0, 3) == 0 ? 1 : 0));
+    std::uniform_real_distribution<double> pos(1.0, 2.0);
+    for (long long i = 0; i < E * n3; ++i) m.diag.push_back(pos(rng));
+    for (long long i = 0; i < E * n3; ++i) m.a.push_back(val(rng));
     return m;
 }
 
@@ -109,8 +130,10 @@ double star_sum(const Mesh& m, const std::vector<int32_t>& ent, int begin, int e
 }
 
 // for_each_copy_sum<P>, one element at a time.
-void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<double>& out)
+void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<double>& out, std::vector<double>& partials)
 {
+    std::vector<long long> position(m.E, -1);   // place of each element in the list
+    for (size_t w = 0; w < list.size(); ++w) position[list[w]] = (long long)w;
     int face_l[6 * (F > 0 ? F : 1)], face_map[64 * (F > 0 ? F : 1)], edge_l[12 * n], corner_l[8];
     if constexpr (P > 1) {
         for (int i = 0; i < 64 * F; ++i) {
@@ -148,15 +171,46 @@ void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<doub
             stage[corner_l[c]] = star_sum(m, m.vert_ent, m.vert_off[g], m.vert_off[g + 1],
                                           [&](int32_t v) { return (long long)(v / 8) * n3 + corner_l[v % 8]; });
         }
+#ifdef MIR_DSS_PRECOND
+        // unstructured_precondition_kernel's visit, in the generated kernel's
+        // reduction order.
+        unsigned dmask = 0;
+        for (int f = 0; f < 6; ++f) dmask |= (((uint8_t)m.face_code[e * 6 + f] >> 6) != 0 ? 1u : 0u) << f;
+        for (int k = 0; k < 12; ++k)
+            dmask |= (m.edge_dir[m.edge_of[e * 12 + k] & 0x7fffffff] != 0 ? 1u : 0u) << (cw::kEdgeBit + k);
+        for (int c = 0; c < 8; ++c) dmask |= (m.vert_dir[m.vert_of[e * 8 + c]] != 0 ? 1u : 0u) << (cw::kVertexBit + c);
+        double acc[32][2] = {};
+        for (int l = 0; l < n3; ++l) {
+            const int bit = cw::entity_bit(cw::local_entity<P>(l / (n * n), (l / n) % n, l % n));
+            const bool dir = (dmask >> bit) & 1u, counted = ((uint32_t)m.counting[e] >> bit) & 1u;
+            const double v = dir ? 0.0 : stage[l] / m.diag[base + l];
+            const double w = counted ? 1.0 : 0.0;
+            out[base + l] = v;
+            acc[l % 32][0] += m.a[base + l] * v * w;
+            acc[l % 32][1] += v * v * w;
+        }
+        for (int off = 16; off >= 1; off /= 2) {
+            double next[32][2];
+            for (int L = 0; L < 32; ++L)
+                for (int j = 0; j < 2; ++j) next[L][j] = acc[L][j] + acc[L ^ off][j];
+            memcpy(acc, next, sizeof(acc));
+        }
+        for (int j = 0; j < 2; ++j) partials[(size_t)position[e] * 2 + j] = acc[0][j];
+#else
         for (int l = 0; l < n3; ++l) out[base + l] = stage[l];
+#endif
     }
 }
 
 // The emulated kernel on `list` with `grid` blocks of 32 lanes, one block at a
 // time (the workgroup buffers are process-wide globals here).
-void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out, long long grid)
+void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out, std::vector<double>& partials,
+              long long grid)
 {
-    D64 dv = desc(m.values), dg = desc(m.ghost), dout = desc(out);
+    D64 dv = desc(m.values), dg = desc(m.ghost), dout = desc(out), dpart = desc(partials);
+    D32 dcnt = desc(m.counting);
+    D8 dedir = desc(m.edge_dir), dvdir = desc(m.vert_dir);
+    D64 ddiag = desc(m.diag), da = desc(m.a);
     D32 dl = desc(list), dfn = desc(m.face_nbr), deo = desc(m.edge_of), deoff = desc(m.edge_off),
         deent = desc(m.edge_ent), dvo = desc(m.vert_of), dvoff = desc(m.vert_off), dvent = desc(m.vert_ent);
     D8 dfc = desc(m.face_code);
@@ -169,7 +223,13 @@ void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out, lon
                 tlLane = L;
                 tlBlock = b;
                 tlGrid = grid;
+#ifdef MIR_DSS_PRECOND
+                MIR_PRECOND_FN(&dv, &dg, &dl, &dfn, &dfc, &deo, &deoff, &deent, &dvo, &dvoff, &dvent, &dcnt, &dedir,
+                               &dvdir, &ddiag, &da, &dout, &dpart);
+#else
+                (void)dpart, (void)dcnt, (void)dedir, (void)dvdir, (void)ddiag, (void)da;
                 MIR_DSS_FN(&dv, &dg, &dl, &dfn, &dfc, &deo, &deoff, &deent, &dvo, &dvoff, &dvent, &dout);
+#endif
             });
         for (auto& t : lanes) t.join();
     }
@@ -199,13 +259,26 @@ int main(int argc, char** argv)
     for (auto* list : {&all, &some})
         for (long long grid : {(long long)list->size(), 3LL}) {
             std::vector<double> ref(E * n3, std::nan("")), got(E * n3, std::nan(""));
-            reference(m, *list, ref);
-            emulated(m, *list, got, grid);
+            std::vector<double> ref_part(list->size() * 2, std::nan("")), got_part(list->size() * 2, std::nan(""));
+            reference(m, *list, ref, ref_part);
+            emulated(m, *list, got, got_part, grid);
             const long long bad = mismatches(ref, got);
+#ifdef MIR_DSS_PRECOND
+            const long long bad_part = mismatches(ref_part, got_part);
+            printf("  p=%d, %zu of %lld elements listed, %lld ghosts, %lld blocks: %lld of %lld copies, %lld of %zu "
+                   "partials differ\n", P, list->size(), E, G, grid, bad, E * n3, bad_part, ref_part.size());
+            failed |= bad != 0 || bad_part != 0;
+#else
             printf("  p=%d, %zu of %lld elements listed, %lld ghosts, %lld blocks: %lld of %lld copies differ\n", P,
                    list->size(), E, G, grid, bad, E * n3);
             failed |= bad != 0;
+#endif
         }
-    printf("DSS WARP EMULATION (p=%d, bit-exact vs the hand kernel's formula): %s\n", P, failed ? "FAIL" : "PASS");
+#ifdef MIR_DSS_PRECOND
+    const char* what = "PRECONDITIONER";
+#else
+    const char* what = "DSS";
+#endif
+    printf("%s WARP EMULATION (p=%d, bit-exact vs the hand kernel's formula): %s\n", what, P, failed ? "FAIL" : "PASS");
     return failed;
 }

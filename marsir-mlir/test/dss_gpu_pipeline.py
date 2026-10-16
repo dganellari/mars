@@ -28,7 +28,10 @@ staging phase (1.31 ms).
 compared bit for bit with the hand kernel's formula; --emu-tsan adds
 ThreadSanitizer, which reports any shared access no barrier orders.
 
-Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--emulate [--emu-tsan]]
+--precond: the Jacobi preconditioner with <a, z> and <z, z> instead
+(mlir_ir.emit_dss_precond: mir.dss with an epilogue), precond_p{p}_az_zz_sm90.ptx.
+
+Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond] [--emulate [--emu-tsan]]
 """
 import os
 import re
@@ -53,16 +56,17 @@ def run(cmd, data):
 def main():
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     p = int(argv[0]) if argv else 7
+    precond = "--precond" in sys.argv
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(MARS, 'marsir-compiler')!r})
 from marsir.backends import mlir_ir
-sys.stdout.write(mlir_ir.emit_dss({p}))
+sys.stdout.write(mlir_ir.{'emit_dss_precond' if precond else 'emit_dss'}({p}))
 """], "")
     ir = run([MIROPT, "-", "--mir-lower-dss", "--canonicalize", "--cse",
               "--mir-warp-per-element", "--canonicalize", "--cse",
               "--loop-invariant-code-motion"], src)
     if "--emulate" in sys.argv:
-        return emulate(ir, p)
+        return emulate(ir, p, precond)
 
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels ",
@@ -78,7 +82,7 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
     ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    out = os.path.join(ROOT, "generated", f"dss_p{p}_sm90.ptx")
+    out = os.path.join(ROOT, "generated", f"precond_p{p}_az_zz_sm90.ptx" if precond else f"dss_p{p}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [
@@ -101,7 +105,7 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
     return 0 if ok else 1
 
 
-def emulate(ir, p):
+def emulate(ir, p, precond):
     ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
     work = os.path.join(ROOT, "build", "emu_dss")
     os.makedirs(work, exist_ok=True)
@@ -126,8 +130,9 @@ def emulate(ir, p):
     cc = "/usr/bin/clang" if tsan else os.path.join(LLVM, "bin", "clang")
     run([cc, *san, "-c", os.path.join(work, "kernel.ll"),
          "-o", os.path.join(work, "kernel.o")], "")
-    exe = os.path.join(work, f"emu_dss_p{p}")
+    exe = os.path.join(work, f"emu_{'precond' if precond else 'dss'}_p{p}")
     run(["/usr/bin/clang++", "-std=c++20", *san, f"-DMIR_DSS_P={p}"]
+        + (["-DMIR_DSS_PRECOND"] if precond else [])
         + (["-DMIR_EMU_TSAN"] if tsan else []) +
         ["-I", MARS, os.path.join(ROOT, "tools", "emu_dss.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
@@ -135,7 +140,7 @@ def emulate(ir, p):
     r = subprocess.run([exe], capture_output=True, text=True, env=env)
     if tsan and "ThreadSanitizer: data race" in r.stderr:
         print("\n".join(r.stderr.splitlines()[:24]))
-        print("DSS WARP EMULATION (TSan): DATA RACE -- a shared access no gpu.barrier orders")
+        print("WARP EMULATION (TSan): DATA RACE -- a shared access no gpu.barrier orders")
         return 1
     print(r.stdout.strip() or r.stderr.strip())
     return r.returncode
