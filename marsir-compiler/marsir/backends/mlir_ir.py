@@ -439,7 +439,9 @@ def emit_dss(p=7):
     sig = ", ".join(f"%{name}: memref<?x{t}>" for name, t in DSS_ARGS)
     types = ", ".join(f"memref<?x{t}>" for _, t in DSS_ARGS)
     return "\n".join([
-        f"func.func @dss_p{p}({sig}) attributes {{mir.kernel}} {{",
+        # mir.noalias: no two arguments overlap. The gather reads neighbours'
+        # copies while it writes `out`, so it cannot run in place anyway.
+        f"func.func @dss_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
         f"  mir.dss ins({a['values']}, {a['ghost']}) elements({a['elements']})",
         f"          faces({a['face_nbr']}, {a['face_code']})",
         f"          edges({a['edge_of']}, {a['edge_off']}, {a['edge_ent']})",

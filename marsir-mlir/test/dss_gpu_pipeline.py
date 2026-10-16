@@ -8,7 +8,10 @@
       --mir-warp-per-element        element -> block, phases -> lane-cyclic loops,
                                     a barrier between phases, scratch -> shared
       --mir-gpu-wrap                gpu.func kernel (the tables move along)
-      explicit NVVM lowering        -> PTX   (as in hl_gpu_pipeline.py)
+      explicit NVVM lowering        as in hl_gpu_pipeline.py
+      --mir-noalias-descriptors     the arguments' data pointers noalias, so
+                                    read-only buffers load as ld.global.nc
+      -> PTX
 
 Kernel contract: dss_p{p}(values, ghost, elements, face_nbr, face_code, edge_of,
 edge_off, edge_ent, vert_of, vert_off, vert_ent, out), every argument a 1-D
@@ -56,8 +59,8 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
         return emulate(ir, p)
 
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = ir.replace("gpu.module @mir_kernels {",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
+    ir = ir.replace("gpu.module @mir_kernels ",
+                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] ', 1)
     ir = run([MLIROPT, "-",
               "--convert-scf-to-cf",
               "--expand-strided-metadata",
@@ -66,6 +69,7 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
               "--convert-arith-to-llvm", "--convert-index-to-llvm",
               "--convert-cf-to-llvm",
               "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
+    ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
     out = os.path.join(ROOT, "generated", f"dss_p{p}_sm90.ptx")
@@ -76,6 +80,7 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", "tid.x" in ptx),
         ("no local memory", ptx.count(".local") == 0),
+        ("values on the read-only path", "ld.global.nc.f64" in ptx),
         ("phase barriers", ptx.count("bar.sync") + ptx.count("barrier.sync") >= (3 if p > 1 else 2)),
         ("warp collectives convergent", subprocess.run(
             [sys.executable, os.path.join(HERE, "ptx_convergence.py"), out],

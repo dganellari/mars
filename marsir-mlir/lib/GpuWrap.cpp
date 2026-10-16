@@ -72,7 +72,16 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
       auto gfunc = gb.create<gpu::GPUFuncOp>(f.getLoc(), f.getName(),
                                              f.getFunctionType());
       gfunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(), gb.getUnitAttr());
-      // Argument attributes (llvm.noalias, ...) carry over to the kernel.
+      // The lowering drops function attributes; a {mir.noalias} promise survives
+      // on the gpu.module, for --mir-noalias-descriptors.
+      if (f->hasAttr("mir.noalias")) {
+        SmallVector<Attribute> names;
+        if (auto old = gmod->getAttrOfType<ArrayAttr>(mir::kMirNoaliasKernelsAttr))
+          names.append(old.begin(), old.end());
+        names.push_back(gb.getStringAttr(f.getName()));
+        gmod->setAttr(mir::kMirNoaliasKernelsAttr, gb.getArrayAttr(names));
+      }
+      // Argument attributes carry over to the kernel.
       for (unsigned i = 0; i < f.getNumArguments(); ++i)
         if (DictionaryAttr attrs = f.getArgAttrDict(i))
           gfunc.setArgAttrs(i, attrs);

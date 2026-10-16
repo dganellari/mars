@@ -46,6 +46,7 @@ ninja -C build mir-opt
 | `--mir-warp-wrap` | `lib/WarpWrap.cpp` | wraps innermost `scf.parallel` bodies in `vector.warp_execute_on_lane_0` (lane = `gpu.lane_id`) + hoists uniform code out so boundary writes can distribute |
 | `--mir-lower-dss` | `lib/LowerDss.cpp` | mir.dss -> per-element `scf.parallel` phases (own copies, face pairs, edge/corner stars, write-back), the hand kernel's summation order; reference-hex tables from MARS's `mars_cellwise_hex.hpp` as constant globals |
 | `--mir-warp-per-element` | `lib/WarpPerElement.cpp` | element loop -> `gpu.block_id x`, phase loops -> lane-cyclic `scf.for`, `gpu.barrier` between phases, scratch -> `{mir.workgroup}` |
+| `--mir-noalias-descriptors` | `lib/NoaliasDescriptors.cpp` | after the NVVM lowering: the data pointers of a `{mir.noalias}` kernel's memref arguments get `llvm.noalias`, and `llvm.readonly` when provably never written, so read-only buffers load as `ld.global.nc` (the lowering drops argument attributes) |
 | `--mir-warp-distribute` | `lib/WarpDistribute.cpp` | lane-distributes warp regions via upstream VectorDistribution patterns (shipped in MLIR 19 but unexposed) + `WarpOpContractToMma`: bridges m8n8k4 f64 `vector.contract` to `nvgpu.mma.sync` on per-lane DMMA fragments |
 
 ## Pipelines / PTX scripts

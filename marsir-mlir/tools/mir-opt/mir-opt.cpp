@@ -32,6 +32,7 @@ int main(int argc, char **argv) {
   mir::registerForwardOwnedPass();
   mir::registerLowerDssPass();
   mir::registerWarpPerElementPass();
+  mir::registerNoaliasDescriptorsPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

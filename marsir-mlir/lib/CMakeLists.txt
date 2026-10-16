@@ -19,6 +19,7 @@ add_mlir_dialect_library(MLIRMir
   ForwardOwned.cpp
   LowerDss.cpp
   WarpPerElement.cpp
+  NoaliasDescriptors.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -40,6 +41,7 @@ add_mlir_dialect_library(MLIRMir
   MLIRVectorDialect
   MLIRMemRefDialect
   MLIRGPUDialect
+  MLIRLLVMDialect
   MLIRNVGPUDialect
   MLIRFuncDialect
   )
