@@ -215,6 +215,15 @@ struct EmulateWarpPass
           fn.eraseArgument(i);
       }
       fn->setAttr("llvm.emit_c_interface", UnitAttr::get(ctx));
+      // <kernel>__threads(): the block size the harness launches.
+      auto threadsAttr = fn->getAttrOfType<IntegerAttr>("mir.block_threads");
+      OpBuilder tb(ctx);
+      tb.setInsertionPointAfter(fn);
+      auto q = tb.create<func::FuncOp>(fn.getLoc(), (fn.getName() + "__threads").str(),
+                                       tb.getFunctionType({}, {tb.getI64Type()}));
+      OpBuilder qb = OpBuilder::atBlockBegin(q.addEntryBlock());
+      qb.create<func::ReturnOp>(
+          fn.getLoc(), ValueRange{qb.create<arith::ConstantIntOp>(fn.getLoc(), threadsAttr ? threadsAttr.getInt() : 32, 64)});
     }
   }
 };

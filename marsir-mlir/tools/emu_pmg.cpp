@@ -37,6 +37,9 @@ Masked _mlir_ciface_masked_copy_p7, _mlir_ciface_masked_copy_p3;
 Interp _mlir_ciface_interp_4x8, _mlir_ciface_interp_2x4, _mlir_ciface_interp_8x4, _mlir_ciface_interp_8x4_add,
     _mlir_ciface_interp_4x2, _mlir_ciface_interp_4x2_add;
 void _mlir_ciface_pmg_dots_p7_az_zz(D32*, D32*, D64*, D64*, D64*, D64*);
+int64_t cheb_first0_p7__threads(), cheb_first0_p3__threads(), cheb_first0_p1__threads();
+int64_t masked_copy_p7__threads(), masked_copy_p3__threads();
+int64_t interp_4x8__threads(), pmg_dots_p7_az_zz__threads();
 }
 
 namespace {
@@ -48,13 +51,14 @@ Desc<T> desc(std::vector<T>& v)
 }
 
 template <typename F>
-void emulate(long long grid, F&& kernel)
+void emulate(int64_t threads, long long grid, F&& kernel)
 {
     Warp w;
+    w.bar.threads = (int)threads;
     warp = &w;
     for (long long b = 0; b < grid; ++b) {
         std::vector<std::thread> lanes;
-        for (int L = 0; L < kLanes; ++L)
+        for (int L = 0; L < threads; ++L)
             lanes.emplace_back([&, L, b] {
                 tlLane = L;
                 tlBlock = b;
@@ -90,7 +94,7 @@ std::vector<double> random_vector(long long size, unsigned seed)
 }
 
 template <int P>
-void chebyshev(Cheb* first0, Cheb* first, Cheb* next)
+void chebyshev(int64_t threads, Cheb* first0, Cheb* first, Cheb* next)
 {
     using Mesh = CellwiseMesh<P>;
     constexpr int n3 = Mesh::n3;
@@ -120,7 +124,7 @@ void chebyshev(Cheb* first0, Cheb* first, Cheb* next)
             eent = desc(m.edge_ent), vo = desc(m.vert_of), voff = desc(m.vert_off), vent = desc(m.vert_ent),
             cnt = desc(m.counting);
         D8 fc = desc(m.face_code), edir = desc(m.edge_dir), vdir = desc(m.vert_dir);
-        emulate((long long)list.size(), [&] {
+        emulate(threads, (long long)list.size(), [&] {
             kernels[kind](&db, &dg, &dy, &dl, &fn, &fc, &eo, &eoff, &eent, &vo, &voff, &vent, &cnt, &edir, &vdir, &ddiag,
                           &dd, &dx, c1, c2);
         });
@@ -129,7 +133,7 @@ void chebyshev(Cheb* first0, Cheb* first, Cheb* next)
 }
 
 template <int P>
-void masked_copy(Masked* kernel)
+void masked_copy(int64_t threads, Masked* kernel)
 {
     using Mesh = CellwiseMesh<P>;
     constexpr int n3 = Mesh::n3;
@@ -146,7 +150,7 @@ void masked_copy(Masked* kernel)
     D32 dl = desc(list), eo = desc(m.edge_of), vo = desc(m.vert_of);
     D8 fc = desc(m.face_code), edir = desc(m.edge_dir), vdir = desc(m.vert_dir);
     D64 db = desc(m.values), dr = desc(r);
-    emulate((long long)list.size(), [&] { kernel(&dl, &fc, &eo, &vo, &edir, &vdir, &db, &dr); });
+    emulate(threads, (long long)list.size(), [&] { kernel(&dl, &fc, &eo, &vo, &edir, &vdir, &db, &dr); });
     report("masked_copy", P, differ(r, ref), r.size());
 }
 
@@ -181,7 +185,7 @@ void interpolate(const char* what, Interp* kernel, int R, int C, bool add)
     }
     D32 dl = desc(list);
     D64 dm = desc(M), din = desc(in), dout = desc(out);
-    emulate((long long)list.size(), [&] { kernel(&dl, &dm, &din, &dout); });
+    emulate(interp_4x8__threads(), (long long)list.size(), [&] { kernel(&dl, &dm, &din, &dout); });
     printf("  %-14s %dx%d  %lld of %zu values differ\n", what, R, C, differ(out, ref), out.size());
     failed |= differ(out, ref) != 0;
 }
@@ -201,7 +205,7 @@ void dots()
     }
     D32 dl = desc(list), cnt = desc(m.counting);
     D64 dz = desc(z), da = desc(m.a), dsc = desc(sc), dp = desc(part);
-    emulate((long long)list.size(), [&] { _mlir_ciface_pmg_dots_p7_az_zz(&dl, &cnt, &dz, &da, &dsc, &dp); });
+    emulate(pmg_dots_p7_az_zz__threads(), (long long)list.size(), [&] { _mlir_ciface_pmg_dots_p7_az_zz(&dl, &cnt, &dz, &da, &dsc, &dp); });
     report("pmg_dots", 7, differ(part, ref), part.size());
 }
 
@@ -209,11 +213,11 @@ void dots()
 
 int main()
 {
-    chebyshev<7>(_mlir_ciface_cheb_first0_p7, _mlir_ciface_cheb_first_p7, _mlir_ciface_cheb_next_p7);
-    chebyshev<3>(_mlir_ciface_cheb_first0_p3, _mlir_ciface_cheb_first_p3, _mlir_ciface_cheb_next_p3);
-    chebyshev<1>(_mlir_ciface_cheb_first0_p1, _mlir_ciface_cheb_first_p1, _mlir_ciface_cheb_next_p1);
-    masked_copy<7>(_mlir_ciface_masked_copy_p7);
-    masked_copy<3>(_mlir_ciface_masked_copy_p3);
+    chebyshev<7>(cheb_first0_p7__threads(), _mlir_ciface_cheb_first0_p7, _mlir_ciface_cheb_first_p7, _mlir_ciface_cheb_next_p7);
+    chebyshev<3>(cheb_first0_p3__threads(), _mlir_ciface_cheb_first0_p3, _mlir_ciface_cheb_first_p3, _mlir_ciface_cheb_next_p3);
+    chebyshev<1>(cheb_first0_p1__threads(), _mlir_ciface_cheb_first0_p1, _mlir_ciface_cheb_first_p1, _mlir_ciface_cheb_next_p1);
+    masked_copy<7>(masked_copy_p7__threads(), _mlir_ciface_masked_copy_p7);
+    masked_copy<3>(masked_copy_p3__threads(), _mlir_ciface_masked_copy_p3);
     interpolate("restrict 7->3", _mlir_ciface_interp_4x8, 4, 8, false);
     interpolate("restrict 3->1", _mlir_ciface_interp_2x4, 2, 4, false);
     interpolate("prolong 3->7", _mlir_ciface_interp_8x4, 8, 4, false);
@@ -221,6 +225,8 @@ int main()
     interpolate("prolong 1->3", _mlir_ciface_interp_4x2, 4, 2, false);
     interpolate("prolong 1->3 +", _mlir_ciface_interp_4x2_add, 4, 2, true);
     dots();
+    printf("  block threads: cheb p7 %lld, p3 %lld, p1 %lld\n", (long long)cheb_first0_p7__threads(),
+           (long long)cheb_first0_p3__threads(), (long long)cheb_first0_p1__threads());
     printf("P-MULTIGRID KERNELS WARP EMULATION (bit-exact vs host formulas): %s\n", failed ? "FAIL" : "PASS");
     return failed;
 }

@@ -15,8 +15,11 @@
 // which then reports every pair of accesses from different lanes that no
 // gpu.barrier orders: a missing barrier, under the GPU's rules.
 //
-// Include it in exactly one translation unit of a harness. The harness sets
-// `warp`, and tlLane / tlBlock / tlGrid on every lane thread, before calling the kernel.
+// Include it in exactly one translation unit of a harness. The harness sets `warp`
+// (with bar.threads = the kernel's block size, <kernel>__threads()), and tlLane (the
+// thread of the block) / tlBlock / tlGrid on every thread, before calling the kernel.
+// Blocks of several warps: barriers span the block, shuffles stay in the warp; the
+// mma emulation assumes one warp.
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -38,13 +41,13 @@ constexpr int kLanes = 32;
 struct Barrier {
     std::mutex m;
     std::condition_variable cv;
-    int count = 0;
+    int count = 0, threads = kLanes;   // threads of the block
     unsigned gen = 0;
     void arrive_and_wait()
     {
         std::unique_lock<std::mutex> lk(m);
         const unsigned g = gen;
-        if (++count == kLanes) {
+        if (++count == threads) {
             count = 0;
             ++gen;
             cv.notify_all();
@@ -56,8 +59,8 @@ struct Barrier {
 
 struct Warp {
     Barrier bar;
-    double xchg[kLanes];
-    int32_t xchg_i32[kLanes];
+    double xchg[1024];       // by thread of the block; a shuffle reads within its warp
+    int32_t xchg_i32[1024];
     double A[8][4], B[4][8], C[8][8];
 };
 Warp* warp = nullptr;
@@ -105,7 +108,7 @@ double mir_emu_shfl(double v, int32_t src)
     HiddenExchange hidden;
     warp->xchg[tlLane] = v;
     warp->bar.arrive_and_wait();
-    const double r = warp->xchg[src & (kLanes - 1)];
+    const double r = warp->xchg[(tlLane & ~(int64_t)(kLanes - 1)) | (src & (kLanes - 1))];
     warp->bar.arrive_and_wait();   // nobody overwrites xchg before all have read
     return r;
 }
@@ -115,7 +118,7 @@ int32_t mir_emu_shfl_i32(int32_t v, int32_t src)
     HiddenExchange hidden;
     warp->xchg_i32[tlLane] = v;
     warp->bar.arrive_and_wait();
-    const int32_t r = warp->xchg_i32[src & (kLanes - 1)];
+    const int32_t r = warp->xchg_i32[(tlLane & ~(int64_t)(kLanes - 1)) | (src & (kLanes - 1))];
     warp->bar.arrive_and_wait();
     return r;
 }

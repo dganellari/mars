@@ -1,40 +1,49 @@
-// --mir-warp-per-element: map per-element parallel loops onto one warp per element.
+// --mir-warp-per-element: map per-element parallel loops onto the lanes of a block.
 //
-//   scf.parallel (w) = (0) to (N) {mir.elements}      ->  scf.for w = block_id to N step grid_dim {
-//     %s = memref.alloca {mir.scratch}                       %s = the warp's shared buffer
-//     scf.parallel (i) = (a) to (b) {mir.lanes} {A}          scf.for i = a + lane to b step 32 {A}
+//   scf.parallel (w) = (0) to (N) {mir.elements}      ->  scf.for c = block_id to N / G step grid_dim {
+//     %s = memref.alloca {mir.scratch}                       w = c G + group, %s = the group's shared buffer
+//     scf.parallel (i) = (a) to (b) {mir.lanes} {A}          scf.for i = a + glane to b step L {A}
 //     scf.parallel (j) = (c) to (d) {mir.lanes} {B}          gpu.barrier
-//                                                             scf.for j = c + lane to d step 32 {B}
+//                                                             scf.for j = c + glane to d step L {B}
 //                                                             gpu.barrier
 //                                                           }
 //
-// Launch contract: blockDim.x = 32, any grid.x >= 1. With grid.x = N each block
-// does one element; with fewer, each block walks the elements in grid-stride
-// order, so per-block setup (see --mir-workgroup-constants) is paid once per
-// block rather than once per element.
+// Shape: L lanes per element (a power of two, at most 32) and W warps per block,
+// so G = 32 W / L elements per block; group = thread / L, glane = thread % L. L
+// comes from the element loop's {mir.lanes_per_element} (default 32), W from
+// {mir.warps_per_block} (default 1 for L = 32, else 4). With L = 32 and W = 1 a
+// block is one warp on one element at a time. The element loop of the last
+// block may run past N: those groups compute on a valid element and store
+// nothing. The function gets {mir.block_threads} and {mir.elements_per_block}
+// for the launcher (--mir-gpu-wrap publishes them). Launch: blockDim.x = 32 W,
+// any grid.x >= 1 (blocks stride over the element groups).
+//
+// Phases may be multi-dimensional scf.parallel loops; their iterations are
+// numbered row-major and dealt to the lanes cyclically.
 //
 // Reductions (scf.parallel with init values and scf.reduce): each lane folds its
-// iterations in order, then an xor-shuffle tree over the 32 lanes, in a fixed
-// order, so results are reproducible bit for bit; every lane ends with the same
-// value. A 32-iteration OR reduction this way is a ballot. Stores in the element
-// body itself (outside the phases, e.g. reduction results) are done by lane 0.
+// iterations in order, then an xor-shuffle tree over the group's L lanes, in a
+// fixed order, so results are reproducible bit for bit; every lane of the group
+// ends with the same value. A 32-iteration OR reduction this way is a ballot.
+// Stores in the element body itself (outside the phases, e.g. reduction results)
+// are done by the group's lane 0.
 //
-// Barriers: phases are assumed to pass data only through the {mir.scratch}
-// buffers, so a barrier goes between two phases only when both touch scratch and
-// one writes it, and at the end of the element body only if some phase touches
-// it.
+// Barriers: a barrier goes between two phases when some buffer (traced to its
+// root through views) is written by one and accessed by the other with no
+// barrier in between, and at the end of the element body when some phase uses
+// scratch (the next element reuses it).
 //
 // Why this is correct: iterations of an scf.parallel are independent by
 // definition, so any lane may run any of them, and a lane-cyclic split needs no
-// synchronisation inside a phase. Consecutive phases of one element do depend
-// on each other (one writes the scratch the next reads), and the barrier
-// between them is exactly that order; the barrier at the end of the body keeps
-// the next element from overwriting scratch that a slower lane still reads.
-// Every lane reaches every barrier: the element loop depends only on the block,
-// and the phases sit directly in the element body. The scratch becomes a {mir.workgroup} argument, which --mir-gpu-wrap
-// turns into shared memory: one copy per warp, which the lanes share.
+// synchronisation inside a phase. Phases of one element run in order, and the
+// barriers enforce exactly the orders the memory accesses need. Every thread
+// reaches every barrier: the element loop depends only on the block, the phases
+// sit directly in the element body, and out-of-range groups are masked only at
+// their stores. The scratch becomes a {mir.workgroup} argument, which
+// --mir-gpu-wrap turns into shared memory: one copy per group.
 
 #include "mir/MirPasses.h"
+#include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -45,13 +54,15 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 
 using namespace mlir;
 
 namespace {
 
-constexpr int kLanes = 32;
+constexpr int kWarp = 32;
 
 // Moves the body of a one-dimensional scf.parallel in front of `dest`'s
 // terminator, with its induction variable replaced by `iv`.
@@ -62,61 +73,122 @@ void moveBody(scf::ParallelOp par, Block *dest, Value iv) {
                                std::prev(src->end()));   // all but the scf.reduce terminator
 }
 
+// The buffer a memref value views: a function argument, an alloca or an alloc.
+Value rootOf(Value m) {
+  while (Operation *def = m.getDefiningOp()) {
+    auto view = dyn_cast<ViewLikeOpInterface>(def);
+    if (!view)
+      break;
+    m = view.getViewSource();
+  }
+  return m;
+}
+
+// ceil(x / y) for x >= 0, y > 0, written out (arith.ceildivui needs a separate
+// expansion before the LLVM lowering).
+Value ceilDiv(OpBuilder &b, Location loc, Value x, Value y) {
+  Value one = b.create<arith::ConstantIndexOp>(loc, 1);
+  return b.create<arith::DivUIOp>(loc, b.create<arith::AddIOp>(loc, x, b.create<arith::SubIOp>(loc, y, one)), y);
+}
+
+enum { kRead = 1, kWrite = 2 };
+using Accesses = llvm::MapVector<Value, int>;   // root -> kRead | kWrite
+
+void collect(Operation *phase, Accesses &acc) {
+  phase->walk([&](MemoryEffectOpInterface op) {
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    op.getEffects(effects);
+    for (auto &e : effects) {
+      Value v = e.getValue();
+      if (!v || !isa<MemRefType>(v.getType()))
+        continue;
+      int &flags = acc[rootOf(v)];
+      if (isa<MemoryEffects::Read>(e.getEffect()))
+        flags |= kRead;
+      if (isa<MemoryEffects::Write>(e.getEffect()))
+        flags |= kWrite;
+    }
+  });
+}
+
+bool conflict(const Accesses &a, const Accesses &b) {
+  for (auto &[root, fa] : a) {
+    auto it = b.find(root);
+    if (it != b.end() && ((fa | it->second) & kWrite))
+      return true;
+  }
+  return false;
+}
+
 LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
   if (elements.getNumLoops() != 1 || !elements.getInitVals().empty())
     return elements.emitOpError("{mir.elements} must be a one-dimensional loop without reductions");
   if (getConstantIntValue(elements.getLowerBound()[0]) != 0 || getConstantIntValue(elements.getStep()[0]) != 1)
     return elements.emitOpError("{mir.elements} must run from 0 in steps of 1");
+  auto attr = [&](StringRef name, int64_t fallback) {
+    auto a = elements->getAttrOfType<IntegerAttr>(name);
+    return a ? a.getInt() : fallback;
+  };
+  const int64_t L = attr("mir.lanes_per_element", kWarp);
+  const int64_t W = attr("mir.warps_per_block", L == kWarp ? 1 : 4);
+  if (L < 1 || L > kWarp || (L & (L - 1)) != 0 || W < 1)
+    return elements.emitOpError("lanes per element must be a power of two <= 32, warps per block >= 1");
+  const int64_t G = kWarp * W / L;
+  const bool single = G == 1;   // one element per block: the original form
   OpBuilder b(elements);
   Location loc = elements.getLoc();
 
-  // Phases communicate only through the {mir.scratch} buffers (a phase does not
-  // read global memory that an earlier phase of the same element wrote), so a
-  // barrier is needed between two phases only when both touch scratch and one of
-  // them writes it.
   DenseSet<Value> scratch;
   for (Operation &op : *elements.getBody())
     if (auto a = dyn_cast<memref::AllocaOp>(op); a && a->hasAttr("mir.scratch"))
       scratch.insert(a.getResult());
-  enum { kNone = 0, kRead = 1, kWrite = 2 };
-  auto scratchUse = [&](Operation *phase) {
-    int use = kNone;
-    phase->walk([&](Operation *op) {
-      if (auto ld = dyn_cast<memref::LoadOp>(op); ld && scratch.contains(ld.getMemRef()))
-        use |= kRead;
-      if (auto st = dyn_cast<memref::StoreOp>(op); st && scratch.contains(st.getMemRef()))
-        use |= kWrite;
-    });
-    return use;
-  };
 
-  Value lane = b.create<gpu::ThreadIdOp>(loc, gpu::Dimension::x);
-  int previous = kNone;
+  Value tid = b.create<gpu::ThreadIdOp>(loc, gpu::Dimension::x);
+  Value glane = tid, group;
+  if (!single || L != kWarp) {
+    glane = b.create<arith::RemUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
+    group = b.create<arith::DivUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
+  }
+
+  Accesses pending;   // accesses since the last barrier
   bool anyScratch = false;
   for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
     auto par = dyn_cast<scf::ParallelOp>(op);
     if (!par || !par->hasAttr("mir.lanes"))
       continue;
-    if (par.getNumLoops() != 1)
-      return par.emitOpError("{mir.lanes} must be a one-dimensional loop");
     OpBuilder pb(par);
     Location pl = par.getLoc();
-    const int use = scratchUse(par);
-    if (use != kNone && previous != kNone && ((use | previous) & kWrite))
+    Accesses mine;
+    collect(par, mine);
+    for (auto &[root, f] : mine) anyScratch |= scratch.contains(root);
+    if (conflict(pending, mine)) {
       pb.create<gpu::BarrierOp>(pl);
-    if (use != kNone) {
-      previous = use;
-      anyScratch = true;
+      pending.clear();
     }
+    for (auto &[root, f] : mine) pending[root] |= f;
 
-    // Each lane runs the iterations lane, lane + 32, ...; reductions accumulate in
-    // that order per lane, then an xor-shuffle tree combines the 32 lane values in
-    // a fixed order (every lane ends with the same bits: combine is commutative).
-    Value step = par.getStep()[0];
-    Value start = pb.create<arith::AddIOp>(pl, par.getLowerBound()[0], pb.create<arith::MulIOp>(pl, lane, step));
-    Value stride = pb.create<arith::MulIOp>(pl, step, pb.create<arith::ConstantIndexOp>(pl, kLanes));
-    // The yield starts as the identity; with reductions it gets the accumulators below.
-    auto loop = pb.create<scf::ForOp>(pl, start, par.getUpperBound()[0], stride, par.getInitVals(),
+    // Each lane runs the iterations glane, glane + L, ... (row-major over the
+    // phase's dimensions); reductions accumulate in that order per lane, then an
+    // xor-shuffle tree combines the group's L lane values in a fixed order.
+    const unsigned dims = par.getNumLoops();
+    Value start, ub, stride;
+    if (dims == 1) {
+      Value step = par.getStep()[0];
+      start = pb.create<arith::AddIOp>(pl, par.getLowerBound()[0], pb.create<arith::MulIOp>(pl, glane, step));
+      stride = pb.create<arith::MulIOp>(pl, step, pb.create<arith::ConstantIndexOp>(pl, L));
+      ub = par.getUpperBound()[0];
+    } else {
+      Value total = pb.create<arith::ConstantIndexOp>(pl, 1);
+      for (unsigned d = 0; d < dims; ++d) {
+        Value extent = ceilDiv(pb, pl, pb.create<arith::SubIOp>(pl, par.getUpperBound()[d], par.getLowerBound()[d]),
+                               par.getStep()[d]);
+        total = pb.create<arith::MulIOp>(pl, total, extent);
+      }
+      start = glane;
+      stride = pb.create<arith::ConstantIndexOp>(pl, L);
+      ub = total;
+    }
+    auto loop = pb.create<scf::ForOp>(pl, start, ub, stride, par.getInitVals(),
                                       [](OpBuilder &lb, Location ll, Value, ValueRange acc) {
                                         lb.create<scf::YieldOp>(ll, acc);
                                       });
@@ -130,7 +202,6 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
       return map.lookup(cast<scf::ReduceReturnOp>(blk.getTerminator()).getResult());
     };
     if (!par.getInitVals().empty()) {
-      // The terms now become per-lane accumulators.
       OpBuilder yb(reduce);
       SmallVector<Value> next;
       for (unsigned i = 0; i < reduce.getNumOperands(); ++i)
@@ -138,14 +209,27 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
       loop.getBody()->getTerminator()->setOperands(next);
     }
     Block *src = par.getBody();
-    src->getArgument(0).replaceAllUsesWith(loop.getInductionVar());
+    if (dims == 1) {
+      src->getArgument(0).replaceAllUsesWith(loop.getInductionVar());
+    } else {   // the row-major position of the linear index q
+      OpBuilder ib = OpBuilder::atBlockBegin(loop.getBody());
+      Value q = loop.getInductionVar();
+      for (int d = (int)dims - 1; d >= 0; --d) {
+        Value extent = ceilDiv(ib, pl, ib.create<arith::SubIOp>(pl, par.getUpperBound()[d], par.getLowerBound()[d]),
+                               par.getStep()[d]);
+        Value k = d == 0 ? q : ib.create<arith::RemUIOp>(pl, q, extent).getResult();
+        if (d > 0)
+          q = ib.create<arith::DivUIOp>(pl, q, extent);
+        Value iv = ib.create<arith::AddIOp>(pl, par.getLowerBound()[d], ib.create<arith::MulIOp>(pl, k, par.getStep()[d]));
+        src->getArgument(d).replaceAllUsesWith(iv);
+      }
+    }
     loop.getBody()->getOperations().splice(loop.getBody()->getTerminator()->getIterator(), src->getOperations(),
                                            src->begin(), std::prev(src->end()));
-    // (the scf.reduce stays behind in the parallel op, which is erased)
     SmallVector<Value> results(loop.getResults());
-    for (int offset = kLanes / 2; offset >= 1; offset /= 2)
+    for (int64_t offset = L / 2; offset >= 1; offset /= 2)
       for (unsigned i = 0; i < results.size(); ++i) {
-        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], offset, kLanes, gpu::ShuffleMode::XOR)
+        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], (int32_t)offset, kWarp, gpu::ShuffleMode::XOR)
                           .getShuffleResult();
         results[i] = combine(pb, i, results[i], other);
       }
@@ -158,39 +242,83 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
   if (nested.wasInterrupted())
     return elements.emitOpError("{mir.lanes} loops must sit directly in the element body");
 
-  // Element-level work runs on every lane alike; its stores (e.g. the reduction
-  // results) happen once, from lane 0.
-  Value lane0 = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, lane, b.create<arith::ConstantIndexOp>(loc, 0));
-  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
-    auto st = dyn_cast<memref::StoreOp>(op);
-    if (!st || scratch.contains(st.getMemRef()))
-      continue;
+  // The element loop: one element per block in grid-stride order, or groups of G.
+  Value N = elements.getUpperBound()[0];
+  Value valid;
+  scf::ForOp loop;
+  if (single) {
+    loop = b.create<scf::ForOp>(loc, b.create<gpu::BlockIdOp>(loc, gpu::Dimension::x), N,
+                                b.create<gpu::GridDimOp>(loc, gpu::Dimension::x));
+    moveBody(elements, loop.getBody(), loop.getInductionVar());
+  } else {
+    Value g = b.create<arith::ConstantIndexOp>(loc, G);
+    loop = b.create<scf::ForOp>(loc, b.create<gpu::BlockIdOp>(loc, gpu::Dimension::x),
+                                ceilDiv(b, loc, N, g),
+                                b.create<gpu::GridDimOp>(loc, gpu::Dimension::x));
+    OpBuilder ib = OpBuilder::atBlockBegin(loop.getBody());
+    Value w = ib.create<arith::AddIOp>(loc, ib.create<arith::MulIOp>(loc, loop.getInductionVar(), g), group);
+    valid = ib.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, w, N);
+    Value last = ib.create<arith::SubIOp>(loc, N, ib.create<arith::ConstantIndexOp>(loc, 1));
+    moveBody(elements, loop.getBody(), ib.create<arith::SelectOp>(loc, valid, w, last));
+  }
+  Block *body = loop.getBody();
+
+  // Stores to anything but scratch: element-level ones once per group (lane 0),
+  // and none at all from a group past the last element.
+  auto guard = [](memref::StoreOp st, Value cond) {
     OpBuilder sb(st);
-    auto guard = sb.create<scf::IfOp>(st.getLoc(), lane0, /*withElseRegion=*/false);
-    st->moveBefore(guard.thenBlock()->getTerminator());
+    auto ifOp = sb.create<scf::IfOp>(st.getLoc(), cond, /*withElseRegion=*/false);
+    st->moveBefore(ifOp.thenBlock()->getTerminator());
+  };
+  OpBuilder gb = OpBuilder::atBlockBegin(body);
+  if (valid)
+    gb.setInsertionPointAfter(valid.getDefiningOp());
+  Value lane0 = gb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, glane, gb.create<arith::ConstantIndexOp>(loc, 0));
+  if (valid)
+    lane0 = gb.create<arith::AndIOp>(loc, lane0, valid);
+  SmallVector<memref::StoreOp> stores;
+  body->walk([&](memref::StoreOp st) {
+    if (!scratch.contains(rootOf(st.getMemRef())))
+      stores.push_back(st);
+  });
+  for (memref::StoreOp st : stores) {
+    if (st->getBlock() == body)
+      guard(st, lane0);
+    else if (valid)
+      guard(st, valid);
   }
 
-  // The scratch: one buffer per warp, in shared memory.
-  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
+  // The scratch: one buffer per group, in shared memory.
+  for (Operation &op : llvm::make_early_inc_range(*body)) {
     auto alloca = dyn_cast<memref::AllocaOp>(op);
     if (!alloca || !alloca->hasAttr("mir.scratch"))
       continue;
-    if (!alloca.getType().hasStaticShape())
-      return alloca.emitOpError("{mir.scratch} must have a static shape");
+    MemRefType t = alloca.getType();
+    if (!t.hasStaticShape() || t.getRank() != 1)
+      return alloca.emitOpError("{mir.scratch} must be a static one-dimensional buffer");
+    const int64_t S = t.getNumElements();
     const unsigned at = func.getNumArguments();
-    func.insertArgument(at, alloca.getType(),
+    func.insertArgument(at, MemRefType::get({G * S}, t.getElementType()),
                         b.getDictionaryAttr(b.getNamedAttr("mir.workgroup", b.getUnitAttr())), loc);
-    alloca.replaceAllUsesWith(func.getArgument(at));
+    Value buffer = func.getArgument(at);
+    if (!single) {
+      OpBuilder vb(alloca);
+      Value offset = vb.create<arith::MulIOp>(loc, group, vb.create<arith::ConstantIndexOp>(loc, S));
+      buffer = vb.create<memref::SubViewOp>(loc, buffer, ArrayRef<OpFoldResult>{offset},
+                                            ArrayRef<OpFoldResult>{vb.getIndexAttr(S)},
+                                            ArrayRef<OpFoldResult>{vb.getIndexAttr(1)});
+    }
+    alloca.replaceAllUsesWith(buffer);
     alloca.erase();
   }
-
-  Value start = b.create<gpu::BlockIdOp>(loc, gpu::Dimension::x);
-  Value stride = b.create<gpu::GridDimOp>(loc, gpu::Dimension::x);
-  auto loop = b.create<scf::ForOp>(loc, start, elements.getUpperBound()[0], stride);
-  moveBody(elements, loop.getBody(), loop.getInductionVar());
   if (anyScratch)   // the next element must not overwrite scratch a slower lane still reads
-    OpBuilder(loop.getBody()->getTerminator()).create<gpu::BarrierOp>(loc);
+    OpBuilder(body->getTerminator()).create<gpu::BarrierOp>(loc);
   elements.erase();
+  mir::refreshViewTypes(func.getOperation());
+  if (!single || L != kWarp) {
+    func->setAttr("mir.block_threads", b.getI64IntegerAttr(kWarp * W));
+    func->setAttr("mir.elements_per_block", b.getI64IntegerAttr(G));
+  }
   return success();
 }
 
@@ -199,8 +327,9 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
 
   StringRef getArgument() const final { return "mir-warp-per-element"; }
   StringRef getDescription() const final {
-    return "Map a {mir.elements} scf.parallel onto gpu.block_id x and its "
-           "{mir.lanes} phases onto the 32 lanes, with a barrier between phases";
+    return "Map a {mir.elements} scf.parallel onto groups of lanes (one element "
+           "each) and its {mir.lanes} phases onto the group's lanes, with barriers "
+           "where phases share memory";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, gpu::GPUDialect, memref::MemRefDialect, scf::SCFDialect>();

@@ -48,11 +48,14 @@ using D32 = Desc<int32_t>;
 using D8 = Desc<int8_t>;
 #ifdef MIR_DSS_PRECOND
 #define MIR_PRECOND_FN MIR_CAT(MIR_CAT(_mlir_ciface_precond_p, MIR_DSS_P), _az_zz)
+#define MIR_THREADS_FN MIR_CAT(MIR_CAT(precond_p, MIR_DSS_P), _az_zz__threads)
 extern "C" void MIR_PRECOND_FN(D64*, D64*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, D32*, D8*, D8*, D64*,
                                D64*, D64*, D64*);
 #else
 extern "C" void MIR_DSS_FN(D64*, D64*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, D64*);
+#define MIR_THREADS_FN MIR_CAT(MIR_CAT(dss_p, MIR_DSS_P), __threads)
 #endif
+extern "C" int64_t MIR_THREADS_FN();
 
 namespace {
 
@@ -116,10 +119,11 @@ void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out, std
         deent = desc(m.edge_ent), dvo = desc(m.vert_of), dvoff = desc(m.vert_off), dvent = desc(m.vert_ent);
     D8 dfc = desc(m.face_code);
     Warp w;
+    w.bar.threads = (int)MIR_THREADS_FN();
     warp = &w;
     for (long long b = 0; b < grid; ++b) {
         std::vector<std::thread> lanes;
-        for (int L = 0; L < kLanes; ++L)
+        for (int L = 0; L < w.bar.threads; ++L)
             lanes.emplace_back([&, L, b] {
                 tlLane = L;
                 tlBlock = b;

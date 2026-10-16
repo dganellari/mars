@@ -26,6 +26,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -85,17 +86,32 @@ protected:
         return {thrust::raw_pointer_cast(v.data()), (long long)v.size()};
     }
 
-    CUfunction function(const std::string& name) const
+    // The kernel and its launch shape: <name>__launch = {threads per block, elements
+    // per block} when the compiler published one, else one warp per element.
+    CUfunction function(const std::string& name)
     {
         CUfunction fn = nullptr;
         MARS_MARSIR_CU(cuModuleGetFunction(&fn, module_, name.c_str()));
+        Shape shape;
+        CUdeviceptr global = 0;
+        size_t bytes = 0;
+        if (cuModuleGetGlobal(&global, &bytes, module_, (name + "__launch").c_str()) == CUDA_SUCCESS &&
+            bytes == sizeof(long long[2])) {
+            long long v[2];
+            MARS_MARSIR_CU(cuMemcpyDtoH(v, global, sizeof(v)));
+            shape = {(unsigned)v[0], v[1]};
+        }
+        shapes_[fn] = shape;
         return fn;
     }
 
+    // `elements`: how many the kernel visits (its element list, or its loop count).
     // Integer (index) and then real (f64) arguments follow the memrefs.
-    void launch(CUfunction fn, std::vector<Arg>& args, long long blocks, cudaStream_t stream,
+    void launch(CUfunction fn, std::vector<Arg>& args, long long elements, cudaStream_t stream,
                 std::vector<long long> integers = {}, std::vector<double> reals = {})
     {
+        const Shape shape = shapes_.at(fn);
+        const long long blocks = (elements + shape.per_block - 1) / shape.per_block;
         // The driver API takes a pointer to every scalar of every descriptor.
         std::vector<void*> params(args.size() * 5);
         for (size_t i = 0; i < args.size(); ++i) {
@@ -108,13 +124,18 @@ protected:
         for (long long& v : integers) params.push_back(&v);
         for (double& v : reals) params.push_back(&v);
         MARS_MARSIR_CU(
-            cuLaunchKernel(fn, (unsigned)blocks, 1, 1, 32, 1, 1, 0, (CUstream)stream, params.data(), nullptr));
+            cuLaunchKernel(fn, (unsigned)blocks, 1, 1, shape.threads, 1, 1, 0, (CUstream)stream, params.data(), nullptr));
     }
 
     int p_;
 
 private:
+    struct Shape {
+        unsigned threads = 32;
+        long long per_block = 1;
+    };
     CUmodule module_ = nullptr;
+    std::map<CUfunction, Shape> shapes_;
     long long zero_ = 0, one_ = 1;
     thrust::device_vector<int> all_;
 };

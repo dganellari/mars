@@ -251,6 +251,19 @@ SmallVector<Value> reduceLanes(OpBuilder &ob, Location l, int64_t trips, ValueRa
 
 Value addf(OpBuilder &rb, Location rl, Value a, Value c) { return rb.create<arith::AddFOp>(rl, a, c); }
 
+// Marks a per-element loop whose phases have `copies` iterations: an element with
+// fewer than 32 copies gets that many lanes (rounded down to a power of two), so
+// that --mir-warp-per-element puts several elements in a warp instead of leaving
+// most lanes idle (p = 1: 8 copies, 8 lanes).
+void markElements(OpBuilder &b, scf::ParallelOp loop, int64_t copies) {
+  loop->setAttr("mir.elements", b.getUnitAttr());
+  if (copies >= 32)
+    return;
+  int64_t lanes = 1;
+  while (lanes * 2 <= copies) lanes *= 2;
+  loop->setAttr("mir.lanes_per_element", b.getI64IntegerAttr(lanes));
+}
+
 // Bit `bit` of the 32-bit mask `word`, as i1.
 Value maskBit(Emit &z, Value word, Value bit) {
   return z.b.create<arith::CmpIOp>(z.loc, arith::CmpIPredicate::ne,
@@ -503,7 +516,7 @@ LogicalResult lowerOne(mir::DssOp op) {
         for (int64_t j = 0; j < reductions; ++j)
           y.store(sums[j], d.partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
       });
-  elementLoop->setAttr("mir.elements", b.getUnitAttr());
+  markElements(b, elementLoop, d.n3);
   op.erase();
   return success();
 }
@@ -561,7 +574,7 @@ LogicalResult lowerOne(mir::CellwiseOp op) {
         for (int64_t j = 0; j < reductions; ++j)
           y.store(sums[j], partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
       });
-  elementLoop->setAttr("mir.elements", b.getUnitAttr());
+  markElements(b, elementLoop, n3);
   op.erase();
   return success();
 }

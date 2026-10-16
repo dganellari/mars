@@ -81,6 +81,18 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
         names.push_back(gb.getStringAttr(f.getName()));
         gmod->setAttr(mir::kMirNoaliasKernelsAttr, gb.getArrayAttr(names));
       }
+      // A launch shape other than one warp per element (--mir-warp-per-element):
+      // published as <kernel>__launch = {threads per block, elements per block}, a
+      // global the launcher reads from the module.
+      if (auto threads = f->getAttrOfType<IntegerAttr>("mir.block_threads")) {
+        auto perBlock = f->getAttrOfType<IntegerAttr>("mir.elements_per_block");
+        auto type = MemRefType::get({2}, gb.getI64Type());
+        auto values = DenseElementsAttr::get(RankedTensorType::get({2}, gb.getI64Type()),
+                                             ArrayRef<int64_t>{threads.getInt(), perBlock ? perBlock.getInt() : 1});
+        gb.create<memref::GlobalOp>(f.getLoc(), gb.getStringAttr((f.getName() + "__launch").str()),
+                                    /*sym_visibility=*/StringAttr(), TypeAttr::get(type), values, gb.getUnitAttr(),
+                                    IntegerAttr());
+      }
       // Argument attributes carry over to the kernel.
       for (unsigned i = 0; i < f.getNumArguments(); ++i)
         if (DictionaryAttr attrs = f.getArgAttrDict(i))

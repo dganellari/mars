@@ -55,13 +55,14 @@ Desc<T> desc(std::vector<T>& v)
 
 // `grid` blocks of 32 lanes, one block at a time.
 template <typename F>
-void emulate(long long grid, F&& kernel)
+void emulate(int64_t threads, long long grid, F&& kernel)
 {
     Warp w;
+    w.bar.threads = (int)threads;
     warp = &w;
     for (long long b = 0; b < grid; ++b) {
         std::vector<std::thread> lanes;
-        for (int L = 0; L < kLanes; ++L)
+        for (int L = 0; L < threads; ++L)
             lanes.emplace_back([&, L, b] {
                 tlLane = L;
                 tlBlock = b;
@@ -132,8 +133,8 @@ int main()
                 sref[t] = r[t] - sc[kAlpha] * v[t];
             }
         D64 dr = desc(r), dv = desc(v), dp = desc(p), ds = desc(s);
-        emulate((long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_p_p, MIR_DSS_P)(&dl, &dr, &dv, &dp, &dsc); });
-        emulate((long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_s_p, MIR_DSS_P)(&dl, &dr, &dv, &ds, &dsc); });
+        emulate(32, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_p_p, MIR_DSS_P)(&dl, &dr, &dv, &dp, &dsc); });
+        emulate(32, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_s_p, MIR_DSS_P)(&dl, &dr, &dv, &ds, &dsc); });
         report("update_p", differ(p, pref), p.size());
         report("update_s", differ(s, sref), s.size());
     }
@@ -155,7 +156,7 @@ int main()
             pref[2 * w + 1] = lane_sum(0, n3, [&](long long l) { return rh[base + l] * rref[base + l] * counted(l); });
         }
         D64 dx = desc(x), dp = desc(p), ds = desc(s), dt = desc(t), drh = desc(rh), dr = desc(r), dpart = desc(part);
-        emulate((long long)list.size(), [&] {
+        emulate(32, (long long)list.size(), [&] {
             MIR_CAT(_mlir_ciface_bicg_update_xr_p, MIR_DSS_P)(&dl, &dcnt, &dx, &dp, &ds, &dt, &drh, &dr, &dsc, &dpart);
         });
         report("update_xr x", differ(x, xref), x.size());
@@ -170,7 +171,7 @@ int main()
                 ref[2 * b + j] = lane_sum(b * per, std::min(count, b * per + per),
                                           [&](long long i) { return src[2 * i + j]; });
         D64 dsrc = desc(src), ddst = desc(dst);
-        emulate(blocks, [&] { _mlir_ciface_fold_nv2(&dsrc, &ddst, count); });
+        emulate(32, blocks, [&] { _mlir_ciface_fold_nv2(&dsrc, &ddst, count); });
         report("fold_nv2", differ(dst, ref), dst.size());
     }
     {   // finish / totals / step on 37 block partials
@@ -187,7 +188,7 @@ int main()
             std::vector<double> s0 = sc, ref = sc;
             D64 ds0 = desc(s0);
             expect(ref);
-            emulate(1, [&] { kernel(&ds0); });
+            emulate(32, 1, [&] { kernel(&ds0); });
             report(what, differ(s0, ref), s0.size());
         };
         run("finish_start", [&](D64* d) { _mlir_ciface_finish_start(&dsrc1, d, count); }, [&](std::vector<double>& s) {
