@@ -36,9 +36,14 @@ levels) instead of the tensor-core one. After the same lowering to bufferized li
                                    memory, face loops unrolled, one phase per linalg
                                    op (fills fused into reductions), temporaries in
                                    shared scratch; n^2 lanes per element, 8 warps
+      --mir-fuse-phases            neighbouring phases with lane-local dependences
+                                   merged, handed-over values kept in registers
       --mir-warp-per-element       several elements per block, barriers where phases
                                    share memory
-  -> hl_cellwise_p{p}_sm90.ptx (launch shape published as laplacian_apply__launch).
+  -> hl_cellwise_p{p}_sm90.ptx: kernel laplacian_apply_p{p} (named by degree, so a
+     profile tells the levels apart), launch shape published as
+     laplacian_apply_p{p}__launch. --warps=W sets the warps per block (default 8),
+     written to hl_cellwise_p{p}_w{W}_sm90.ptx when not 8.
 
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
@@ -108,11 +113,14 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
           + ir[m.end(3):])
     if cellwise:
-        ir = run([MIROPT, "-", "--mir-cellwise-schedule", "--canonicalize", "--cse",
+        warps = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), 8)
+        ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+                  "--mir-fuse-phases", "--canonicalize", "--cse",
                   "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
         if "--emulate" in sys.argv:
             return emulate(ir, p)
-        return finish(ir, p, "", no_chain=True, prefix="hl_cellwise")
+        ir = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}(")
+        return finish(ir, p, "" if warps == 8 else f"_w{warps}", no_chain=True, prefix="hl_cellwise")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)

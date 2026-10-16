@@ -21,6 +21,7 @@ add_mlir_dialect_library(MLIRMir
   WarpPerElement.cpp
   NoaliasDescriptors.cpp
   CellwiseSchedule.cpp
+  FusePhases.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir

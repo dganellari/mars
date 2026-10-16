@@ -6,7 +6,7 @@
 //
 // Kernel contract (see marsir-mlir/test/hl_gpu_pipeline.py): laplacian_apply(U,
 // Btil, Dtil, W, D, G, Y); one warp per element (grid = E, block = 32) for the
-// tensor-core schedule, or the shape the kernel publishes as laplacian_apply__launch
+// tensor-core schedule, or the shape the kernel publishes as <kernel>__launch
 // = {threads per block, elements per block} (the cellwise schedule, --cellwise). Every memref
 // argument is passed as an MLIR descriptor (allocated ptr, aligned ptr, offset,
 // sizes, strides) and must be 16-byte aligned, which cudaMalloc guarantees.
@@ -58,13 +58,14 @@ public:
     // p = 7: U, Y are E x 8 x 8 x 8; Btil, Dtil are 8 x 8 with a zero last row (the
     // face dimension padded to a full tensor-core tile); W, D are 8 x 8; G is
     // E x [3][7][3][8][8], component-major.
-    explicit LaplacianPtx(const std::string& ptx_path, int p = 7) : p_(p)
+    // kernel: laplacian_apply (tensor-core schedule) or laplacian_apply_p{p} (cellwise).
+    explicit LaplacianPtx(const std::string& ptx_path, int p = 7, const std::string& kernel = "laplacian_apply") : p_(p)
     {
         module_ = load_ptx(ptx_path);
-        MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, "laplacian_apply"));
+        MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, kernel.c_str()));
         CUdeviceptr global = 0;
         size_t bytes = 0;
-        if (cuModuleGetGlobal(&global, &bytes, module_, "laplacian_apply__launch") == CUDA_SUCCESS &&
+        if (cuModuleGetGlobal(&global, &bytes, module_, (kernel + "__launch").c_str()) == CUDA_SUCCESS &&
             bytes == sizeof(long long[2])) {
             long long v[2];
             MARS_MARSIR_CU(cuMemcpyDtoH(v, global, sizeof(v)));

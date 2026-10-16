@@ -31,7 +31,8 @@ public:
     // G3, G1: the p = 3 and p = 1 metrics of PMultigrid.
     PmgPtx(const std::string& dir, const cellwise::UnstructuredTopology& T, const double* G3, const double* G1)
         : CellwisePtx(dir + "/pmg_sm90.ptx", 7), T_(T), G3_(G3), G1_(G1),
-          op3_(dir + "/hl_cellwise_p3_sm90.ptx", 3), op1_(dir + "/hl_cellwise_p1_sm90.ptx", 1)
+          op3_(dir + "/hl_cellwise_p3_sm90.ptx", 3, "laplacian_apply_p3"),
+          op1_(dir + "/hl_cellwise_p1_sm90.ptx", 1, "laplacian_apply_p1")
     {
         const char* kinds[3] = {"first0", "first", "next"};
         const int degrees[3] = {7, 3, 1};
