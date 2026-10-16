@@ -6,13 +6,15 @@
 //   PrecondPtx  generated/precond_p7_sm90.ptx: the Jacobi preconditioner in the
 //               four variants of unstructured_precondition_kernel<AZ, ZZ>: same z
 //               bits; the dot products as per-element partials;
+//   BicgstabPtx generated/bicgstab_p7_sm90.ptx: the vector updates, partial
+//               folding and Krylov scalar steps of BiCGStab (mlir_ir.emit_bicgstab);
 //   MarsirJacobi  PrecondPtx behind the interface of UnstructuredJacobi, for the
 //               Krylov solvers of mars_cellwise_krylov.hpp.
 //
 // Kernel contract: the arguments of mir.dss in order (values, ghost, elements,
 // face_nbr, face_code, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent,
 // then flags, copies, outs, partials), each a 1-D memref descriptor (allocated
-// ptr, aligned ptr, offset, size, stride); block = 32, one block per listed
+// ptr, aligned ptr, offset, size, stride), integers (index) last; block = 32, one block per listed
 // element (measured faster than fewer blocks striding over them). The size of
 // `values` is where ghost copies start, so it must be the local copy count
 // exactly.
@@ -38,6 +40,8 @@ public:
     CellwisePtx(const CellwisePtx&) = delete;
     CellwisePtx& operator=(const CellwisePtx&) = delete;
 
+    long long values_per_element() const { return n3(); }
+
 protected:
     struct Arg {
         const void* ptr;
@@ -46,21 +50,24 @@ protected:
 
     long long n3() const { return (long long)(p_ + 1) * (p_ + 1) * (p_ + 1); }
 
+    // The element list argument: set.ids, or 0 .. local when it is null.
+    Arg element_list(const cellwise::ElementList& set, long long local)
+    {
+        if (set.ids) return {set.ids, set.count};
+        if ((long long)all_.size() != local) {
+            all_.resize(local);
+            thrust::sequence(all_.begin(), all_.end());
+        }
+        return {thrust::raw_pointer_cast(all_.data()), local};
+    }
+
     // The first 11 arguments: copies (local, ghost), the element list and the tables.
     std::vector<Arg> topology_args(const double* d_in, const double* d_ghost, const cellwise::UnstructuredTopology& T,
                                    const cellwise::ElementList& set)
     {
-        const int* ids = set.ids;
-        if (!ids) {   // the kernel always reads a list; the whole-mesh pass reads 0 .. local
-            if ((long long)all_.size() != T.local) {
-                all_.resize(T.local);
-                thrust::sequence(all_.begin(), all_.end());
-            }
-            ids = thrust::raw_pointer_cast(all_.data());
-        }
         return {{d_in, T.local * n3()},
                 {d_ghost, (T.elements - T.local) * n3()},
-                {ids, set.count},
+                element_list(set, T.local),
                 vec(T.face_nbr),
                 vec(T.face_code),
                 vec(T.edge_of),
@@ -84,7 +91,8 @@ protected:
         return fn;
     }
 
-    void launch(CUfunction fn, std::vector<Arg>& args, long long blocks, cudaStream_t stream)
+    void launch(CUfunction fn, std::vector<Arg>& args, long long blocks, cudaStream_t stream,
+                std::vector<long long> integers = {})
     {
         // The driver API takes a pointer to every scalar of every descriptor.
         std::vector<void*> params(args.size() * 5);
@@ -95,6 +103,7 @@ protected:
             params[5 * i + 3] = &args[i].size;
             params[5 * i + 4] = &one_;
         }
+        for (long long& v : integers) params.push_back(&v);
         MARS_MARSIR_CU(
             cuLaunchKernel(fn, (unsigned)blocks, 1, 1, 32, 1, 1, 0, (CUstream)stream, params.data(), nullptr));
     }
@@ -163,35 +172,111 @@ private:
     CUfunction fn_[2][2];
 };
 
-// Block partials (NV values each) of the per-element partials src[0 .. count):
-// block b sums a contiguous range in a fixed order, so the result is reproducible.
-template <int NV>
-__global__ void __launch_bounds__(cellwise::kThreads)
-sum_partials_kernel(const double* __restrict__ src, long long count, double* __restrict__ dst)
-{
-    double v[NV] = {};
-    const long long per = (count + gridDim.x - 1) / gridDim.x, lo = blockIdx.x * per;
-    const long long hi = lo + per < count ? lo + per : count;
-    for (long long i = lo + threadIdx.x; i < hi; i += blockDim.x)
-#pragma unroll
-        for (int j = 0; j < NV; ++j) v[j] += src[i * NV + j];
-    cellwise::store_partial<NV>(v, dst);
-}
+// The Krylov scalars (the device array of mars_cellwise_krylov.hpp's Reduction) and
+// the Step names follow the krylov header.
+class BicgstabPtx : public CellwisePtx {
+public:
+    BicgstabPtx(const std::string& ptx_path, int p) : CellwisePtx(ptx_path, p)
+    {
+        const std::string q = std::to_string(p);
+        update_p_ = function("bicg_update_p_p" + q);
+        update_s_ = function("bicg_update_s_p" + q);
+        update_xr_ = function("bicg_update_xr_p" + q);
+        fold_[0] = function("fold_nv1");
+        fold_[1] = function("fold_nv2");
+        totals_[0] = function("totals_nv1");
+        totals_[1] = function("totals_nv2");
+        const char* steps[4] = {"start", "alpha", "omega", "rho"};
+        for (int k = 0; k < 4; ++k) {
+            finish_[k] = function(std::string("finish_") + steps[k]);
+            step_[k] = function(std::string("step_") + steps[k]);
+        }
+        int device = 0, sms = 0;
+        MARS_CELLWISE_CK(cudaGetDevice(&device));
+        MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+        fold_blocks_ = 2 * sms;   // within Reduction's 4 * 32 * sms doubles for NV = 2
+    }
+
+    // p = r + beta (p - omega v) and s = r - alpha v on the `local` elements.
+    void update_p(double* p, const double* r, const double* v, const double* sc, long long local, cudaStream_t s)
+    {
+        std::vector<Arg> a{all(local), {r, local * n3()}, {v, local * n3()}, {p, local * n3()}, {sc, 7}};
+        launch(update_p_, a, local, s);
+    }
+    void update_s(double* sv, const double* r, const double* v, const double* sc, long long local, cudaStream_t s)
+    {
+        std::vector<Arg> a{all(local), {r, local * n3()}, {v, local * n3()}, {sv, local * n3()}, {sc, 7}};
+        launch(update_s_, a, local, s);
+    }
+    // x += alpha p + omega s, r = s - omega t, and per-element partials of <r, r>, <rh, r>.
+    void update_xr(double* x, double* r, const double* p, const double* sv, const double* t, const double* rh,
+                   const double* sc, const cellwise::UnstructuredTopology& T, double* partials, cudaStream_t s)
+    {
+        const long long L = T.local, m = L * n3();
+        std::vector<Arg> a{all(L), vec(T.counting), {x, m}, {p, m}, {sv, m}, {t, m}, {rh, m}, {r, m}, {sc, 7},
+                           {partials, 2 * L}};
+        launch(update_xr_, a, L, s);
+    }
+
+    // Per-element partials (count x NV) -> block partials in `blocks` (fold_blocks()
+    // x NV, the layout of the hand kernels' store_partial). Returns fold_blocks().
+    int fold(int nv, const double* partials, long long count, double* blocks, cudaStream_t s)
+    {
+        std::vector<Arg> a{{partials, count * nv}, {blocks, (long long)fold_blocks_ * nv}};
+        launch(fold_[nv - 1], a, fold_blocks_, s, {count});
+        return fold_blocks_;
+    }
+
+    // Block partials -> the Krylov step (step: 0 start, 1 alpha, 2 omega, 3 rho), with
+    // the totals summed over the ranks of `comm` on the host between two kernels.
+    void finish(int step, int nv, const double* blocks, int count, double* sc, double* host, MPI_Comm comm,
+                cudaStream_t s)
+    {
+        int ranks = 1;
+        MARS_CELLWISE_MPI(MPI_Comm_size(comm, &ranks));
+        std::vector<Arg> a{{blocks, (long long)count * nv}, {sc, 7}};
+        if (ranks == 1) {
+            launch(finish_[step], a, 1, s, {count});
+            return;
+        }
+        launch(totals_[nv - 1], a, 1, s, {count});
+        MARS_CELLWISE_CK(cudaMemcpyAsync(host, sc + cellwise::kT0, nv * sizeof(double), cudaMemcpyDeviceToHost, s));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(s));
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, host, nv, MPI_DOUBLE, MPI_SUM, comm));
+        MARS_CELLWISE_CK(cudaMemcpyAsync(sc + cellwise::kT0, host, nv * sizeof(double), cudaMemcpyHostToDevice, s));
+        std::vector<Arg> b{{sc, 7}};
+        launch(step_[step], b, 1, s);
+    }
+
+    int fold_blocks() const { return fold_blocks_; }
+
+private:
+    Arg all(long long local)
+    {
+        const cellwise::ElementList set{nullptr, local};
+        return element_list(set, local);
+    }
+
+    CUfunction update_p_, update_s_, update_xr_, fold_[2], totals_[2], finish_[4], step_[4];
+    int fold_blocks_ = 0;
+};
 
 // The generated preconditioner as cellwise::UnstructuredJacobi: z = P q, and the
 // block partials of <a, z> / <z, z> in `partial`, returning how many blocks wrote
 // them (what the Krylov solvers' Reduction expects). The kernels write one partial
-// per element into `scratch` (2 * local elements); sum_partials_kernel folds them
-// into a few hundred blocks. `halo` is null on one rank.
+// per element into `scratch` (2 * local elements); the generated fold kernel turns
+// them into block partials. `halo` is null on one rank.
 struct MarsirJacobi {
     PrecondPtx* ptx;
+    BicgstabPtx* vec;
     const cellwise::UnstructuredTopology* T;
     const double* diag;
     cellwise::UnstructuredHalo* halo;
     double* scratch;
 
+    // z = P q and the per-element partials in scratch; returns the element count.
     template <bool AZ, bool ZZ>
-    int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
+    long long per_element(const double* q, double* z, const double* a, cudaStream_t stream) const
     {
         constexpr int NV = AZ + ZZ;
         long long done = 0;   // elements written so far: the interior pass, then the rest
@@ -202,20 +287,16 @@ struct MarsirJacobi {
                                             done += set.count;
                                             return 0;
                                         });
-        if constexpr (NV == 0) {
-            return 0;
-        } else {
-            // Within Reduction's 4 * 32 * sms doubles for NV = 2; one device per rank.
-            static const int blocks = [] {
-                int device = 0, sms = 0;
-                MARS_CELLWISE_CK(cudaGetDevice(&device));
-                MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
-                return 2 * sms;
-            }();
-            sum_partials_kernel<NV><<<blocks, cellwise::kThreads, 0, stream>>>(scratch, done, partial);
-            MARS_CELLWISE_CK(cudaGetLastError());
-            return blocks;
-        }
+        return done;
+    }
+
+    template <bool AZ, bool ZZ>
+    int operator()(const double* q, double* z, const double* a, double* partial, cudaStream_t stream) const
+    {
+        constexpr int NV = AZ + ZZ;
+        const long long count = per_element<AZ, ZZ>(q, z, a, stream);
+        if constexpr (NV == 0) return 0;
+        else return vec->fold(NV, scratch, count, partial, stream);
     }
 };
 

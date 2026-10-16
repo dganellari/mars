@@ -37,6 +37,8 @@ ninja -C build mir-opt
   tables of MARS's `UnstructuredTopology` (the cell-wise solver's assembly), with an
   optional `epilogue` region per copy (sum, Dirichlet, counted, inputs) that yields
   per-copy results and terms reduced into per-element partials (e.g. Jacobi + dots).
+- `mir.cellwise` — a per-copy map over element-local vectors with reductions (the
+  Krylov vector updates and their dot products).
 
 ## Passes (all in `mir-opt`)
 
@@ -46,7 +48,7 @@ ninja -C build mir-opt
 | `--mir-hoist-transfer-pairs` | `lib/HoistTransferPairs.cpp` | loop-invariant transfer_read/write pair -> loop-carried iter_arg (the v4 accumulator registerization; upstream hoisting declines on aliasing); `assume-zero-init` option |
 | `--mir-lower-copies` | `lib/LowerCopies.cpp` | `memref.copy` -> plain `scf.for` loops (strided copies otherwise lower to a memrefCopy host-runtime call, illegal in GPU kernels) |
 | `--mir-warp-wrap` | `lib/WarpWrap.cpp` | wraps innermost `scf.parallel` bodies in `vector.warp_execute_on_lane_0` (lane = `gpu.lane_id`) + hoists uniform code out so boundary writes can distribute |
-| `--mir-lower-dss` | `lib/LowerDss.cpp` | mir.dss -> per-element `scf.parallel` phases (own copies, face pairs, edge/corner stars, write-back), the hand kernel's summation order; reference-hex tables from MARS's `mars_cellwise_hex.hpp` as constant globals |
+| `--mir-lower-cellwise` | `lib/LowerCellwise.cpp` | mir.cellwise -> one per-copy phase per element; mir.dss -> per-element `scf.parallel` phases (own copies, face pairs, edge/corner stars, write-back), the hand kernel's summation order; reference-hex tables from MARS's `mars_cellwise_hex.hpp` as constant globals |
 | `--mir-warp-per-element` | `lib/WarpPerElement.cpp` | element loop -> grid-stride `scf.for` over `gpu.block_id x`, phase loops -> lane-cyclic `scf.for`, reductions -> per-lane folds + xor-shuffle tree, `gpu.barrier` only between phases sharing scratch, scratch -> `{mir.workgroup}` |
 | `--mir-noalias-descriptors` | `lib/NoaliasDescriptors.cpp` | after the NVVM lowering: the data pointers of a `{mir.noalias}` kernel's memref arguments get `llvm.noalias`, and `llvm.readonly` when provably never written, so read-only buffers load as `ld.global.nc` (the lowering drops argument attributes) |
 | `--mir-warp-distribute` | `lib/WarpDistribute.cpp` | lane-distributes warp regions via upstream VectorDistribution patterns (shipped in MLIR 19 but unexposed) + `WarpOpContractToMma`: bridges m8n8k4 f64 `vector.contract` to `nvgpu.mma.sync` on per-lane DMMA fragments |
@@ -65,7 +67,7 @@ present.
 | `make_ptx_v4.sh` | the production sweep schedule: tile+vectorize -> `--mir-hoist-transfer-pairs` -> convert-vector-to-gpu *before* outlining -> `sumfac_batched_v4_sm90.ptx` |
 | `make_ptx_v5.sh` | v5 experiment (zero-init + 8 warps/block; measured no-gain) |
 | `make_ptx_full.sh [p]` | the fused full-operator kernel (whole Knaus apply, one kernel instead of 111 launches) -> `full_apply_p{p}_sm90.ptx` |
-| `test/dss_gpu_pipeline.py [p]` | the cell-wise DSS -> `dss_p{p}_sm90.ptx` (`--precond`: Jacobi + dots -> `precond_p{p}_az_zz_sm90.ptx`); `--emulate [--emu-tsan]` runs it on the CPU (`tools/emu_dss.cpp`), bit-exact against the hand kernel's formula on random tables |
+| `test/dss_gpu_pipeline.py [p]` | the cell-wise DSS -> `dss_p{p}_sm90.ptx` (`--precond`: the four Jacobi variants -> `precond_p{p}_sm90.ptx`; `--bicgstab`: vector updates, partial folding and Krylov steps -> `bicgstab_p{p}_sm90.ptx`, gate `tools/emu_bicg.cpp`); `--emulate [--emu-tsan]` runs it on the CPU (`tools/emu_dss.cpp`), bit-exact against the hand kernel's formula on random tables |
 | `make_ptx_warp.sh` | the warp->tensor-core bridge gate -> `warp_mma_sm90.ptx` |
 
 ## Gates

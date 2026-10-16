@@ -1,4 +1,5 @@
-// --mir-lower-dss: lower mir.dss to the staged gather of the hand-written MARS
+// --mir-lower-cellwise: lower mir.cellwise (one per-copy phase per element, see
+// lowerOne(CellwiseOp)) and mir.dss: the latter to the staged gather of the hand-written MARS
 // kernel (unstructured_dss_kernel in
 // backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp), as plain
 // loops that say nothing about the GPU:
@@ -212,6 +213,56 @@ SmallVector<int64_t> widen(const std::vector<T> &v) {
   return SmallVector<int64_t>(v.begin(), v.end());
 }
 
+// One phase: scf.parallel over [0, trips) marked {mir.lanes}.
+void lanes(OpBuilder &ob, Location l, int64_t trips, function_ref<void(OpBuilder &, Location, Value)> body) {
+  Emit y{ob, l};
+  auto par = ob.create<scf::ParallelOp>(l, ValueRange{y.idx(0)}, ValueRange{y.idx(trips)}, ValueRange{y.idx(1)},
+                                        [&](OpBuilder &pb, Location pl, ValueRange iv) { body(pb, pl, iv[0]); });
+  par->setAttr("mir.lanes", ob.getUnitAttr());
+}
+
+// The same with reductions: body returns one term per init value, combined with
+// `combine`; returns the reduced values.
+SmallVector<Value> reduceLanes(OpBuilder &ob, Location l, int64_t trips, ValueRange inits,
+                               function_ref<Value(OpBuilder &, Location, Value, Value)> combine,
+                               function_ref<SmallVector<Value>(OpBuilder &, Location, Value)> body) {
+  Emit y{ob, l};
+  auto par = ob.create<scf::ParallelOp>(
+      l, ValueRange{y.idx(0)}, ValueRange{y.idx(trips)}, ValueRange{y.idx(1)}, inits,
+      [&](OpBuilder &pb, Location pl, ValueRange iv, ValueRange) {
+        const SmallVector<Value> terms = body(pb, pl, iv[0]);
+        auto red = pb.create<scf::ReduceOp>(pl, terms);
+        for (unsigned i = 0; i < terms.size(); ++i) {
+          Block &blk = red.getReductions()[i].front();
+          OpBuilder rb = OpBuilder::atBlockEnd(&blk);
+          rb.create<scf::ReduceReturnOp>(pl, combine(rb, pl, blk.getArgument(0), blk.getArgument(1)));
+        }
+      });
+  par->setAttr("mir.lanes", ob.getUnitAttr());
+  return SmallVector<Value>(par.getResults());
+}
+
+Value addf(OpBuilder &rb, Location rl, Value a, Value c) { return rb.create<arith::AddFOp>(rl, a, c); }
+
+// Bit `bit` of the 32-bit mask `word`, as i1.
+Value maskBit(Emit &z, Value word, Value bit) {
+  return z.b.create<arith::CmpIOp>(z.loc, arith::CmpIPredicate::ne,
+                                   z.band(z.b.create<arith::ShRUIOp>(z.loc, word, bit), z.i32(1)), z.i32(0));
+}
+
+// Inlines a per-copy region (mir.dss epilogue, mir.cellwise body) with `args`, stores
+// its first outs.size() results to outs at t and returns the rest (reduction terms).
+SmallVector<Value> inlineBody(Emit &z, Block &body, ArrayRef<Value> args, ArrayRef<Value> outs, Value t) {
+  IRMapping map;
+  for (unsigned j = 0; j < args.size(); ++j) map.map(body.getArgument(j), args[j]);
+  for (Operation &bop : body.without_terminator()) z.b.clone(bop, map);
+  auto yield = cast<mir::YieldOp>(body.getTerminator());
+  for (unsigned j = 0; j < outs.size(); ++j) z.store(map.lookup(yield.getOperand(j)), outs[j], t);
+  SmallVector<Value> terms;
+  for (unsigned j = outs.size(); j < yield.getNumOperands(); ++j) terms.push_back(map.lookup(yield.getOperand(j)));
+  return terms;
+}
+
 LogicalResult lowerOne(mir::DssOp op) {
   const int P = (int)op.getDegree();
   if (P < 1 || P > kMaxDegree)
@@ -261,35 +312,6 @@ LogicalResult lowerOne(mir::DssOp op) {
   d.localValues = b.create<memref::DimOp>(loc, d.values, 0);
   Value count = b.create<memref::DimOp>(loc, op.getElements(), 0);
   Value elements = op.getElements();
-
-  auto lanes = [&](OpBuilder &ob, Location l, int64_t trips,
-                   function_ref<void(OpBuilder &, Location, Value)> body) {
-    Emit y{ob, l};
-    auto par = ob.create<scf::ParallelOp>(
-        l, ValueRange{y.idx(0)}, ValueRange{y.idx(trips)}, ValueRange{y.idx(1)},
-        [&](OpBuilder &pb, Location pl, ValueRange iv) { body(pb, pl, iv[0]); });
-    par->setAttr("mir.lanes", ob.getUnitAttr());
-  };
-  // The same with reductions: body returns one term per init value, combined
-  // with `combine`; returns the reduced values.
-  auto reduceLanes = [&](OpBuilder &ob, Location l, int64_t trips, ValueRange inits,
-                         function_ref<Value(OpBuilder &, Location, Value, Value)> combine,
-                         function_ref<SmallVector<Value>(OpBuilder &, Location, Value)> body) {
-    Emit y{ob, l};
-    auto par = ob.create<scf::ParallelOp>(
-        l, ValueRange{y.idx(0)}, ValueRange{y.idx(trips)}, ValueRange{y.idx(1)}, inits,
-        [&](OpBuilder &pb, Location pl, ValueRange iv, ValueRange) {
-          const SmallVector<Value> terms = body(pb, pl, iv[0]);
-          auto red = pb.create<scf::ReduceOp>(pl, terms);
-          for (unsigned i = 0; i < terms.size(); ++i) {
-            Block &blk = red.getReductions()[i].front();
-            OpBuilder rb = OpBuilder::atBlockEnd(&blk);
-            rb.create<scf::ReduceReturnOp>(pl, combine(rb, pl, blk.getArgument(0), blk.getArgument(1)));
-          }
-        });
-    par->setAttr("mir.lanes", ob.getUnitAttr());
-    return SmallVector<Value>(par.getResults());
-  };
 
   auto elementLoop = b.create<scf::ParallelOp>(
       loc, ValueRange{x.idx(0)}, ValueRange{count}, ValueRange{x.idx(1)},
@@ -448,30 +470,14 @@ LogicalResult lowerOne(mir::DssOp op) {
         SmallVector<Value> zeros(reductions, y.f64(0.0));
         const SmallVector<Value> sums = reduceLanes(
             eb, l, d.n3, zeros,
-            [](OpBuilder &rb, Location rl, Value a, Value c) -> Value { return rb.create<arith::AddFOp>(rl, a, c); },
-            [&](OpBuilder &pb, Location pl, Value node) -> SmallVector<Value> {
+            addf, [&](OpBuilder &pb, Location pl, Value node) -> SmallVector<Value> {
               Emit z{pb, pl};
               const Value t = z.add(base, node);
               const Value bit = z.entry(d.bit, z.toI32(node));
-              auto flag = [&](Value word) {
-                const Value one = z.i32(1);
-                return pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::ne,
-                                                z.band(pb.create<arith::ShRUIOp>(pl, word, bit), one), z.i32(0))
-                    .getResult();
-              };
-              IRMapping map;
-              Block &body = epilogue->front();
-              map.map(body.getArgument(0), z.load(stage, d.slot(z, node)));
-              map.map(body.getArgument(1), flag(dmask));
-              map.map(body.getArgument(2), flag(countingBits));
-              for (unsigned j = 0; j < d.copies.size(); ++j) map.map(body.getArgument(3 + j), z.load(d.copies[j], t));
-              for (Operation &bop : body.without_terminator()) pb.clone(bop, map);
-              auto yield = cast<mir::YieldOp>(body.getTerminator());
-              for (unsigned j = 0; j < d.outs.size(); ++j) z.store(map.lookup(yield.getOperand(j)), d.outs[j], t);
-              SmallVector<Value> terms;
-              for (unsigned j = d.outs.size(); j < yield.getNumOperands(); ++j)
-                terms.push_back(map.lookup(yield.getOperand(j)));
-              return terms;
+              SmallVector<Value> args{z.load(stage, d.slot(z, node)), maskBit(z, dmask, bit),
+                                      maskBit(z, countingBits, bit)};
+              for (Value c : d.copies) args.push_back(z.load(c, t));
+              return inlineBody(z, epilogue->front(), args, d.outs, t);
             });
         for (int64_t j = 0; j < reductions; ++j)
           y.store(sums[j], d.partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
@@ -481,23 +487,79 @@ LogicalResult lowerOne(mir::DssOp op) {
   return success();
 }
 
-struct LowerDssPass : public PassWrapper<LowerDssPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerDssPass)
+// mir.cellwise: one phase per element over its n^3 copies, the body inlined per
+// copy, its reduction terms summed over the element (scf.reduce).
+LogicalResult lowerOne(mir::CellwiseOp op) {
+  const int P = (int)op.getDegree();
+  if (P < 1 || P > kMaxDegree)
+    return op.emitOpError("degree must be in [1, ") << kMaxDegree << "]";
+  const int n = P + 1, n3 = n * n * n;
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  ModuleOp mod = op->getParentOfType<ModuleOp>();
+  Emit x{b, loc};
+  Value bitTable;
+  if (op.getCounting()) {
+    const HexTables tables = tablesFor(P, std::make_integer_sequence<int, kMaxDegree>{});
+    bitTable = constantTable(b, mod, loc, "__mir_dss_p" + std::to_string(P) + "_bit", b.getI8Type(),
+                             widen(tables.bit));
+  }
+  const int64_t reductions = op.getReductions();
+  const SmallVector<Value> inputs(op.getInputs()), outs(op.getOuts());
+  Value elements = op.getElements(), counting = op.getCounting(), partials = op.getPartials();
+  Value count = b.create<memref::DimOp>(loc, elements, 0);
+  Block &body = op.getBody().front();
 
-  StringRef getArgument() const final { return "mir-lower-dss"; }
+  auto elementLoop = b.create<scf::ParallelOp>(
+      loc, ValueRange{x.idx(0)}, ValueRange{count}, ValueRange{x.idx(1)},
+      [&](OpBuilder &eb, Location l, ValueRange w) {
+        Emit y{eb, l};
+        const Value e = y.toIndex(y.load(elements, w[0]));
+        const Value base = y.mul(e, y.idx(n3));
+        const Value bits = counting ? y.load(counting, e) : Value();
+        auto copy = [&](OpBuilder &pb, Location pl, Value node) {
+          Emit z{pb, pl};
+          const Value t = z.add(base, node);
+          SmallVector<Value> args{counting ? maskBit(z, bits, z.entry(bitTable, z.toI32(node)))
+                                           : Value(pb.create<arith::ConstantIntOp>(pl, 1, 1))};
+          for (Value in : inputs) args.push_back(z.load(in, t));
+          return inlineBody(z, body, args, outs, t);
+        };
+        if (reductions == 0) {
+          lanes(eb, l, n3, [&](OpBuilder &pb, Location pl, Value node) { copy(pb, pl, node); });
+          return;
+        }
+        SmallVector<Value> zeros(reductions, y.f64(0.0));
+        const SmallVector<Value> sums = reduceLanes(eb, l, n3, zeros, addf, copy);
+        for (int64_t j = 0; j < reductions; ++j)
+          y.store(sums[j], partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
+      });
+  elementLoop->setAttr("mir.elements", b.getUnitAttr());
+  op.erase();
+  return success();
+}
+
+struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerCellwisePass)
+
+  StringRef getArgument() const final { return "mir-lower-cellwise"; }
   StringRef getDescription() const final {
-    return "Lower mir.dss to the staged gather: per-element parallel phases over "
-           "own copies, face pairs, edge/corner stars and the write-back";
+    return "Lower mir.dss (the staged gather: per-element phases over own copies, face "
+           "pairs, edge/corner stars, write-back) and mir.cellwise (a per-copy phase) to "
+           "per-element parallel loops";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, memref::MemRefDialect, scf::SCFDialect>();
   }
 
   void runOnOperation() override {
-    SmallVector<mir::DssOp> ops;
-    getOperation()->walk([&](mir::DssOp op) { ops.push_back(op); });
-    for (mir::DssOp op : ops)
-      if (failed(lowerOne(op)))
+    SmallVector<Operation *> ops;
+    getOperation()->walk([&](Operation *op) {
+      if (isa<mir::DssOp, mir::CellwiseOp>(op))
+        ops.push_back(op);
+    });
+    for (Operation *op : ops)
+      if (failed(isa<mir::DssOp>(op) ? lowerOne(cast<mir::DssOp>(op)) : lowerOne(cast<mir::CellwiseOp>(op))))
         return signalPassFailure();
   }
 };
@@ -505,5 +567,5 @@ struct LowerDssPass : public PassWrapper<LowerDssPass, OperationPass<ModuleOp>> 
 }  // namespace
 
 namespace mir {
-void registerLowerDssPass() { PassRegistration<LowerDssPass>(); }
+void registerLowerCellwisePass() { PassRegistration<LowerCellwisePass>(); }
 }  // namespace mir

@@ -30,7 +30,7 @@
 // Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file] [--precond-ptx file]
 // (several ranks need GPU-aware MPI: on Cray MPICH, MPICH_GPU_SUPPORT_ENABLED=1)
 
-#include "backend/distributed/unstructured/marsir/mars_marsir_ptx_dss.hpp"
+#include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 

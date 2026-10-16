@@ -500,3 +500,157 @@ def emit_dss_precond_all(p=7):
     """All four variants the Krylov solvers call (no dots, <a, z>, <z, z>, both), in
     one module: precond_p{p}, precond_p{p}_az, precond_p{p}_zz, precond_p{p}_az_zz."""
     return "".join(emit_dss_precond(p, az, zz) for az in (False, True) for zz in (False, True))
+
+
+# ---- BiCGStab on element-local vectors (bicgstab of mars_cellwise_krylov.hpp) -----
+# Krylov scalars live in a device array, in the order of its enum Scalar.
+KRYLOV = {"rho": 0, "alpha": 1, "omega": 2, "beta": 3, "rr": 4, "t0": 5, "t1": 6}
+
+
+def _scalar(name, sc="%sc"):
+    return [f"  %{name}_i = arith.constant {KRYLOV[name]} : index",
+            f"  %{name} = memref.load {sc}[%{name}_i] : memref<?xf64>"]
+
+
+def _cellwise(name, p, inputs, outs, body, yields, counting=False, reductions=0, scalars=()):
+    """A kernel of one mir.cellwise op. inputs / outs name f64 arrays (an array may be
+    both); body lines see %counted and %<name>_t for every input."""
+    args = ["elements"] + (["counting"] if counting else []) + list(dict.fromkeys(inputs + outs)) + ["sc"] \
+        + (["partials"] if reductions else [])
+    types = {"elements": "i32", "counting": "i32"}
+    sig = ", ".join(f"%{a}: memref<?x{types.get(a, 'f64')}>" for a in args)
+    opnds = ["%elements"] + (["%counting"] if counting else []) + [f"%{a}" for a in inputs + outs] \
+        + (["%partials"] if reductions else [])
+    otypes = ["memref<?xi32>"] + (["memref<?xi32>"] if counting else []) + ["memref<?xf64>"] * (
+        len(inputs) + len(outs) + (1 if reductions else 0))
+    lines = [f"func.func @{name}({sig}) attributes {{mir.kernel}} {{"]
+    for s_ in scalars:
+        lines += _scalar(s_)
+    lines += [f"  mir.cellwise elements(%elements)" + (" counting(%counting)" if counting else "")
+              + (f" inputs({', '.join('%' + a for a in inputs)})" if inputs else "")
+              + (f" outs({', '.join('%' + a for a in outs)})" if outs else "")
+              + (" partials(%partials)" if reductions else "")
+              + f" {{degree = {p} : i64, reductions = {reductions} : i64}} : {', '.join(otypes)} body {{",
+              "  ^bb0(%counted: i1" + "".join(f", %{a}_t: f64" for a in inputs) + "):"]
+    lines += ["    " + l for l in body]
+    lines += [f"    mir.yield {', '.join(yields)} : {', '.join(['f64'] * len(yields))}", "  }", "  return", "}", ""]
+    return "\n".join(lines)
+
+
+def _reduce_block(n, op="arith.addf"):
+    return ", ".join("{\n      ^bb0(%l: f64, %r: f64):\n        %x = " + op
+                     + " %l, %r : f64\n        scf.reduce.return %x : f64\n      }" for _ in range(n))
+
+
+def _sum_range(nv, lo, hi, src="%src"):
+    """Lines that sum src[i * nv + j] over i in [lo, hi) as one {mir.lanes} phase into
+    %s#j (one lane per i, a fixed-order tree across lanes)."""
+    res = "%s" if nv == 1 else f"%s:{nv}"
+    loads = []
+    for j in range(nv):
+        loads += [f"      %k{j} = arith.addi %k, %c{j} : index",
+                  f"      %v{j} = memref.load {src}[%k{j}] : memref<?xf64>"]
+    zeros = ", ".join(["%zero"] * nv)
+    return [f"    {res} = scf.parallel (%i) = ({lo}) to ({hi}) step (%c1) init ({zeros}) -> ({', '.join(['f64'] * nv)}) {{",
+            f"      %k = arith.muli %i, %nv : index", *loads,
+            f"      scf.reduce({', '.join(f'%v{j}' for j in range(nv))} : {', '.join(['f64'] * nv)}) {_reduce_block(nv)}",
+            "    } {mir.lanes}"]
+
+
+def _sums(nv):
+    return ["%s"] if nv == 1 else [f"%s#{j}" for j in range(nv)]
+
+
+def _consts(nv):
+    return ["  %c0 = arith.constant 0 : index", "  %c1 = arith.constant 1 : index",
+            f"  %nv = arith.constant {nv} : index", "  %zero = arith.constant 0.0 : f64"] + \
+        [f"  %c{j} = arith.constant {j} : index" for j in range(2, nv)]
+
+
+# What a finished reduction does with its totals v (apply_step of the krylov header).
+def _step_lines(step, v):
+    st = lambda name, val: [f"    %{name}_si = arith.constant {KRYLOV[name]} : index",
+                             f"    memref.store {val}, %sc[%{name}_si] : memref<?xf64>"]
+    ld = lambda name: [f"    %{name}_li = arith.constant {KRYLOV[name]} : index",
+                       f"    %{name}_old = memref.load %sc[%{name}_li] : memref<?xf64>"]
+    if step == "start":
+        return (["    %one = arith.constant 1.0 : f64", "    %zf = arith.constant 0.0 : f64"]
+                + st("rr", v[0]) + st("rho", v[0]) + st("alpha", "%one") + st("omega", "%one") + st("beta", "%zf"))
+    if step == "alpha":
+        return ld("rho") + [f"    %a = arith.divf %rho_old, {v[0]} : f64"] + st("alpha", "%a")
+    if step == "omega":
+        return [f"    %w = arith.divf {v[0]}, {v[1]} : f64"] + st("omega", "%w")
+    if step == "rho":   # beta = (v1 / rho) * (alpha / omega), then rho = v1
+        return (ld("rho") + ld("alpha") + ld("omega")
+                + [f"    %q1 = arith.divf {v[1]}, %rho_old : f64", "    %q2 = arith.divf %alpha_old, %omega_old : f64",
+                   "    %beta_new = arith.mulf %q1, %q2 : f64"]
+                + st("rr", v[0]) + st("beta", "%beta_new") + st("rho", v[1]))
+    raise ValueError(step)
+
+
+STEP_NV = {"start": 1, "alpha": 1, "omega": 2, "rho": 2}
+
+
+def emit_bicgstab(p=7):
+    """The kernels of a cell-wise BiCGStab besides the operator and the preconditioner:
+      bicg_update_p_p{p}   p = r + beta (p - omega v)
+      bicg_update_s_p{p}   s = r - alpha v
+      bicg_update_xr_p{p}  x += alpha p + omega s, r = s - omega t, per-element partials
+                           of <r, r> and <rh, r> (each node counted once)
+      fold_nv{1,2}         per-element partials -> one partial per block (a contiguous
+                           range each, fixed order); grid = size(dst) / nv
+      finish_<step>        block partials -> totals -> the Krylov step (one block)
+      totals_nv{1,2}       block partials -> totals in sc[t0], sc[t1] (for MPI)
+      step_<step>          sc[t0], sc[t1] -> the Krylov step (after MPI)"""
+    out = []
+    out.append(_cellwise(f"bicg_update_p_p{p}", p, ["r", "v", "p"], ["p"],
+                         ["%ov = arith.mulf %omega, %v_t : f64", "%d = arith.subf %p_t, %ov : f64",
+                          "%bd = arith.mulf %beta, %d : f64", "%pn = arith.addf %r_t, %bd : f64"],
+                         ["%pn"], scalars=("beta", "omega")))
+    out.append(_cellwise(f"bicg_update_s_p{p}", p, ["r", "v"], ["s"],
+                         ["%av = arith.mulf %alpha, %v_t : f64", "%sn = arith.subf %r_t, %av : f64"],
+                         ["%sn"], scalars=("alpha",)))
+    out.append(_cellwise(f"bicg_update_xr_p{p}", p, ["x", "p", "s", "t", "rh"], ["x", "r"],
+                         ["%ap = arith.mulf %alpha, %p_t : f64", "%os = arith.mulf %omega, %s_t : f64",
+                          "%inc = arith.addf %ap, %os : f64", "%xn = arith.addf %x_t, %inc : f64",
+                          "%ot = arith.mulf %omega, %t_t : f64", "%rn = arith.subf %s_t, %ot : f64",
+                          "%one = arith.constant 1.0 : f64", "%zw = arith.constant 0.0 : f64",
+                          "%w = arith.select %counted, %one, %zw : f64",
+                          "%rr = arith.mulf %rn, %rn : f64", "%rrw = arith.mulf %rr, %w : f64",
+                          "%hr = arith.mulf %rh_t, %rn : f64", "%hrw = arith.mulf %hr, %w : f64"],
+                         ["%xn", "%rn", "%rrw", "%hrw"], counting=True, reductions=2, scalars=("alpha", "omega")))
+    for nv in (1, 2):
+        out.append("\n".join(
+            [f"func.func @fold_nv{nv}(%src: memref<?xf64>, %dst: memref<?xf64>, %count: index) "
+             "attributes {mir.kernel, mir.noalias} {"] + _consts(nv) +
+            ["  %dn = memref.dim %dst, %c0 : memref<?xf64>", "  %blocks = arith.divui %dn, %nv : index",
+             "  %bm1 = arith.subi %blocks, %c1 : index", "  %cb = arith.addi %count, %bm1 : index",
+             "  %per = arith.divui %cb, %blocks : index",
+             "  scf.parallel (%b) = (%c0) to (%blocks) step (%c1) {",
+             "    %lo = arith.muli %b, %per : index", "    %lp = arith.addi %lo, %per : index",
+             "    %hi = arith.minui %lp, %count : index"] + _sum_range(nv, "%lo", "%hi") +
+            ["    %o = arith.muli %b, %nv : index"] +
+            sum(([f"    %o{j} = arith.addi %o, %c{j} : index", f"    memref.store {s_}, %dst[%o{j}] : memref<?xf64>"]
+                 for j, s_ in enumerate(_sums(nv))), []) +
+            ["  } {mir.elements}", "  return", "}", ""]))
+        out.append("\n".join(
+            [f"func.func @totals_nv{nv}(%src: memref<?xf64>, %sc: memref<?xf64>, %count: index) "
+             "attributes {mir.kernel, mir.noalias} {"] + _consts(nv) +
+            ["  scf.parallel (%b) = (%c0) to (%c1) step (%c1) {"] + _sum_range(nv, "%c0", "%count") +
+            sum(([f"    %ti{j} = arith.constant {KRYLOV['t0'] + j} : index",
+                  f"    memref.store {s_}, %sc[%ti{j}] : memref<?xf64>"] for j, s_ in enumerate(_sums(nv))), []) +
+            ["  } {mir.elements}", "  return", "}", ""]))
+    for step, nv in STEP_NV.items():
+        out.append("\n".join(
+            [f"func.func @finish_{step}(%src: memref<?xf64>, %sc: memref<?xf64>, %count: index) "
+             "attributes {mir.kernel, mir.noalias} {"] + _consts(nv) +
+            ["  scf.parallel (%b) = (%c0) to (%c1) step (%c1) {"] + _sum_range(nv, "%c0", "%count") +
+            _step_lines(step, _sums(nv)) + ["  } {mir.elements}", "  return", "}", ""]))
+        out.append("\n".join(
+            [f"func.func @step_{step}(%sc: memref<?xf64>) attributes {{mir.kernel}} {{",
+             "  %c0 = arith.constant 0 : index", "  %c1 = arith.constant 1 : index",
+             "  scf.parallel (%b) = (%c0) to (%c1) step (%c1) {"] +
+            sum(([f"    %tl{j} = arith.constant {KRYLOV['t0'] + j} : index",
+                  f"    %tv{j} = memref.load %sc[%tl{j}] : memref<?xf64>"] for j in range(nv)), []) +
+            _step_lines(step, [f"%tv{j}" for j in range(nv)]) + ["  } {mir.elements}", "  return", "}", ""]))
+    return "".join(out)

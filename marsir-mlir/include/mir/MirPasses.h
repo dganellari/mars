@@ -40,7 +40,7 @@ void registerWarpBarriersPass();
 void registerHoistInvariantReadsPass();
 void registerUnrollLoopsPass();
 void registerForwardOwnedPass();
-void registerLowerDssPass();
+void registerLowerCellwisePass();
 void registerWarpPerElementPass();
 void registerNoaliasDescriptorsPass();
 }  // namespace mir

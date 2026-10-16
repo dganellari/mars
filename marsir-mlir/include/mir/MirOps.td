@@ -174,8 +174,8 @@ def Mir_FluxOp : Mir_Op<"flux",
   }];
 }
 
-def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp"]>]> {
-  let summary = "terminator of mir.flux (per-point result) and mir.dss (epilogue results)";
+def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp", "CellwiseOp"]>]> {
+  let summary = "terminator of mir.flux (per-point result), mir.dss and mir.cellwise (per-copy results)";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
   // Zero-operand builder (defined in MirOps.cpp) so SingleBlockImplicitTerminator
@@ -264,6 +264,54 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
     (`flags` `(` $flags^ `)`)? (`copies` `(` $copies^ `)`)?
     `outs` `(` $outs `)` (`partials` `(` $partials^ `)`)?
     attr-dict `:` type(operands) (`epilogue` $epilogue^)?
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// mir.cellwise : a pointwise map over element-local copies, with reductions.
+//===----------------------------------------------------------------------===//
+
+def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
+  let summary = "per-copy map over the element-local vectors of listed elements";
+  let description = [{
+    The vector operations of a cell-wise Krylov solver: for every copy t of the
+    elements in `elements` (nodes numbered as for mir.dss), the region runs on
+      (counted: i1, inputs[0][t], inputs[1][t], ...)
+    and yields one value per `outs` array (stored at t) followed by `reductions`
+    terms, summed over the element's copies into partials[w * reductions + j]
+    for the w-th listed element. `counted` is bit b of counting[e] for the
+    copy's entity bit b (see mir.dss), so a sum over counted copies takes every
+    node once; without `counting` it is true.
+
+    An array may be both an input and an output (x = x + ...): each copy is
+    read and written by the same iteration. Values from above the op (e.g.
+    Krylov scalars loaded once) may be used in the region.
+
+    Example (s = r - alpha v):
+      mir.cellwise elements(%ids) inputs(%r, %v) outs(%s) {degree = 7 : i64}
+                   : memref<?xi32>, ... body {
+      ^bb0(%c: i1, %ri: f64, %vi: f64):
+        %av = arith.mulf %alpha, %vi : f64
+        %si = arith.subf %ri, %av : f64
+        mir.yield %si : f64
+      }
+  }];
+
+  let arguments = (ins
+      Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
+      Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
+      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy inputs", [MemRead]>:$inputs,
+      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      I64Attr:$degree,
+      DefaultValuedAttr<I64Attr, "0">:$reductions);
+  let regions = (region SizedRegion<1>:$body);
+
+  let assemblyFormat = [{
+    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)?
+    (`inputs` `(` $inputs^ `)`)? (`outs` `(` $outs^ `)`)? (`partials` `(` $partials^ `)`)?
+    attr-dict `:` type(operands) `body` $body
   }];
   let hasVerifier = 1;
 }

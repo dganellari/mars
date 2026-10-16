@@ -45,3 +45,18 @@ mlir::LogicalResult mir::DssOp::verify() {
     return emitOpError("the epilogue yields one value per outs array, then the reduction terms");
   return mlir::success();
 }
+
+mlir::LogicalResult mir::CellwiseOp::verify() {
+  const int64_t r = getReductions();
+  if (r < 0)
+    return emitOpError("reductions must be >= 0");
+  if ((r > 0) != (getPartials() != nullptr))
+    return emitOpError("partials are needed exactly when reductions > 0");
+  mlir::Block &body = getBody().front();
+  if (body.getNumArguments() != 1 + getInputs().size())
+    return emitOpError("the body takes (counted) and one value per inputs array");
+  auto yield = llvm::dyn_cast<mir::YieldOp>(body.getTerminator());
+  if (!yield || yield.getNumOperands() != getOuts().size() + r)
+    return emitOpError("the body yields one value per outs array, then the reduction terms");
+  return mlir::success();
+}

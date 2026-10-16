@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   mir::registerHoistInvariantReadsPass();
   mir::registerUnrollLoopsPass();
   mir::registerForwardOwnedPass();
-  mir::registerLowerDssPass();
+  mir::registerLowerCellwisePass();
   mir::registerWarpPerElementPass();
   mir::registerNoaliasDescriptorsPass();
 

@@ -2,7 +2,7 @@
 """The cell-wise DSS from HIGH-LEVEL mir to a GPU kernel, by passes only.
 
     mlir_ir.emit_dss                one mir.dss op on the topology tables
-      --mir-lower-dss               per-element parallel phases (own copies, face
+      --mir-lower-cellwise              per-element parallel phases (own copies, face
                                     pairs, edge/corner stars, write-back); the
                                     reference-hex tables become constant globals
       --mir-warp-per-element        elements -> blocks (grid-stride), phases ->
@@ -33,7 +33,12 @@ solvers call (no dots, <a, z>, <z, z>, both; mlir_ir.emit_dss_precond_all: mir.d
 with an epilogue), one module, precond_p{p}_sm90.ptx. The CPU gate checks the
 variant with both dots.
 
-Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond] [--emulate [--emu-tsan]]
+--bicgstab: the other BiCGStab kernels (vector updates as mir.cellwise; partial
+folding, finish and step kernels as structured parallel loops; mlir_ir.emit_bicgstab),
+bicgstab_p{p}_sm90.ptx, CPU gate tools/emu_bicg.cpp. Mapped before canonicalizing:
+the one-iteration element loop of a finish kernel would otherwise fold away.
+
+Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond | --bicgstab] [--emulate [--emu-tsan]]
 """
 import os
 import re
@@ -59,16 +64,19 @@ def main():
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     p = int(argv[0]) if argv else 7
     precond = "--precond" in sys.argv
+    bicg = "--bicgstab" in sys.argv
+    emitter = "emit_bicgstab" if bicg else ("emit_dss_precond_all" if precond else "emit_dss")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(MARS, 'marsir-compiler')!r})
 from marsir.backends import mlir_ir
-sys.stdout.write(mlir_ir.{'emit_dss_precond_all' if precond else 'emit_dss'}({p}))
+sys.stdout.write(mlir_ir.{emitter}({p}))
 """], "")
-    ir = run([MIROPT, "-", "--mir-lower-dss", "--canonicalize", "--cse",
+    early_cleanup = [] if bicg else ["--canonicalize", "--cse"]
+    ir = run([MIROPT, "-", "--mir-lower-cellwise", *early_cleanup,
               "--mir-warp-per-element", "--canonicalize", "--cse",
               "--loop-invariant-code-motion"], src)
     if "--emulate" in sys.argv:
-        return emulate(ir, p, precond)
+        return emulate(ir, p, precond, bicg)
 
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels ",
@@ -84,16 +92,17 @@ sys.stdout.write(mlir_ir.{'emit_dss_precond_all' if precond else 'emit_dss'}({p}
     ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    out = os.path.join(ROOT, "generated", f"precond_p{p}_sm90.ptx" if precond else f"dss_p{p}_sm90.ptx")
+    name = f"bicgstab_p{p}" if bicg else (f"precond_p{p}" if precond else f"dss_p{p}")
+    out = os.path.join(ROOT, "generated", f"{name}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [
-        ("kernel entries", ptx.count(".visible .entry") == (4 if precond else 1)),
+        ("kernel entries", ptx.count(".visible .entry") == (15 if bicg else 4 if precond else 1)),
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", "tid.x" in ptx),
         ("no local memory", ptx.count(".local") == 0),
         ("values on the read-only path", "ld.global.nc.f64" in ptx),
-        ("phase barriers", ptx.count("bar.sync") + ptx.count("barrier.sync") >= (4 if p > 1 else 3)),
+        ("phase barriers", bicg or ptx.count("bar.sync") + ptx.count("barrier.sync") >= (4 if p > 1 else 3)),
         ("warp collectives convergent", subprocess.run(
             [sys.executable, os.path.join(HERE, "ptx_convergence.py"), out],
             capture_output=True).returncode == 0),
@@ -107,7 +116,7 @@ sys.stdout.write(mlir_ir.{'emit_dss_precond_all' if precond else 'emit_dss'}({p}
     return 0 if ok else 1
 
 
-def emulate(ir, p, precond):
+def emulate(ir, p, precond, bicg):
     ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
     work = os.path.join(ROOT, "build", "emu_dss")
     os.makedirs(work, exist_ok=True)
@@ -132,11 +141,11 @@ def emulate(ir, p, precond):
     cc = "/usr/bin/clang" if tsan else os.path.join(LLVM, "bin", "clang")
     run([cc, *san, "-c", os.path.join(work, "kernel.ll"),
          "-o", os.path.join(work, "kernel.o")], "")
-    exe = os.path.join(work, f"emu_{'precond' if precond else 'dss'}_p{p}")
-    run(["/usr/bin/clang++", "-std=c++20", *san, f"-DMIR_DSS_P={p}"]
+    exe = os.path.join(work, f"emu_{'bicg' if bicg else 'precond' if precond else 'dss'}_p{p}")
+    run(["/usr/bin/clang++", "-std=c++20", "-ffp-contract=off", *san, f"-DMIR_DSS_P={p}"]
         + (["-DMIR_DSS_PRECOND"] if precond else [])
         + (["-DMIR_EMU_TSAN"] if tsan else []) +
-        ["-I", MARS, os.path.join(ROOT, "tools", "emu_dss.cpp"),
+        ["-I", MARS, os.path.join(ROOT, "tools", "emu_bicg.cpp" if bicg else "emu_dss.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
     env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")
     r = subprocess.run([exe], capture_output=True, text=True, env=env)

@@ -17,7 +17,7 @@ add_mlir_dialect_library(MLIRMir
   HoistInvariantReads.cpp
   UnrollLoops.cpp
   ForwardOwned.cpp
-  LowerDss.cpp
+  LowerCellwise.cpp
   WarpPerElement.cpp
   NoaliasDescriptors.cpp
 
@@ -46,7 +46,7 @@ add_mlir_dialect_library(MLIRMir
   MLIRFuncDialect
   )
 
-# LowerDss.cpp takes the reference-hex numbering from MARS itself
+# LowerCellwise.cpp takes the reference-hex numbering from MARS itself
 # (backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp).
 foreach(t MLIRMir obj.MLIRMir)
   if(TARGET ${t})
