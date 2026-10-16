@@ -2,14 +2,13 @@
 """The cell-wise DSS from HIGH-LEVEL mir to a GPU kernel, by passes only.
 
     mlir_ir.emit_dss                one mir.dss op on the topology tables
-      --mir-lower-dss               per-element parallel phases (own copies, face
-                                    pairs, edge/corner stars, write-back); the
-                                    reference-hex tables become constant globals
+      --mir-lower-dss               per-element parallel phases (own copies and the
+                                    element's descriptors, face pairs, edge/corner
+                                    stars, write-back); the reference-hex tables
+                                    become constant globals
       --mir-warp-per-element        elements -> blocks (grid-stride), phases ->
                                     lane-cyclic loops, a barrier between phases,
                                     scratch -> shared
-      [--mir-workgroup-constants]   with --shared-tables: the reference-hex
-                                    tables copied to shared memory per block
       --mir-gpu-wrap                gpu.func kernel (the tables move along)
       explicit NVVM lowering        as in hl_gpu_pipeline.py
       --mir-noalias-descriptors     the arguments' data pointers noalias, so
@@ -19,7 +18,8 @@
 Kernel contract: dss_p{p}(values, ghost, elements, face_nbr, face_code, edge_of,
 edge_off, edge_ent, vert_of, vert_off, vert_ent, out), every argument a 1-D
 memref descriptor; block = 32, any grid (grid-stride over the listed elements).
---shared-tables writes dss_p{p}_shtab_sm90.ptx.
+--no-prefetch: the descriptors loaded where they are used, not in the first
+phase (the A/B control), dss_p{p}_noprefetch_sm90.ptx.
 
 --emulate: the same kernel body with --mir-emulate-warp instead of
 --mir-gpu-wrap, run on the CPU by tools/emu_dss.cpp (32 threads per element) and
@@ -56,11 +56,11 @@ import sys; sys.path.insert(0, {os.path.join(MARS, 'marsir-compiler')!r})
 from marsir.backends import mlir_ir
 sys.stdout.write(mlir_ir.emit_dss({p}))
 """], "")
-    shared_tables = "--shared-tables" in sys.argv
-    ir = run([MIROPT, "-", "--mir-lower-dss", "--canonicalize", "--cse",
+    no_prefetch = "--no-prefetch" in sys.argv
+    ir = run([MIROPT, "-", "--mir-lower-dss" + ("=prefetch-descriptors=false" if no_prefetch else ""),
+              "--canonicalize", "--cse",
               "--mir-warp-per-element", "--canonicalize", "--cse",
-              "--loop-invariant-code-motion"]
-             + (["--mir-workgroup-constants"] if shared_tables else []), src)
+              "--loop-invariant-code-motion"], src)
     if "--emulate" in sys.argv:
         return emulate(ir, p)
 
@@ -78,7 +78,7 @@ sys.stdout.write(mlir_ir.emit_dss({p}))
     ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    out = os.path.join(ROOT, "generated", f"dss_p{p}{'_shtab' if shared_tables else ''}_sm90.ptx")
+    out = os.path.join(ROOT, "generated", f"dss_p{p}{'_noprefetch' if no_prefetch else ''}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [

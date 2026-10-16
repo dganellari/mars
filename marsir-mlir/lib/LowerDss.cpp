@@ -24,6 +24,13 @@
 // Summation order is the hand kernel's, so the results are bit-identical: a
 // face node is own + other, a star sum starts from 0 and adds the entries in
 // order, four loads in flight at a time.
+//
+// prefetch-descriptors (default on): the first phase also loads the element's
+// 26 entity descriptors (face neighbours and frame codes, edge entries and star
+// bounds, corner star bounds) into a second scratch buffer, so their latency
+// overlaps the staging loads and the later phases find them in shared memory
+// instead of starting a chain of dependent global loads. The hand kernel does
+// the same with one descriptor per lane and shuffles.
 
 #include "mir/MirOps.h"
 #include "mir/MirPasses.h"
@@ -38,6 +45,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -199,7 +207,12 @@ SmallVector<int64_t> widen(const std::vector<T> &v) {
   return SmallVector<int64_t>(v.begin(), v.end());
 }
 
-LogicalResult lowerOne(mir::DssOp op) {
+// Descriptor scratch layout (i32): face neighbours, face codes, edge entries,
+// edge star bounds (begin, end), corner star bounds (begin, end).
+constexpr int kDescFaceNbr = 0, kDescFaceCode = 6, kDescEdge = 12, kDescEdgeOff = 24, kDescVertOff = 48,
+              kDescSize = 64, kEntities = 26;
+
+LogicalResult lowerOne(mir::DssOp op, bool prefetch) {
   const int P = (int)op.getDegree();
   if (P < 1 || P > kMaxDegree)
     return op.emitOpError("degree must be in [1, ") << kMaxDegree << "]";
@@ -257,10 +270,109 @@ LogicalResult lowerOne(mir::DssOp op) {
         auto stage = eb.create<memref::AllocaOp>(
             l, MemRefType::get({(int64_t)d.n * d.n * (d.n + 1)}, eb.getF64Type()));
         stage->setAttr("mir.scratch", eb.getUnitAttr());
+        Value desc;
+        if (prefetch) {
+          auto a = eb.create<memref::AllocaOp>(l, MemRefType::get({kDescSize}, eb.getI32Type()));
+          a->setAttr("mir.scratch", eb.getUnitAttr());
+          desc = a;
+        }
+        const Value mask = y.i32(0x7fffffff);
 
-        lanes(eb, l, d.n3, [&](OpBuilder &pb, Location pl, Value node) {
+        // The element's entity descriptors, from the tables or from the prefetched copy.
+        auto faceNbr = [&](Emit &z, Value f) {
+          return prefetch ? z.load(desc, z.toIndex(z.add(f, z.i32(kDescFaceNbr))))
+                          : z.load(d.faceNbr, z.add(z.mul(e, z.idx(6)), z.toIndex(f)));
+        };
+        auto faceCode = [&](Emit &z, Value f) {
+          return prefetch ? z.load(desc, z.toIndex(z.add(f, z.i32(kDescFaceCode))))
+                          : Value(z.b.create<arith::ExtUIOp>(z.loc, z.b.getI32Type(),
+                                                             z.load(d.faceCode, z.add(z.mul(e, z.idx(6)), z.toIndex(f)))));
+        };
+        auto edgeEntry = [&](Emit &z, Value k) {
+          return prefetch ? z.load(desc, z.toIndex(z.add(k, z.i32(kDescEdge))))
+                          : z.load(d.edgeOf, z.add(z.mul(e, z.idx(12)), z.toIndex(k)));
+        };
+        // [begin, end) of the star of local edge k (own = its edge entry) or corner c.
+        auto edgeStar = [&](Emit &z, Value k, Value own, Value &begin, Value &end) {
+          if (prefetch) {
+            const Value at = z.toIndex(z.add(z.mul(k, z.i32(2)), z.i32(kDescEdgeOff)));
+            begin = z.load(desc, at);
+            end = z.load(desc, z.add(at, z.idx(1)));
+            return;
+          }
+          const Value g = z.toIndex(z.band(own, mask));
+          begin = z.load(d.edgeOff, g);
+          end = z.load(d.edgeOff, z.add(g, z.idx(1)));
+        };
+        auto vertStar = [&](Emit &z, Value c, Value &begin, Value &end) {
+          if (prefetch) {
+            const Value at = z.toIndex(z.add(z.mul(c, z.i32(2)), z.i32(kDescVertOff)));
+            begin = z.load(desc, at);
+            end = z.load(desc, z.add(at, z.idx(1)));
+            return;
+          }
+          const Value g = z.toIndex(z.load(d.vertOf, z.add(z.mul(e, z.idx(8)), z.toIndex(c))));
+          begin = z.load(d.vertOff, g);
+          end = z.load(d.vertOff, z.add(g, z.idx(1)));
+        };
+
+        // Descriptor slot i (i < 26): face i, edge i - 6, corner i - 18, from the tables.
+        auto loadDescriptor = [&](OpBuilder &ob, Location ol, Value i) {
+          Emit z{ob, ol};
+          auto ifFace = ob.create<scf::IfOp>(ol, z.lt(i, z.i32(6)), /*withElseRegion=*/true);
+          {
+            OpBuilder tb = ifFace.getThenBodyBuilder();
+            Emit t{tb, ol};
+            const Value at = t.add(t.mul(e, t.idx(6)), t.toIndex(i));
+            t.store(t.load(d.faceNbr, at), desc, t.toIndex(t.add(i, t.i32(kDescFaceNbr))));
+            t.store(tb.create<arith::ExtUIOp>(ol, tb.getI32Type(), t.load(d.faceCode, at)), desc,
+                    t.toIndex(t.add(i, t.i32(kDescFaceCode))));
+          }
+          OpBuilder eb2 = ifFace.getElseBodyBuilder();
+          Emit z2{eb2, ol};
+          auto ifEdge = eb2.create<scf::IfOp>(ol, z2.lt(i, z2.i32(18)), /*withElseRegion=*/true);
+          {
+            OpBuilder tb = ifEdge.getThenBodyBuilder();
+            Emit t{tb, ol};
+            const Value k = t.sub(i, t.i32(6));
+            const Value own = t.load(d.edgeOf, t.add(t.mul(e, t.idx(12)), t.toIndex(k)));
+            const Value g = t.toIndex(t.band(own, mask));
+            const Value at = t.toIndex(t.add(t.mul(k, t.i32(2)), t.i32(kDescEdgeOff)));
+            t.store(own, desc, t.toIndex(t.add(k, t.i32(kDescEdge))));
+            t.store(t.load(d.edgeOff, g), desc, at);
+            t.store(t.load(d.edgeOff, t.add(g, t.idx(1))), desc, t.add(at, t.idx(1)));
+          }
+          {
+            OpBuilder tb = ifEdge.getElseBodyBuilder();
+            Emit t{tb, ol};
+            const Value c = t.sub(i, t.i32(18));
+            const Value g = t.toIndex(t.load(d.vertOf, t.add(t.mul(e, t.idx(8)), t.toIndex(c))));
+            const Value at = t.toIndex(t.add(t.mul(c, t.i32(2)), t.i32(kDescVertOff)));
+            t.store(t.load(d.vertOff, g), desc, at);
+            t.store(t.load(d.vertOff, t.add(g, t.idx(1))), desc, t.add(at, t.idx(1)));
+          }
+        };
+
+        const int64_t first = prefetch ? std::max<int64_t>(d.n3, kEntities) : d.n3;
+        lanes(eb, l, first, [&](OpBuilder &pb, Location pl, Value node) {
           Emit z{pb, pl};
-          z.store(z.load(d.values, z.add(base, node)), stage, d.slot(z, node));
+          auto stageOwn = [&](OpBuilder &sb, Location sl) {
+            Emit t{sb, sl};
+            t.store(t.load(d.values, t.add(base, node)), stage, d.slot(t, node));
+          };
+          if (first == d.n3) {
+            stageOwn(pb, pl);
+          } else {
+            auto guard = pb.create<scf::IfOp>(pl, z.lt(node, z.idx(d.n3)), /*withElseRegion=*/false);
+            OpBuilder gb = guard.getThenBodyBuilder();
+            stageOwn(gb, pl);
+          }
+          if (prefetch) {
+            const Value i = z.toI32(node);
+            auto guard = pb.create<scf::IfOp>(pl, z.lt(i, z.i32(kEntities)), /*withElseRegion=*/false);
+            OpBuilder gb = guard.getThenBodyBuilder();
+            loadDescriptor(gb, pl, i);
+          }
         });
 
         if (d.F > 0)
@@ -268,9 +380,8 @@ LogicalResult lowerOne(mir::DssOp op) {
             Emit z{pb, pl};
             const Value p32 = z.toI32(pos), F = z.i32(d.F);
             const Value f = z.div(p32, F);
-            const Value at = z.add(z.mul(e, z.idx(6)), z.toIndex(f));
-            const Value nbr = z.load(d.faceNbr, at);
-            const Value code = pb.create<arith::ExtUIOp>(pl, pb.getI32Type(), z.load(d.faceCode, at));
+            const Value nbr = faceNbr(z, f);
+            const Value code = faceCode(z, f);
             pb.create<scf::IfOp>(pl, pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::sge, nbr, z.i32(0)),
                                  [&](OpBuilder &tb, Location tl) {
                                    Emit t{tb, tl};
@@ -293,8 +404,9 @@ LogicalResult lowerOne(mir::DssOp op) {
           auto corner = [&](OpBuilder &cb, Location cl) {
             Emit t{cb, cl};
             const Value c = t.sub(p32, t.i32(edgeSlots));
-            const Value g = t.toIndex(t.load(d.vertOf, t.add(t.mul(e, t.idx(8)), t.toIndex(c))));
-            const Value s = d.starSum(cb, cl, d.vertEnt, t.load(d.vertOff, g), t.load(d.vertOff, t.add(g, t.idx(1))),
+            Value begin, end;
+            vertStar(t, c, begin, end);
+            const Value s = d.starSum(cb, cl, d.vertEnt, begin, end,
                                       [&](Emit &u, Value entry) {
                                         return u.add(u.mul(u.toIndex(u.div(entry, u.i32(8))), u.idx(d.n3)),
                                                      u.toIndex(u.entry(d.cornerL, u.rem(entry, u.i32(8)))));
@@ -311,14 +423,15 @@ LogicalResult lowerOne(mir::DssOp op) {
                 Emit t{tb, tl};
                 const Value k = t.div(p32, t.i32(d.Ed));
                 const Value pos1 = t.sub(t.add(p32, t.i32(1)), t.mul(k, t.i32(d.Ed)));   // position t on the edge
-                const Value own = t.load(d.edgeOf, t.add(t.mul(e, t.idx(12)), t.toIndex(k)));
-                const Value mask = t.i32(0x7fffffff), zero = t.i32(0), Pc = t.i32(P);
-                const Value g = t.toIndex(t.band(own, mask));
+                const Value own = edgeEntry(t, k);
+                const Value zero = t.i32(0), Pc = t.i32(P);
+                Value begin, end;
+                edgeStar(t, k, own, begin, end);
                 // Canonical position on the edge: the star's entries are in the edge's
                 // canonical direction, each with its own reversal bit.
                 const Value tc = t.select(t.lt(own, zero), t.sub(Pc, pos1), pos1);
                 const Value s = d.starSum(
-                    tb, tl, d.edgeEnt, t.load(d.edgeOff, g), t.load(d.edgeOff, t.add(g, t.idx(1))),
+                    tb, tl, d.edgeEnt, begin, end,
                     [&](Emit &u, Value entry) {
                       const Value m = u.band(entry, mask);
                       const Value at = u.select(u.lt(entry, zero), u.sub(Pc, tc), tc);
@@ -347,6 +460,11 @@ LogicalResult lowerOne(mir::DssOp op) {
 struct LowerDssPass : public PassWrapper<LowerDssPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerDssPass)
 
+  LowerDssPass() = default;
+  LowerDssPass(const LowerDssPass &other) : PassWrapper(other) {}
+  Option<bool> prefetch{*this, "prefetch-descriptors",
+                        llvm::cl::desc("Load each element's descriptors in the first phase"), llvm::cl::init(true)};
+
   StringRef getArgument() const final { return "mir-lower-dss"; }
   StringRef getDescription() const final {
     return "Lower mir.dss to the staged gather: per-element parallel phases over "
@@ -360,7 +478,7 @@ struct LowerDssPass : public PassWrapper<LowerDssPass, OperationPass<ModuleOp>> 
     SmallVector<mir::DssOp> ops;
     getOperation()->walk([&](mir::DssOp op) { ops.push_back(op); });
     for (mir::DssOp op : ops)
-      if (failed(lowerOne(op)))
+      if (failed(lowerOne(op, prefetch)))
         return signalPassFailure();
   }
 };
