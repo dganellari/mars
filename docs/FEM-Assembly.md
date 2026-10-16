@@ -55,8 +55,9 @@ with `DofSpace` (`mars_dof_space.hpp`) instead, which also handles periodic poin
 [Taylor–Green tutorial](periodic_tgv_tutorial.md)).
 
 > **Ownership.** `ElementDomain::getNodeOwnershipMap()` holds one byte per local node: `1` if
-> this rank owns the node, `0` for a ghost. On several ranks a node belongs, by default, to the
-> rank whose space-filling-curve range contains it, so every node is owned by exactly one rank.
+> this rank owns the node, `0` for a ghost. On several ranks a node of a single-block mesh belongs, by
+> default, to the rank whose space-filling-curve range contains it (multi-block meshes keep the
+> older vote ownership), so every node is owned by exactly one rank.
 > Only owned nodes get an equation row.
 
 ---

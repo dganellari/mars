@@ -172,12 +172,13 @@ channel an earlier Jacobi-CG version needed thousands of iterations per step. Wi
 last step of the validation run takes 18 pressure iterations and 10 to 13 per velocity
 component, on 1, 2 and 4 GPUs.
 
-Both matrices are constant in time, so the solver assembles them once and builds the multigrid
-hierarchies once:
+The matrices are constant in time: one velocity matrix for the first step (BDF1), one for the
+BDF2 steps after it, and the pressure matrix. The solver assembles each once and builds its
+multigrid hierarchy once:
 
 | System | Matrix |
 |---|---|
-| velocity (each of u, v) | `M / dt_eff + nu K`, rows and columns of fixed velocities removed |
+| velocity (each of u, v) | `M / dt_eff + nu K` with `dt_eff = dt` (BDF1) and `2 dt / 3` (BDF2), rows and columns of fixed velocities removed |
 | pressure | `K`, rows of the outlet nodes (p = 0) removed |
 
 Each GPU assembles the matrix of its own elements. Nodes shared by several GPUs are one unknown,
@@ -380,7 +381,7 @@ MARS's own part keeps 79%.
 | 64 | 512 M | 452 | 19.3 | 432 | 80% / 96% / 79% |
 | 256 | 2.05 B | 505 | 23.5 | 482 | 72% / 79% / 71% |
 
-Efficiency is the one-node time divided by the N-GPU time. One GPU does no communication at all,
+Efficiency is the one-node time divided by the N-GPU time, from the unrounded times. One GPU does no communication at all,
 so its row is only a reference. `MARS` is everything outside Hypre: the element kernels, the halo
 exchanges and the projection. A smaller load per GPU hides less of the communication: at 2 million
 nodes per GPU the step takes 126 ms on one node, 237 ms on 256 GPUs (53%) and 301 ms on 1024 GPUs

@@ -163,8 +163,8 @@ output this is the `div=` column, which stays at round-off level.
 result back to every slot. The new velocity is single-valued at every periodic point by
 construction.
 
-**Every matrix goes through P too.** `K` and `M / dtEff + ν K` are constant in time, so they are
-assembled once and solved with Hypre PCG + BoomerAMG. Each rank assembles its own elements into a
+**Every matrix goes through P too.** `K` and `M / dtEff + ν K` (one for the BDF1 first step, one
+for the BDF2 steps) are constant in time, so each is assembled once and solved with Hypre PCG + BoomerAMG. Each rank assembles its own elements into a
 matrix over its local slots, `A_local`. The matrix over the DOFs is `Pᵀ A_local P`: since `P`
 only copies each DOF into its slots, the product is formed by adding every copy's row into its
 DOF's row, sent to the rank that owns the DOF in the same exchange as `restrict`
