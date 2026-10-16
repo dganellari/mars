@@ -35,8 +35,8 @@ The main features of MARS are:
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
-The GPU backend runs on NVIDIA GPUs with CUDA. A HIP build for AMD GPUs compiles the library,
-but it was not re-verified for v0.1 and the examples are CUDA-only. The older Kokkos backend
+The GPU backend runs on NVIDIA GPUs with CUDA. HIP support for AMD GPUs exists (`-DMARS_ENABLE_HIP=ON`)
+but was not built or tested for v0.1, and the examples are CUDA-only. The older Kokkos backend
 covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
@@ -58,8 +58,8 @@ A plain clone is all you need:
 
 A network connection is required at configure time for the dependency fetch.
 
-GPU build (the main use case; on AMD GPUs `-DMARS_ENABLE_HIP=ON` instead of the CUDA flags builds
-the library only, see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The unstructured backend is on
+GPU build (the main use case; HIP support for AMD GPUs, `-DMARS_ENABLE_HIP=ON`, was not built or
+tested for v0.1 and does not build the examples, see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The unstructured backend is on
 by default in a GPU build. This builds the library, the example
 programs of the tutorials and the release checks; leave out `-DMARS_ENABLE_HYPRE=ON` if Hypre is
 not installed (the Navier–Stokes examples and their checks then are not built):
@@ -81,10 +81,10 @@ cmake --build build -j
 
 ### Checking your build
 
-Run the release checks after every build, before you use MARS for your own work. They take a
-few minutes and catch a broken build, MPI setup or GPU setup. A CUDA build with the FEM examples
+Run the release checks after every build, before you use MARS for your own work. They take
+about five minutes and catch a broken build, MPI setup or GPU setup. A CUDA build with the FEM examples
 (the GPU build above; tests are on by default) registers them; they run the documented drivers
-end to end on meshes generated at test time:
+end to end on meshes generated at test time, plus the shipped Poiseuille mesh:
 
 ```bash
 cd build
@@ -101,7 +101,7 @@ they also run the Navier–Stokes examples: the lid-driven cavity, the generated
 periodic Taylor–Green vortex must give the same result on 1 and on N ranks, the Taylor–Green
 kinetic energy must follow the viscous decay, and, with netCDF, the Poiseuille channel must match
 the analytic parabola (the tutorial's 1500-step validation, on 1 and N ranks). They need python3
-with numpy and an MPI launcher, and take about ten minutes on one GPU node. ctest starts every GPU run through the MPI launcher
+with numpy and an MPI launcher, and take about five minutes on one GPU node. ctest starts every GPU run through the MPI launcher
 CMake found (`mpiexec`, or `srun` on Slurm), so on a Slurm cluster either run ctest inside an
 allocation:
 
@@ -156,7 +156,7 @@ default is the serial execution space.
 
 To compile for CUDA the CMake flag MARS_ENABLE_CUDA=ON must be set. An example would be:
 ```
-cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_CUDA=ON ..
+cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=OFF ..
 ```
 
 If compiled for CUDA then Kokkos should also be compiled with CUDA (Kokkos_ENABLE_CUDA=ON) and CUDA_LAMBDA (Kokkos_ENABLE_CUDA_LAMBDA=ON) support.
@@ -238,7 +238,7 @@ has a quickstart, tutorials for v0.1 and reference pages:
 - **[Quickstart](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Quickstart/)** - Clone, build, generate a mesh, run your first GPU assembly
 - **[Poiseuille Channel Flow](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/poiseuille_tutorial/)** - Incompressible Navier–Stokes, from the mesh to the validated result and weak scaling to 256 GPUs
 - **[Taylor–Green Vortex (periodic)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/periodic_tgv_tutorial/)** - Periodic boundaries, one unknown per periodic point on any number of GPUs
-- **[High-Order Matrix-Free Operator](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Matrix-Free-Tutorial/)** - The experimental high-order CVFEM operator apply on one and many GPUs, with weak scaling to 2048 GPUs
+- **[High-Order Matrix-Free Operator](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Matrix-Free-Tutorial/)** - The experimental high-order CVFEM operator apply on one and many GPUs, with weak scaling of its p = 1 apply to 2048 GPUs
 
 **Reference**
 

@@ -35,25 +35,8 @@ re-tested for this release, also handle simplices up to dimension 4.
 - A plain `cmake ..` on a CPU-only machine builds the core library; the unstructured
   backend is on by default in CUDA / HIP builds.
 - Release checks: `ctest -L release` runs the documented drivers end to end on generated
-  meshes (assembly rank-count invariance, Poisson solve, cavity/channel/Taylor–Green
+  meshes and the shipped Poiseuille mesh (assembly rank-count invariance, Poisson solve, cavity/channel/Taylor–Green
   Navier–Stokes, high-order matrix-free gates on one GPU and on N ranks).
-- Hex CVFEM kernels transform reference gradients with the inverse-transpose Jacobian. Earlier
-  code used the inverse, which is wrong whenever an element's reference axes are not aligned with
-  x, y, z (typical of meshes from mesh generators).
-- Multi-rank node ownership comes from the SFC decomposition: a node belongs to the rank whose SFC range contains
-  it, which every rank computes without communication. The domain sync sends each element to the owners of its
-  corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
-  on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic
-  meshes use the same SFC ownership.
-- `mars_ex1_poisson` numbers DOFs from the domain's node ownership and solves with CG and the node
-  halo, like the Navier–Stokes solvers; before, its own DOF handler disagreed with the assembler's
-  rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo
-  elements included, and keep the ghost columns of owned rows; they used to drop both, which on more
-  than one rank decoupled the ranks.
-- `mars_cvfem_poisson` builds its DOF numbering, sparsity, boundary conditions and statistics on the
-  GPU and runs on any number of ranks; before, it built them on the host, ran on one rank only, and
-  handed the assembly kernels a host pointer that only unified-memory systems could read. The CG
-  solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation against the
   analytic parabola is part of `ctest -L release` (1 and N ranks, needs netCDF).
 - One incompressible Navier–Stokes solver for hex meshes, `fem/mars_navier_stokes.hpp`,
@@ -65,25 +48,49 @@ re-tested for this release, also handle simplices up to dimension 4.
   (`fem/mars_dof_space.hpp`) maps node copies to unknowns: ghosts and periodic images of
   one point share one unknown, and every matrix is Pᵀ A P, formed by sending each copy's
   matrix row to the rank that owns its unknown. Both systems are solved with Hypre PCG +
-  BoomerAMG (18 pressure iterations per step in the Poiseuille validation). Weak scaling on
+  BoomerAMG (18 pressure iterations in the last step of the Poiseuille validation). Weak scaling on
   Alps GH200, 8M nodes per GPU: 72% of the one-node (4-GPU) step speed on 256 GPUs, Hypre-bound,
   with 20 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
-- Weak scaling of MARS alone, the distributed matrix-free operator at 16M elements per GPU: 70%
-  of the one-node rate on 1024 GPUs and 66% on 2048 GPUs (32.8 billion DOFs), with overlap of
-  the halo exchange (Matrix-Free tutorial).
+- Weak scaling of MARS alone, the distributed p = 1 matrix-free operator apply at 16M elements per
+  GPU with the halo exchange overlapped: 70% of the one-node rate on 1024 GPUs and 66% on 2048 GPUs
+  (32.8 billion DOFs); without overlap 65% and 45 to 62% (Matrix-Free tutorial).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
   and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,
   4 and 8 GPUs, 8 over two nodes (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
   cavity, the channel and the Taylor–Green vortex on 1 and N ranks.
+
+### Changed
+- Multi-rank node ownership comes from the SFC decomposition (single-block meshes; multi-block meshes keep the
+  older vote ownership): a node belongs to the rank whose SFC range contains
+  it, which every rank computes without communication. The domain sync sends each element to the owners of its
+  corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
+  on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic
+  meshes use the same SFC ownership.
+
+### Fixed
+- Hex CVFEM kernels transform reference gradients with the inverse-transpose Jacobian. Earlier
+  code used the inverse, which is wrong whenever an element's reference axes are not aligned with
+  x, y, z (typical of meshes from mesh generators).
+- `mars_ex1_poisson` numbers DOFs from the domain's node ownership and solves with CG and the node
+  halo, like the Navier–Stokes solvers; before, its own DOF handler disagreed with the assembler's
+  rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo
+  elements included, and keep the ghost columns of owned rows; they used to drop both, which on more
+  than one rank decoupled the ranks.
+- `mars_cvfem_poisson` builds its DOF numbering, sparsity, boundary conditions and statistics on the
+  GPU and runs on any number of ranks; before, it built them on the host, ran on one rank only, and
+  handed the assembly kernels a host pointer that only unified-memory systems could read. The CG
+  solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
   points, and the multi-rank run lost the projection. Velocity and pressure now share one
   unknown per periodic point.
-- Removed: the cxxopts dependency and the legacy example programs that used it
+
+### Removed
+- The cxxopts dependency and the legacy example programs that used it
   (`mars_examples` from `examples/mars_discretization.cpp`, `examples/mars_st_example.cpp`,
   `examples/serial/mars_serial_driver.cpp`); the examples parse their options directly.
-- Removed: `examples/cvfem/`, a standalone STK-based assembly bench from another project.
-- Removed: the 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
+- `examples/cvfem/`, a standalone STK-based assembly bench from another project.
+- The 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
   `fem/mars_periodic_ns.hpp`, `fem/mars_periodic_space.hpp` and its host model
   `tests/periodic/`; the `--planar-ddt`, `--pressure-amg`, `--velocity-amg`, `--skew`,
   `--solver` and `--pressure-solve` options.

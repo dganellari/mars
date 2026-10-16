@@ -11,13 +11,13 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   (lid-driven cavity, channel and Taylor–Green Navier–Stokes).
 - **Incompressible Navier–Stokes on hex meshes** (`fem/mars_navier_stokes.hpp`), the
   solver of `mars_poiseuille_flow`, `mars_tgv` and `mars_lid_driven_cavity`, including
-  periodic boxes. Validated on 1 to 8 GPUs:
-  [Poiseuille](tests/reference/poiseuille/planar_validation.md) against the exact profile, and
-  the [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) against the viscous decay,
-  with the same kinetic energy on every rank count. The release checks require the lid-driven cavity
+  periodic boxes. Validated:
+  [Poiseuille](tests/reference/poiseuille/planar_validation.md) on 1, 2 and 4 GPUs against the
+  exact profile, and the [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) on 1 to 8
+  GPUs against the viscous decay, with the same kinetic energy on every rank count. The release checks require the lid-driven cavity
   to give the same result on 1 and N ranks; it is not compared with a reference solution.
 
-The stable paths are validated on generated structured meshes (release checks: `ctest -L release`),
+The stable paths are validated on generated structured meshes and the shipped Poiseuille mesh (release checks: `ctest -L release`),
 including element numberings that are not aligned with the coordinate axes.
 
 ## Experimental — usable, not yet hardened
@@ -68,8 +68,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 ## Build / platform notes
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
-  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is enabled with `-DMARS_ENABLE_HIP=ON`, but
-  the HIP build was not re-verified for v0.1.0, and the FEM examples are CUDA-only.
+  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) support exists (`-DMARS_ENABLE_HIP=ON`), but
+  it was not built or tested for v0.1.0, and the FEM examples are CUDA-only.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
 - Every rank must own part of the mesh. A mesh too small for the rank count stops on every rank with a
   message, instead of leaving a rank without elements.
@@ -91,6 +91,6 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
   builds only the core library. Its CPU tests are the MPI communication tests; the
   `test_install` target builds `examples/usage_from_external_cmake_project/` against an install.
-- GPU builds: `ctest -L release` runs the documented drivers on generated meshes (see the
+- GPU builds: `ctest -L release` runs the documented drivers on generated meshes and the shipped Poiseuille mesh (see the
   README). The lower-level GPU domain tests still need a mesh directory in `MESH_PATH` and are
   skipped without one.
