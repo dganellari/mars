@@ -38,7 +38,8 @@ ninja -C build mir-opt
   optional `epilogue` region per copy (sum, Dirichlet, counted, inputs) that yields
   per-copy results and terms reduced into per-element partials (e.g. Jacobi + dots).
 - `mir.cellwise` — a per-copy map over element-local vectors with reductions (the
-  Krylov vector updates and their dot products).
+  Krylov vector updates and their dot products), optionally with a Dirichlet flag.
+- `mir.interpolate` — `M (x) M (x) M` per element (the p-multigrid transfers).
 
 ## Passes (all in `mir-opt`)
 
@@ -67,7 +68,7 @@ present.
 | `make_ptx_v4.sh` | the production sweep schedule: tile+vectorize -> `--mir-hoist-transfer-pairs` -> convert-vector-to-gpu *before* outlining -> `sumfac_batched_v4_sm90.ptx` |
 | `make_ptx_v5.sh` | v5 experiment (zero-init + 8 warps/block; measured no-gain) |
 | `make_ptx_full.sh [p]` | the fused full-operator kernel (whole Knaus apply, one kernel instead of 111 launches) -> `full_apply_p{p}_sm90.ptx` |
-| `test/dss_gpu_pipeline.py [p]` | the cell-wise DSS -> `dss_p{p}_sm90.ptx` (`--precond`: the four Jacobi variants -> `precond_p{p}_sm90.ptx`; `--bicgstab`: vector updates, partial folding and Krylov steps -> `bicgstab_p{p}_sm90.ptx`, gate `tools/emu_bicg.cpp`); `--emulate [--emu-tsan]` runs it on the CPU (`tools/emu_dss.cpp`), bit-exact against the hand kernel's formula on random tables |
+| `test/dss_gpu_pipeline.py [p]` | the cell-wise DSS -> `dss_p{p}_sm90.ptx` (`--precond`: the four Jacobi variants -> `precond_p{p}_sm90.ptx`; `--bicgstab`: vector updates, partial folding and Krylov steps -> `bicgstab_p{p}_sm90.ptx`, gate `tools/emu_bicg.cpp`; `--pmg`: Chebyshev steps, masked copies, transfers, dots of the V-cycle -> `pmg_sm90.ptx`, gate `tools/emu_pmg.cpp`); `--emulate [--emu-tsan]` runs it on the CPU (`tools/emu_dss.cpp`), bit-exact against the hand kernel's formula on random tables |
 | `make_ptx_warp.sh` | the warp->tensor-core bridge gate -> `warp_mma_sm90.ptx` |
 
 ## Gates

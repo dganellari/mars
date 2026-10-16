@@ -63,10 +63,11 @@ protected:
 
     // The first 11 arguments: copies (local, ghost), the element list and the tables.
     std::vector<Arg> topology_args(const double* d_in, const double* d_ghost, const cellwise::UnstructuredTopology& T,
-                                   const cellwise::ElementList& set)
+                                   const cellwise::ElementList& set, long long values_per_element = 0)
     {
-        return {{d_in, T.local * n3()},
-                {d_ghost, (T.elements - T.local) * n3()},
+        const long long m = values_per_element ? values_per_element : n3();
+        return {{d_in, T.local * m},
+                {d_ghost, (T.elements - T.local) * m},
                 element_list(set, T.local),
                 vec(T.face_nbr),
                 vec(T.face_code),
@@ -91,8 +92,9 @@ protected:
         return fn;
     }
 
+    // Integer (index) and then real (f64) arguments follow the memrefs.
     void launch(CUfunction fn, std::vector<Arg>& args, long long blocks, cudaStream_t stream,
-                std::vector<long long> integers = {})
+                std::vector<long long> integers = {}, std::vector<double> reals = {})
     {
         // The driver API takes a pointer to every scalar of every descriptor.
         std::vector<void*> params(args.size() * 5);
@@ -104,6 +106,7 @@ protected:
             params[5 * i + 4] = &one_;
         }
         for (long long& v : integers) params.push_back(&v);
+        for (double& v : reals) params.push_back(&v);
         MARS_MARSIR_CU(
             cuLaunchKernel(fn, (unsigned)blocks, 1, 1, 32, 1, 1, 0, (CUstream)stream, params.data(), nullptr));
     }

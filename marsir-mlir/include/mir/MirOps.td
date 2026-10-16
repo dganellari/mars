@@ -199,7 +199,9 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
     with n = degree + 1.
 
     Copy i reads values[i] when i < size(values), else ghost[i - size(values)]:
-    the copies of ghost elements, received from other ranks.
+    the copies of ghost elements, received from other ranks. With `minus`, a
+    local copy reads values[i] - minus[i] (the DSS of a residual b - y; the
+    ghost copies then hold the exchanged difference).
 
     The topology is that of MARS's UnstructuredTopology
     (backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp):
@@ -239,6 +241,7 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
   let arguments = (ins
       Arg<MemRefRankOf<[F64], [1]>, "local copies", [MemRead]>:$values,
       Arg<MemRefRankOf<[F64], [1]>, "ghost copies", [MemRead]>:$ghost,
+      Arg<Optional<MemRefRankOf<[F64], [1]>>, "subtracted from the local copies", [MemRead]>:$minus,
       Arg<MemRefRankOf<[I32], [1]>, "elements to write", [MemRead]>:$elements,
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$face_nbr,
       Arg<MemRefRankOf<[I8], [1]>, "", [MemRead]>:$face_code,
@@ -257,7 +260,7 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
   let regions = (region AnyRegion:$epilogue);
 
   let assemblyFormat = [{
-    `ins` `(` $values `,` $ghost `)` `elements` `(` $elements `)`
+    `ins` `(` $values `,` $ghost `)` (`minus` `(` $minus^ `)`)? `elements` `(` $elements `)`
     `faces` `(` $face_nbr `,` $face_code `)`
     `edges` `(` $edge_of `,` $edge_off `,` $edge_ent `)`
     `vertices` `(` $vert_of `,` $vert_off `,` $vert_ent `)`
@@ -282,7 +285,10 @@ def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
     terms, summed over the element's copies into partials[w * reductions + j]
     for the w-th listed element. `counted` is bit b of counting[e] for the
     copy's entity bit b (see mir.dss), so a sum over counted copies takes every
-    node once; without `counting` it is true.
+    node once; without `counting` it is true. With
+    dirichlet(face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet) (the
+    tables of mir.dss) the region takes a second flag, (counted, dirichlet, ...):
+    whether the copy's node is a Dirichlet node.
 
     An array may be both an input and an output (x = x + ...): each copy is
     read and written by the same iteration. Values from above the op (e.g.
@@ -301,6 +307,7 @@ def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
   let arguments = (ins
       Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
       Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
+      Arg<Variadic<AnyMemRef>, "face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet", [MemRead]>:$dirichlet,
       Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy inputs", [MemRead]>:$inputs,
       Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
       Arg<Optional<MemRefRankOf<[F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
@@ -309,11 +316,44 @@ def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
   let regions = (region SizedRegion<1>:$body);
 
   let assemblyFormat = [{
-    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)?
+    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)? (`dirichlet` `(` $dirichlet^ `)`)?
     (`inputs` `(` $inputs^ `)`)? (`outs` `(` $outs^ `)`)? (`partials` `(` $partials^ `)`)?
     attr-dict `:` type(operands) `body` $body
   }];
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// mir.interpolate : M (x) M (x) M on element-local vectors (p-multigrid transfers).
+//===----------------------------------------------------------------------===//
+
+def Mir_InterpolateOp : Mir_Op<"interpolate"> {
+  let summary = "per-element tensor-product map between two nodal degrees";
+  let description = [{
+    For every listed element e:
+      out[e][a][b][c] (+)= sum_{j,k,m} M[a][j] M[b][k] M[c][m] in[e][j][k][m]
+    with M the row-major `rows` x `cols` matrix (rows = nodes per axis of the
+    output, cols = of the input). Prolongation passes the GLL interpolation
+    matrix I (fine x coarse), restriction its transpose. `accumulate` adds to
+    out instead of overwriting it.
+
+    Example (prolong p = 3 -> 7, x += I u):
+      mir.interpolate elements(%ids) matrix(%I) ins(%u) outs(%x)
+                      {rows = 8 : i64, cols = 4 : i64, accumulate}
+                      : memref<?xi32>, memref<?xf64>, memref<?xf64>, memref<?xf64>
+  }];
+  let arguments = (ins
+      Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
+      Arg<MemRefRankOf<[F64], [1]>, "rows x cols, row-major", [MemRead]>:$matrix,
+      Arg<MemRefRankOf<[F64], [1]>, "", [MemRead]>:$input,
+      Arg<MemRefRankOf<[F64], [1]>, "", [MemRead, MemWrite]>:$output,
+      I64Attr:$rows,
+      I64Attr:$cols,
+      UnitAttr:$accumulate);
+  let assemblyFormat = [{
+    `elements` `(` $elements `)` `matrix` `(` $matrix `)` `ins` `(` $input `)` `outs` `(` $output `)`
+    attr-dict `:` type(operands)
+  }];
 }
 
 #endif // MIR_OPS

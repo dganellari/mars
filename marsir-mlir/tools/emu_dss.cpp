@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
+#include "emu_cellwise_mesh.h"
 #include "emu_warp_runtime.h"
 
 #ifndef MIR_DSS_P
@@ -64,124 +65,24 @@ Desc<T> desc(std::vector<T>& v)
     return {v.data(), v.data(), 0, {(int64_t)v.size()}, {1}};
 }
 
-struct Mesh {
-    long long E, G;   // local and ghost elements
-    std::vector<double> values, ghost;
-    std::vector<int32_t> face_nbr, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent;
-    std::vector<int8_t> face_code;
-    std::vector<int32_t> counting;              // preconditioner only
-    std::vector<int8_t> edge_dir, vert_dir;
-    std::vector<double> diag, a;
-
-    double value(long long i) const { return i < (long long)values.size() ? values[i] : ghost[i - values.size()]; }
-};
-
-Mesh random_mesh(long long E, long long G, unsigned seed)
-{
-    std::mt19937 rng(seed);
-    auto uni = [&](long long lo, long long hi) { return std::uniform_int_distribution<long long>(lo, hi)(rng); };
-    Mesh m{E, G};
-    std::uniform_real_distribution<double> val(-1.0, 1.0);
-    m.values.resize(E * n3);
-    m.ghost.resize(G * n3);
-    for (auto& v : m.values) v = val(rng);
-    for (auto& v : m.ghost) v = val(rng);
-    const long long copies = E + G;
-    for (long long i = 0; i < E * 6; ++i) {
-        m.face_nbr.push_back(uni(0, 4) == 0 ? -1 : (int32_t)uni(0, copies * 6 - 1));
-        m.face_code.push_back((int8_t)uni(0, 127));
-    }
-    auto star = [&](long long entities, long long slots, std::vector<int32_t>& off, std::vector<int32_t>& ent,
-                    bool reversal) {
-        off.push_back(0);
-        for (long long g = 0; g < entities; ++g) {
-            const long long size = uni(1, 9);
-            for (long long k = 0; k < size; ++k) {
-                int32_t c = (int32_t)uni(0, copies * slots - 1);
-                if (reversal && uni(0, 1)) c = (int32_t)((uint32_t)c | 0x80000000u);
-                ent.push_back(c);
-            }
-            off.push_back((int32_t)ent.size());
-        }
-    };
-    const long long edges = 3 * E + 1, verts = E + 1;
-    star(edges, 12, m.edge_off, m.edge_ent, true);
-    star(verts, 8, m.vert_off, m.vert_ent, false);
-    for (long long i = 0; i < E * 12; ++i) {
-        int32_t g = (int32_t)uni(0, edges - 1);
-        if (uni(0, 1)) g = (int32_t)((uint32_t)g | 0x80000000u);
-        m.edge_of.push_back(g);
-    }
-    for (long long i = 0; i < E * 8; ++i) m.vert_of.push_back((int32_t)uni(0, verts - 1));
-    for (long long e = 0; e < E; ++e) m.counting.push_back((int32_t)((uint32_t)uni(0, 0xfffffff) | (1u << cw::kInteriorBit)));
-    for (long long g = 0; g < edges; ++g) m.edge_dir.push_back((int8_t)(uni(0, 3) == 0 ? uni(1, 2) : 0));
-    for (long long g = 0; g < verts; ++g) m.vert_dir.push_back((int8_t)(uni(0, 3) == 0 ? 1 : 0));
-    std::uniform_real_distribution<double> pos(1.0, 2.0);
-    for (long long i = 0; i < E * n3; ++i) m.diag.push_back(pos(rng));
-    for (long long i = 0; i < E * n3; ++i) m.a.push_back(val(rng));
-    return m;
-}
-
-double star_sum(const Mesh& m, const std::vector<int32_t>& ent, int begin, int end, auto index)
-{
-    double s = 0.0;
-    for (int k = begin; k < end; ++k) s += m.value(index(ent[k]));
-    return s;
-}
+using Mesh = CellwiseMesh<P>;
 
 // for_each_copy_sum<P>, one element at a time.
 void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<double>& out, std::vector<double>& partials)
 {
     std::vector<long long> position(m.E, -1);   // place of each element in the list
     for (size_t w = 0; w < list.size(); ++w) position[list[w]] = (long long)w;
-    int face_l[6 * (F > 0 ? F : 1)], face_map[64 * (F > 0 ? F : 1)], edge_l[12 * n], corner_l[8];
-    if constexpr (P > 1) {
-        for (int i = 0; i < 64 * F; ++i) {
-            const int q = i % F, code = i / F;
-            int I, J, i2, j2;
-            cw::face_to_canonical<P>(code & 7, 1 + q / (P - 1), 1 + q % (P - 1), I, J);
-            cw::canonical_to_face<P>(code >> 3, I, J, i2, j2);
-            face_map[i] = (i2 - 1) * (P - 1) + j2 - 1;
-        }
-        for (int i = 0; i < 6 * F; ++i) face_l[i] = cw::face_node<P>(i / F, 1 + (i % F) / (P - 1), 1 + (i % F) % (P - 1));
-    }
-    for (int i = 0; i < 12 * n; ++i) edge_l[i] = cw::edge_node<P>(i / n, i % n);
-    for (int c = 0; c < 8; ++c) corner_l[c] = cw::corner_node<P>(c);
-
     std::vector<double> stage(n3);
     for (int32_t e : list) {
         const long long base = (long long)e * n3;
-        for (int l = 0; l < n3; ++l) stage[l] = m.values[base + l];
-        for (int p = 0; p < 6 * F; ++p) {
-            const int f = p / F, nbr = m.face_nbr[e * 6 + f], code = (uint8_t)m.face_code[e * 6 + f];
-            if (nbr < 0) continue;
-            const int q = face_map[(code & 63) * F + p - f * F];
-            stage[face_l[p]] += m.value((long long)(nbr / 6) * n3 + face_l[(nbr % 6) * F + q]);
-        }
-        for (int p = 0; p < 12 * Ed; ++p) {
-            const int k = p / Ed, t = 1 + p - k * Ed, own = m.edge_of[e * 12 + k], g = own & 0x7fffffff;
-            const int tc = own < 0 ? P - t : t;
-            stage[edge_l[k * n + t]] = star_sum(m, m.edge_ent, m.edge_off[g], m.edge_off[g + 1], [&](int32_t c) {
-                const int mm = c & 0x7fffffff;
-                return (long long)(mm / 12) * n3 + edge_l[(mm % 12) * n + (c < 0 ? P - tc : tc)];
-            });
-        }
-        for (int c = 0; c < 8; ++c) {
-            const int g = m.vert_of[e * 8 + c];
-            stage[corner_l[c]] = star_sum(m, m.vert_ent, m.vert_off[g], m.vert_off[g + 1],
-                                          [&](int32_t v) { return (long long)(v / 8) * n3 + corner_l[v % 8]; });
-        }
+        m.stage(e, stage);
 #ifdef MIR_DSS_PRECOND
         // unstructured_precondition_kernel's visit, in the generated kernel's
         // reduction order.
-        unsigned dmask = 0;
-        for (int f = 0; f < 6; ++f) dmask |= (((uint8_t)m.face_code[e * 6 + f] >> 6) != 0 ? 1u : 0u) << f;
-        for (int k = 0; k < 12; ++k)
-            dmask |= (m.edge_dir[m.edge_of[e * 12 + k] & 0x7fffffff] != 0 ? 1u : 0u) << (cw::kEdgeBit + k);
-        for (int c = 0; c < 8; ++c) dmask |= (m.vert_dir[m.vert_of[e * 8 + c]] != 0 ? 1u : 0u) << (cw::kVertexBit + c);
+        const unsigned dmask = m.dirichlet_mask(e);
         double acc[32][2] = {};
         for (int l = 0; l < n3; ++l) {
-            const int bit = cw::entity_bit(cw::local_entity<P>(l / (n * n), (l / n) % n, l % n));
+            const int bit = Mesh::bit(l);
             const bool dir = (dmask >> bit) & 1u, counted = ((uint32_t)m.counting[e] >> bit) & 1u;
             const double v = dir ? 0.0 : stage[l] / m.diag[base + l];
             const double w = counted ? 1.0 : 0.0;
@@ -249,7 +150,7 @@ long long mismatches(const std::vector<double>& a, const std::vector<double>& b)
 int main(int argc, char** argv)
 {
     const long long E = argc > 1 ? atoll(argv[1]) : 12, G = argc > 2 ? atoll(argv[2]) : 5;
-    Mesh m = random_mesh(E, G, 2026);
+    Mesh m = Mesh::random(E, G, 2026);
     std::vector<int32_t> all(E);
     for (long long e = 0; e < E; ++e) all[e] = (int32_t)e;
     std::shuffle(all.begin(), all.end(), std::mt19937(7));

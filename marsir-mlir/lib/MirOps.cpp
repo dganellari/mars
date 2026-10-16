@@ -52,9 +52,12 @@ mlir::LogicalResult mir::CellwiseOp::verify() {
     return emitOpError("reductions must be >= 0");
   if ((r > 0) != (getPartials() != nullptr))
     return emitOpError("partials are needed exactly when reductions > 0");
+  if (!getDirichlet().empty() && getDirichlet().size() != 5)
+    return emitOpError("dirichlet takes (face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet)");
+  const unsigned flags = getDirichlet().empty() ? 1 : 2;
   mlir::Block &body = getBody().front();
-  if (body.getNumArguments() != 1 + getInputs().size())
-    return emitOpError("the body takes (counted) and one value per inputs array");
+  if (body.getNumArguments() != flags + getInputs().size())
+    return emitOpError("the body takes (counted[, dirichlet]) and one value per inputs array");
   auto yield = llvm::dyn_cast<mir::YieldOp>(body.getTerminator());
   if (!yield || yield.getNumOperands() != getOuts().size() + r)
     return emitOpError("the body yields one value per outs array, then the reduction terms");

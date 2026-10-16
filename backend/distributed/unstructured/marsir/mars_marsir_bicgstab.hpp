@@ -17,8 +17,10 @@ namespace mars {
 namespace marsir {
 
 // `apply(u, y)`: y = A u on this rank's local elements (u continuous, y unassembled).
-template <typename Apply>
-cellwise::SolveResult bicgstab(Apply&& apply, const MarsirJacobi& precond, BicgstabPtx& vec,
+// `precond`: MarsirJacobi or MarsirPmg (per_element<AZ, ZZ>(q, z, a, stream) writes z =
+// P q and returns how many per-element partials it wrote to precond.scratch).
+template <typename Apply, typename Precond>
+cellwise::SolveResult bicgstab(Apply&& apply, const Precond& precond, BicgstabPtx& vec,
                                const cellwise::UnstructuredTopology& T, const double* d_rhs, double* d_x, MPI_Comm comm,
                                double tol, int max_iterations, cudaStream_t stream = 0)
 {
@@ -43,7 +45,7 @@ cellwise::SolveResult bicgstab(Apply&& apply, const MarsirJacobi& precond, Bicgs
     MARS_CELLWISE_CK(cudaMemsetAsync(d_x, 0, n * sizeof(double), stream));
     MARS_CELLWISE_CK(cudaMemsetAsync(ws.p, 0, n * sizeof(double), stream));
     MARS_CELLWISE_CK(cudaMemsetAsync(ws.v, 0, n * sizeof(double), stream));
-    reduce(0, 1, precond.per_element<false, true>(d_rhs, ws.r, nullptr, stream));   // r = P (b - A 0)
+    reduce(0, 1, precond.template per_element<false, true>(d_rhs, ws.r, nullptr, stream));   // r = P (b - A 0)
     MARS_CELLWISE_CK(cudaMemcpyAsync(ws.rh, ws.r, n * sizeof(double), cudaMemcpyDeviceToDevice, stream));
 
     cellwise::SolveResult res;
@@ -52,10 +54,10 @@ cellwise::SolveResult bicgstab(Apply&& apply, const MarsirJacobi& precond, Bicgs
     for (int k = 0; k < max_iterations; ++k) {
         vec.update_p(ws.p, ws.r, ws.v, sc, L, stream);
         apply(ws.p, ws.q);
-        reduce(1, 1, precond.per_element<true, false>(ws.q, ws.v, ws.rh, stream));
+        reduce(1, 1, precond.template per_element<true, false>(ws.q, ws.v, ws.rh, stream));
         vec.update_s(ws.s, ws.r, ws.v, sc, L, stream);
         apply(ws.s, ws.q);
-        reduce(2, 2, precond.per_element<true, true>(ws.q, ws.t, ws.s, stream));
+        reduce(2, 2, precond.template per_element<true, true>(ws.q, ws.t, ws.s, stream));
         vec.update_xr(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh, sc, T, partials, stream);
         reduce(3, 2, L);
         res.residual = norm();

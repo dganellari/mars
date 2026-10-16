@@ -40,6 +40,9 @@
 // only the preconditioner generated. The preconditioner gives the same z bits as the
 // hand one; the dot products are summed in another order, so iteration counts match
 // on small problems and drift by a few percent on long runs.
+// --pmg-ptx <marsir-mlir/generated> --bicgstab-ptx <bicgstab_p7_sm90.ptx> with --mg and
+// --unstructured or --domain: the same with the p-multigrid V-cycle's per-iteration
+// kernels generated too (marsir/mars_marsir_pmg.hpp); setup and BoomerAMG unchanged.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -53,6 +56,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_bicgstab.hpp"
+#include "backend/distributed/unstructured/marsir/mars_marsir_pmg.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
@@ -421,7 +425,7 @@ int main(int argc, char** argv)
         MARS_CELLWISE_CK(cudaFree(nullptr));
     }
 
-    std::string ptx_path, precond_ptx, bicgstab_ptx;
+    std::string ptx_path, precond_ptx, bicgstab_ptx, pmg_dir;
     bool hand_krylov = false;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
@@ -449,13 +453,16 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-cycles")) amg_cycles = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--precond-ptx")) precond_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--bicgstab-ptx")) bicgstab_ptx = argv[i + 1];
+        else if (!strcmp(argv[i], "--pmg-ptx")) pmg_dir = argv[i + 1];
         else error = "unknown option";
     }
     if (!error && ptx_path.empty()) error = "--ptx is required";
     if (!error && !precond_ptx.empty() && (!unstructured || use_mg))
         error = "--precond-ptx needs --unstructured or --domain, without --mg";
-    if (!error && precond_ptx.empty() != bicgstab_ptx.empty())
-        error = "--precond-ptx and --bicgstab-ptx go together";
+    if (!error && !pmg_dir.empty() && (!unstructured || !use_mg))
+        error = "--pmg-ptx needs --mg with --unstructured or --domain";
+    if (!error && (precond_ptx.empty() && pmg_dir.empty()) != bicgstab_ptx.empty())
+        error = "--bicgstab-ptx goes with --precond-ptx or --pmg-ptx";
     if (!error && use_mg && !unstructured && (ne & (ne - 1))) error = "--mg needs ne to be a power of two";
     if (!error && use_amg && !(use_mg && unstructured)) error = "--amg goes with --mg and --unstructured or --domain";
 #ifndef MARS_ENABLE_HYPRE
@@ -465,8 +472,8 @@ int main(int argc, char** argv)
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
                             "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--amg] [--amg-cycles k] "
-                            "[--unstructured] [--rotate] [--domain] [--precond-ptx file --bicgstab-ptx file "
-                            "[--hand-krylov]]\n", error, argv[0]);
+                            "[--unstructured] [--rotate] [--domain] [--precond-ptx file | --pmg-ptx dir] "
+                            "[--bicgstab-ptx file [--hand-krylov]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
@@ -763,13 +770,24 @@ int main(int argc, char** argv)
                                                                         : new marsir::PrecondPtx(precond_ptx, kP));
     std::unique_ptr<marsir::BicgstabPtx> bicgstab_gen(bicgstab_ptx.empty() ? nullptr
                                                                           : new marsir::BicgstabPtx(bicgstab_ptx, kP));
-    thrust::device_vector<double> precond_scratch(precond_gen ? 2 * E : 0);
+    thrust::device_vector<double> precond_scratch(bicgstab_gen ? 2 * E : 0);
     const marsir::MarsirJacobi jacobi_gen{precond_gen.get(), bicgstab_gen.get(), &topo, d_diag, uhalo.get(),
                                           thrust::raw_pointer_cast(precond_scratch.data())};
+    // The generated V-cycle kernels (--pmg-ptx).
+    std::unique_ptr<marsir::PmgPtx> pmg_gen(pmg_dir.empty() ? nullptr
+                                                            : new marsir::PmgPtx(pmg_dir, topo, d_G3, d_G1));
+    if (pmg_gen) pmg->set_kernels(pmg_gen.get());
+    const marsir::MarsirPmg<PMultigrid> pmg_precond{pmg.get(), pmg_gen.get(), bicgstab_gen.get(), &topo,
+                                                    thrust::raw_pointer_cast(precond_scratch.data())};
 
     MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
     const cellwise::SolveResult res =
-        unstructured && use_mg
+        pmg_gen && hand_krylov
+            ? cellwise::bicgstab(apply, pmg_precond, counting, flat, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations,
+                                 stream)
+        : pmg_gen ? marsir::bicgstab(apply, pmg_precond, *bicgstab_gen, topo, d_b, d_x, MPI_COMM_WORLD, tol,
+                                     max_iterations, stream)
+        : unstructured && use_mg
             ? cellwise::bicgstab(apply, *pmg, counting, flat, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations, stream)
         : precond_gen && hand_krylov
             ? cellwise::bicgstab(apply, jacobi_gen, counting, flat, d_b, d_x, MPI_COMM_WORLD, tol, max_iterations,
@@ -806,8 +824,9 @@ int main(int argc, char** argv)
                : use_domain   ? (rotate ? "ElementDomain tables, rotated frames, DSS + Jacobi" : "ElementDomain tables, DSS + Jacobi")
                : unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
                : use_mg     ? "multigrid V-cycle" : "DSS + Jacobi");
-        if (precond_gen)
-            printf("  kernels: MARSIR operator, MARSIR preconditioner, %s\n",
+        if (precond_gen || !pmg_dir.empty())
+            printf("  kernels: MARSIR operator, MARSIR %s, %s\n",
+                   pmg_dir.empty() ? "preconditioner" : "V-cycle (setup and AMG unchanged)",
                    hand_krylov ? "hand BiCGStab vector kernels" : "MARSIR BiCGStab vector kernels (all generated)");
         if (use_domain)
             printf("  %d rank(s), the domain's SFC partition, %lld elements on rank 0\n", dec.size, E);
