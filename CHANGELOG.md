@@ -52,8 +52,8 @@ re-tested for this release, also handle simplices up to dimension 4.
   Alps GH200, 8M nodes per GPU: 72% of the one-node (4-GPU) step speed on 256 GPUs, Hypre-bound,
   with 20 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
 - Weak scaling of MARS alone, the distributed p = 1 matrix-free operator apply at 16M elements per
-  GPU with the halo exchange overlapped: 70% of the one-node rate on 1024 GPUs and 66% on 2048 GPUs
-  (32.8 billion DOFs); without overlap 65% and 45 to 62% (Matrix-Free tutorial).
+  GPU, with the halo exchange overlapped (the default): 73% of the one-node rate on 1024 GPUs and
+  69% on 2048 GPUs (32.8 billion DOFs); 65% and 45 to 62% without overlap (Matrix-Free tutorial).
 - Validation: the Poiseuille 1500-step check (profile RMS error 4.551e-4 m/s, about 24 s on
   one GPU; `tests/reference/poiseuille/planar_validation.md`) passes on 1, 2, 4, 16 and 64 GPUs,
   and the Taylor–Green vortex kinetic energy follows the Stokes decay, identical on 1, 2, 4 and

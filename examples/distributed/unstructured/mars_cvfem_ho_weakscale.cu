@@ -284,7 +284,7 @@ int main(int argc, char** argv)
     using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     std::string mesh; size_t ncells = 0; int iters = 50; std::string dumpFile;
-    bool overlap = false;   // --overlap: hide the forward halo behind the interior apply
+    bool overlap = true;    // hide the forward halo behind the interior apply; --no-overlap times blocking only
     // --irregular: opt-in genuinely-unstructured procedural mesh (warp+deform) so the
     // scaling test is not flattered by the perfect cube's free SFC locality. The deform
     // is DOMAIN-scale (amplitude + wavelength fixed in domain units), so the halo bump
@@ -297,10 +297,11 @@ int main(int argc, char** argv)
         else if (a.rfind("--ncells=", 0) == 0) ncells = std::stoull(a.substr(9));
         else if (a.rfind("--iters=", 0) == 0) iters = std::stoi(a.substr(8));
         else if (a == "--overlap") overlap = true;
+        else if (a == "--no-overlap") overlap = false;
         else if (a == "--irregular") { irr.warp = true; irr.deform = true; }
         else if (a.rfind("--dump-parity=", 0) == 0) dumpFile = a.substr(14); }
     if (mesh.empty() && ncells == 0) {
-        if (rank == 0) printf("need --mesh=<dir/.exo> OR --ncells=<N> [--iters=N] [--dump-parity=<file>]\n");
+        if (rank == 0) printf("need --mesh=<dir/.exo> OR --ncells=<N> [--iters=N] [--no-overlap] [--dump-parity=<file>]\n");
         MPI_Finalize(); return 1;
     }
 
