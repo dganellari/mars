@@ -75,17 +75,18 @@ outlet rows of K (p = 0) are removed. Diffusion moves the fixed inlet values to
 the right-hand side (lift) before eliminating their columns. Skew advection uses
 the face fluxes F and includes the matching opening momentum flux.
 
-## Daint release run
+## Release run on a Slurm cluster
 
-From the build directory of a CUDA build with `MARS_ENABLE_HYPRE=ON`:
+From the build directory of a CUDA build with `MARS_ENABLE_HYPRE=ON`; replace `<scratch>` and
+`<account>` with your own:
 
 ```bash
 cmake --build . --target mars_poiseuille_flow --parallel 32
-R=$(mktemp -d /capstor/scratch/cscs/gandanie/poiseuille-release-XXXXXX)
+R=$(mktemp -d <scratch>/poiseuille-release-XXXXXX)
 git rev-parse HEAD > $R/mars-revision.txt
 for np in 1 2 4; do
-  srun --account=csstaff --time=00:30:00 --nodes=1 --ntasks-per-node=$np --export=ALL --kill-on-bad-exit=1 \
-    ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_poiseuille_flow \
+  srun --account=<account> --time=00:30:00 --nodes=1 --ntasks-per-node=$np --export=ALL --kill-on-bad-exit=1 \
+    ./examples/distributed/unstructured/mars_poiseuille_flow \
     --mesh=../tests/data/poiseuille/poiseuille_hex_14k_elem.e \
     --uinf=1 --rho=1 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=100 --check \
     --vtu-output=$R/np$np/flow --vtu-every=500 --comparison-output=$R/np$np/fields --comparison-every=500 \

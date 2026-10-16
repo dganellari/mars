@@ -123,13 +123,11 @@ element-specific diffusion-coefficient matrix. Two kernels offload that 8×8 ont
 
 - **`WmmaTensor`** — one warp per element, using the `wmma` FP64 mma API (SM80+,
   i.e. A100/H100/GH200), with a non-tensor-core fallback below SM80.
-- **`WgmmaTensor`** — Hopper-only (SM90a), using asynchronous `wgmma` via inline PTX,
-  packing several elements' rows into one wide matmul so the FP64 tensor pipe is better
-  fed, overlapping with the scalar advection work.
+- **`WgmmaTensor`** — kept under its name from an experiment with Hopper's asynchronous
+  `wgmma`; FP64 has no `wgmma` instruction, so it runs the same WMMA path as `WmmaTensor`.
 
 These are **experimental / capability-demonstration** paths: the 8×8 FP64 tiles are
-small (the tensor cores are under-fed for a trilinear element), and the WGMMA path
-hand-rolls architecture-pinned PTX. They show MARS can drive the tensor cores from a
+small (the tensor cores are under-fed for a trilinear element). They show MARS can drive the tensor cores from a
 CVFEM assembly; they are not the recommended production path on current hardware.
 
 ---
@@ -183,9 +181,10 @@ level; the kernel variants above are **how fast** you assemble whichever you cho
 | The smallest matrix | the **graph-lumped** assembly path |
 | Drive the tensor cores (experimental) | `WmmaTensor` / `WgmmaTensor` |
 
-Start from `Tensor` / `FullPerip` and the graph-lumped sparsity, then time the others on
-your GPU (`mars_cvfem_graph --kernel=... --iterations=N`): the right kernel depends on
-its atomic throughput, your mesh's spatial locality, and whether you are occupancy- or
+For hexahedra, start from `Tensor` with the graph-lumped sparsity, then time the others on
+your GPU (`mars_cvfem_graph --kernel=... --iterations=N`). For tetrahedra, `FullPerip` is the
+starting point with the full sparsity; `mars_cvfem_graph_tet` runs the graph-lumped kernel. The right kernel depends on
+the GPU's atomic throughput, your mesh's spatial locality, and whether you are occupancy- or
 bandwidth-bound.
 
 ---

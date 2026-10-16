@@ -46,7 +46,7 @@ by default in a CUDA build. Without `--target`, `cmake --build build -j` builds 
 all examples.
 
 **Check the build before you go on** (recommended after every build): build everything, then run
-the release checks, which take a few minutes on one GPU. All 15 must pass; add
+the release checks, which take about five minutes on one GPU. All 15 must pass; add
 `-DMARS_ENABLE_HYPRE=ON` to the configure line to include the Navier–Stokes checks (22 then,
 with netCDF).
 On a Slurm cluster, see the
@@ -94,7 +94,7 @@ and each rank uses GPU `rank % deviceCount`:
 mpirun -np 4 ./build/examples/distributed/unstructured/mars_cvfem_graph --mesh=cube16
 ```
 
-Options (run it without `--mesh` to print them):
+Options:
 
 | Option | Meaning |
 |--------|---------|
@@ -122,7 +122,7 @@ compare them on your GPU with `--iterations=N`):
 | `tensor_perip_lb2` | `tensor_perip` with two blocks per SM |
 | `smem_cache` | shared-memory node cache |
 | `wmma_tensor` | FP64 tensor cores, WMMA (experimental) |
-| `wgmma_tensor` | FP64 tensor cores, WGMMA, Hopper only (experimental) |
+| `wgmma_tensor` | same path as `wmma_tensor`: FP64 has no WGMMA instruction (experimental) |
 
 ---
 
@@ -173,7 +173,7 @@ You ran the whole [FEM Assembly](FEM-Assembly.md) pipeline:
 mesh (cube16)  ->  partition (SFC)  ->  node-to-DOF map  ->  CSR sparsity  ->  assemble  ->  [your solver]
 ```
 
-Everything after reading the mesh ran on the GPU. Only the mesh and the rank count change for a
+With the default kernel, everything after reading the mesh ran on the GPU. Only the mesh and the rank count change for a
 bigger problem.
 
 ---
