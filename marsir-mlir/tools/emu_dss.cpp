@@ -11,8 +11,9 @@
 // order, which a mesh would exercise only partly (a cube has no 5-edge stars,
 // for instance). Real meshes are the GPU check against the hand kernel.
 //
-// Two passes: every element in a shuffled order, then a subset, whose other
-// copies must stay untouched (NaN).
+// Two lists: every element in a shuffled order, then a subset, whose other
+// copies must stay untouched (NaN). Each with one block per element and with 3
+// blocks that stride over the list.
 //
 // Build + run: python3 test/dss_gpu_pipeline.py [p] --emulate [--emu-tsan]
 #include <cmath>
@@ -151,9 +152,9 @@ void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<doub
     }
 }
 
-// The emulated kernel on `list`: grid = list size, 32 lanes per block, one
-// block at a time (the workgroup buffer is one process-wide global here).
-void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out)
+// The emulated kernel on `list` with `grid` blocks of 32 lanes, one block at a
+// time (the workgroup buffers are process-wide globals here).
+void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out, long long grid)
 {
     D64 dv = desc(m.values), dg = desc(m.ghost), dout = desc(out);
     D32 dl = desc(list), dfn = desc(m.face_nbr), deo = desc(m.edge_of), deoff = desc(m.edge_off),
@@ -161,12 +162,13 @@ void emulated(Mesh& m, std::vector<int32_t>& list, std::vector<double>& out)
     D8 dfc = desc(m.face_code);
     Warp w;
     warp = &w;
-    for (long long b = 0; b < (long long)list.size(); ++b) {
+    for (long long b = 0; b < grid; ++b) {
         std::vector<std::thread> lanes;
         for (int L = 0; L < kLanes; ++L)
             lanes.emplace_back([&, L, b] {
                 tlLane = L;
                 tlBlock = b;
+                tlGrid = grid;
                 MIR_DSS_FN(&dv, &dg, &dl, &dfn, &dfc, &deo, &deoff, &deent, &dvo, &dvoff, &dvent, &dout);
             });
         for (auto& t : lanes) t.join();
@@ -194,15 +196,16 @@ int main(int argc, char** argv)
     std::vector<int32_t> some(all.begin(), all.begin() + E / 3);
 
     int failed = 0;
-    for (auto* list : {&all, &some}) {
-        std::vector<double> ref(E * n3, std::nan("")), got(E * n3, std::nan(""));
-        reference(m, *list, ref);
-        emulated(m, *list, got);
-        const long long bad = mismatches(ref, got);
-        printf("  p=%d, %zu of %lld elements listed, %lld ghosts: %lld of %lld copies differ\n", P, list->size(), E, G,
-               bad, E * n3);
-        failed |= bad != 0;
-    }
+    for (auto* list : {&all, &some})
+        for (long long grid : {(long long)list->size(), 3LL}) {
+            std::vector<double> ref(E * n3, std::nan("")), got(E * n3, std::nan(""));
+            reference(m, *list, ref);
+            emulated(m, *list, got, grid);
+            const long long bad = mismatches(ref, got);
+            printf("  p=%d, %zu of %lld elements listed, %lld ghosts, %lld blocks: %lld of %lld copies differ\n", P,
+                   list->size(), E, G, grid, bad, E * n3);
+            failed |= bad != 0;
+        }
     printf("DSS WARP EMULATION (p=%d, bit-exact vs the hand kernel's formula): %s\n", P, failed ? "FAIL" : "PASS");
     return failed;
 }

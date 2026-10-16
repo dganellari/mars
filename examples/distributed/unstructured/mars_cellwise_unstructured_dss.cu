@@ -21,8 +21,10 @@
 // --dss-ptx <dss_p7_sm90.ptx>: also run the DSS kernel MARSIR generates from mir.dss
 // (marsir-mlir/test/dss_gpu_pipeline.py) in every check above, which must give the
 // same bits as the hand-written kernel on every copy, and time the two.
+// --dss-blocks k: its grid (0: one block per element, the default; -1: as many
+// blocks as fit on the device, each striding over the elements).
 //
-// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file]
+// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file] [--dss-blocks k]
 // (several ranks need GPU-aware MPI: on Cray MPICH, MPICH_GPU_SUPPORT_ENABLED=1)
 
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_dss.hpp"
@@ -32,6 +34,7 @@
 #include <cuda_runtime.h>
 #include <mpi.h>
 #include <memory>
+#include <string>
 #include <thrust/device_vector.h>
 #include <thrust/extrema.h>
 #include <thrust/fill.h>
@@ -243,7 +246,7 @@ int bits_differ(const double* a, const double* b, long long n)
     return count[0];
 }
 
-bool one_rank(int ne, int reps, marsir::DssPtx* gen)
+bool one_rank(int ne, int reps, marsir::DssPtx* gen, long long dss_blocks)
 {
     const long long E = (long long)ne * ne * ne, n = E * kN3, NG = (long long)ne * kP + 1;
     Mesh plain, rotated;
@@ -310,19 +313,19 @@ bool one_rank(int ne, int reps, marsir::DssPtx* gen)
         input_kernel<<<grid_of(n), kThreads>>>(nullptr, raw(m.gid), n, raw(in));
         dss(raw(in), raw(out), m.topo);
         thrust::fill(out_gen.begin(), out_gen.end(), 0.0);
-        gen->run(raw(in), nullptr, raw(out_gen), m.topo, ElementList{nullptr, E});
+        gen->run(raw(in), nullptr, raw(out_gen), m.topo, ElementList{nullptr, E}, 0, dss_blocks);
         const int bd = bits_differ(raw(out_gen), raw(out), n);
         printf("  MARSIR DSS vs hand kernel, %s: %d copies differ in any bit\n", pass ? "rotated" : "plain", bd);
         ok &= bd == 0;
     }
-    const float ms_gen_plain = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), plain.topo, ElementList{nullptr, E}); });
-    const float ms_gen_rot = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), rotated.topo, ElementList{nullptr, E}); });
+    const float ms_gen_plain = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), plain.topo, ElementList{nullptr, E}, 0, dss_blocks); });
+    const float ms_gen_rot = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), rotated.topo, ElementList{nullptr, E}, 0, dss_blocks); });
     row("MARSIR, plain", ms_gen_plain);
     row("MARSIR, rotated", ms_gen_rot);
     return ok;
 }
 
-bool several_ranks(int ne, int reps, MPI_Comm comm, marsir::DssPtx* gen)
+bool several_ranks(int ne, int reps, MPI_Comm comm, marsir::DssPtx* gen, long long dss_blocks)
 {
     const Decomposition dec(comm, ne, ne, ne);
     thrust::device_vector<unsigned long long> elem;
@@ -353,7 +356,7 @@ bool several_ranks(int ne, int reps, MPI_Comm comm, marsir::DssPtx* gen)
     thrust::device_vector<double> out_gen(n);
     auto dss_gen = [&] {
         run_unstructured_pass(&halo, m.topo.local, raw(in), nullptr, 0, [&](const ElementList& set, const double* ghost, int) {
-            gen->run(raw(in), ghost, raw(out_gen), m.topo, set);
+            gen->run(raw(in), ghost, raw(out_gen), m.topo, set, 0, dss_blocks);
             return 0;
         });
     };
@@ -403,10 +406,12 @@ int main(int argc, char** argv)
     }
     int ne = 8, reps = 20;
     const char* dss_ptx = nullptr;
+    long long dss_blocks = 0;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--dss-ptx")) dss_ptx = argv[i + 1];
+        else if (!strcmp(argv[i], "--dss-blocks")) dss_blocks = atoll(argv[i + 1]);
         else { if (rank == 0) fprintf(stderr, "unknown option %s\n", argv[i]); MPI_Finalize(); return 1; }
     }
     if (size > 1) {   // device pointers go to MPI: MPICH needs GPU support switched on
@@ -435,7 +440,10 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaDeviceSynchronize());
 
     std::unique_ptr<marsir::DssPtx> gen(dss_ptx ? new marsir::DssPtx(dss_ptx, kP) : nullptr);
-    const bool ok = size == 1 ? one_rank(ne, reps, gen.get()) : several_ranks(ne, reps, MPI_COMM_WORLD, gen.get());
+    if (gen && dss_blocks < 0) dss_blocks = gen->resident_blocks();
+    if (gen && rank == 0) printf("MARSIR DSS %s, grid %s\n", dss_ptx, dss_blocks > 0 ? std::to_string(dss_blocks).c_str() : "one block per element");
+    const bool ok = size == 1 ? one_rank(ne, reps, gen.get(), dss_blocks)
+                              : several_ranks(ne, reps, MPI_COMM_WORLD, gen.get(), dss_blocks);
     if (rank == 0) printf("UNSTRUCTURED DSS: %s\n", ok ? "PASS" : "FAIL");
     MPI_Finalize();
     return ok ? 0 : 1;

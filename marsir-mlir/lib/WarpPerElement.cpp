@@ -1,22 +1,26 @@
 // --mir-warp-per-element: map per-element parallel loops onto one warp per element.
 //
-//   scf.parallel (w) = (0) to (N) {mir.elements}      ->  w = gpu.block_id x
-//     %s = memref.alloca {mir.scratch}                     scf.if w < N {
-//     scf.parallel (i) = (a) to (b) {mir.lanes} {A}          %s = the warp's shared buffer
-//     scf.parallel (j) = (c) to (d) {mir.lanes} {B}          scf.for i = a + lane to b step 32 {A}
-//                                                             gpu.barrier
+//   scf.parallel (w) = (0) to (N) {mir.elements}      ->  scf.for w = block_id to N step grid_dim {
+//     %s = memref.alloca {mir.scratch}                       %s = the warp's shared buffer
+//     scf.parallel (i) = (a) to (b) {mir.lanes} {A}          scf.for i = a + lane to b step 32 {A}
+//     scf.parallel (j) = (c) to (d) {mir.lanes} {B}          gpu.barrier
 //                                                             scf.for j = c + lane to d step 32 {B}
+//                                                             gpu.barrier
 //                                                           }
 //
-// Launch contract: grid.x >= N, blockDim.x = 32, as for --mir-batch-elements.
+// Launch contract: blockDim.x = 32, any grid.x >= 1. With grid.x = N each block
+// does one element; with fewer, each block walks the elements in grid-stride
+// order, so per-block setup (see --mir-workgroup-constants) is paid once per
+// block rather than once per element.
 //
 // Why this is correct: iterations of an scf.parallel are independent by
 // definition, so any lane may run any of them, and a lane-cyclic split needs no
 // synchronisation inside a phase. Consecutive phases of one element do depend
 // on each other (one writes the scratch the next reads), and the barrier
-// between them is exactly that order. Every lane reaches every barrier: the
-// guard depends only on the block, and the phases sit directly in the element
-// body. The scratch becomes a {mir.workgroup} argument, which --mir-gpu-wrap
+// between them is exactly that order; the barrier at the end of the body keeps
+// the next element from overwriting scratch that a slower lane still reads.
+// Every lane reaches every barrier: the element loop depends only on the block,
+// and the phases sit directly in the element body. The scratch becomes a {mir.workgroup} argument, which --mir-gpu-wrap
 // turns into shared memory: one copy per warp, which the lanes share.
 
 #include "mir/MirPasses.h"
@@ -95,10 +99,11 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
     alloca.erase();
   }
 
-  Value w = b.create<gpu::BlockIdOp>(loc, gpu::Dimension::x);
-  Value inRange = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, w, elements.getUpperBound()[0]);
-  auto guard = b.create<scf::IfOp>(loc, inRange, /*withElseRegion=*/false);
-  moveBody(elements, guard.thenBlock(), w);
+  Value start = b.create<gpu::BlockIdOp>(loc, gpu::Dimension::x);
+  Value stride = b.create<gpu::GridDimOp>(loc, gpu::Dimension::x);
+  auto loop = b.create<scf::ForOp>(loc, start, elements.getUpperBound()[0], stride);
+  moveBody(elements, loop.getBody(), loop.getInductionVar());
+  OpBuilder(loop.getBody()->getTerminator()).create<gpu::BarrierOp>(loc);
   elements.erase();
   return success();
 }

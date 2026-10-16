@@ -16,7 +16,7 @@
 // gpu.barrier orders: a missing barrier, under the GPU's rules.
 //
 // Include it in exactly one translation unit of a harness. The harness sets
-// `warp`, and tlLane / tlBlock on every lane thread, before calling the kernel.
+// `warp`, and tlLane / tlBlock / tlGrid on every lane thread, before calling the kernel.
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -60,7 +60,7 @@ struct Warp {
     double A[8][4], B[4][8], C[8][8];
 };
 Warp* warp = nullptr;
-thread_local int64_t tlLane = 0, tlBlock = 0;
+thread_local int64_t tlLane = 0, tlBlock = 0, tlGrid = 1;
 thread_local double tlHi = 0;
 }  // namespace
 
@@ -96,6 +96,7 @@ struct HiddenExchange {};
 extern "C" {
 int64_t mir_emu_lane() { return tlLane; }
 int64_t mir_emu_block() { return tlBlock; }
+int64_t mir_emu_grid() { return tlGrid; }
 void mir_emu_barrier() { warp->bar.arrive_and_wait(); }
 
 double mir_emu_shfl(double v, int32_t src)

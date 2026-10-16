@@ -43,6 +43,7 @@ void registerForwardOwnedPass();
 void registerLowerDssPass();
 void registerWarpPerElementPass();
 void registerNoaliasDescriptorsPass();
+void registerWorkgroupConstantsPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

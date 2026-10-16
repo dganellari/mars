@@ -6,9 +6,9 @@
 //
 // Kernel contract: dss_p{p}(values, ghost, elements, face_nbr, face_code, edge_of,
 // edge_off, edge_ent, vert_of, vert_off, vert_ent, out), each a 1-D memref
-// descriptor (allocated ptr, aligned ptr, offset, size, stride); grid = listed
-// elements, block = 32. The size of `values` is where ghost copies start, so it
-// must be the local copy count exactly.
+// descriptor (allocated ptr, aligned ptr, offset, size, stride); block = 32, and
+// any grid: the blocks stride over the listed elements. The size of `values` is
+// where ghost copies start, so it must be the local copy count exactly.
 
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
@@ -29,13 +29,25 @@ public:
         MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, ("dss_p" + std::to_string(p)).c_str()));
     }
     ~DssPtx() { cuModuleUnload(module_); }
+
+    // Blocks that fit on the device at once (32 threads, the kernel's static
+    // shared memory): the grid of a persistent launch.
+    long long resident_blocks() const
+    {
+        int per_sm = 0, sms = 0, device = 0;
+        MARS_MARSIR_CU(cuOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, fn_, 32, 0));
+        cudaGetDevice(&device);
+        cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device);
+        return (long long)per_sm * sms;
+    }
     DssPtx(const DssPtx&) = delete;
     DssPtx& operator=(const DssPtx&) = delete;
 
     // out = DSS(in) on the elements of `set` (all local elements when set.ids is
-    // null); `ghost` holds the ghost elements' copies (null on one rank).
+    // null); `ghost` holds the ghost elements' copies (null on one rank). `blocks`
+    // caps the grid (0: one block per element).
     void run(const double* d_in, const double* d_ghost, double* d_out, const cellwise::UnstructuredTopology& T,
-             const cellwise::ElementList& set, cudaStream_t stream = 0)
+             const cellwise::ElementList& set, cudaStream_t stream = 0, long long blocks = 0)
     {
         if (set.count == 0) return;
         const long long n3 = (long long)(p_ + 1) * (p_ + 1) * (p_ + 1);
@@ -68,7 +80,8 @@ public:
             params[5 * i + 3] = &a[i].size;
             params[5 * i + 4] = &one_;
         }
-        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)set.count, 1, 1, 32, 1, 1, 0, (CUstream)stream, params, nullptr));
+        const long long grid = blocks > 0 && blocks < set.count ? blocks : set.count;
+        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)grid, 1, 1, 32, 1, 1, 0, (CUstream)stream, params, nullptr));
     }
 
 private:
