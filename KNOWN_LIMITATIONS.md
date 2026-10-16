@@ -12,9 +12,10 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
 - **Incompressible Navier–Stokes on hex meshes** (`fem/mars_navier_stokes.hpp`), the
   solver of `mars_poiseuille_flow`, `mars_tgv` and `mars_lid_driven_cavity`, including
   periodic boxes. Validated:
-  [Poiseuille](tests/reference/poiseuille/planar_validation.md) on 1, 2 and 4 GPUs against the
-  exact profile, and the [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) on 1 to 8
-  GPUs against the viscous decay, with the same kinetic energy on every rank count. The release checks require the lid-driven cavity
+  [Poiseuille](tests/reference/poiseuille/planar_validation.md) on 1, 2, 4, 16 and 64 GPUs against
+  the exact profile, and the [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) against
+  the viscous decay, with the same kinetic energy on 1 to 8 GPUs and within the release band on 16
+  and 64. The release checks require the lid-driven cavity
   to give the same result on 1 and N ranks; it is not compared with a reference solution.
 
 The stable paths are validated on generated structured meshes and the shipped Poiseuille mesh (release checks: `ctest -L release`),

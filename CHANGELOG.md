@@ -54,10 +54,11 @@ re-tested for this release, also handle simplices up to dimension 4.
 - Weak scaling of MARS alone, the distributed p = 1 matrix-free operator apply at 16M elements per
   GPU with the halo exchange overlapped: 70% of the one-node rate on 1024 GPUs and 66% on 2048 GPUs
   (32.8 billion DOFs); without overlap 65% and 45 to 62% (Matrix-Free tutorial).
-- Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
-  4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
-  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,
-  4 and 8 GPUs, 8 over two nodes (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
+- Validation: the Poiseuille 1500-step check (profile RMS error 4.551e-4 m/s, about 24 s on
+  one GPU; `tests/reference/poiseuille/planar_validation.md`) passes on 1, 2, 4, 16 and 64 GPUs,
+  and the Taylor–Green vortex kinetic energy follows the Stokes decay, identical on 1, 2, 4 and
+  8 GPUs (8 over two nodes, `docs/periodic_tgv_tutorial.md`) and within the release band on 16
+  and 64. `ctest -L release` runs the lid-driven
   cavity, the channel and the Taylor–Green vortex on 1 and N ranks.
 
 ### Changed
