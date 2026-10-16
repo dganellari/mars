@@ -28,8 +28,10 @@ staging phase (1.31 ms).
 compared bit for bit with the hand kernel's formula; --emu-tsan adds
 ThreadSanitizer, which reports any shared access no barrier orders.
 
---precond: the Jacobi preconditioner with <a, z> and <z, z> instead
-(mlir_ir.emit_dss_precond: mir.dss with an epilogue), precond_p{p}_az_zz_sm90.ptx.
+--precond: the Jacobi preconditioner instead, in the four variants the Krylov
+solvers call (no dots, <a, z>, <z, z>, both; mlir_ir.emit_dss_precond_all: mir.dss
+with an epilogue), one module, precond_p{p}_sm90.ptx. The CPU gate checks the
+variant with both dots.
 
 Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond] [--emulate [--emu-tsan]]
 """
@@ -60,7 +62,7 @@ def main():
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(MARS, 'marsir-compiler')!r})
 from marsir.backends import mlir_ir
-sys.stdout.write(mlir_ir.{'emit_dss_precond' if precond else 'emit_dss'}({p}))
+sys.stdout.write(mlir_ir.{'emit_dss_precond_all' if precond else 'emit_dss'}({p}))
 """], "")
     ir = run([MIROPT, "-", "--mir-lower-dss", "--canonicalize", "--cse",
               "--mir-warp-per-element", "--canonicalize", "--cse",
@@ -82,11 +84,11 @@ sys.stdout.write(mlir_ir.{'emit_dss_precond' if precond else 'emit_dss'}({p}))
     ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    out = os.path.join(ROOT, "generated", f"precond_p{p}_az_zz_sm90.ptx" if precond else f"dss_p{p}_sm90.ptx")
+    out = os.path.join(ROOT, "generated", f"precond_p{p}_sm90.ptx" if precond else f"dss_p{p}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [
-        ("single kernel entry", ptx.count(".visible .entry") == 1),
+        ("kernel entries", ptx.count(".visible .entry") == (4 if precond else 1)),
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", "tid.x" in ptx),
         ("no local memory", ptx.count(".local") == 0),

@@ -494,3 +494,9 @@ def emit_dss_precond(p=7, az=True, zz=True):
         "  return",
         "}",
         ""])
+
+
+def emit_dss_precond_all(p=7):
+    """All four variants the Krylov solvers call (no dots, <a, z>, <z, z>, both), in
+    one module: precond_p{p}, precond_p{p}_az, precond_p{p}_zz, precond_p{p}_az_zz."""
+    return "".join(emit_dss_precond(p, az, zz) for az in (False, True) for zz in (False, True))

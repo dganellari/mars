@@ -22,7 +22,7 @@
 // (marsir-mlir/test/dss_gpu_pipeline.py) in every check above, which must give the
 // same bits as the hand-written kernel on every copy, and time the two.
 //
-// --precond-ptx <precond_p7_az_zz_sm90.ptx>: the generated Jacobi preconditioner with
+// --precond-ptx <precond_p7_sm90.ptx>: the generated Jacobi preconditioner with
 // <a, z> and <z, z> against unstructured_precondition_kernel<true, true> on the rotated
 // cube: z must have the same bits; the dot products agree to rounding (the two kernels
 // reduce in different orders). Times the two.
@@ -333,7 +333,8 @@ bool one_rank(int ne, int reps, marsir::DssPtx* gen, marsir::PrecondPtx* pre)
         const UnstructuredJacobi jacobi{view(rotated.topo), raw(diag), nullptr};
         auto hand = [&] { return jacobi.operator()<true, true>(raw(in), raw(z_hand), raw(a), raw(part_hand), 0); };
         auto generated = [&] {
-            pre->run(raw(in), nullptr, raw(z_gen), raw(diag), raw(a), raw(part_gen), rotated.topo, ElementList{nullptr, E});
+            pre->run<true, true>(raw(in), nullptr, raw(z_gen), raw(diag), raw(a), raw(part_gen), rotated.topo,
+                                 ElementList{nullptr, E});
         };
         const int blocks = hand();
         generated();
