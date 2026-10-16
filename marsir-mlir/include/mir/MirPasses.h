@@ -37,6 +37,8 @@ void registerWarpBarriersPass();
 void registerHoistInvariantReadsPass();
 void registerUnrollLoopsPass();
 void registerForwardOwnedPass();
+void registerLowerDssPass();
+void registerWarpPerElementPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

@@ -422,3 +422,29 @@ def emit_full_batched(ea, p=7, tpb=128):
           "  return",
           "}"]
     return "\n".join(L) + "\n"
+
+
+# The cell-wise DSS kernel: direct stiffness summation on element-local vectors
+# (marsir-mlir: mir.dss, lowered by --mir-lower-dss). The arguments are the flat
+# device arrays of MARS's UnstructuredTopology, in the order of mir.dss.
+DSS_ARGS = [("values", "f64"), ("ghost", "f64"), ("elements", "i32"),
+            ("face_nbr", "i32"), ("face_code", "i8"),
+            ("edge_of", "i32"), ("edge_off", "i32"), ("edge_ent", "i32"),
+            ("vert_of", "i32"), ("vert_off", "i32"), ("vert_ent", "i32"),
+            ("out", "f64")]
+
+
+def emit_dss(p=7):
+    a = {name: f"%{name}" for name, _ in DSS_ARGS}
+    sig = ", ".join(f"%{name}: memref<?x{t}>" for name, t in DSS_ARGS)
+    types = ", ".join(f"memref<?x{t}>" for _, t in DSS_ARGS)
+    return "\n".join([
+        f"func.func @dss_p{p}({sig}) attributes {{mir.kernel}} {{",
+        f"  mir.dss ins({a['values']}, {a['ghost']}) elements({a['elements']})",
+        f"          faces({a['face_nbr']}, {a['face_code']})",
+        f"          edges({a['edge_of']}, {a['edge_off']}, {a['edge_ent']})",
+        f"          vertices({a['vert_of']}, {a['vert_off']}, {a['vert_ent']})",
+        f"          outs({a['out']}) {{degree = {p} : i64}} : {types}",
+        "  return",
+        "}",
+        ""])

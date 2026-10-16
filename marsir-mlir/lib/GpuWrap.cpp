@@ -72,9 +72,21 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
       auto gfunc = gb.create<gpu::GPUFuncOp>(f.getLoc(), f.getName(),
                                              f.getFunctionType());
       gfunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(), gb.getUnitAttr());
+      // Argument attributes (llvm.noalias, ...) carry over to the kernel.
+      for (unsigned i = 0; i < f.getNumArguments(); ++i)
+        if (DictionaryAttr attrs = f.getArgAttrDict(i))
+          gfunc.setArgAttrs(i, attrs);
       // takeBody replaces the entry block the builder just made, so the argument
       // values the body already refers to come across unchanged.
       gfunc.getBody().takeBody(f.getBody());
+      // Constant tables the body reads (memref.get_global) resolve in the nearest
+      // symbol table, which is now the gpu.module: they move along.
+      gfunc.walk([&](memref::GetGlobalOp get) {
+        if (gmod.lookupSymbol(get.getName()))
+          return;
+        if (auto global = mod.lookupSymbol<memref::GlobalOp>(get.getName()))
+          gb.clone(*global.getOperation());
+      });
       // A kernel ends in gpu.return, and only a void one can: a result would
       // have to come back through an out-parameter.
       gfunc.walk([&](func::ReturnOp r) {

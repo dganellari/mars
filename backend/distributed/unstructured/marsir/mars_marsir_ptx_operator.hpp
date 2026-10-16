@@ -33,6 +33,24 @@ namespace marsir {
         }                                                                        \
     } while (0)
 
+// Loads a MARSIR PTX file into the context the runtime API has made current.
+inline CUmodule load_ptx(const std::string& ptx_path)
+{
+    std::ifstream in(ptx_path, std::ios::binary);
+    if (!in) {
+        fprintf(stderr, "cannot open MARSIR PTX %s\n", ptx_path.c_str());
+        std::abort();
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string ptx = ss.str();
+    cudaFree(nullptr);   // make sure the runtime's primary context exists
+    MARS_MARSIR_CU(cuInit(0));
+    CUmodule module = nullptr;
+    MARS_MARSIR_CU(cuModuleLoadData(&module, ptx.c_str()));
+    return module;
+}
+
 class LaplacianPtx {
 public:
     // p = 7: U, Y are E x 8 x 8 x 8; Btil, Dtil are 8 x 8 with a zero last row (the
@@ -40,17 +58,7 @@ public:
     // E x [3][7][3][8][8], component-major.
     explicit LaplacianPtx(const std::string& ptx_path, int p = 7) : p_(p)
     {
-        std::ifstream in(ptx_path, std::ios::binary);
-        if (!in) {
-            fprintf(stderr, "cannot open MARSIR PTX %s\n", ptx_path.c_str());
-            std::abort();
-        }
-        std::stringstream ss;
-        ss << in.rdbuf();
-        const std::string ptx = ss.str();
-        cudaFree(nullptr);   // make sure the runtime's primary context exists
-        MARS_MARSIR_CU(cuInit(0));
-        MARS_MARSIR_CU(cuModuleLoadData(&module_, ptx.c_str()));
+        module_ = load_ptx(ptx_path);
         MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, "laplacian_apply"));
     }
     ~LaplacianPtx() { cuModuleUnload(module_); }

@@ -476,9 +476,10 @@ if(MARS_ENABLE_MARSIR)
     install(TARGETS mars_marsir_cellwise_solve RUNTIME DESTINATION bin/examples)
 
     # The unstructured element-local DSS (solvers/mars_cellwise_topology.hpp) on a cube
-    # with randomly rotated element frames, against an oracle and the structured DSS.
+    # with randomly rotated element frames, against an oracle and the structured DSS;
+    # with --dss-ptx, also the MARSIR-generated DSS against it.
     add_executable(mars_cellwise_unstructured_dss mars_cellwise_unstructured_dss.cu)
-    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars)
+    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars CUDA::cuda_driver)
     install(TARGETS mars_cellwise_unstructured_dss RUNTIME DESTINATION bin/examples)
 endif()
 

@@ -183,4 +183,62 @@ def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, HasParent<"FluxOp">]> {
   let builders = [OpBuilder<(ins)>];
 }
 
+//===----------------------------------------------------------------------===//
+// mir.dss : direct stiffness summation on element-local (cell-wise) vectors.
+//===----------------------------------------------------------------------===//
+
+def Mir_DssOp : Mir_Op<"dss"> {
+  let summary = "direct stiffness summation on element-local hex vectors";
+  let description = [{
+    Every element-local copy of a node gets the sum over all copies of that
+    node: the assembly G G^T of a cell-wise solver, without forming the global
+    vector. Edge and vertex copies are summed in the order of their star (the
+    canonical order of the tables), and a face adds its two copies, so every
+    copy of a node gets the same bits. Only the copies of the elements listed
+    in `elements` are written; nodes are numbered (a, b, c) -> (a n + b) n + c
+    with n = degree + 1.
+
+    Copy i reads values[i] when i < size(values), else ghost[i - size(values)]:
+    the copies of ghost elements, received from other ranks.
+
+    The topology is that of MARS's UnstructuredTopology
+    (backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp):
+      face_nbr[e*6+f]     the other copy of face f (element*6 + face), or -1
+      face_code[e*6+f]    own frame | other frame << 3 (bit 6: Dirichlet)
+      edge_of[e*12+k]     global edge of local edge k; bit 31: reversed
+      edge_off, edge_ent  edge stars (CSR); entries element*12 + edge, bit 31:
+                          reversed
+      vert_of[e*8+c], vert_off, vert_ent
+                          corner stars; entries element*8 + corner
+
+    Example (p = 7):
+      mir.dss ins(%u, %ghost) elements(%ids) faces(%fn, %fc)
+              edges(%eo, %eoff, %eent) vertices(%vo, %voff, %vent)
+              outs(%y) {degree = 7 : i64} : memref<?xf64>, ...
+  }];
+
+  let arguments = (ins
+      Arg<MemRefRankOf<[F64], [1]>, "local copies", [MemRead]>:$values,
+      Arg<MemRefRankOf<[F64], [1]>, "ghost copies", [MemRead]>:$ghost,
+      Arg<MemRefRankOf<[I32], [1]>, "elements to write", [MemRead]>:$elements,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$face_nbr,
+      Arg<MemRefRankOf<[I8], [1]>, "", [MemRead]>:$face_code,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_of,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_ent,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_of,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_ent,
+      Arg<MemRefRankOf<[F64], [1]>, "summed copies", [MemWrite]>:$out,
+      I64Attr:$degree);
+
+  let assemblyFormat = [{
+    `ins` `(` $values `,` $ghost `)` `elements` `(` $elements `)`
+    `faces` `(` $face_nbr `,` $face_code `)`
+    `edges` `(` $edge_of `,` $edge_off `,` $edge_ent `)`
+    `vertices` `(` $vert_of `,` $vert_off `,` $vert_ent `)`
+    `outs` `(` $out `)` attr-dict `:` type(operands)
+  }];
+}
+
 #endif // MIR_OPS
