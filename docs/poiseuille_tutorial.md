@@ -5,7 +5,8 @@ channel, checked against the exact solution. It explains the case, the numerical
 MARS Navier–Stokes solver, how to run the example, and how to read every line it prints. No
 prior CFD knowledge is assumed.
 
-> The 1500-step validation passes on 1, 2 and 4 GPUs; see the
+> The 1500-step validation passes on 1, 2, 4, 16 and 64 GPUs (the release check runs it on 1 and
+> N ranks; 16 and 64 were run for v0.1); see the
 > [validation record](https://github.com/dganellari/mars/blob/master/tests/reference/poiseuille/planar_validation.md).
 
 ---
