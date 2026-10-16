@@ -29,7 +29,7 @@
 //     and pass WarpsPerBlock*sizeof(HoLaplacianDmmaWarpData) as the 3rd <<<>>>
 //     argument. ho_laplacian_dmma_launch below does exactly this.
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <cstddef>
 #include <mma.h>
 #include <type_traits>

@@ -69,8 +69,13 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 ## Build / platform notes
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
-  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) support exists (`-DMARS_ENABLE_HIP=ON`), but
-  it was not built or tested for v0.1.0, and the FEM examples are CUDA-only.
+  `-DCMAKE_CUDA_ARCHITECTURES=...`).
+- HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2): the build and the 15
+  release checks without Hypre pass. Not tested on AMD: the Navier–Stokes examples (they need
+  Hypre built for HIP), more than one node, and performance. The `wmma_tensor` and
+  `wgmma_tensor` assembly kernels need NVIDIA tensor cores and stop with a message on AMD.
+  With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
+  `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
 - Every rank must own part of the mesh. A mesh too small for the rank count stops on every rank with a
   message, instead of leaving a rank without elements.

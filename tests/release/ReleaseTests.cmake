@@ -174,3 +174,12 @@ get_property(_rel_tests DIRECTORY PROPERTY TESTS)
 list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Cavity|Channel|Tgv)")
 set_tests_properties(${_rel_tests} PROPERTIES
     FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 600)
+
+# AMD: cornerstone passes GPU buffers to MPI, so Cray MPICH needs GPU support on, and its on-node
+# GPU IPC path crashes in GTL on MI300A (Beverin, cray-gtl 9.1.0), so that is turned off.
+if(MARS_ENABLE_HIP)
+    get_property(_rel_all DIRECTORY PROPERTY TESTS)
+    list(FILTER _rel_all INCLUDE REGEX "^marsRelease")
+    set_tests_properties(${_rel_all} PROPERTIES
+        ENVIRONMENT "MPICH_GPU_SUPPORT_ENABLED=1;MPICH_GPU_IPC_ENABLED=0")
+endif()

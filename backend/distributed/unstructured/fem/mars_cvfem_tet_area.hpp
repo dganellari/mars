@@ -2,7 +2,7 @@
 
 #include "mars_cvfem_kernel.hpp"   // Tet4CVFEM
 #include "mars_element_traits.hpp" // d_tetLRSCV
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

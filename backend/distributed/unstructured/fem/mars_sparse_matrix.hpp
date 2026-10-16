@@ -3,7 +3,9 @@
 #include <memory>
 #include <vector>
 #include <thrust/fill.h>
-#include <thrust/system/cuda/memory.h>
+#include <thrust/copy.h>
+#include <thrust/device_ptr.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

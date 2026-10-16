@@ -1,6 +1,6 @@
 #include "gtest/gtest.h"
 #include "backend/distributed/unstructured/domain.hpp"
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/copy.h>

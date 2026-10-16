@@ -2,7 +2,7 @@
 
 #include "mars_cvfem_kernel.hpp"
 #include "mars_cvfem_hex_kernel.hpp"   // CSRMatrix POD struct
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

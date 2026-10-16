@@ -33,7 +33,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree_shfl.hpp"
 
-#include <cuda_runtime.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>

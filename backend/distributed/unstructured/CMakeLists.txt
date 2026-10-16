@@ -72,6 +72,8 @@ elseif(MARS_ENABLE_HIP)
     # Source-file properties are directory-scoped: the top-level LANGUAGE HIP glob does not
     # reach targets defined here, so set it for this target's .cu file explicitly.
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE HIP)
+    target_sources(mars_unstructured PRIVATE cstone_instantiations.cu)
+    set_source_files_properties(cstone_instantiations.cu PROPERTIES LANGUAGE HIP)
 endif()
 
 # For domain_cuda_impl.cpp
@@ -140,8 +142,13 @@ if(MARS_ENABLE_CUDA)
     target_link_libraries(mars_unstructured PUBLIC 
         CUDA::cudart 
         CUDA::cusparse 
-        CUDA::cublas 
+        CUDA::cublas
         CUDA::cusolver)
+elseif(MARS_ENABLE_HIP)
+    if(NOT TARGET mars::rocmlibs)
+        include(${CMAKE_SOURCE_DIR}/cmake/rocmlibs_target.cmake)
+    endif()
+    target_link_libraries(mars_unstructured PUBLIC mars::rocmlibs)
 endif()
 
 # BUILD_INTERFACE only -- see the note at the matching link in the top-level

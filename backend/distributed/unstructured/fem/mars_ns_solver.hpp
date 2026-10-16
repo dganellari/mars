@@ -47,7 +47,7 @@
 #include <thrust/transform.h>
 #include <thrust/extrema.h>
 #include <thrust/fill.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/execution_policy.h>
 
 #include <memory>
 #include <array>

@@ -35,8 +35,8 @@ The main features of MARS are:
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
-The GPU backend runs on NVIDIA GPUs with CUDA. HIP support for AMD GPUs exists (`-DMARS_ENABLE_HIP=ON`)
-but was not built or tested for v0.1, and the examples are CUDA-only. The older Kokkos backend
+The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A). The
+Navier–Stokes examples need Hypre and are tested on NVIDIA GPUs only. The older Kokkos backend
 covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
@@ -58,8 +58,7 @@ A plain clone is all you need:
 
 A network connection is required at configure time for the dependency fetch.
 
-GPU build (the main use case; HIP support for AMD GPUs, `-DMARS_ENABLE_HIP=ON`, was not built or
-tested for v0.1 and does not build the examples, see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The unstructured backend is on
+GPU build (the main use case; for AMD GPUs see the HIP build below). The unstructured backend is on
 by default in a GPU build. This builds the library, the example
 programs of the tutorials and the release checks; leave out `-DMARS_ENABLE_HYPRE=ON` if Hypre is
 not installed (the Navier–Stokes examples and their checks then are not built):
@@ -69,6 +68,25 @@ cd mars
 cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
       -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_HYPRE=ON
 cmake --build build -j
+```
+
+HIP build for AMD GPUs (MI300A is `gfx942`). It builds the example programs of the tutorials and the release checks,
+except the Navier–Stokes ones, which need Hypre built for HIP. Use a C++20 host compiler (GCC 13 on
+Beverin), passed explicitly if the system `g++` is older:
+
+```bash
+cd mars
+cmake -B build -DMARS_ENABLE_HIP=ON -DHIP_GPU_ARCHITECTURES=gfx942 -DMARS_ENABLE_FEM_EXAMPLES=ON \
+      -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+cmake --build build -j
+```
+
+With Cray MPICH, multi-rank runs need GPU-aware MPI, and on MI300A also its on-node GPU IPC turned
+off; without either, the ranks crash in the first domain sync. The release checks set these
+themselves:
+
+```bash
+export MPICH_GPU_SUPPORT_ENABLED=1 MPICH_GPU_IPC_ENABLED=0
 ```
 
 CPU-only build. This builds the core library; the unstructured backend needs CUDA or HIP:
@@ -82,8 +100,8 @@ cmake --build build -j
 ### Checking your build
 
 Run the release checks after every build, before you use MARS for your own work. They take
-about five minutes and catch a broken build, MPI setup or GPU setup. A CUDA build with the FEM examples
-(the GPU build above; tests are on by default) registers them; they run the documented drivers
+about five minutes and catch a broken build, MPI setup or GPU setup. A CUDA or HIP build with the FEM examples
+(the GPU builds above; tests are on by default) registers them; they run the documented drivers
 end to end on meshes generated at test time, plus the shipped Poiseuille mesh:
 
 ```bash
@@ -91,7 +109,7 @@ cd build
 ctest -L release
 ```
 
-Every test must pass: 22 tests with Hypre and netCDF, 15 without Hypre.
+Every test must pass: 22 tests with Hypre and netCDF, 15 without Hypre (and in a HIP build).
 
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson

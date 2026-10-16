@@ -53,7 +53,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/utils/mars_generate_cube.hpp"
 
-#include <cuda_runtime.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 #include <thrust/device_vector.h>
 #include <thrust/extrema.h>      // min_element/max_element for the global box (Gate 2)
@@ -61,7 +61,7 @@
 #include <thrust/copy.h>         // overlap: copy_if to partition interior/boundary lists
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/execution_policy.h>
-#include <thrust/system/cuda/execution_policy.h>   // thrust::cuda::par.on(stream)
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -500,7 +500,7 @@ int main(int argc, char** argv)
             RealType* arr = thrust::raw_pointer_cast(d_u.data());
             const int* snds = d_sendNodeIds; RealType* sbuf = d_sendBuf;
             const int* n2d = d_nodeToDof.data();
-            thrust::for_each(thrust::cuda::par.on(packStream),
+            thrust::for_each(mars::gpuPar.on(packStream),
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(sendTotal),
                 [arr, snds, sbuf, n2d] __device__ (size_t i) {
@@ -548,7 +548,7 @@ int main(int argc, char** argv)
             RealType* arr = thrust::raw_pointer_cast(d_u.data());
             const int* rnds = d_recvNodeIds; RealType* rbuf = d_recvBuf;
             const int* n2d = d_nodeToDof.data();
-            thrust::for_each(thrust::cuda::par.on(applyStream),
+            thrust::for_each(mars::gpuPar.on(applyStream),
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(recvTotal),
                 [arr, rnds, rbuf, n2d] __device__ (size_t i) {

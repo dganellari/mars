@@ -51,6 +51,7 @@
 #endif
 
 #ifdef MARS_CS_CUDA
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>

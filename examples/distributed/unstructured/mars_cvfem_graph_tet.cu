@@ -13,7 +13,7 @@
 #include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
@@ -231,10 +231,10 @@ int main(int argc, char** argv) {
     };
 
     auto resetSystem = [&]() {
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_values.data()),
                      thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_rhs.data()),
                      thrust::device_pointer_cast(d_rhs.data() + numDofs), 0.0);
     };

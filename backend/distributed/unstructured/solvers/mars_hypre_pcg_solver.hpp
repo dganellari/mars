@@ -5,7 +5,7 @@
 #include <HYPRE_parcsr_ls.h>
 #include <HYPRE_utilities.h>
 #include <mpi.h>
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/copy.h>
@@ -130,7 +130,7 @@ __global__ void fillGlobalRowIndicesKernel(HBigInt* d_rows, HBigInt ilower, int 
 template<typename T>
 struct IsNonFinite {
     __host__ __device__ bool operator()(T v) const {
-#if defined(__CUDA_ARCH__)
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
         return !isfinite(static_cast<double>(v));
 #else
         return !std::isfinite(static_cast<double>(v));

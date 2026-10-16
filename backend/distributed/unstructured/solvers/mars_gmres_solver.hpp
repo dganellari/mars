@@ -2,8 +2,7 @@
 
 #include "../fem/mars_sparse_matrix.hpp"
 #include "mars_cg_solver_with_preconditioner.hpp"   // Preconditioner base (pluggable + flexible GMRES)
-#include <cusparse.h>
-#include <cublas_v2.h>
+#include "../utils/mars_gpu_sparse_blas.hpp"
 #include <mpi.h>
 #include <functional>
 #include <iostream>

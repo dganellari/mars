@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_cvfem_hex_kernel.hpp"
+#include "../utils/mars_gpu_warp.cuh"
 
 namespace mars {
 namespace fem {
@@ -298,7 +299,7 @@ __global__ void cvfem_hex_assembly_kernel_team(
     // Within a warp: threads 0-11 handle one SCS each, others idle during SCS loop
     // Then all threads help with assembly
 
-    constexpr int THREADS_PER_ELEM = 32;  // One warp per element
+    constexpr int THREADS_PER_ELEM = laneGroup;  // one lane group per element
     int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / THREADS_PER_ELEM;
     int laneId = threadIdx.x % THREADS_PER_ELEM;
 
@@ -352,7 +353,7 @@ __global__ void cvfem_hex_assembly_kernel_team(
         }
         s_rhs[teamId][laneId] = 0.0;
     }
-    __syncwarp();
+    syncWarp();
 
     // Each of first 12 lanes processes one SCS
     if (laneId < 12) {
@@ -425,7 +426,7 @@ __global__ void cvfem_hex_assembly_kernel_team(
             atomicAdd(&s_rhs[teamId][nodeR], diff_coeff * s_phi[teamId][node]);
         }
     }
-    __syncwarp();
+    syncWarp();
 
     // Assembly: first 8 lanes assemble one row each
     if (laneId < 8) {

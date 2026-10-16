@@ -6,7 +6,6 @@
 #include "thrust/gather.h"
 #include "thrust/remove.h"
 #include "thrust/device_vector.h"
-#include "cub/cub.cuh"
 #include <unordered_map>
 #include <algorithm>
 #include <cstdlib>
@@ -540,8 +539,8 @@ __global__ void connectivityRebuildKernel(
     if (elemIdx < numElements)
     {
         KeyType key = sfcKeys[elemIdx];
-        // Use CUB's device-side binary search
-        auto localId = cub::LowerBound(uniqueSfcKeys, numUniqueKeys, key);
+        auto localId = KeyType(thrust::lower_bound(thrust::seq, uniqueSfcKeys, uniqueSfcKeys + numUniqueKeys, key) -
+                               uniqueSfcKeys);
         // If the key is not found, localId will be numUniqueKeys
         connectivity[elemIdx] = localId;
         // Ensure the key is valid
@@ -809,9 +808,10 @@ __global__ void mapSfcToLocalIdKernel(const KeyType* sfc_conn,
     if (elemIdx >= num_elements) return;
 
     KeyType sfc_key = sfc_conn[elemIdx];
-    
-    // Binary search using CUB for optimal performance
-    KeyType local_id = cub::LowerBound(sorted_sfc, static_cast<int>(num_nodes), sfc_key);
+
+    // Binary search in the sorted node keys
+    KeyType local_id =
+        thrust::lower_bound(thrust::seq, sorted_sfc, sorted_sfc + static_cast<int>(num_nodes), sfc_key) - sorted_sfc;
 
     // Verify the key was found (debug check)
     assert(local_id < num_nodes && sorted_sfc[local_id] == sfc_key);
@@ -860,7 +860,8 @@ __global__ void mapSfcBlockToLocalIdKernel(const KeyType* sfc_conn,
     KeyType sfc_key = sfc_conn[elemIdx];
     int blk = elem_block[elemIdx];
 
-    int j = cub::LowerBound(sorted_sfc, static_cast<int>(num_nodes), sfc_key);
+    int j =
+        thrust::lower_bound(thrust::seq, sorted_sfc, sorted_sfc + static_cast<int>(num_nodes), sfc_key) - sorted_sfc;
     while (j < static_cast<int>(num_nodes) && sorted_sfc[j] == sfc_key) {
         if (sorted_block[j] == blk) { local_conn[elemIdx] = static_cast<KeyType>(j); return; }
         ++j;
@@ -1007,8 +1008,8 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
     extractConnPtrs<KeyType>(d_conn, h_ptrs, std::make_index_sequence<NPC>{});
 
     const KeyType** d_ptrs;
-    cudaMalloc(&d_ptrs, NPC * sizeof(const KeyType*));
-    cudaMemcpy(d_ptrs, h_ptrs, NPC * sizeof(const KeyType*), cudaMemcpyHostToDevice);
+    cudaCheckCall(cudaMalloc(&d_ptrs, NPC * sizeof(const KeyType*)));
+    cudaCheckCall(cudaMemcpy(d_ptrs, h_ptrs, NPC * sizeof(const KeyType*), cudaMemcpyHostToDevice));
 
     // Step 1: Mark all nodes in LOCAL elements as owned
     size_t numLocal = endIdx - startIdx;
@@ -1036,7 +1037,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
     // Corner-contact nodes can end up owned twice here when the cornerstone halo lacks the opposite-rank
     // element; NodeHaloTopology resolves them lowest-rank-wins among halo peers. SFC ownership avoids both.
 
-    cudaFree(d_ptrs);
+    cudaCheckCall(cudaFree(d_ptrs));
 }
 
 // ============================================================================
@@ -1172,14 +1173,14 @@ static void buildNodeHaloTopologyHostPath(
     std::vector<uint8_t> h_owned(nodeCount);
     {
         const auto& d_own = domain.getNodeOwnershipMap();
-        cudaMemcpy(h_owned.data(), thrust::raw_pointer_cast(d_own.data()),
-                   nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+        cudaCheckCall(cudaMemcpy(h_owned.data(), thrust::raw_pointer_cast(d_own.data()), nodeCount * sizeof(uint8_t),
+                                 cudaMemcpyDeviceToHost));
     }
     std::vector<KeyType> h_sfc(nodeCount);
     {
         const auto& d_map = domain.getLocalToGlobalSfcMap();
-        cudaMemcpy(h_sfc.data(), thrust::raw_pointer_cast(d_map.data()),
-                   nodeCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaCheckCall(cudaMemcpy(h_sfc.data(), thrust::raw_pointer_cast(d_map.data()), nodeCount * sizeof(KeyType),
+                                 cudaMemcpyDeviceToHost));
     }
 
     // ----- Build my local owned-keys list: (sfc, localNodeId) -----
@@ -1242,8 +1243,8 @@ static void buildNodeHaloTopologyHostPath(
         }
         if (yielded > 0)
         {
-            cudaMemcpy(thrust::raw_pointer_cast(d_own.data()), h_ownNew.data(),
-                       nodeCount * sizeof(uint8_t), cudaMemcpyHostToDevice);
+            cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(d_own.data()), h_ownNew.data(),
+                                     nodeCount * sizeof(uint8_t), cudaMemcpyHostToDevice));
             h_owned = std::move(h_ownNew);
         }
         std::cout << "Rank " << rank << ": NodeHaloTopo yielded " << yielded
@@ -1333,11 +1334,11 @@ static void buildNodeHaloTopologyHostPath(
     sendNodeIds_.resize(sendNodesHost.size());
     recvNodeIds_.resize(recvNodesHost.size());
     if (!sendNodesHost.empty())
-        cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
-                   sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
+                                 sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice));
     if (!recvNodesHost.empty())
-        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
-                   recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
+                                 recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice));
 
     std::cout << "Rank " << rank << ": NodeHaloTopo " << peers_.size() << " peers, "
               << sendNodesHost.size() << " send nodes, "
@@ -1676,7 +1677,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
                 int(hAllStart.size()),
                 thrust::raw_pointer_cast(d_isBoundary.data()),
                 totalAll);
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
     }
 
@@ -1703,7 +1704,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
                 thrust::raw_pointer_cast(d_connPtrs.data()),
                 startIdx, endIdx,
                 thrust::raw_pointer_cast(d_locallyClaimed.data()));
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
     }
     const uint8_t* d_claimedPtr  = thrust::raw_pointer_cast(d_locallyClaimed.data());
@@ -1872,8 +1873,8 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
                             d_uniqueOffsets.begin());
         // Set the sentinel offset[numUnique] = totalRecvKeys.
         int lastOff = totalRecvKeys;
-        cudaMemcpy(thrust::raw_pointer_cast(d_uniqueOffsets.data()) + numUnique,
-                   &lastOff, sizeof(int), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(d_uniqueOffsets.data()) + numUnique, &lastOff, sizeof(int),
+                                 cudaMemcpyHostToDevice));
     }
 
     // ====================================================================
@@ -1899,7 +1900,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
             thrust::raw_pointer_cast(d_authoritativeOwner.data()),
             rank,
             int(nodeCount));
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
     }
     const int* d_authPtr = thrust::raw_pointer_cast(d_authoritativeOwner.data());
 
@@ -1922,7 +1923,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
                 // practice). Otherwise set to 1 iff this rank is the owner.
                 d_own_ptr[n] = (owner == rank) ? uint8_t(1) : uint8_t(0);
             });
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
     }
 
     // ----- Helper: emit per-peer (peer, node) tuples then compact -----
@@ -1963,10 +1964,10 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
         std::vector<int> hPeerOut(uniq), hNodeOut(uniq);
         if (uniq > 0)
         {
-            cudaMemcpy(hPeerOut.data(), thrust::raw_pointer_cast(d_keepPeer.data()),
-                       uniq * sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(hNodeOut.data(), thrust::raw_pointer_cast(d_keepNode.data()),
-                       uniq * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaCheckCall(cudaMemcpy(hPeerOut.data(), thrust::raw_pointer_cast(d_keepPeer.data()), uniq * sizeof(int),
+                                     cudaMemcpyDeviceToHost));
+            cudaCheckCall(cudaMemcpy(hNodeOut.data(), thrust::raw_pointer_cast(d_keepNode.data()), uniq * sizeof(int),
+                                     cudaMemcpyDeviceToHost));
         }
 
         std::unordered_map<int, size_t> peerIdx;
@@ -1993,7 +1994,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
             thrust::raw_pointer_cast(d_outPeer.data()),
             thrust::raw_pointer_cast(d_outNode.data()),
             int(nodeCount));
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
         {
@@ -2025,8 +2026,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
     {
         std::vector<KeyType> h_sfc(nodeCount);
         if (nodeCount > 0)
-            cudaMemcpy(h_sfc.data(), d_sfcMap, nodeCount * sizeof(KeyType),
-                       cudaMemcpyDeviceToHost);
+            cudaCheckCall(cudaMemcpy(h_sfc.data(), d_sfcMap, nodeCount * sizeof(KeyType), cudaMemcpyDeviceToHost));
 
         const int np = int(peers.size());
 
@@ -2130,11 +2130,11 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
     sendNodeIds_.resize(sendNodesHost.size());
     recvNodeIds_.resize(recvNodesHost.size());
     if (!sendNodesHost.empty())
-        cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
-                   sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
+                                 sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice));
     if (!recvNodesHost.empty())
-        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
-                   recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
+                                 recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice));
 
     std::cout << "Rank " << rank << ": NodeHaloTopo[v2] " << peers_.size() << " peers, "
               << sendNodesHost.size() << " send nodes, "
@@ -2258,8 +2258,8 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
         {
             const auto& r = requests[requestIdx++];
             sendCount     = r.count;
-            cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()) + sendOffsets_.back(), sendIds + r.offset,
-                       sendCount * sizeof(int), cudaMemcpyDeviceToDevice);
+            cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()) + sendOffsets_.back(),
+                                     sendIds + r.offset, sendCount * sizeof(int), cudaMemcpyDeviceToDevice));
         }
         if (ownerIdx < owners.size() && owners[ownerIdx] == peer) { recvCount = ownerCounts[ownerIdx++]; }
         peers_.push_back(peer);
@@ -2269,8 +2269,8 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
     // ghosts are sorted by owner, and peers ascend, so the receive list is the ghost list as is
     if (numGhosts > 0)
     {
-        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), ghostNode, numGhosts * sizeof(int),
-                   cudaMemcpyDeviceToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), ghostNode, numGhosts * sizeof(int),
+                                 cudaMemcpyDeviceToDevice));
     }
 
     std::cout << "Rank " << rank << ": NodeHaloTopo[" << (full ? "sfc-full" : "sfc") << "] " << peers_.size()
@@ -2372,7 +2372,8 @@ bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, Acceler
 
         auto owner = domain.sfcNodeOwner();
         std::vector<KeyType> bounds(numRanks + 1);
-        cudaMemcpy(bounds.data(), owner.rankBounds, bounds.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaCheckCall(
+            cudaMemcpy(bounds.data(), owner.rankBounds, bounds.size() * sizeof(KeyType), cudaMemcpyDeviceToHost));
         owner.rankBounds = bounds.data();
         const auto box   = domain.getBoundingBox();
 
@@ -2388,7 +2389,8 @@ bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, Acceler
             for (int c = 0; c < NPC; ++c)
             {
                 KeyType corner;
-                cudaMemcpy(&corner, destinations.conn.ptrs[c] + e, sizeof(KeyType), cudaMemcpyDeviceToHost);
+                cudaCheckCall(
+                    cudaMemcpy(&corner, destinations.conn.ptrs[c] + e, sizeof(KeyType), cudaMemcpyDeviceToHost));
                 if (owner(corner) != d) { continue; }
                 auto [px, py, pz] = decodeSfcToPhysical(corner, box);
                 std::fprintf(stderr, " (%g, %g, %g)", px, py, pz);
@@ -2466,8 +2468,8 @@ bool NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::validateAg
                             template DeviceVector<uint8_t>&>(domain.getNodeOwnershipMap());
     std::vector<uint8_t> ownSnapshot(dOwn.size());
     if (!ownSnapshot.empty())
-        cudaMemcpy(ownSnapshot.data(), thrust::raw_pointer_cast(dOwn.data()),
-                   ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+        cudaCheckCall(cudaMemcpy(ownSnapshot.data(), thrust::raw_pointer_cast(dOwn.data()),
+                                 ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 
     NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag> hostTopo{};
     NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag> v2Topo{};
@@ -2475,16 +2477,16 @@ bool NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::validateAg
 
     // Restore ownership before v2 build so it sees pre-yield state.
     if (!ownSnapshot.empty())
-        cudaMemcpy(thrust::raw_pointer_cast(dOwn.data()), ownSnapshot.data(),
-                   ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(dOwn.data()), ownSnapshot.data(),
+                                 ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
     v2Topo.buildOnDevice(domain);
 
     auto pullToHost = [](const auto& d_vec) {
         std::vector<int> h(d_vec.size());
         if (!h.empty())
-            cudaMemcpy(h.data(), thrust::raw_pointer_cast(d_vec.data()),
-                       h.size() * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaCheckCall(cudaMemcpy(h.data(), thrust::raw_pointer_cast(d_vec.data()), h.size() * sizeof(int),
+                                     cudaMemcpyDeviceToHost));
         return h;
     };
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "mars_base.hpp"
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

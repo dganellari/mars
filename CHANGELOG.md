@@ -7,6 +7,17 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
+### Added
+- HIP build for AMD GPUs, tested on MI300A: the tutorial examples build, and the release checks
+  without Hypre pass on 1 and 4 ranks. The CUDA runtime, cuSPARSE/cuBLAS, Thrust and CUB calls map
+  to HIP through one header layer on top of cornerstone's; warp-level kernels keep 32-lane
+  groups inside AMD's 64-lane wavefronts.
+
+### Changed
+- The matrix-free weak-scaling driver overlaps the halo exchange by default (`--no-overlap` to wait).
+- GPU runtime calls in the domain setup (copies, allocations, synchronizations) are checked; a
+  failure stops every rank with its location instead of continuing.
+
 ## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element

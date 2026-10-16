@@ -1,13 +1,12 @@
 #pragma once
 
 #include "domain.hpp"
-#include <cuda_runtime.h>
+#include "utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
 #include <thrust/remove.h>
 #include <thrust/execution_policy.h>
-#include <thrust/system/cuda/memory.h>
 #include <map>
 #include <array>
 

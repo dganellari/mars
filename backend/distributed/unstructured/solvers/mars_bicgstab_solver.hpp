@@ -1,8 +1,7 @@
 #pragma once
 
 #include "../fem/mars_sparse_matrix.hpp"
-#include <cusparse.h>
-#include <cublas_v2.h>
+#include "../utils/mars_gpu_sparse_blas.hpp"
 #include <iostream>
 #include <cmath>
 

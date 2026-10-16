@@ -9,9 +9,8 @@ pipeline.
 
 ## 1. Prerequisites
 
-- An NVIDIA GPU with the CUDA toolkit. The example drivers need CUDA. (A HIP build for AMD GPUs
-  is possible, `-DMARS_ENABLE_HIP=ON -DHIP_GPU_ARCHITECTURES=gfx942`, but it was not re-verified
-  for v0.1 and it does not build the examples.)
+- An NVIDIA GPU with the CUDA toolkit. AMD GPUs work with HIP instead: see the HIP build and
+  the MPI settings it needs in the [README](https://github.com/dganellari/mars#downloading-mars-and-its-dependencies).
 - CMake 3.22 or newer and a C++20 compiler.
 - MPI. The build needs it by default; a single-rank run can start without `mpirun`.
 - Python 3 with NumPy, to generate the mesh.

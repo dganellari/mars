@@ -5,14 +5,17 @@
 #include "mars_cvfem_hex_kernel_optimized.hpp"
 #include "mars_cvfem_hex_kernel_shmem.hpp"
 #include "mars_cvfem_hex_kernel_tensor.hpp"
+#if !defined(MARS_ENABLE_HIP) // FP64 tensor cores through the NVIDIA wmma API
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
+#endif
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
 #include "mars_cvfem_hex_kernel_tensor_perip.hpp"
 #include "mars_cvfem_hex_kernel_smem_cache.hpp"
 #include "mars_cvfem_node_data.hpp"
 #include "mars_cvfem_coloring.hpp"
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
+#include <stdexcept>
 
 namespace mars {
 namespace fem {
@@ -258,6 +261,7 @@ public:
                 break;
             }
 
+#if !defined(MARS_ENABLE_HIP)
             case CvfemKernelVariant::WmmaTensor: {
                 // FP64 WMMA: 1 warp (32 threads) per element, diffusion = S^T x D
                 // Optimised for Hopper/GH200 (SM90a): hardware smem atomics, 228 KB smem.
@@ -305,6 +309,12 @@ public:
                 );
                 break;
             }
+#else
+            case CvfemKernelVariant::WmmaTensor:
+            case CvfemKernelVariant::WgmmaTensor:
+                throw std::runtime_error("the wmma_tensor and wgmma_tensor kernels need CUDA FP64 tensor cores; "
+                                         "choose another --kernel on AMD GPUs");
+#endif
         }
     }
 
@@ -421,6 +431,7 @@ public:
                 break;
             }
 
+#if !defined(MARS_ENABLE_HIP)
             case CvfemKernelVariant::WmmaTensor: {
                 auto* wmmaKernelPtr = cvfem_hex_assembly_kernel_tensor_wmma<KeyType, RealType, 256>;
                 cudaFuncSetAttribute(wmmaKernelPtr,
@@ -462,6 +473,12 @@ public:
                 );
                 break;
             }
+#else
+            case CvfemKernelVariant::WmmaTensor:
+            case CvfemKernelVariant::WgmmaTensor:
+                throw std::runtime_error("the wmma_tensor and wgmma_tensor kernels need CUDA FP64 tensor cores; "
+                                         "choose another --kernel on AMD GPUs");
+#endif
 
             case CvfemKernelVariant::Team: {
                 int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
@@ -9,7 +9,7 @@
 #include <thrust/binary_search.h>
 #include <thrust/distance.h>
 #include <thrust/execution_policy.h>
-#include <cub/cub.cuh>
+#include "../utils/mars_gpu_thrust.hpp"
 #include <cstdlib>
 #include <string>
 #include <iostream>
@@ -464,7 +464,7 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsityCub(
         const int* rowPtr_ = thrust::raw_pointer_cast(d_edgeRow.data());
         const int* colPtr_ = thrust::raw_pointer_cast(d_edgeCol.data());
         PackedKey* outPtr  = thrust::raw_pointer_cast(d_keysIn.data());
-        thrust::for_each(thrust::cuda::par.on(stream),
+        thrust::for_each(mars::gpuPar.on(stream),
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(numEdges),
             [rowPtr_, colPtr_, outPtr] __device__ (size_t i) {
@@ -481,7 +481,7 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsityCub(
     // Pack diagonals starting at offset numEdges. Diagonal (i,i) for i in [0, numDofs).
     {
         PackedKey* outPtr = thrust::raw_pointer_cast(d_keysIn.data()) + numEdges;
-        thrust::for_each(thrust::cuda::par.on(stream),
+        thrust::for_each(mars::gpuPar.on(stream),
             thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(numDofs),
             [outPtr] __device__ (int i) {
@@ -556,7 +556,7 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsityCub(
                 // Linear scan from the end (worst case ~few k entries are INVALID).
                 // Using thrust::lower_bound to keep all on device:
                 auto it = thrust::lower_bound(
-                    thrust::cuda::par.on(stream),
+                    mars::gpuPar.on(stream),
                     d_keysUniq.begin(), d_keysUniq.begin() + h_uniqCount,
                     INVALID_PACKED);
                 nnz = int(it - d_keysUniq.begin());
@@ -572,7 +572,7 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsityCub(
         const PackedKey* keysPtr = thrust::raw_pointer_cast(d_keysUniq.data());
         int* colOutPtr = thrust::raw_pointer_cast(d_decodedCol.data());
         int* rowCntPtr = thrust::raw_pointer_cast(d_rowCounts.data());
-        thrust::for_each(thrust::cuda::par.on(stream),
+        thrust::for_each(mars::gpuPar.on(stream),
             thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(nnz),
             [keysPtr, colOutPtr, rowCntPtr] __device__ (int i) {
@@ -616,7 +616,7 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsityCub(
 
     // Diagonal positions: same logic as thrust path.
     if (d_diagPtr != nullptr && d_colInd != nullptr) {
-        thrust::for_each(thrust::cuda::par.on(stream),
+        thrust::for_each(mars::gpuPar.on(stream),
             thrust::make_counting_iterator(0),
             thrust::make_counting_iterator(numDofs),
             [rowPtr = d_rowPtr, colInd = d_colInd, diagPtr = d_diagPtr]
