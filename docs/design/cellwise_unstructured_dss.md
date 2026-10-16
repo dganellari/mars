@@ -280,6 +280,28 @@ are summed in another order, and Jacobi's ~1300 iterations amplify that rounding
 Tried for the DSS gap and measured slower: tables in shared memory, fewer blocks
 striding over the elements, descriptors prefetched in the staging phase.
 
+**p-multigrid V-cycle generated too** (`--mg --pmg-ptx`): Chebyshev steps (`mir.dss` with a
+`minus` operand and an epilogue), masked residual copies (`mir.cellwise` with a Dirichlet
+flag), transfers (`mir.interpolate`, sum-factorized), dots; the p = 3 and p = 1 operators
+come from the same operator spec as p = 7 with the small-element schedule
+(`--mir-cellwise-schedule`: many elements per block, a thread per output point, field and
+result staged in shared memory, fills fused into reductions, scratch packed by liveness).
+The tensor-core schedule at p = 3 sinks an mma under a lane guard (the convergence gate
+rejects it), so it is not used there. Setup (diagonals, power iteration) and BoomerAMG
+keep their code. GH200, 64^3, deform 0.05, rotated frames:
+
+| | hand | MARSIR |
+|---|---|---|
+| V-cycle, 100 Chebyshev steps at p = 1 | 76.6 ms | 56.2 ms |
+| V-cycle, BoomerAMG at p = 1 | 41.7 ms | 37.2 ms |
+| solve (6 / 10 iterations) | 1130 / 1096 ms | 860 / 995 ms |
+| Chebyshev step p = 1 / p = 7 | 0.30 / 4.08 ms | 0.11 / 3.60 ms |
+| prolong / restrict 7 <-> 3 | 3.0 / 2.8 ms | 0.56 / 0.47 ms |
+| operator p = 1 / p = 3 | 0.059 / 0.45 ms | about 0.09 / 1.3 ms |
+
+Same iterations everywhere (7 at ne = 8 on 1 rank and on 4 ranks from an ElementDomain).
+Open: the generated p = 3 and p = 1 operators trail the hand kernels.
+
 ## Validation
 
 1. Numpy spec: both kernel shapes and the multi-rank exchange, on structured blocks with
