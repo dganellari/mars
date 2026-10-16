@@ -120,6 +120,129 @@ bool conflict(const Accesses &a, const Accesses &b) {
   return false;
 }
 
+// Packs an element body's scratch buffers into one shared buffer per element
+// type, G group parts of S slots each: buffers whose lifetimes (first to last
+// access, in the body's top-level order) do not overlap share slots, first fit
+// in order of first access. Where a buffer reuses the slots of an earlier one, a
+// barrier must separate the last access of the one from the first of the next
+// (a lane may still read what another lane would overwrite); one is added if the
+// body has none in between. Each buffer becomes a view at group * S + its offset
+// (`group` null: one element per block, offset static).
+LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::AllocaOp> allocas, Value group,
+                          int64_t G) {
+  DenseMap<Operation *, int> pos;
+  int k = 0;
+  for (Operation &op : *body) pos[&op] = k++;
+  auto top = [&](Operation *op) {
+    while (op->getBlock() != body) op = op->getParentOp();
+    return op;
+  };
+  struct Item {
+    memref::AllocaOp alloca;
+    int64_t size = 0, offset = 0;
+    int first = INT_MAX, last = -1;
+    Operation *firstOp = nullptr;
+  };
+  SmallVector<Item> items;
+  for (memref::AllocaOp a : allocas) {
+    Item it{a, a.getType().getNumElements()};
+    SmallVector<Value> work{a.getResult()};
+    while (!work.empty()) {
+      Value v = work.pop_back_val();
+      for (Operation *user : v.getUsers()) {
+        if (auto view = dyn_cast<ViewLikeOpInterface>(user); view && view.getViewSource() == v) {
+          for (Value r : user->getResults()) work.push_back(r);
+          continue;
+        }
+        Operation *t = top(user);
+        if (pos[t] < it.first) {
+          it.first = pos[t];
+          it.firstOp = t;
+        }
+        it.last = std::max(it.last, pos[t]);
+      }
+    }
+    if (it.last < 0) {   // never accessed
+      it.first = it.last = pos[a];
+      it.firstOp = a;
+    }
+    items.push_back(it);
+  }
+  SmallVector<int> barriers;
+  for (Operation &op : *body)
+    if (isa<gpu::BarrierOp>(op))
+      barriers.push_back(pos[&op]);
+  auto live = [](const Item &x, const Item &y) { return !(x.last < y.first || y.last < x.first); };
+  OpBuilder b(func.getContext());
+  Location loc = func.getLoc();
+  SmallVector<Operation *> needBarrier;
+  DenseMap<Type, SmallVector<int>> byType;
+  for (int i = 0; i < (int)items.size(); ++i) byType[items[i].alloca.getType().getElementType()].push_back(i);
+  for (auto &[type, idx] : byType) {
+    llvm::stable_sort(idx, [&](int x, int y) { return items[x].first < items[y].first; });
+    SmallVector<int> placed;
+    int64_t S = 0;
+    for (int i : idx) {
+      Item &it = items[i];
+      SmallVector<int64_t> candidates{0};
+      for (int j : placed)
+        if (live(items[j], it)) candidates.push_back(items[j].offset + items[j].size);
+      llvm::sort(candidates);
+      for (int64_t c : candidates) {
+        bool fits = true;
+        for (int j : placed)
+          if (live(items[j], it) && c < items[j].offset + items[j].size && items[j].offset < c + it.size)
+            fits = false;
+        if (fits) {
+          it.offset = c;
+          break;
+        }
+      }
+      for (int j : placed) {   // reused slots: is there a barrier between the two lifetimes?
+        const Item &prev = items[j];
+        if (live(prev, it) || !(it.offset < prev.offset + prev.size && prev.offset < it.offset + it.size))
+          continue;
+        const int from = std::min(prev.last, it.last), to = std::max(prev.first, it.first);
+        if (!llvm::any_of(barriers, [&](int p) { return from < p && p < to; }))
+          needBarrier.push_back(prev.last < it.first ? it.firstOp : prev.firstOp);
+      }
+      placed.push_back(i);
+      S = std::max(S, it.offset + it.size);
+    }
+    const unsigned at = func.getNumArguments();
+    func.insertArgument(at, MemRefType::get({G * S}, type),
+                        b.getDictionaryAttr(b.getNamedAttr("mir.workgroup", b.getUnitAttr())), loc);
+    Value buffer = func.getArgument(at);
+    for (int i : idx) {
+      Item &it = items[i];
+      MemRefType t = it.alloca.getType();
+      OpBuilder vb(it.alloca);
+      SmallVector<int64_t> strides(t.getRank(), 1);
+      for (int d = (int)t.getRank() - 2; d >= 0; --d) strides[d] = strides[d + 1] * t.getDimSize(d + 1);
+      SmallVector<OpFoldResult> sizes, strideFolds;
+      for (int d = 0; d < t.getRank(); ++d) {
+        sizes.push_back(vb.getIndexAttr(t.getDimSize(d)));
+        strideFolds.push_back(vb.getIndexAttr(strides[d]));
+      }
+      OpFoldResult offset = vb.getIndexAttr(it.offset);
+      int64_t staticOffset = it.offset;
+      if (group) {
+        offset = vb.create<arith::AddIOp>(loc, vb.create<arith::MulIOp>(loc, group, vb.create<arith::ConstantIndexOp>(loc, S)),
+                                          vb.create<arith::ConstantIndexOp>(loc, it.offset))
+                     .getResult();
+        staticOffset = ShapedType::kDynamic;
+      }
+      auto viewType = MemRefType::get(t.getShape(), t.getElementType(),
+                                      StridedLayoutAttr::get(vb.getContext(), staticOffset, strides));
+      Value view = vb.create<memref::ReinterpretCastOp>(loc, viewType, buffer, offset, sizes, strideFolds);
+      it.alloca.replaceAllUsesWith(view);
+      it.alloca.erase();
+    }
+  }
+  for (Operation *op : needBarrier) OpBuilder(op).create<gpu::BarrierOp>(loc);
+  return success();
+}
+
 LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
   if (elements.getNumLoops() != 1 || !elements.getInitVals().empty())
     return elements.emitOpError("{mir.elements} must be a one-dimensional loop without reductions");
@@ -288,28 +411,26 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
       guard(st, valid);
   }
 
-  // The scratch: one buffer per group, in shared memory.
-  for (Operation &op : llvm::make_early_inc_range(*body)) {
-    auto alloca = dyn_cast<memref::AllocaOp>(op);
-    if (!alloca || !alloca->hasAttr("mir.scratch"))
-      continue;
-    MemRefType t = alloca.getType();
-    if (!t.hasStaticShape() || t.getRank() != 1)
-      return alloca.emitOpError("{mir.scratch} must be a static one-dimensional buffer");
-    const int64_t S = t.getNumElements();
-    const unsigned at = func.getNumArguments();
-    func.insertArgument(at, MemRefType::get({G * S}, t.getElementType()),
-                        b.getDictionaryAttr(b.getNamedAttr("mir.workgroup", b.getUnitAttr())), loc);
-    Value buffer = func.getArgument(at);
-    if (!single) {
-      OpBuilder vb(alloca);
-      Value offset = vb.create<arith::MulIOp>(loc, group, vb.create<arith::ConstantIndexOp>(loc, S));
-      buffer = vb.create<memref::SubViewOp>(loc, buffer, ArrayRef<OpFoldResult>{offset},
-                                            ArrayRef<OpFoldResult>{vb.getIndexAttr(S)},
-                                            ArrayRef<OpFoldResult>{vb.getIndexAttr(1)});
+  // The scratch, in shared memory: one buffer per scratch alloca for one element
+  // per block with flat buffers (the DSS kernels), else packed (below).
+  SmallVector<memref::AllocaOp> allocas;
+  for (Operation &op : *body)
+    if (auto a = dyn_cast<memref::AllocaOp>(op); a && a->hasAttr("mir.scratch"))
+      allocas.push_back(a);
+  for (memref::AllocaOp a : allocas)
+    if (!a.getType().hasStaticShape() || !a.getType().getLayout().isIdentity())
+      return a.emitOpError("{mir.scratch} must be a static buffer with the identity layout");
+  const bool flat = llvm::all_of(allocas, [](memref::AllocaOp a) { return a.getType().getRank() == 1; });
+  if (single && flat) {
+    for (memref::AllocaOp alloca : allocas) {
+      const unsigned at = func.getNumArguments();
+      func.insertArgument(at, alloca.getType(),
+                          b.getDictionaryAttr(b.getNamedAttr("mir.workgroup", b.getUnitAttr())), loc);
+      alloca.replaceAllUsesWith(func.getArgument(at));
+      alloca.erase();
     }
-    alloca.replaceAllUsesWith(buffer);
-    alloca.erase();
+  } else if (failed(packScratch(func, body, allocas, single ? Value() : group, G))) {
+    return failure();
   }
   if (anyScratch)   // the next element must not overwrite scratch a slower lane still reads
     OpBuilder(body->getTerminator()).create<gpu::BarrierOp>(loc);

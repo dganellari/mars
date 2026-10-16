@@ -43,6 +43,7 @@ void registerForwardOwnedPass();
 void registerLowerCellwisePass();
 void registerWarpPerElementPass();
 void registerNoaliasDescriptorsPass();
+void registerCellwiseSchedulePass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

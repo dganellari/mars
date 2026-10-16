@@ -5,7 +5,9 @@
 // already made current, so it mixes freely with runtime-API allocations and kernels.
 //
 // Kernel contract (see marsir-mlir/test/hl_gpu_pipeline.py): laplacian_apply(U,
-// Btil, Dtil, W, D, G, Y), one warp per element (grid = E, block = 32). Every memref
+// Btil, Dtil, W, D, G, Y); one warp per element (grid = E, block = 32) for the
+// tensor-core schedule, or the shape the kernel publishes as laplacian_apply__launch
+// = {threads per block, elements per block} (the cellwise schedule, --cellwise). Every memref
 // argument is passed as an MLIR descriptor (allocated ptr, aligned ptr, offset,
 // sizes, strides) and must be 16-byte aligned, which cudaMalloc guarantees.
 
@@ -60,6 +62,15 @@ public:
     {
         module_ = load_ptx(ptx_path);
         MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, "laplacian_apply"));
+        CUdeviceptr global = 0;
+        size_t bytes = 0;
+        if (cuModuleGetGlobal(&global, &bytes, module_, "laplacian_apply__launch") == CUDA_SUCCESS &&
+            bytes == sizeof(long long[2])) {
+            long long v[2];
+            MARS_MARSIR_CU(cuMemcpyDtoH(v, global, sizeof(v)));
+            threads_ = (unsigned)v[0];
+            per_block_ = v[1];
+        }
     }
     ~LaplacianPtx() { cuModuleUnload(module_); }
     LaplacianPtx(const LaplacianPtx&) = delete;
@@ -93,14 +104,17 @@ public:
             &y,  &y,  &zero, &u_sz[0], &u_sz[1], &u_sz[2], &u_sz[3],
                              &u_st[0], &u_st[1], &u_st[2], &u_st[3],
         };
-        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)E, 1, 1, 32, 1, 1, 0, (CUstream)stream,
-                                      args, nullptr));
+        if (E == 0) return;
+        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)((E + per_block_ - 1) / per_block_), 1, 1, threads_, 1, 1, 0,
+                                      (CUstream)stream, args, nullptr));
     }
 
 private:
     CUmodule module_ = nullptr;
     CUfunction fn_ = nullptr;
     int p_;
+    unsigned threads_ = 32;
+    long long per_block_ = 1;
 };
 
 }  // namespace marsir

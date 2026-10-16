@@ -20,6 +20,7 @@
 extern "C" void _mlir_ciface_laplacian_apply(Desc<double, 4>*, Desc<double, 2>*, Desc<double, 2>*,
                                              Desc<double, 2>*, Desc<double, 2>*, Desc<double, 6>*,
                                              Desc<double, 4>*);
+extern "C" int64_t laplacian_apply__threads();   // the block size the kernel was built for
 
 int main(int argc, char** argv)
 {
@@ -58,13 +59,15 @@ int main(int argc, char** argv)
     // One block at a time: the kernel's workgroup buffers are process-wide
     // globals in the emulated build, so two blocks in flight would share them.
     Warp w;
+    w.bar.threads = (int)laplacian_apply__threads();
     warp = &w;
-    for (long long e = 0; e < E; ++e) {
+    for (long long e = 0; e < E; ++e) {   // one block per element is enough for any shape
         std::vector<std::thread> lanes;
-        for (int L = 0; L < kLanes; ++L)
+        for (int L = 0; L < w.bar.threads; ++L)
             lanes.emplace_back([&, L, e] {
                 tlLane = L;
                 tlBlock = e;
+                tlGrid = E;
                 _mlir_ciface_laplacian_apply(&dU, &dBt, &dDt, &dW, &dDm, &dG, &dY);
             });
         for (auto& t : lanes) t.join();
@@ -87,7 +90,7 @@ int main(int argc, char** argv)
                e, mo, mr, eo);
         err = fmax(err, eo);
     }
-    printf("WARP EMULATION (p=%d, E=%lld, 32 lanes/elem): max|err| = %.3e  %s\n",
-           p, E, err, err < 1e-11 ? "PASS" : "FAIL");
+    printf("WARP EMULATION (p=%d, E=%lld, %d threads per block): max|err| = %.3e  %s\n",
+           p, E, w.bar.threads, err, err < 1e-11 ? "PASS" : "FAIL");
     return err < 1e-11 ? 0 : 1;
 }

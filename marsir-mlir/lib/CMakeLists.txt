@@ -20,6 +20,7 @@ add_mlir_dialect_library(MLIRMir
   LowerCellwise.cpp
   WarpPerElement.cpp
   NoaliasDescriptors.cpp
+  CellwiseSchedule.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -34,6 +35,7 @@ add_mlir_dialect_library(MLIRMir
   MLIRTransforms
   MLIRTransformUtils
   MLIRLinalgDialect
+  MLIRLinalgTransforms
   MLIRTensorDialect
   MLIRArithDialect
   MLIRSCFDialect

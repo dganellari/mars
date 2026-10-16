@@ -33,6 +33,7 @@ int main(int argc, char **argv) {
   mir::registerLowerCellwisePass();
   mir::registerWarpPerElementPass();
   mir::registerNoaliasDescriptorsPass();
+  mir::registerCellwiseSchedulePass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

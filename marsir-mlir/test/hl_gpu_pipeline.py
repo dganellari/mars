@@ -30,6 +30,16 @@ legalisation with "'llvm.cond_br' op operand #1 ... got 'index'". Adding
 
 Numerics are gated on the GPU by tools/run_hl_mma.cpp against the Knaus oracle.
 
+--cellwise: the schedule for small elements (low degree, the p-multigrid's coarse
+levels) instead of the tensor-core one. After the same lowering to bufferized linalg:
+      --mir-cellwise-schedule      element loop, U staged in and Y out of shared
+                                   memory, face loops unrolled, one phase per linalg
+                                   op (fills fused into reductions), temporaries in
+                                   shared scratch; n^2 lanes per element, 8 warps
+      --mir-warp-per-element       several elements per block, barriers where phases
+                                   share memory
+  -> hl_cellwise_p{p}_sm90.ptx (launch shape published as laplacian_apply__launch).
+
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
 import os
@@ -68,6 +78,7 @@ def main():
     # Together they bisect a numerical failure to one feature of the chain pass.
     chain_opts = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--chain-opts=")), "")
     no_hoist = "--no-hoist" in sys.argv
+    cellwise = "--cellwise" in sys.argv
     tag_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--tag=")), "")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
@@ -91,8 +102,17 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     args = m.group(2).split(", ")
     marks = PER_ELEMENT | {len(args) - 1}
     args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
+    if cellwise:   # the element's field is staged into shared memory, its result out of it
+        args[0] = args[0].replace("{mir.element}", '{mir.element, mir.stage = "in"}')
+        args[-1] = args[-1].replace("{mir.element}", '{mir.element, mir.stage = "out"}')
     ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
           + ir[m.end(3):])
+    if cellwise:
+        ir = run([MIROPT, "-", "--mir-cellwise-schedule", "--canonicalize", "--cse",
+                  "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
+        if "--emulate" in sys.argv:
+            return emulate(ir, p)
+        return finish(ir, p, "", no_chain=True, prefix="hl_cellwise")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
@@ -135,7 +155,14 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     if "--emulate" in sys.argv:
         return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
 
-    ir = run([MIROPT, "-", "--mir-batch-elements", "--mir-gpu-wrap"], ir)
+    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
+    return finish(run([MIROPT, "-", "--mir-batch-elements"], ir), p, tag, no_chain,
+                  stats=(mma_ir, shfl_ir, barriers))
+
+
+def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
+    """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
+    ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels {",
                     'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
     ir = run([MLIROPT, "-",
@@ -151,8 +178,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
               "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
-    out = os.path.join(ROOT, "generated", f"hl_full_p{p}{tag}_sm90.ptx")
+    out = os.path.join(ROOT, "generated", f"{prefix}_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
 
     ptx = open(out).read()
@@ -171,12 +197,13 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     for name, good in checks:
         print(f"  {'ok  ' if good else 'FAIL'} {name}")
     shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
-    print(f"  shared memory {shared} B/block, {barriers} gpu.barrier in IR")
-    print(f"  IR had {mma_ir} nvgpu.mma.sync and {shfl_ir} gpu.shuffle; "
-          f"PTX has {ptx.count('mma.sync.aligned.m8n8k4')} mma, "
-          f"{ptx.count('shfl.sync')} shfl")
+    print(f"  shared memory {shared} B/block, {ptx.count('bar.sync') + ptx.count('barrier.sync')} barriers in PTX")
+    if stats:
+        print(f"  IR had {stats[0]} nvgpu.mma.sync and {stats[1]} gpu.shuffle, {stats[2]} gpu.barrier; "
+              f"PTX has {ptx.count('mma.sync.aligned.m8n8k4')} mma, {ptx.count('shfl.sync')} shfl")
     ok = all(g for _, g in checks)
-    print("HIGH-LEVEL mir -> TENSOR-CORE PTX: PASS" if ok else "FAILED")
+    print(("HIGH-LEVEL mir -> TENSOR-CORE PTX: PASS" if prefix == "hl_full" else "HIGH-LEVEL mir -> PTX: PASS")
+          if ok else "FAILED")
     return 0 if ok else 1
 
 
