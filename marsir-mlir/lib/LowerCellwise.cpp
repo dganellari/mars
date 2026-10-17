@@ -594,7 +594,17 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
   OpBuilder b(op);
   Location loc = op.getLoc();
   Emit x{b, loc};
-  Value elements = op.getElements(), M = op.getMatrix(), in = op.getInput(), out = op.getOutput();
+  Value elements = op.getElements(), counting = op.getCounting(), M = op.getMatrix(), in = op.getInput(),
+        out = op.getOutput();
+  Value bitTable;
+  if (counting) {
+    const int P = (int)R - 1;
+    if (P < 1 || P > kMaxDegree)
+      return op.emitOpError("counting needs rows - 1 in [1, ") << kMaxDegree << "]";
+    const HexTables tables = tablesFor(P, std::make_integer_sequence<int, kMaxDegree>{});
+    bitTable = constantTable(b, op->getParentOfType<ModuleOp>(), loc, "__mir_dss_p" + std::to_string(P) + "_bit",
+                             b.getI8Type(), widen(tables.bit));
+  }
   const bool accumulate = op.getAccumulate();
   const Type real = cast<MemRefType>(in.getType()).getElementType();   // f32 or f64
   Value count = b.create<memref::DimOp>(loc, elements, 0);
@@ -615,6 +625,7 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
         Emit y{eb, l};
         const Value e = y.toIndex(y.load(elements, w[0]));
         const Value baseIn = y.mul(e, y.idx(C * C * C)), baseOut = y.mul(e, y.idx(R * R * R));
+        const Value bits = counting ? y.load(counting, e) : Value();
         auto scratch = [&](int64_t size) {
           auto a = eb.create<memref::AllocaOp>(l, MemRefType::get({size}, real));
           a->setAttr("mir.scratch", eb.getUnitAttr());
@@ -640,6 +651,8 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
           Value v = contract(z, a, [&](Emit &u, Value j) { return u.load(s2, u.add(u.mul(j, u.idx(R * R)), bc)); });
           const Value t = z.add(baseOut, q);
           if (accumulate) v = z.addf(z.load(out, t), v);
+          if (counting)
+            v = pb.create<arith::SelectOp>(pl, maskBit(z, bits, z.entry(bitTable, z.toI32(q))), v, z.zero(real));
           z.store(v, out, t);
         });
       });

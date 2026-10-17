@@ -351,6 +351,25 @@ diagonals and matrices. Setup (diagonals, lambda_max) stays FP64, and the Chebys
 coefficients come from the shared `cellwise::chebyshev_steps`. Several ranks need an FP32
 ghost exchange, which does not exist yet.
 
+**The V-cycle output must be continuous.** The first GPU run (a0bed0ef, GH200, rotated
+frames, `--tol 1e-8`) converged in the residual but missed the error: ne = 8: 7 it, error
+2.8e-8; 64^3: 8 it, 2.4e-8 (FP64 right, AMG coarse: 10 it, 9.5e-10). Cause: the
+prolongation to p = 7 gives the copies of a shared node values that differ by FP32
+rounding, because each element sums in its own frame's order. The element-local space has
+more unknowns than the continuous one, and these jumps lie mostly in directions the
+assembled residual cannot see, so the right-preconditioned solver never removes them from
+x. In FP64 the same jumps are ~1e-16 and harmless. The numpy reference had no rotated
+frames, so it did not show this. Now it does: `right32 rot` sums the FP32 transfers in
+reversed axis order on half the elements. At ne = 8 (exact coarse) the V-cycle output
+jumps by 4.3e-8 and the error is 7.4e-9.
+
+Fix: the top-level prolongation writes only each node's counting copy, with zero on the
+others (`mir.interpolate ... counting(...)`, kernel `interp_8x4_counted_f32`). Then a plain
+FP32 DSS (`dss_p7_f32`) gives every copy that one value. The post-smoother keeps the copies
+equal bit for bit, since its DSS gives every copy the same sum. Numpy `right32 rot cont`:
+the output jump is exactly 0 and the error is 4.9e-11, as in FP64. Cost: one FP32 DSS pass
+per V-cycle.
+
 ## Validation
 
 1. Numpy spec: both kernel shapes and the multi-rank exchange, on structured blocks with

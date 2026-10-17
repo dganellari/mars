@@ -198,7 +198,12 @@ private:
 // (BoomerAMG). Setup (diagonals, lambda_max) is PMultigrid's, in FP64.
 // An FP32 V-cycle is not exactly linear, which the left-preconditioned BiCGStab
 // assumes (it stalls near 1e-8); the right-preconditioned one tolerates it
-// (marsir-mlir/test/cellwise_mixed_ref.py). One rank: the ghost exchange is FP64 only.
+// (marsir-mlir/test/cellwise_mixed_ref.py), provided the output is continuous. The
+// prolongation to p = 7 gives copies of a node that differ by FP32 rounding (each
+// element sums in its own frame's order), and the solver's assembled residual cannot
+// see such jumps: they stay in x (error ~2e-8 on rotated meshes). So the top-level
+// prolongation writes the counting copies only and a DSS spreads them; the smoother
+// after it keeps the copies equal bit for bit. One rank: the ghost exchange is FP64 only.
 class PmgPtxF32 : public CellwisePtx {
 public:
     // mg: the FP64 PMultigrid (diagonals, lambda_max); G7, G3, G1: the metrics.
@@ -235,8 +240,9 @@ public:
         masked_[1] = function("masked_copy_p3_f32");
         restrict_[0] = function("interp_4x8_f32");
         restrict_[1] = function("interp_2x4_f32");
-        prolong_[0] = function("interp_8x4_f32");
-        prolong_[1] = function("interp_4x2_f32");
+        prolong_counted_ = function("interp_8x4_counted_f32");
+        prolong_ = function("interp_4x2_f32");
+        dss_ = function("dss_p7_f32");
         to32_[0] = function("to_f32_p7");
         to32_[1] = function("to_f32_p1");
         to64_[0] = function("to_f64_p7");
@@ -295,9 +301,14 @@ private:
         const int pc = p == 7 ? 3 : 1;
         Level &fine = levels_[degree_index(p)], &coarse = levels_[degree_index(pc)];
         masked_copy(p, b, raw(fine.r));
-        transfer(p, false, raw(fine.r), raw(coarse.b));
+        restrict_to(p, raw(fine.r), raw(coarse.b));
         vcycle(pc, raw(coarse.b), raw(coarse.x));
-        transfer(p, true, raw(coarse.x), x);
+        if (p == 7) {   // the residual buffer is free again: it holds the counting copies
+            prolong_continuous(raw(coarse.x), raw(fine.r));
+            dss(raw(fine.r), x);
+        } else {
+            prolong(raw(coarse.x), x);
+        }
         if (post_ > 0) chebyshev(p, b, x, post_, false);
     }
 
@@ -344,14 +355,36 @@ private:
         launch(masked_[p == 7 ? 0 : 1], a, E_, stream_);
     }
 
-    // Restrict (to = I^T from) or prolong (to = I from) between p and the next degree.
-    void transfer(int p, bool prolong, const float* from, float* to)
+    // to = I^T from, from degree p to the next one down.
+    void restrict_to(int p, const float* from, float* to)
     {
         const int t = p == 7 ? 0 : 1;
-        const long long fine = E_ * values(p), coarse = E_ * values(p == 7 ? 3 : 1);
-        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(prolong ? i_[t] : it_[t]),
-                           {from, prolong ? coarse : fine}, {to, prolong ? fine : coarse}};
-        launch(prolong ? prolong_[t] : restrict_[t], a, E_, stream_);
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(it_[t]), {from, E_ * values(p)},
+                           {to, E_ * values(p == 7 ? 3 : 1)}};
+        launch(restrict_[t], a, E_, stream_);
+    }
+
+    // to = I from, p = 1 -> 3.
+    void prolong(const float* from, float* to)
+    {
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(i_[1]), {from, E_ * values(1)}, {to, E_ * values(3)}};
+        launch(prolong_, a, E_, stream_);
+    }
+
+    // to = I from, p = 3 -> 7, on the counting copies (zero on the others).
+    void prolong_continuous(const float* from, float* to)
+    {
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(T_.counting), vec(i_[0]), {from, E_ * values(3)},
+                           {to, E_ * values(7)}};
+        launch(prolong_counted_, a, E_, stream_);
+    }
+
+    // out = DSS(in) at p = 7.
+    void dss(const float* in, float* out)
+    {
+        std::vector<Arg> a = topology_args(in, nullptr, T_, {nullptr, E_}, values(7));
+        a.push_back({out, E_ * values(7)});
+        launch(dss_, a, E_, stream_);
     }
 
     void convert(CUfunction fn, int p, const void* from, void* to)
@@ -371,7 +404,7 @@ private:
     thrust::device_vector<float> i_[2], it_[2];   // 7 <- 3, 3 <- 1 and their transposes
     thrust::device_vector<double> b1_, x1_;       // around the FP64 coarse solve
     std::function<void(const double*, double*)> coarse_solve_;
-    CUfunction cheb_[3][3], masked_[2], restrict_[2], prolong_[2], to32_[2], to64_[2];
+    CUfunction cheb_[3][3], masked_[2], restrict_[2], prolong_, prolong_counted_, dss_, to32_[2], to64_[2];
 };
 
 // One V-cycle as the preconditioner of the Krylov solvers: z = V(q), then the dot

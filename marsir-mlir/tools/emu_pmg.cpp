@@ -8,7 +8,8 @@
 //   interp_*         M (x) M (x) M per element, in the generated kernels' sum-factorized
 //                    order (the hand transfer kernels sum in another order);
 //   pmg_dots_*       per-element partials in the generated reduction order;
-//   to_f32/to_f64_p* (-DMIR_EMU_F32 only) the conversions at p = 7 and 1.
+//   -DMIR_EMU_F32 only: to_f32/to_f64_p* (the conversions at p = 7 and 1),
+//                    interp_8x4_counted (zero off the counting copies) and dss_p7.
 // Built with -ffp-contract=off: the generated code does not fuse multiply-adds.
 // -DMIR_EMU_F32: the single-precision kernels (names ending in _f32), against the same
 // formulas in float.
@@ -59,6 +60,9 @@ using ToF64 = void(D32*, DR*, D64*);
 ToF32 _mlir_ciface_to_f32_p7, _mlir_ciface_to_f32_p1;
 ToF64 _mlir_ciface_to_f64_p7, _mlir_ciface_to_f64_p1;
 int64_t to_f32_p7__threads(), to_f32_p1__threads();
+void _mlir_ciface_interp_8x4_counted_f32(D32*, D32*, DR*, DR*, DR*);
+void _mlir_ciface_dss_p7_f32(DR*, DR*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, DR*);
+int64_t interp_8x4_counted_f32__threads(), dss_p7_f32__threads();
 #else
 void _mlir_ciface_pmg_dots_p7_az_zz(D32*, D32*, D64*, D64*, D64*, D64*);
 int64_t pmg_dots_p7_az_zz__threads();
@@ -179,10 +183,13 @@ void masked_copy(int64_t threads, Masked* kernel)
     report("masked_copy", P, differ(r, ref), r.size());
 }
 
-void interpolate(const char* what, Interp* kernel, int R, int C, bool add)
+// counting: as mir.interpolate's counting operand (R = 8 only; null: plain).
+void interpolate(const char* what, Interp* kernel, int R, int C, bool add,
+                 void (*counted)(D32*, D32*, DR*, DR*, DR*) = nullptr, int64_t counted_threads = 0)
 {
     const long long E = 5;
     std::vector<int32_t> list = {4, 1, 3};
+    std::vector<int32_t> counting = {0x0f0f0f0f, 0x7ffffff1, 0x12345678, (int32_t)0x80000000u, 0x7fffffff};
     std::vector<Real> M = random_vector(R * C, 21), in = random_vector(E * C * C * C, 22),
                       out = random_vector(E * R * R * R, 23), ref = out;
     for (int32_t e : list) {
@@ -206,16 +213,40 @@ void interpolate(const char* what, Interp* kernel, int R, int C, bool add)
             for (int j = 0; j < C; ++j) s = s + M[a * C + j] * s2[j * R * R + bc];
             const size_t t = (size_t)e * R * R * R + q;
             ref[t] = add ? out[t] + s : s;
+            if (counted && !(((uint32_t)counting[e] >> CellwiseMesh<7>::bit(q)) & 1u)) ref[t] = 0;
         }
     }
-    D32 dl = desc(list);
+    D32 dl = desc(list), dc = desc(counting);
     DR dm = desc(M), din = desc(in), dout = desc(out);
-    emulate(TH(interp_4x8)(), (long long)list.size(), [&] { kernel(&dl, &dm, &din, &dout); });
+    if (counted)
+        emulate(counted_threads, (long long)list.size(), [&] { counted(&dl, &dc, &dm, &din, &dout); });
+    else
+        emulate(TH(interp_4x8)(), (long long)list.size(), [&] { kernel(&dl, &dm, &din, &dout); });
     printf("  %-14s %dx%d  %lld of %zu values differ\n", what, R, C, differ(out, ref), out.size());
     failed |= differ(out, ref) != 0;
 }
 
 #ifdef MIR_EMU_F32
+void dss()
+{
+    using Mesh = CellwiseMesh<7, float>;
+    constexpr int n3 = Mesh::n3;
+    Mesh m = Mesh::random(10, 4, 2027);
+    std::vector<int32_t> list = {3, 0, 9, 5, 7, 1};
+    std::vector<float> out(m.E * n3, std::nanf("")), ref = out, stage;
+    for (int32_t e : list) {
+        m.stage(e, stage);
+        for (int l = 0; l < n3; ++l) ref[(size_t)e * n3 + l] = stage[l];
+    }
+    DR dv = desc(m.values), dg = desc(m.ghost), dout = desc(out);
+    D32 dl = desc(list), fn = desc(m.face_nbr), eo = desc(m.edge_of), eoff = desc(m.edge_off),
+        eent = desc(m.edge_ent), vo = desc(m.vert_of), voff = desc(m.vert_off), vent = desc(m.vert_ent);
+    D8 fc = desc(m.face_code);
+    emulate(dss_p7_f32__threads(), (long long)list.size(),
+            [&] { _mlir_ciface_dss_p7_f32(&dv, &dg, &dl, &fn, &fc, &eo, &eoff, &eent, &vo, &voff, &vent, &dout); });
+    report("dss", 7, differ(out, ref), out.size());
+}
+
 template <int P>
 void convert(int64_t threads, ToF32* to32, ToF64* to64)
 {
@@ -274,6 +305,9 @@ int main()
     interpolate("prolong 1->3", CI(interp_4x2), 4, 2, false);
     interpolate("prolong 1->3 +", CI(interp_4x2_add), 4, 2, true);
 #ifdef MIR_EMU_F32
+    interpolate("prolong counted", nullptr, 8, 4, false, _mlir_ciface_interp_8x4_counted_f32,
+                interp_8x4_counted_f32__threads());
+    dss();
     convert<7>(to_f32_p7__threads(), _mlir_ciface_to_f32_p7, _mlir_ciface_to_f64_p7);
     convert<1>(to_f32_p1__threads(), _mlir_ciface_to_f32_p1, _mlir_ciface_to_f64_p1);
 #else

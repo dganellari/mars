@@ -437,14 +437,16 @@ DSS_ARGS = [("values", "f64"), ("ghost", "f64"), ("elements", "i32"),
             ("out", "f64")]
 
 
-def emit_dss(p=7):
+def emit_dss(p=7, real="f64"):
     a = {name: f"%{name}" for name, _ in DSS_ARGS}
-    sig = ", ".join(f"%{name}: memref<?x{t}>" for name, t in DSS_ARGS)
-    types = ", ".join(f"memref<?x{t}>" for _, t in DSS_ARGS)
+    args = [(name, real if t == "f64" else t) for name, t in DSS_ARGS]
+    sig = ", ".join(f"%{name}: memref<?x{t}>" for name, t in args)
+    types = ", ".join(f"memref<?x{t}>" for _, t in args)
+    name = f"dss_p{p}" + ("" if real == "f64" else "_" + real)
     return "\n".join([
         # mir.noalias: no two arguments overlap. The gather reads neighbours'
         # copies while it writes `out`, so it cannot run in place anyway.
-        f"func.func @dss_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
         f"  mir.dss ins({a['values']}, {a['ghost']}) elements({a['elements']})",
         f"          faces({a['face_nbr']}, {a['face_code']})",
         f"          edges({a['edge_of']}, {a['edge_off']}, {a['edge_ent']})",
@@ -748,14 +750,17 @@ def _masked_copy(p, real="f64"):
         f"    mir.yield %rv : {real}", "  }", "  return", "}", ""])
 
 
-def _interpolate(rows, cols, add, real="f64"):
-    name = f"interp_{rows}x{cols}" + ("_add" if add else "") + ("" if real == "f64" else "_" + real)
+def _interpolate(rows, cols, add, real="f64", counted=False):
+    name = f"interp_{rows}x{cols}" + ("_add" if add else "") + ("_counted" if counted else "") + \
+        ("" if real == "f64" else "_" + real)
     mr = f"memref<?x{real}>"
+    cnt_arg, cnt_op, cnt_type = ((", %counting: memref<?xi32>", " counting(%counting)", ", memref<?xi32>")
+                                 if counted else ("", "", ""))
     return "\n".join([
-        f"func.func @{name}(%elements: memref<?xi32>, %matrix: {mr}, %in: {mr}, "
+        f"func.func @{name}(%elements: memref<?xi32>{cnt_arg}, %matrix: {mr}, %in: {mr}, "
         f"%out: {mr}) attributes {{mir.kernel, mir.noalias}} {{",
-        f"  mir.interpolate elements(%elements) matrix(%matrix) ins(%in) outs(%out) {{rows = {rows} : i64, "
-        f"cols = {cols} : i64{', accumulate' if add else ''}}} : memref<?xi32>, {mr}, {mr}, {mr}",
+        f"  mir.interpolate elements(%elements){cnt_op} matrix(%matrix) ins(%in) outs(%out) {{rows = {rows} : i64, "
+        f"cols = {cols} : i64{', accumulate' if add else ''}}} : memref<?xi32>{cnt_type}, {mr}, {mr}, {mr}",
         "  return", "}", ""])
 
 
@@ -791,9 +796,13 @@ def emit_pmg(real="f64"):
     """The per-iteration kernels of the p-multigrid V-cycle 7 -> 3 -> 1 besides the
     operators (the operator pipeline generates those at p = 7, 3, 1). real = f32: the
     same kernels in single precision (names end in _f32), the dot products left out
-    (they belong to the FP64 Krylov solver) and the conversions to_f32_p* / to_f64_p*
-    added: at p = 7 the V-cycle's input and output, at p = 1 those of an FP64 coarse
-    solve (BoomerAMG)."""
+    (they belong to the FP64 Krylov solver) and added: the conversions to_f32_p* /
+    to_f64_p* (at p = 7 the V-cycle's input and output, at p = 1 those of an FP64
+    coarse solve, BoomerAMG), and the continuous prolongation 3 -> 7: interp_8x4_counted
+    writes the counting copies only, dss_p7 spreads them. In FP32 the copies of a node
+    that the plain prolongation gives differ by rounding (each element sums in its own
+    frame's order), and the right-preconditioned solver cannot see such jumps in its
+    residual: they stay in x as an error near 1e-8."""
     out = [_chebyshev(p, k, real) for p in (7, 3, 1) for k in ("first0", "first", "next")]
     out += [_masked_copy(p, real) for p in (7, 3)]
     out += [_interpolate(4, 8, False, real), _interpolate(2, 4, False, real)]          # restrict 7->3, 3->1
@@ -803,4 +812,5 @@ def emit_pmg(real="f64"):
         out += [_dots(7, az, zz) for az, zz in ((True, False), (False, True), (True, True))]
     else:
         out += [_convert(p, a, b) for p in (7, 1) for a, b in (("f64", real), (real, "f64"))]
+        out += [_interpolate(8, 4, False, real, counted=True), emit_dss(7, real)]
     return "".join(out)

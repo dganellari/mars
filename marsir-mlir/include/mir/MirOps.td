@@ -337,6 +337,13 @@ def Mir_InterpolateOp : Mir_Op<"interpolate"> {
     matrix I (fine x coarse), restriction its transpose. `accumulate` adds to
     out instead of overwriting it.
 
+    With `counting` (the bits of mir.cellwise), out is written only on the
+    element's counting copies (one copy per node) and is zero on the others: a
+    plain mir.dss of it then gives every copy of a node the same value. Without
+    it, the copies of a shared node agree only up to rounding, because each
+    element sums in its own frame's order; in single precision such a jump
+    becomes an error that the assembled residual of a Krylov solver cannot see.
+
     Example (prolong p = 3 -> 7, x += I u):
       mir.interpolate elements(%ids) matrix(%I) ins(%u) outs(%x)
                       {rows = 8 : i64, cols = 4 : i64, accumulate}
@@ -344,6 +351,7 @@ def Mir_InterpolateOp : Mir_Op<"interpolate"> {
   }];
   let arguments = (ins
       Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
+      Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
       Arg<MemRefRankOf<[F32, F64], [1]>, "rows x cols, row-major", [MemRead]>:$matrix,
       Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead]>:$input,
       Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead, MemWrite]>:$output,
@@ -351,9 +359,10 @@ def Mir_InterpolateOp : Mir_Op<"interpolate"> {
       I64Attr:$cols,
       UnitAttr:$accumulate);
   let assemblyFormat = [{
-    `elements` `(` $elements `)` `matrix` `(` $matrix `)` `ins` `(` $input `)` `outs` `(` $output `)`
-    attr-dict `:` type(operands)
+    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)? `matrix` `(` $matrix `)` `ins` `(` $input `)`
+    `outs` `(` $output `)` attr-dict `:` type(operands)
   }];
+  let hasVerifier = 1;
 }
 
 #endif // MIR_OPS

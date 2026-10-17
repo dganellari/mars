@@ -46,6 +46,12 @@ mlir::LogicalResult mir::DssOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult mir::InterpolateOp::verify() {
+  if (getCounting() && getAccumulate())
+    return emitOpError("counting writes zeros on the other copies, so it cannot accumulate");
+  return mlir::success();
+}
+
 mlir::LogicalResult mir::CellwiseOp::verify() {
   const int64_t r = getReductions();
   if (r < 0)

@@ -104,7 +104,7 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [
-        ("kernel entries", ptx.count(".visible .entry") == ((21 if real == "f32" else 20) if pmg else 18 if bicg
+        ("kernel entries", ptx.count(".visible .entry") == ((23 if real == "f32" else 20) if pmg else 18 if bicg
                                                              else 4 if precond else 1)),
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", "tid.x" in ptx),
