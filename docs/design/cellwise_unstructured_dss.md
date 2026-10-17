@@ -309,6 +309,28 @@ dimension an input does not depend on runs inside the thread: the sweep's column
 for all faces, as in the hand kernel) and fused sibling reduction loops. Remaining: 1.14x /
 1.25x of the hand kernels (BoomerAMG V-cycle not re-measured since fusion: 37.2 ms).
 
+## Mixed precision (numpy, `marsir-mlir/test/cellwise_mixed_ref.py`)
+
+Can the V-cycle run in FP32 inside the FP64 Krylov solver? Not with today's
+left-preconditioned BiCGStab: an FP32 V-cycle is not linear at the 1e-7 level, the
+solver's recursive residual still reaches 1e-10 in 7 iterations, but the true error stalls
+at 1.5e-8 to 3e-8. With right preconditioning (A M y = b, x = M y; the residual is the true
+assembled b - A x, the form flexible Krylov methods use for a varying preconditioner) an
+FP32 V-cycle gives the same iterations and the same error as FP64, to the printed digits.
+deform 0.05, p-multigrid 7-3-1 (0, 3):
+
+| ne, coarse | left FP64 (today) | left FP32 | right FP32, stop 1e-8 | right FP32, stop 1e-10 |
+|---|---|---|---|---|
+| 4, exact | 7 it, 5.3e-11 | 7 it, 2.9e-8 | | 9 it, 2.3e-13 |
+| 8, exact | 7 it, 2.6e-11 | 7 it, 2.3e-8 | 8 it, 4.9e-11 | 9 it, 7.2e-14 |
+| 8, 100 Chebyshev | 7 it, 2.6e-11 | 7 it, 1.5e-8 | 8 it, 4.9e-11 | 9 it, 7.2e-14 |
+
+(errors are the true algebraic error against the manufactured solution; right FP64 is
+identical to right FP32 in every case.) So the path is a right-preconditioned BiCGStab
+(one more DSS per operator application, to assemble the residual) with an FP32 V-cycle:
+one more iteration at matched accuracy, for V-cycles that move half the bytes. GPU cost
+not measured yet.
+
 ## Validation
 
 1. Numpy spec: both kernel shapes and the multi-rank exchange, on structured blocks with
