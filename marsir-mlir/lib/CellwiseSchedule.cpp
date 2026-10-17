@@ -80,7 +80,17 @@ SmallVector<Value> indices(AffineMap map, ValueRange loopIvs) {
 
 // A linalg op as one phase; `init` (if set) is the value of a fused fill of its
 // single output, which the op overwrites entirely.
-LogicalResult lowerLinalg(linalg::LinalgOp op, Value init) {
+//
+// Register blocking: when an input of a reduction does not depend on one of the
+// parallel dimensions (u in u . Btil does not depend on the face l), that
+// dimension (if short, and if the others still give every one of the element's
+// `lanes` lanes a point) runs inside the thread: the input is loaded once per
+// reduction step and the outputs along the dimension accumulate in registers. The
+// summation order of each output is unchanged. This is how a hand kernel's thread
+// keeps a column in registers and applies it for all faces.
+constexpr int64_t kMaxBlock = 8;
+
+LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   for (AffineMap m : op.getIndexingMapsArray())
     if (!m.isProjectedPermutation())
       return op->emitOpError("cellwise schedule: indexing maps must be projected permutations");
@@ -90,53 +100,109 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init) {
   SmallVector<utils::IteratorType> iters = op.getIteratorTypesArray();
   SmallVector<unsigned> par, red;
   for (unsigned d = 0; d < iters.size(); ++d) (iters[d] == utils::IteratorType::parallel ? par : red).push_back(d);
-  SmallVector<int64_t> parShape;
-  for (unsigned d : par) parShape.push_back(ranges[d]);
-  if (parShape.empty())
-    parShape.push_back(1);
   SmallVector<OpOperand *> ins = op.getDpsInputOperands();
   SmallVector<OpOperand *> outs;
   for (OpOperand &o : op.getDpsInitsMutable()) outs.push_back(&o);
   if (outs.size() != 1)
     return op->emitOpError("cellwise schedule: one output expected");
+
+  int blocked = -1;   // the parallel loop dimension run inside the thread
+  if (!red.empty()) {
+    int best = 0;
+    for (unsigned d : par) {
+      if (ranges[d] > kMaxBlock || ranges[d] < 2)
+        continue;
+      int64_t rest = 1;
+      for (unsigned e : par)
+        if (e != d)
+          rest *= ranges[e];
+      if (rest < lanes)
+        continue;
+      int reuse = 0;
+      for (OpOperand *in : ins)
+        if (isa<MemRefType>(in->get().getType()) && !op.getMatchingIndexingMap(in).isFunctionOfDim(d))
+          ++reuse;
+      if (reuse > best) {
+        best = reuse;
+        blocked = (int)d;
+      }
+    }
+  }
+  SmallVector<unsigned> dims;
+  SmallVector<int64_t> parShape;
+  for (unsigned d : par)
+    if ((int)d != blocked) {
+      dims.push_back(d);
+      parShape.push_back(ranges[d]);
+    }
+  if (parShape.empty())
+    parShape.push_back(1);
+  const int64_t B = blocked >= 0 ? ranges[blocked] : 1;
   Block *region = op.getBlock();
+  BlockArgument outArg = region->getArgument(outs[0]->getOperandNumber());
+  AffineMap outMap = op.getMatchingIndexingMap(outs[0]);
+
   phase(b, loc, parShape, [&](OpBuilder &pb, Location pl, ValueRange pivs) {
     SmallVector<Value> ivs(iters.size());
-    for (unsigned k = 0; k < par.size(); ++k) ivs[par[k]] = pivs[k];
-    AffineMap outMap = op.getMatchingIndexingMap(outs[0]);
-    auto body = [&](OpBuilder &bb, Location bl, Value acc) {
-      IRMapping map;
-      for (OpOperand *in : ins) {
-        Value v = in->get();
-        Value x = isa<MemRefType>(v.getType())
-                      ? bb.create<memref::LoadOp>(bl, v, indices(op.getMatchingIndexingMap(in), ivs)).getResult()
-                      : v;
-        map.map(region->getArgument(in->getOperandNumber()), x);
+    for (unsigned k = 0; k < dims.size(); ++k) ivs[dims[k]] = pivs[k];
+    auto at = [&](OpBuilder &ob, Location ol, int64_t kb) {
+      if (blocked >= 0)
+        ivs[blocked] = cidx(ob, ol, kb);
+    };
+    // One reduction step for the B outputs; inputs that do not depend on the
+    // blocked dimension are loaded once.
+    auto step = [&](OpBuilder &bb, Location bl, ValueRange accs) {
+      SmallVector<Value> once(ins.size());
+      for (unsigned i = 0; i < ins.size(); ++i) {
+        Value v = ins[i]->get();
+        AffineMap m = op.getMatchingIndexingMap(ins[i]);
+        if (isa<MemRefType>(v.getType()) && (blocked < 0 || !m.isFunctionOfDim(blocked)))
+          once[i] = bb.create<memref::LoadOp>(bl, v, indices(m, ivs));
       }
-      map.map(region->getArgument(outs[0]->getOperandNumber()), acc);
-      for (Operation &rop : region->without_terminator()) bb.clone(rop, map);
-      return map.lookup(region->getTerminator()->getOperand(0));
+      SmallVector<Value> next;
+      for (int64_t kb = 0; kb < B; ++kb) {
+        at(bb, bl, kb);
+        IRMapping map;
+        for (unsigned i = 0; i < ins.size(); ++i) {
+          Value v = ins[i]->get();
+          Value x = once[i] ? once[i]
+                            : (isa<MemRefType>(v.getType())
+                                   ? bb.create<memref::LoadOp>(bl, v, indices(op.getMatchingIndexingMap(ins[i]), ivs))
+                                         .getResult()
+                                   : v);
+          map.map(region->getArgument(ins[i]->getOperandNumber()), x);
+        }
+        map.map(outArg, accs[kb]);
+        for (Operation &rop : region->without_terminator()) bb.clone(rop, map);
+        next.push_back(map.lookup(region->getTerminator()->getOperand(0)));
+      }
+      return next;
     };
     // The output's current value is read only when the region uses it.
-    const bool usesOut = !region->getArgument(outs[0]->getOperandNumber()).use_empty();
-    Value start = init;
-    if (!start)
-      start = usesOut ? pb.create<memref::LoadOp>(pl, outs[0]->get(), indices(outMap, ivs)).getResult()
-                      : Value(pb.create<arith::ConstantOp>(pl, pb.getZeroAttr(region->getArgument(outs[0]->getOperandNumber()).getType())));
-    std::function<Value(OpBuilder &, Location, unsigned, Value)> nest = [&](OpBuilder &nb, Location nl, unsigned k,
-                                                                           Value acc) -> Value {
+    SmallVector<Value> starts;
+    for (int64_t kb = 0; kb < B; ++kb) {
+      at(pb, pl, kb);
+      starts.push_back(init ? init
+                            : !outArg.use_empty()
+                                ? pb.create<memref::LoadOp>(pl, outs[0]->get(), indices(outMap, ivs)).getResult()
+                                : Value(pb.create<arith::ConstantOp>(pl, pb.getZeroAttr(outArg.getType()))));
+    }
+    std::function<SmallVector<Value>(OpBuilder &, Location, unsigned, ValueRange)> nest =
+        [&](OpBuilder &nb, Location nl, unsigned k, ValueRange accs) -> SmallVector<Value> {
       if (k == red.size())
-        return body(nb, nl, acc);
-      auto loop = nb.create<scf::ForOp>(nl, cidx(nb, nl, 0), cidx(nb, nl, ranges[red[k]]), cidx(nb, nl, 1),
-                                        ValueRange{acc},
+        return step(nb, nl, accs);
+      auto loop = nb.create<scf::ForOp>(nl, cidx(nb, nl, 0), cidx(nb, nl, ranges[red[k]]), cidx(nb, nl, 1), accs,
                                         [&](OpBuilder &lb, Location ll, Value iv, ValueRange a) {
                                           ivs[red[k]] = iv;
-                                          lb.create<scf::YieldOp>(ll, nest(lb, ll, k + 1, a[0]));
+                                          lb.create<scf::YieldOp>(ll, nest(lb, ll, k + 1, a));
                                         });
-      return loop.getResult(0);
+      return SmallVector<Value>(loop.getResults());
     };
-    Value result = nest(pb, pl, 0, start);
-    pb.create<memref::StoreOp>(pl, result, outs[0]->get(), indices(outMap, ivs));
+    SmallVector<Value> results = nest(pb, pl, 0, starts);
+    for (int64_t kb = 0; kb < B; ++kb) {
+      at(pb, pl, kb);
+      pb.create<memref::StoreOp>(pl, results[kb], outs[0]->get(), indices(outMap, ivs));
+    }
   });
   op->erase();
   return success();
@@ -273,6 +339,16 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
       }
     }
 
+    // Shape: n^2 lanes per element for an element of n^3 nodes.
+    int64_t L = lanes;
+    if (L == 0) {
+      int64_t nodes = 1;
+      for (int64_t d : elementTypes[marked[0]].getShape()) nodes *= d;
+      const int64_t n = (int64_t)std::llround(std::cbrt((double)nodes));
+      L = 1;
+      while (L * 2 <= std::min<int64_t>(n * n, 32)) L *= 2;
+    }
+
     // 4. Linalg ops, fills and copies into phases.
     SmallVector<Operation *> ops;
     for (Operation &op : *body) ops.push_back(&op);
@@ -324,7 +400,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
             return op->emitOpError("cellwise schedule: cannot generalize");
           lop = cast<linalg::LinalgOp>(g->getOperation());
         }
-        if (failed(lowerLinalg(lop, init)))
+        if (failed(lowerLinalg(lop, init, L)))
           return failure();
         continue;
       }
@@ -361,15 +437,6 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
     body->walk([&](memref::DeallocOp d) { deallocs.push_back(d); });
     for (memref::DeallocOp d : deallocs) d->erase();
 
-    // Shape: n^2 lanes per element for an element of n^3 nodes.
-    int64_t L = lanes;
-    if (L == 0) {
-      int64_t nodes = 1;
-      for (int64_t d : elementTypes[marked[0]].getShape()) nodes *= d;
-      const int64_t n = (int64_t)std::llround(std::cbrt((double)nodes));
-      L = 1;
-      while (L * 2 <= std::min<int64_t>(n * n, 32)) L *= 2;
-    }
     loop->setAttr("mir.lanes_per_element", b.getI64IntegerAttr(L));
     loop->setAttr("mir.warps_per_block", b.getI64IntegerAttr(warps));
     return success();

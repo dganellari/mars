@@ -21,6 +21,10 @@
 // same step of different faces into one phase, as a hand kernel's thread loops
 // over the faces.
 //
+// In a merged phase, reduction loops over the same range (two contractions of the
+// same input) become one loop when neither stores to memory, so their loads of the
+// shared input are made once.
+//
 // After merging, a load of what the same phase just stored at the same indices
 // takes the stored value, and scratch buffers nothing loads any more are dropped
 // (with their stores), which frees shared memory and its traffic.
@@ -173,6 +177,87 @@ void forward(scf::ParallelOp phase) {
   }
 }
 
+bool storesInside(scf::ForOp loop) {
+  return loop.walk([](memref::StoreOp) { return WalkResult::interrupt(); }).wasInterrupted();
+}
+
+bool sameRange(scf::ForOp a, scf::ForOp b) {
+  auto eq = [](Value x, Value y) {
+    auto cx = getConstantIntValue(x), cy = getConstantIntValue(y);
+    return x == y || (cx && cy && *cx == *cy);
+  };
+  return eq(a.getLowerBound(), b.getLowerBound()) && eq(a.getUpperBound(), b.getUpperBound()) &&
+         eq(a.getStep(), b.getStep());
+}
+
+// Reduction loops of a phase body (top level) over the same range: a later one
+// joins an earlier one when neither stores to memory, nothing in between defines a
+// value it uses, and it reads no buffer stored to in between.
+void fuseReductions(scf::ParallelOp phase) {
+  Block *body = phase.getBody();
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<scf::ForOp> loops;
+    for (Operation &op : *body)
+      if (auto f = dyn_cast<scf::ForOp>(op); f && !storesInside(f))
+        loops.push_back(f);
+    for (size_t j = 1; j < loops.size() && !changed; ++j)
+      for (size_t i = 0; i < j && !changed; ++i) {
+        scf::ForOp a = loops[i], b = loops[j];
+        if (!sameRange(a, b))
+          continue;
+        // What b uses from outside itself must be defined before a; b's loads must not
+        // see a store between a and b.
+        DenseSet<Operation *> between;
+        for (Operation *op = a->getNextNode(); op != b.getOperation(); op = op->getNextNode()) between.insert(op);
+        bool ok = true;
+        b.walk([&](Operation *op) {
+          for (Value v : op->getOperands())
+            if (Operation *def = v.getDefiningOp(); def && (between.count(def) || def == a.getOperation()))
+              ok = false;
+        });
+        DenseSet<Value> storedBetween;
+        for (Operation *op : between)
+          op->walk([&](memref::StoreOp st) { storedBetween.insert(rootOf(st.getMemRef())); });
+        b.walk([&](memref::LoadOp ld) {
+          if (storedBetween.count(rootOf(ld.getMemRef())))
+            ok = false;
+        });
+        if (!ok)
+          continue;
+        // One loop: a's iter_args then b's; a's body then b's.
+        OpBuilder ob(a);
+        SmallVector<Value> inits(a.getInitArgs());
+        llvm::append_range(inits, b.getInitArgs());
+        auto fused = ob.create<scf::ForOp>(a.getLoc(), a.getLowerBound(), a.getUpperBound(), a.getStep(), inits);
+        Block *dst = fused.getBody();
+        if (!dst->empty())
+          dst->getTerminator()->erase();
+        const unsigned na = a.getNumRegionIterArgs();
+        a.getInductionVar().replaceAllUsesWith(fused.getInductionVar());
+        b.getInductionVar().replaceAllUsesWith(fused.getInductionVar());
+        for (unsigned k = 0; k < na; ++k) a.getRegionIterArgs()[k].replaceAllUsesWith(fused.getRegionIterArgs()[k]);
+        for (unsigned k = 0; k < b.getNumRegionIterArgs(); ++k)
+          b.getRegionIterArgs()[k].replaceAllUsesWith(fused.getRegionIterArgs()[na + k]);
+        auto ya = cast<scf::YieldOp>(a.getBody()->getTerminator());
+        auto yb = cast<scf::YieldOp>(b.getBody()->getTerminator());
+        SmallVector<Value> yields(ya.getOperands());
+        llvm::append_range(yields, yb.getOperands());
+        dst->getOperations().splice(dst->end(), a.getBody()->getOperations(), a.getBody()->begin(),
+                                    std::prev(a.getBody()->end()));
+        dst->getOperations().splice(dst->end(), b.getBody()->getOperations(), b.getBody()->begin(),
+                                    std::prev(b.getBody()->end()));
+        OpBuilder::atBlockEnd(dst).create<scf::YieldOp>(a.getLoc(), yields);
+        for (unsigned k = 0; k < na; ++k) a.getResult(k).replaceAllUsesWith(fused.getResult(k));
+        for (unsigned k = 0; k < b.getNumResults(); ++k) b.getResult(k).replaceAllUsesWith(fused.getResult(na + k));
+        a.erase();
+        b.erase();
+        changed = true;
+      }
+  }
+}
+
 void fuse(scf::ParallelOp elements) {
   Block *body = elements.getBody();
   // Hoist what sits between phases (it does not depend on them).
@@ -223,8 +308,10 @@ void fuse(scf::ParallelOp elements) {
       done.push_back(cur);
   }
   for (Operation &op : *body)
-    if (isPhase(&op))
+    if (isPhase(&op)) {
+      fuseReductions(cast<scf::ParallelOp>(&op));
       forward(cast<scf::ParallelOp>(&op));
+    }
 
   // Scratch that nothing loads any more: drop its stores and the buffer.
   SmallVector<memref::AllocaOp> scratch;
