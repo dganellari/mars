@@ -8,7 +8,7 @@
 
 	// .globl	laplacian_apply_p3
 // __wg_laplacian_apply_p3_0 has been demoted
-.visible .global .align 8 .b8 laplacian_apply_p3__launch[16] = {0, 1, 0, 0, 0, 0, 0, 0, 16};
+.visible .global .align 8 .b8 laplacian_apply_p3__launch[16] = {128, 0, 0, 0, 0, 0, 0, 0, 8};
 
 .visible .entry laplacian_apply_p3(
 	.param .u64 laplacian_apply_p3_param_0,
@@ -83,12 +83,12 @@
 	.reg .b64 	%rd<180>;
 	.reg .f64 	%fd<690>;
 	// demoted variable
-	.shared .align 16 .b8 __wg_laplacian_apply_p3_0[61440];
+	.shared .align 16 .b8 __wg_laplacian_apply_p3_0[30720];
 	ld.param.u64 	%rd107, [laplacian_apply_p3_param_3];
 	mov.u32 	%r2, %ctaid.x;
 	cvt.u64.u32 	%rd165, %r2;
-	add.s64 	%rd115, %rd107, 15;
-	shr.u64 	%rd12, %rd115, 4;
+	add.s64 	%rd115, %rd107, 7;
+	shr.u64 	%rd12, %rd115, 3;
 	setp.le.u64 	%p1, %rd12, %rd165;
 	@%p1 bra 	$L__BB0_13;
 	ld.param.u64 	%rd108, [laplacian_apply_p3_param_55];
@@ -223,7 +223,7 @@ $L__BB0_12:
 	@%p8 bra 	$L__BB0_2;
 	bra.uni 	$L__BB0_13;
 $L__BB0_2:
-	shl.b64 	%rd160, %rd165, 4;
+	shl.b64 	%rd160, %rd165, 3;
 	add.s64 	%rd72, %rd160, %rd10;
 	setp.lt.u64 	%p2, %rd72, %rd107;
 	selp.b64 	%rd73, %rd72, %rd14, %p2;

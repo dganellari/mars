@@ -42,8 +42,9 @@ levels) instead of the tensor-core one. After the same lowering to bufferized li
                                    share memory
   -> hl_cellwise_p{p}_sm90.ptx: kernel laplacian_apply_p{p} (named by degree, so a
      profile tells the levels apart), launch shape published as
-     laplacian_apply_p{p}__launch. --warps=W sets the warps per block (default 8),
-     written to hl_cellwise_p{p}_w{W}_sm90.ptx when not 8.
+     laplacian_apply_p{p}__launch. --warps=W sets the warps per block (default 4
+     for p >= 3, else 8: measured), written to hl_cellwise_p{p}_w{W}_sm90.ptx when
+     not the default.
 
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
@@ -113,14 +114,17 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
           + ir[m.end(3):])
     if cellwise:
-        warps = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), 8)
+        # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
+        # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
+        default_warps = 4 if p >= 3 else 8
+        warps = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), default_warps)
         ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
                   "--mir-fuse-phases", "--canonicalize", "--cse",
                   "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
         if "--emulate" in sys.argv:
             return emulate(ir, p)
         ir = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}(")
-        return finish(ir, p, "" if warps == 8 else f"_w{warps}", no_chain=True, prefix="hl_cellwise")
+        return finish(ir, p, "" if warps == default_warps else f"_w{warps}", no_chain=True, prefix="hl_cellwise")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
