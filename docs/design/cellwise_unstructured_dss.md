@@ -330,8 +330,8 @@ deform 0.05, p-multigrid 7-3-1 (0, 3):
 (errors are the true algebraic error against the manufactured solution; right FP64 is
 identical to right FP32 in every case.) So the path is a right-preconditioned BiCGStab
 (one more DSS per operator application, to assemble the residual) with an FP32 V-cycle:
-one more iteration at matched accuracy, for V-cycles that move half the bytes. GPU cost
-not measured yet.
+one more iteration at matched accuracy, for V-cycles that move half the bytes. GPU
+result below.
 
 GPU form (`--right --f32` in `mars_marsir_cellwise_solve`, one rank, pre = 0): the
 generators take the value type from the operands, so the FP32 kernels come from the same
@@ -368,7 +368,24 @@ others (`mir.interpolate ... counting(...)`, kernel `interp_8x4_counted_f32`). T
 FP32 DSS (`dss_p7_f32`) gives every copy that one value. The post-smoother keeps the copies
 equal bit for bit, since its DSS gives every copy the same sum. Numpy `right32 rot cont`:
 the output jump is exactly 0 and the error is 4.9e-11, as in FP64. Cost: one FP32 DSS pass
-per V-cycle.
+per V-cycle (36.6 -> 37.6 ms at 64^3).
+
+**GPU result** (78b65c3a, GH200, 64^3, deform 0.05, rotated frames, right-preconditioned,
+`--tol 1e-8`; FP32 and FP64 runs are one flag apart):
+
+| coarse solve at p = 1 | precision | V-cycle | iterations | error | solve |
+|---|---|---|---|---|---|
+| 100 Chebyshev steps | FP64 | 52.7 ms | 8 | 1.2e-11 | 1053 ms |
+| 100 Chebyshev steps | FP32 | 37.6 ms | 8 | 1.3e-11 | 803 ms |
+| BoomerAMG (FP64) | FP64 | 36.2 ms | 10 | 9.5e-10 | 982 ms |
+| BoomerAMG (FP64) | FP32 | 26.7 ms | 10 | 8.6e-10 | 795 ms |
+
+The FP32 V-cycle is 1.40x / 1.36x faster, and the solve 1.31x / 1.24x faster, with the
+same iterations and error. ne = 8: 7 iterations, error 6.3e-11. Compared with today's
+left-preconditioned FP64 solve (tol 1e-10; table above: 812 ms in 6 iterations, 995 ms in
+10), the right form needs 2 more iterations with the Chebyshev coarse solve, so it gains
+nothing there. With BoomerAMG it takes the same 10 iterations: 795 against 995 ms. The
+left runs did not record their error, so these two are not compared at matched accuracy.
 
 ## Validation
 
