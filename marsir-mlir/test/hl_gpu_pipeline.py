@@ -42,9 +42,11 @@ levels) instead of the tensor-core one. After the same lowering to bufferized li
                                    share memory
   -> hl_cellwise_p{p}_sm90.ptx: kernel laplacian_apply_p{p} (named by degree, so a
      profile tells the levels apart), launch shape published as
-     laplacian_apply_p{p}__launch. --warps=W sets the warps per block (default 4
+     laplacian_apply_p{p}__launch. --f32: the operator in single precision (kernel
+     laplacian_apply_p{p}_f32, file hl_cellwise_p{p}_f32_sm90.ptx), for an FP32 V-cycle
+     under right-preconditioned BiCGStab. --warps=W sets the warps per block (default 4
      for p >= 3, else 8: measured), written to hl_cellwise_p{p}_w{W}_sm90.ptx when
-     not the default.
+     given.
 
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
@@ -85,13 +87,14 @@ def main():
     chain_opts = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--chain-opts=")), "")
     no_hoist = "--no-hoist" in sys.argv
     cellwise = "--cellwise" in sys.argv
+    real = "f32" if "--f32" in sys.argv else "f64"
     tag_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--tag=")), "")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
 from marsir.backends import mlir_ir
 ea = synthesize(parse_spec_file({os.path.join(ROOT, '..', 'marsir-compiler', 'specs', 'laplacian.op')!r}))
-sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
+sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
 """], "")
 
     ir = run([MIROPT, "-", "--convert-mir-to-linalg",
@@ -116,15 +119,28 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     if cellwise:
         # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
         # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
+        # A kernel declares its shared memory statically, at most 48 KB: without --warps,
+        # the warps per block are halved from that default until it fits (p = 7 in f32).
         default_warps = 4 if p >= 3 else 8
-        warps = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), default_warps)
-        ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
-                  "--mir-fuse-phases", "--canonicalize", "--cse",
-                  "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
-        if "--emulate" in sys.argv:
-            return emulate(ir, p)
-        ir = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}(")
-        return finish(ir, p, "" if warps == default_warps else f"_w{warps}", no_chain=True, prefix="hl_cellwise")
+        given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
+        warps = given or default_warps
+        bufferized = ir
+        while True:
+            ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+                      "--mir-fuse-phases", "--canonicalize", "--cse",
+                      "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
+            if "--emulate" in sys.argv:
+                return emulate(ir, p)
+            suffix = "_f32" if real == "f32" else ""
+            named = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}{suffix}(")
+            tag = suffix + ("" if given is None else f"_w{warps}")
+            status = finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
+            ptx = open(os.path.join(ROOT, "generated", f"hl_cellwise_p{p}{tag}_sm90.ptx")).read()
+            shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
+            if shared <= 48 * 1024 or given is not None or warps == 1:
+                return status if shared <= 48 * 1024 else 1
+            warps //= 2
+            print(f"  {shared} B of shared memory > 48 KB: retrying with {warps} warp(s) per block")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
@@ -265,6 +281,7 @@ def emulate(ir, p):
          "-o", os.path.join(work, "kernel.o")], "")
     exe = os.path.join(work, "emu_hl_mma")
     run(["/usr/bin/clang++", "-std=c++20", *san] + (["-DMIR_EMU_TSAN"] if tsan else []) +
+        (["-DMIR_EMU_REAL=float"] if "--f32" in sys.argv else []) +
         [os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
     env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")

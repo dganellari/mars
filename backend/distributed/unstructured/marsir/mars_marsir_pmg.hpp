@@ -12,19 +12,82 @@
 //
 // MarsirPmg puts the V-cycle behind the preconditioner interface of the Krylov
 // solvers (the hand cellwise::bicgstab and the generated marsir::bicgstab).
+//
+// PmgPtxF32 runs the same V-cycle in single precision (pmg_f32_sm90.ptx,
+// hl_cellwise_p{7,3,1}_f32_sm90.ptx), for the right-preconditioned BiCGStab.
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
 
+#include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace mars {
 namespace marsir {
+
+namespace pmg_detail {
+
+// The operator kernel's 1D matrices: Btil / Dtil with the face dimension padded to
+// p + 1 rows (as the solve does at p = 7).
+template <typename Real>
+struct OperatorMatrices {
+    thrust::device_vector<Real> btil, dtil, w, d;
+};
+
+template <typename Real>
+OperatorMatrices<Real> operator_matrices(int p)
+{
+    const fem::HoCvfemOperators ops = fem::buildHoCvfemOperators(p);
+    const int n = p + 1;
+    std::vector<Real> btil(n * n, Real(0)), dtil(n * n, Real(0));
+    std::copy(ops.Btil.begin(), ops.Btil.end(), btil.begin());
+    std::copy(ops.Dtil.begin(), ops.Dtil.end(), dtil.begin());
+    OperatorMatrices<Real> m;
+    m.btil = btil;
+    m.dtil = dtil;
+    m.w = std::vector<Real>(ops.W.begin(), ops.W.end());
+    m.d = std::vector<Real>(ops.D.begin(), ops.D.end());
+    return m;
+}
+
+// I (fine x coarse) and its transpose, row-major.
+template <typename Real, int PF, int PC>
+void interpolation_matrices(thrust::device_vector<Real>& I, thrust::device_vector<Real>& It)
+{
+    const cellwise::Interpolation<PF, PC> T = cellwise::interpolation<PF, PC>();
+    constexpr int nf = PF + 1, nc = PC + 1;
+    std::vector<Real> a(nf * nc), b(nf * nc);
+    for (int i = 0; i < nf; ++i)
+        for (int j = 0; j < nc; ++j) {
+            a[i * nc + j] = (Real)T.I[i][j];
+            b[j * nf + i] = (Real)T.I[i][j];
+        }
+    I = a;
+    It = b;
+}
+
+template <typename T>
+const T* raw(const thrust::device_vector<T>& v)
+{
+    return thrust::raw_pointer_cast(v.data());
+}
+
+template <typename T>
+T* raw(thrust::device_vector<T>& v)
+{
+    return thrust::raw_pointer_cast(v.data());
+}
+
+}  // namespace pmg_detail
 
 class PmgPtx : public CellwisePtx, public cellwise::PmgKernels {
 public:
@@ -50,16 +113,17 @@ public:
         dots_[0] = function("pmg_dots_p7_az");
         dots_[1] = function("pmg_dots_p7_zz");
         dots_[2] = function("pmg_dots_p7_az_zz");
-        operators(3, op3m_);
-        operators(1, op1m_);
-        interpolation(cellwise::interpolation<7, 3>(), i73_, i73t_);
-        interpolation(cellwise::interpolation<3, 1>(), i31_, i31t_);
+        op3m_ = pmg_detail::operator_matrices<double>(3);
+        op1m_ = pmg_detail::operator_matrices<double>(1);
+        pmg_detail::interpolation_matrices<double, 7, 3>(i73_, i73t_);
+        pmg_detail::interpolation_matrices<double, 3, 1>(i31_, i31t_);
         MARS_CELLWISE_CK(cudaDeviceSynchronize());   // the pageable uploads above
     }
 
     void apply(int p, const double* u, double* y, cudaStream_t s) override
     {
-        const Matrices& m = p == 3 ? op3m_ : op1m_;
+        using pmg_detail::raw;
+        const pmg_detail::OperatorMatrices<double>& m = p == 3 ? op3m_ : op1m_;
         (p == 3 ? op3_ : op1_).apply(u, raw(m.btil), raw(m.dtil), raw(m.w), raw(m.d), p == 3 ? G3_ : G1_, y, T_.local, s);
     }
 
@@ -115,51 +179,199 @@ public:
     }
 
 private:
-    struct Matrices {
-        thrust::device_vector<double> btil, dtil, w, d;
-    };
-
     static long long values(int p) { return (long long)(p + 1) * (p + 1) * (p + 1); }
     static int degree_index(int p) { return p == 7 ? 0 : (p == 3 ? 1 : 2); }
-    static const double* raw(const thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); }
-
-    // The operator kernel's 1D matrices: Btil / Dtil with the face dimension padded to
-    // p + 1 rows (as the solve does at p = 7).
-    static void operators(int p, Matrices& m)
-    {
-        const fem::HoCvfemOperators ops = fem::buildHoCvfemOperators(p);
-        const int n = p + 1;
-        std::vector<double> btil(n * n, 0.0), dtil(n * n, 0.0);
-        std::copy(ops.Btil.begin(), ops.Btil.end(), btil.begin());
-        std::copy(ops.Dtil.begin(), ops.Dtil.end(), dtil.begin());
-        m.btil = btil;
-        m.dtil = dtil;
-        m.w = std::vector<double>(ops.W.begin(), ops.W.end());
-        m.d = std::vector<double>(ops.D.begin(), ops.D.end());
-    }
-
-    // I (fine x coarse) and its transpose, row-major.
-    template <int PF, int PC>
-    static void interpolation(const cellwise::Interpolation<PF, PC>& T, thrust::device_vector<double>& I,
-                              thrust::device_vector<double>& It)
-    {
-        constexpr int nf = PF + 1, nc = PC + 1;
-        std::vector<double> a(nf * nc), b(nf * nc);
-        for (int i = 0; i < nf; ++i)
-            for (int j = 0; j < nc; ++j) {
-                a[i * nc + j] = T.I[i][j];
-                b[j * nf + i] = T.I[i][j];
-            }
-        I = a;
-        It = b;
-    }
 
     const cellwise::UnstructuredTopology& T_;
     const double *G3_, *G1_;
     LaplacianPtx op3_, op1_;
-    Matrices op3m_, op1m_;
+    pmg_detail::OperatorMatrices<double> op3m_, op1m_;
     thrust::device_vector<double> i73_, i73t_, i31_, i31t_;
     CUfunction cheb_[3][3], masked_[2], restrict73_, restrict31_, prolong37_[2], prolong13_[2], dots_[3];
+};
+
+// The V-cycle of PMultigrid with pre = 0 in single precision: the same recursion and
+// Chebyshev schedule on float copies of the metrics, diagonals and matrices, with the
+// f32 kernels MARSIR generates from the same specs (test/dss_gpu_pipeline.py --pmg
+// --f32, test/hl_gpu_pipeline.py p --cellwise --f32). The conversions at p = 7 take
+// the FP64 input and give the FP64 output; those at p = 1 wrap an FP64 coarse solve
+// (BoomerAMG). Setup (diagonals, lambda_max) is PMultigrid's, in FP64.
+// An FP32 V-cycle is not exactly linear, which the left-preconditioned BiCGStab
+// assumes (it stalls near 1e-8); the right-preconditioned one tolerates it
+// (marsir-mlir/test/cellwise_mixed_ref.py). One rank: the ghost exchange is FP64 only.
+class PmgPtxF32 : public CellwisePtx {
+public:
+    // mg: the FP64 PMultigrid (diagonals, lambda_max); G7, G3, G1: the metrics.
+    template <class Multigrid>
+    PmgPtxF32(const std::string& dir, const cellwise::UnstructuredTopology& T, const Multigrid& mg, const double* G7,
+              const double* G3, const double* G1, int post, int coarse_steps, cudaStream_t stream)
+        : CellwisePtx(dir + "/pmg_f32_sm90.ptx", 7), T_(T), E_(T.local), post_(post), coarse_steps_(coarse_steps),
+          stream_(stream), lmax_(mg.lambda_max()),
+          op7_(dir + "/hl_cellwise_p7_f32_sm90.ptx", 7, "laplacian_apply_p7_f32"),
+          op3_(dir + "/hl_cellwise_p3_f32_sm90.ptx", 3, "laplacian_apply_p3_f32"),
+          op1_(dir + "/hl_cellwise_p1_f32_sm90.ptx", 1, "laplacian_apply_p1_f32")
+    {
+        if (T.elements != T.local) {
+            fprintf(stderr, "PmgPtxF32: one rank only (the ghost exchange is FP64)\n");
+            std::abort();
+        }
+        const char* kinds[3] = {"first0", "first", "next"};
+        const double* G[3] = {G7, G3, G1};
+        const double* diag[3] = {mg.template diag<7>(), mg.template diag<3>(), mg.template diag<1>()};
+        const long long metric[3] = {cellwise::metric_size<7>, cellwise::metric_size<3>, cellwise::metric_size<1>};
+        for (int i = 0; i < 3; ++i) {
+            const int p = kDegrees[i];
+            const long long n = E_ * values(p);
+            for (int k = 0; k < 3; ++k)
+                cheb_[i][k] = function(std::string("cheb_") + kinds[k] + "_p" + std::to_string(p) + "_f32");
+            Level& L = levels_[i];
+            L.g = narrow(G[i], E_ * metric[i]);
+            L.diag = narrow(diag[i], n);
+            L.m = pmg_detail::operator_matrices<float>(p);
+            for (thrust::device_vector<float>* v : {&L.b, &L.x, &L.d, &L.y}) v->resize(n);
+            if (p > 1) L.r.resize(n);
+        }
+        masked_[0] = function("masked_copy_p7_f32");
+        masked_[1] = function("masked_copy_p3_f32");
+        restrict_[0] = function("interp_4x8_f32");
+        restrict_[1] = function("interp_2x4_f32");
+        prolong_[0] = function("interp_8x4_f32");
+        prolong_[1] = function("interp_4x2_f32");
+        to32_[0] = function("to_f32_p7");
+        to32_[1] = function("to_f32_p1");
+        to64_[0] = function("to_f64_p7");
+        to64_[1] = function("to_f64_p1");
+        pmg_detail::interpolation_matrices<float, 7, 3>(i_[0], it_[0]);
+        pmg_detail::interpolation_matrices<float, 3, 1>(i_[1], it_[1]);
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());   // the uploads and conversions above
+    }
+
+    // solve(b1, x1) in FP64, as PMultigrid::set_coarse_solve.
+    void set_coarse_solve(std::function<void(const double*, double*)> solve)
+    {
+        coarse_solve_ = std::move(solve);
+        b1_.resize(E_ * values(1));
+        x1_.resize(E_ * values(1));
+    }
+
+    // x = V(b): b unassembled, x continuous, both FP64.
+    void operator()(const double* b, double* x)
+    {
+        Level& top = levels_[0];
+        convert(to32_[0], 7, b, pmg_detail::raw(top.b));
+        vcycle(7, pmg_detail::raw(top.b), pmg_detail::raw(top.x));
+        convert(to64_[0], 7, pmg_detail::raw(top.x), x);
+    }
+
+private:
+    struct Level {
+        thrust::device_vector<float> g, diag, b, x, r, d, y;
+        pmg_detail::OperatorMatrices<float> m;
+    };
+
+    static constexpr int kDegrees[3] = {7, 3, 1};
+    static long long values(int p) { return (long long)(p + 1) * (p + 1) * (p + 1); }
+    static int degree_index(int p) { return p == 7 ? 0 : (p == 3 ? 1 : 2); }
+
+    static thrust::device_vector<float> narrow(const double* d, long long n)
+    {
+        const thrust::device_ptr<const double> first = thrust::device_pointer_cast(d);
+        return thrust::device_vector<float>(first, first + n);
+    }
+
+    void vcycle(int p, const float* b, float* x)
+    {
+        using pmg_detail::raw;
+        if (p == 1) {
+            if (coarse_solve_) {
+                convert(to64_[1], 1, b, raw(b1_));
+                coarse_solve_(raw(b1_), raw(x1_));
+                convert(to32_[1], 1, raw(x1_), x);
+            } else {
+                chebyshev(1, b, x, coarse_steps_, true);
+            }
+            return;
+        }
+        const int pc = p == 7 ? 3 : 1;
+        Level &fine = levels_[degree_index(p)], &coarse = levels_[degree_index(pc)];
+        masked_copy(p, b, raw(fine.r));
+        transfer(p, false, raw(fine.r), raw(coarse.b));
+        vcycle(pc, raw(coarse.b), raw(coarse.x));
+        transfer(p, true, raw(coarse.x), x);
+        if (post_ > 0) chebyshev(p, b, x, post_, false);
+    }
+
+    void chebyshev(int p, const float* b, float* x, int steps, bool zero_x)
+    {
+        using pmg_detail::raw;
+        Level& L = levels_[degree_index(p)];
+        float *d = raw(L.d), *y = raw(L.y);
+        if (!zero_x) apply(p, x, y);
+        cellwise::chebyshev_steps(lmax_[degree_index(p)], steps, [&](int i, double c1, double c2) {
+            if (i > 0) apply(p, x, y);
+            const bool from_zero = i == 0 && zero_x;
+            step(p, i > 0 ? 2 : (from_zero ? 0 : 1), b, from_zero ? nullptr : y, d, x, (float)c1, (float)c2);
+        });
+    }
+
+    void step(int p, int kind, const float* b, const float* y, float* d, float* x, float c1, float c2)
+    {
+        const long long m = values(p), L = E_ * m;
+        std::vector<Arg> a = topology_args(b, nullptr, T_, {nullptr, E_}, m);
+        a.insert(a.begin() + 2, Arg{y ? y : b, L});   // (b, ghost, y, elements, tables...)
+        a.push_back(vec(T_.counting));
+        a.push_back(vec(T_.edge_dirichlet));
+        a.push_back(vec(T_.vert_dirichlet));
+        a.push_back(vec(levels_[degree_index(p)].diag));
+        a.push_back({d, L});
+        a.push_back({x, L});
+        launch<float>(cheb_[degree_index(p)][kind], a, E_, stream_, {}, {c1, c2});
+    }
+
+    void apply(int p, const float* u, float* y)
+    {
+        using pmg_detail::raw;
+        const Level& L = levels_[degree_index(p)];
+        const LaplacianPtx& op = p == 7 ? op7_ : (p == 3 ? op3_ : op1_);
+        op.apply(u, raw(L.m.btil), raw(L.m.dtil), raw(L.m.w), raw(L.m.d), raw(L.g), y, E_, stream_);
+    }
+
+    void masked_copy(int p, const float* b, float* r)
+    {
+        const long long L = E_ * values(p);
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(T_.face_code), vec(T_.edge_of), vec(T_.vert_of),
+                           vec(T_.edge_dirichlet), vec(T_.vert_dirichlet), {b, L}, {r, L}};
+        launch(masked_[p == 7 ? 0 : 1], a, E_, stream_);
+    }
+
+    // Restrict (to = I^T from) or prolong (to = I from) between p and the next degree.
+    void transfer(int p, bool prolong, const float* from, float* to)
+    {
+        const int t = p == 7 ? 0 : 1;
+        const long long fine = E_ * values(p), coarse = E_ * values(p == 7 ? 3 : 1);
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), vec(prolong ? i_[t] : it_[t]),
+                           {from, prolong ? coarse : fine}, {to, prolong ? fine : coarse}};
+        launch(prolong ? prolong_[t] : restrict_[t], a, E_, stream_);
+    }
+
+    void convert(CUfunction fn, int p, const void* from, void* to)
+    {
+        const long long L = E_ * values(p);
+        std::vector<Arg> a{element_list({nullptr, E_}, E_), {from, L}, {to, L}};
+        launch(fn, a, E_, stream_);
+    }
+
+    const cellwise::UnstructuredTopology& T_;
+    long long E_;
+    int post_, coarse_steps_;
+    cudaStream_t stream_;
+    std::array<double, 3> lmax_;
+    LaplacianPtx op7_, op3_, op1_;
+    Level levels_[3];
+    thrust::device_vector<float> i_[2], it_[2];   // 7 <- 3, 3 <- 1 and their transposes
+    thrust::device_vector<double> b1_, x1_;       // around the FP64 coarse solve
+    std::function<void(const double*, double*)> coarse_solve_;
+    CUfunction cheb_[3][3], masked_[2], restrict_[2], prolong_[2], to32_[2], to64_[2];
 };
 
 // One V-cycle as the preconditioner of the Krylov solvers: z = V(q), then the dot

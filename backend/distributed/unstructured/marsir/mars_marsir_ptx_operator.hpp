@@ -77,10 +77,11 @@ public:
     LaplacianPtx(const LaplacianPtx&) = delete;
     LaplacianPtx& operator=(const LaplacianPtx&) = delete;
 
-    // y = A u on E elements: u continuous, y unassembled.
-    void apply(const double* d_u, const double* d_btil, const double* d_dtil, const double* d_w,
-               const double* d_d, const double* d_g, double* d_y, long long E,
-               cudaStream_t stream = 0) const
+    // y = A u on E elements: u continuous, y unassembled. Real: the kernel's value type
+    // (float for the _f32 kernels).
+    template <typename Real>
+    void apply(const Real* d_u, const Real* d_btil, const Real* d_dtil, const Real* d_w, const Real* d_d,
+               const Real* d_g, Real* d_y, long long E, cudaStream_t stream = 0) const
     {
         const long long n = p_ + 1, nn = n * n, n3 = nn * n;
         const long long g_elem = 3LL * p_ * 3 * nn;
@@ -91,8 +92,8 @@ public:
         long long g_st[6] = {g_elem, (long long)p_ * 3 * nn, 3 * nn, nn, n, 1};
         // The driver API takes pointers to each argument value, so the device
         // pointers need addressable copies.
-        const double *u = d_u, *bt = d_btil, *dt = d_dtil, *w = d_w, *d = d_d, *g = d_g;
-        double* y = d_y;
+        const Real *u = d_u, *bt = d_btil, *dt = d_dtil, *w = d_w, *d = d_d, *g = d_g;
+        Real* y = d_y;
         void* args[] = {
             &u,  &u,  &zero, &u_sz[0], &u_sz[1], &u_sz[2], &u_sz[3],
                              &u_st[0], &u_st[1], &u_st[2], &u_st[3],

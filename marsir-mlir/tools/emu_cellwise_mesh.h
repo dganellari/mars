@@ -5,24 +5,25 @@
 // 9 entries, copies on ghost elements; they need not describe a real mesh), and the
 // formula of the hand-written MARS DSS (for_each_copy_sum in
 // backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp) written out on
-// the host with MARS's own reference-hex functions.
+// the host with MARS's own reference-hex functions. Real: the value type (float for
+// the single-precision kernels; the random draws are the same, rounded).
 #include <cstdint>
 #include <random>
 #include <vector>
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 
-template <int P>
+template <int P, typename Real = double>
 struct CellwiseMesh {
     static constexpr int n = P + 1, n3 = n * n * n, F = (P - 1) * (P - 1), Ed = P - 1;
     long long E = 0, G = 0;   // local and ghost elements
-    std::vector<double> values, ghost;
-    std::vector<double> minus;   // when set, local copy i reads values[i] - minus[i]
+    std::vector<Real> values, ghost;
+    std::vector<Real> minus;   // when set, local copy i reads values[i] - minus[i]
     std::vector<int32_t> face_nbr, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent, counting;
     std::vector<int8_t> face_code, edge_dir, vert_dir;
-    std::vector<double> diag, a;
+    std::vector<Real> diag, a;
 
-    double value(long long i) const
+    Real value(long long i) const
     {
         if (i < (long long)values.size()) return minus.empty() ? values[i] : values[i] - minus[i];
         return ghost[i - values.size()];
@@ -45,8 +46,8 @@ struct CellwiseMesh {
         std::uniform_real_distribution<double> val(-1.0, 1.0);
         m.values.resize(E * n3);
         m.ghost.resize(G * n3);
-        for (auto& v : m.values) v = val(rng);
-        for (auto& v : m.ghost) v = val(rng);
+        for (auto& v : m.values) v = (Real)val(rng);
+        for (auto& v : m.ghost) v = (Real)val(rng);
         const long long copies = E + G;
         for (long long i = 0; i < E * 6; ++i) {
             m.face_nbr.push_back(uni(0, 4) == 0 ? -1 : (int32_t)uni(0, copies * 6 - 1));
@@ -79,13 +80,13 @@ struct CellwiseMesh {
         for (long long g = 0; g < edges; ++g) m.edge_dir.push_back((int8_t)(uni(0, 3) == 0 ? uni(1, 2) : 0));
         for (long long g = 0; g < verts; ++g) m.vert_dir.push_back((int8_t)(uni(0, 3) == 0 ? 1 : 0));
         std::uniform_real_distribution<double> pos(1.0, 2.0);
-        for (long long i = 0; i < E * n3; ++i) m.diag.push_back(pos(rng));
-        for (long long i = 0; i < E * n3; ++i) m.a.push_back(val(rng));
+        for (long long i = 0; i < E * n3; ++i) m.diag.push_back((Real)pos(rng));
+        for (long long i = 0; i < E * n3; ++i) m.a.push_back((Real)val(rng));
         return m;
     }
 
     // The DSS sum of every copy of element e, in the hand kernel's order.
-    void stage(int32_t e, std::vector<double>& out) const
+    void stage(int32_t e, std::vector<Real>& out) const
     {
         namespace cw = mars::cellwise;
         static const Tables t;
@@ -101,7 +102,7 @@ struct CellwiseMesh {
         for (int p = 0; p < 12 * Ed; ++p) {
             const int k = p / Ed, tt = 1 + p - k * Ed, own = edge_of[e * 12 + k], g = own & 0x7fffffff;
             const int tc = own < 0 ? P - tt : tt;
-            double s = 0.0;
+            Real s = 0;
             for (int i = edge_off[g]; i < edge_off[g + 1]; ++i) {
                 const int c = edge_ent[i], mm = c & 0x7fffffff;
                 s += value((long long)(mm / 12) * n3 + t.edge_l[(mm % 12) * n + (c < 0 ? P - tc : tc)]);
@@ -110,7 +111,7 @@ struct CellwiseMesh {
         }
         for (int c = 0; c < 8; ++c) {
             const int g = vert_of[e * 8 + c];
-            double s = 0.0;
+            Real s = 0;
             for (int i = vert_off[g]; i < vert_off[g + 1]; ++i) {
                 const int v = vert_ent[i];
                 s += value((long long)(v / 8) * n3 + t.corner_l[v % 8]);
@@ -156,13 +157,13 @@ private:
 
 // The fixed-order reduction of the generated kernels over term(i), i in [lo, hi):
 // lane L sums i = lo + L, lo + L + 32, ...; then an xor tree over the 32 lanes.
-template <typename Term>
-double lane_sum(long long lo, long long hi, Term term)
+template <typename Term, typename Real = double>
+Real lane_sum(long long lo, long long hi, Term term)
 {
-    double acc[32] = {};
+    Real acc[32] = {};
     for (long long i = lo; i < hi; ++i) acc[(i - lo) % 32] += term(i);
     for (int off = 16; off >= 1; off /= 2) {
-        double next[32];
+        Real next[32];
         for (int L = 0; L < 32; ++L) next[L] = acc[L] + acc[L ^ off];
         for (int L = 0; L < 32; ++L) acc[L] = next[L];
     }

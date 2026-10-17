@@ -47,6 +47,9 @@
 // BiCGStab (marsir::bicgstab_right; the generated preconditioner with diag = 1 assembles
 // the residual). It stops on the assembled residual, a stricter test: use a looser --tol
 // for the accuracy of the left form (marsir-mlir/test/cellwise_mixed_ref.py).
+// --f32 (with --right, on one rank, --pre 0): the V-cycle in single precision
+// (marsir::PmgPtxF32; the f32 kernels in the --pmg-ptx directory), BoomerAMG with --amg
+// still in FP64; the Krylov solver stays FP64.
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
 // (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
 // correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
@@ -413,8 +416,9 @@ double* device_copy(const std::vector<double>& h)
 int main(int argc, char** argv)
 {
     MARS_CELLWISE_MPI(MPI_Init(&argc, &argv));
-    int rank = 0;
+    int rank = 0, size = 1;
     MARS_CELLWISE_MPI(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
+    MARS_CELLWISE_MPI(MPI_Comm_size(MPI_COMM_WORLD, &size));
     // One GPU per rank, by the rank's index on its node, before any CUDA object exists
     // (the reductions and the PTX module bind to the current device when built).
     {
@@ -430,7 +434,7 @@ int main(int argc, char** argv)
     }
 
     std::string ptx_path, precond_ptx, bicgstab_ptx, pmg_dir;
-    bool hand_krylov = false, right = false;
+    bool hand_krylov = false, right = false, f32 = false;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
     bool use_mg = false, unstructured = false, rotate = false, use_domain = false, use_amg = false;
@@ -442,6 +446,7 @@ int main(int argc, char** argv)
         if (!strcmp(argv[i], "--unstructured")) { unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--hand-krylov")) { hand_krylov = true; --i; continue; }
         if (!strcmp(argv[i], "--right")) { right = true; --i; continue; }
+        if (!strcmp(argv[i], "--f32")) { f32 = true; --i; continue; }
         if (!strcmp(argv[i], "--rotate")) { rotate = unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--domain")) { use_domain = unstructured = true; --i; continue; }
         if (!strcmp(argv[i], "--amg")) { use_amg = true; --i; continue; }
@@ -466,6 +471,8 @@ int main(int argc, char** argv)
         error = "--precond-ptx needs --unstructured or --domain, without --mg (but for --right)";
     if (!error && right && (pmg_dir.empty() || precond_ptx.empty() || bicgstab_ptx.empty() || hand_krylov))
         error = "--right needs --mg --pmg-ptx --bicgstab-ptx --precond-ptx";
+    if (!error && f32 && (!right || pre != 0 || size > 1))
+        error = "--f32 needs --right and --pre 0, on one rank (the ghost exchange is FP64)";
     if (!error && !pmg_dir.empty() && (!unstructured || !use_mg))
         error = "--pmg-ptx needs --mg with --unstructured or --domain";
     if (!error && (precond_ptx.empty() && pmg_dir.empty()) != bicgstab_ptx.empty())
@@ -480,7 +487,8 @@ int main(int argc, char** argv)
             fprintf(stderr, "%s\nusage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] [--tol t] "
                             "[--maxit k] [--reps r] [--mg] [--pre k] [--post k] [--coarse k] [--amg] [--amg-cycles k] "
                             "[--unstructured] [--rotate] [--domain] [--precond-ptx file | --pmg-ptx dir] "
-                            "[--bicgstab-ptx file [--hand-krylov | --right --precond-ptx file]]\n", error, argv[0]);
+                            "[--bicgstab-ptx file [--hand-krylov | --right [--f32] --precond-ptx file]]\n", error,
+                    argv[0]);
         MPI_Finalize();
         return 1;
     }
@@ -791,7 +799,16 @@ int main(int argc, char** argv)
     const marsir::MarsirJacobi assemble{precond_gen.get(), bicgstab_gen.get(), &topo,
                                         thrust::raw_pointer_cast(ones.data()), uhalo.get(),
                                         thrust::raw_pointer_cast(precond_scratch.data())};
-    auto vcycle = [&](const double* b, double* x) { pmg->template vcycle<7>(b, x); };
+    // --f32: the V-cycle in single precision, on the FP64 setup above.
+    std::unique_ptr<marsir::PmgPtxF32> pmg32(
+        f32 ? new marsir::PmgPtxF32(pmg_dir, topo, *pmg, d_G, d_G3, d_G1, post, coarse_steps, stream) : nullptr);
+#ifdef MARS_ENABLE_HYPRE
+    if (pmg32 && amg) pmg32->set_coarse_solve([&](const double* b1, double* x1) { amg->solve(b1, x1); });
+#endif
+    auto vcycle = [&](const double* b, double* x) {
+        if (pmg32) (*pmg32)(b, x);
+        else pmg->template vcycle<7>(b, x);
+    };
 
     MARS_CELLWISE_CK(cudaEventRecord(t0, stream));
     const cellwise::SolveResult res =
@@ -840,8 +857,8 @@ int main(int argc, char** argv)
                : unstructured ? (rotate ? "unstructured tables, rotated frames, DSS + Jacobi" : "unstructured tables, DSS + Jacobi")
                : use_mg     ? "multigrid V-cycle" : "DSS + Jacobi");
         if (precond_gen || !pmg_dir.empty())
-            printf("  kernels: MARSIR operator, MARSIR %s, %s%s\n",
-                   pmg_dir.empty() ? "preconditioner" : "V-cycle (setup and AMG unchanged)",
+            printf("  kernels: MARSIR operator, MARSIR %s%s, %s%s\n",
+                   pmg_dir.empty() ? "preconditioner" : "V-cycle (setup and AMG unchanged)", f32 ? " in FP32" : "",
                    hand_krylov ? "hand BiCGStab vector kernels" : "MARSIR BiCGStab vector kernels (all generated)",
                    right ? ", right-preconditioned" : "");
         if (use_domain)
@@ -902,7 +919,7 @@ int main(int argc, char** argv)
                                                                                             timing_red.partial, stream);
           });
     const float vc_ms = !use_mg       ? 0.0f
-                        : unstructured ? time_ms([&] { pmg->template vcycle<7>(d_b, d_x); })
+                        : unstructured ? time_ms([&] { vcycle(d_b, d_x); })
                                        : time_ms([&] { mg->vcycle(0, d_b, d_x, stream); });
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
     if (rank == 0) {

@@ -306,9 +306,11 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None,
     return y
 
 
-def emit_full(ea, p=7, pad_faces=False):
+def emit_full(ea, p=7, pad_faces=False, real="f64"):
     """Single-element full Knaus apply (tensor-semantic func). pad_faces: see
-    _apply_body; Btil/Dtil are then n x n with a zero last row."""
+    _apply_body; Btil/Dtil are then n x n with a zero last row. real: the scalar
+    type of every tensor and constant (f64, or f32 for a reduced-precision
+    preconditioner)."""
     o = ea.op
     n, P = p + 1, p
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
@@ -333,7 +335,8 @@ def emit_full(ea, p=7, pad_faces=False):
     y = _apply_body(L, ea, p, ctr, v, "%u", "%G", pad_faces=pad_faces)
     L.append("  return %s : %s" % (y, t3))
     L.append("}")
-    return "\n".join(L) + "\n"
+    text = "\n".join(L) + "\n"
+    return text if real == "f64" else text.replace("f64", real)
 
 
 def emit_full_batched(ea, p=7, tpb=128):
@@ -687,69 +690,87 @@ _TABLES = [("face_nbr", "i32"), ("face_code", "i8"), ("edge_of", "i32"), ("edge_
 _FLAGS = [("counting", "i32"), ("edge_dirichlet", "i8"), ("vert_dirichlet", "i8")]
 
 
-def _chebyshev(p, kind):
+def _chebyshev(p, kind, real="f64"):
     """One Chebyshev-Jacobi step at degree p (unstructured_chebyshev_kernel): z = 0 on
     Dirichlet copies, DSS(b - y) / diag elsewhere; first0: d = x = c2 z (x was 0, no
     y); first: d = c2 z, x += d; next: d = c1 d + c2 z, x += d. One argument list
     for the three: (b, ghost, y, elements, tables, flags, diag, d, x, c1, c2)."""
-    args = [("b", "f64"), ("ghost", "f64"), ("y", "f64"), ("elements", "i32")] + _TABLES + _FLAGS + \
-        [("diag", "f64"), ("d", "f64"), ("x", "f64")]
-    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args) + ", %c1: f64, %c2: f64"
+    args = [("b", real), ("ghost", real), ("y", real), ("elements", "i32")] + _TABLES + _FLAGS + \
+        [("diag", real), ("d", real), ("x", real)]
+    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args) + f", %c1: {real}, %c2: {real}"
     copies = {"first0": ["diag"], "first": ["diag", "x"], "next": ["diag", "d", "x"]}[kind]
     minus = "" if kind == "first0" else " minus(%y)"
-    opnd_types = ["memref<?xf64>", "memref<?xf64>"] + ([] if kind == "first0" else ["memref<?xf64>"]) + \
-        ["memref<?xi32>"] + [f"memref<?x{t}>" for _, t in _TABLES + _FLAGS] + ["memref<?xf64>"] * (len(copies) + 2)
-    body = ["  %zero = arith.constant 0.0 : f64",
-            "  %q = arith.divf %sum, %diag_t : f64",
-            "  %z = arith.select %dir, %zero, %q : f64",
-            "  %cz = arith.mulf %c2, %z : f64"]
+    mr = f"memref<?x{real}>"
+    opnd_types = [mr, mr] + ([] if kind == "first0" else [mr]) + \
+        ["memref<?xi32>"] + [f"memref<?x{t}>" for _, t in _TABLES + _FLAGS] + [mr] * (len(copies) + 2)
+    body = [f"  %zero = arith.constant 0.0 : {real}",
+            f"  %q = arith.divf %sum, %diag_t : {real}",
+            f"  %z = arith.select %dir, %zero, %q : {real}",
+            f"  %cz = arith.mulf %c2, %z : {real}"]
     if kind == "first0":
         ys = ["%cz", "%cz"]
     elif kind == "first":
-        body += ["  %xn = arith.addf %x_t, %cz : f64"]
+        body += [f"  %xn = arith.addf %x_t, %cz : {real}"]
         ys = ["%cz", "%xn"]
     else:
-        body += ["  %cd = arith.mulf %c1, %d_t : f64", "  %dn = arith.addf %cd, %cz : f64",
-                 "  %xn = arith.addf %x_t, %dn : f64"]
+        body += [f"  %cd = arith.mulf %c1, %d_t : {real}", f"  %dn = arith.addf %cd, %cz : {real}",
+                 f"  %xn = arith.addf %x_t, %dn : {real}"]
         ys = ["%dn", "%xn"]
-    bargs = "%sum: f64, %dir: i1, %cnt: i1" + "".join(f", %{c}_t: f64" for c in copies)
+    bargs = f"%sum: {real}, %dir: i1, %cnt: i1" + "".join(f", %{c}_t: {real}" for c in copies)
+    name = f"cheb_{kind}_p{p}" + ("" if real == "f64" else "_" + real)
     return "\n".join([
-        f"func.func @cheb_{kind}_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
         f"  mir.dss ins(%b, %ghost){minus} elements(%elements) faces(%face_nbr, %face_code)",
         "          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
         "          flags(%counting, %edge_dirichlet, %vert_dirichlet)",
         f"          copies({', '.join('%' + c for c in copies)}) outs(%d, %x)",
         f"          {{degree = {p} : i64, reductions = 0 : i64}} : {', '.join(opnd_types)} epilogue {{",
         f"  ^bb0({bargs}):", *["  " + l for l in body],
-        f"    mir.yield {', '.join(ys)} : f64, f64", "  }", "  return", "}", ""])
+        f"    mir.yield {', '.join(ys)} : {real}, {real}", "  }", "  return", "}", ""])
 
 
-def _masked_copy(p):
+def _masked_copy(p, real="f64"):
     """r = b, zero on Dirichlet copies (the V-cycle's residual with pre = 0, then
     zero_dirichlet)."""
     dt = [("face_code", "i8"), ("edge_of", "i32"), ("vert_of", "i32"), ("edge_dirichlet", "i8"),
           ("vert_dirichlet", "i8")]
-    args = [("elements", "i32")] + dt + [("b", "f64"), ("r", "f64")]
+    args = [("elements", "i32")] + dt + [("b", real), ("r", real)]
     sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args)
     types = ", ".join(f"memref<?x{t}>" for _, t in args)
+    name = f"masked_copy_p{p}" + ("" if real == "f64" else "_" + real)
     return "\n".join([
-        f"func.func @masked_copy_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
         "  mir.cellwise elements(%elements) dirichlet(%face_code, %edge_of, %vert_of, %edge_dirichlet, %vert_dirichlet)"
         f" inputs(%b) outs(%r) {{degree = {p} : i64}} : {types} body {{",
-        "  ^bb0(%cnt: i1, %dir: i1, %b_t: f64):",
-        "    %zero = arith.constant 0.0 : f64",
-        "    %rv = arith.select %dir, %zero, %b_t : f64",
-        "    mir.yield %rv : f64", "  }", "  return", "}", ""])
+        f"  ^bb0(%cnt: i1, %dir: i1, %b_t: {real}):",
+        f"    %zero = arith.constant 0.0 : {real}",
+        f"    %rv = arith.select %dir, %zero, %b_t : {real}",
+        f"    mir.yield %rv : {real}", "  }", "  return", "}", ""])
 
 
-def _interpolate(rows, cols, add):
-    name = f"interp_{rows}x{cols}" + ("_add" if add else "")
+def _interpolate(rows, cols, add, real="f64"):
+    name = f"interp_{rows}x{cols}" + ("_add" if add else "") + ("" if real == "f64" else "_" + real)
+    mr = f"memref<?x{real}>"
     return "\n".join([
-        f"func.func @{name}(%elements: memref<?xi32>, %matrix: memref<?xf64>, %in: memref<?xf64>, "
-        "%out: memref<?xf64>) attributes {mir.kernel, mir.noalias} {",
+        f"func.func @{name}(%elements: memref<?xi32>, %matrix: {mr}, %in: {mr}, "
+        f"%out: {mr}) attributes {{mir.kernel, mir.noalias}} {{",
         f"  mir.interpolate elements(%elements) matrix(%matrix) ins(%in) outs(%out) {{rows = {rows} : i64, "
-        f"cols = {cols} : i64{', accumulate' if add else ''}}} : memref<?xi32>, memref<?xf64>, memref<?xf64>, memref<?xf64>",
+        f"cols = {cols} : i64{', accumulate' if add else ''}}} : memref<?xi32>, {mr}, {mr}, {mr}",
         "  return", "}", ""])
+
+
+def _convert(p, src, dst):
+    """dst = src in another precision, on the listed elements' copies (the V-cycle's
+    input and output when it runs in single precision)."""
+    op = "arith.truncf" if src == "f64" else "arith.extf"
+    return "\n".join([
+        f"func.func @to_{dst}_p{p}(%elements: memref<?xi32>, %src: memref<?x{src}>, %dst: memref<?x{dst}>) "
+        "attributes {mir.kernel, mir.noalias} {",
+        f"  mir.cellwise elements(%elements) inputs(%src) outs(%dst) {{degree = {p} : i64}} "
+        f": memref<?xi32>, memref<?x{src}>, memref<?x{dst}> body {{",
+        f"  ^bb0(%cnt: i1, %v: {src}):",
+        f"    %w = {op} %v : {src} to {dst}",
+        f"    mir.yield %w : {dst}", "  }", "  return", "}", ""])
 
 
 def _dots(p, az, zz):
@@ -766,13 +787,20 @@ def _dots(p, az, zz):
     return _cellwise(name, p, ["z"] + (["a"] if az else []), [], body, ys, counting=True, reductions=len(ys))
 
 
-def emit_pmg():
+def emit_pmg(real="f64"):
     """The per-iteration kernels of the p-multigrid V-cycle 7 -> 3 -> 1 besides the
-    operators (the operator pipeline generates those at p = 7, 3, 1)."""
-    out = [_chebyshev(p, k) for p in (7, 3, 1) for k in ("first0", "first", "next")]
-    out += [_masked_copy(p) for p in (7, 3)]
-    out += [_interpolate(4, 8, False), _interpolate(2, 4, False)]                     # restrict 7->3, 3->1
-    out += [_interpolate(8, 4, add) for add in (False, True)]                          # prolong 3->7
-    out += [_interpolate(4, 2, add) for add in (False, True)]                          # prolong 1->3
-    out += [_dots(7, az, zz) for az, zz in ((True, False), (False, True), (True, True))]
+    operators (the operator pipeline generates those at p = 7, 3, 1). real = f32: the
+    same kernels in single precision (names end in _f32), the dot products left out
+    (they belong to the FP64 Krylov solver) and the conversions to_f32_p* / to_f64_p*
+    added: at p = 7 the V-cycle's input and output, at p = 1 those of an FP64 coarse
+    solve (BoomerAMG)."""
+    out = [_chebyshev(p, k, real) for p in (7, 3, 1) for k in ("first0", "first", "next")]
+    out += [_masked_copy(p, real) for p in (7, 3)]
+    out += [_interpolate(4, 8, False, real), _interpolate(2, 4, False, real)]          # restrict 7->3, 3->1
+    out += [_interpolate(8, 4, add, real) for add in (False, True)]                     # prolong 3->7
+    out += [_interpolate(4, 2, add, real) for add in (False, True)]                     # prolong 1->3
+    if real == "f64":
+        out += [_dots(7, az, zz) for az, zz in ((True, False), (False, True), (True, True))]
+    else:
+        out += [_convert(p, a, b) for p in (7, 1) for a, b in (("f64", real), (real, "f64"))]
     return "".join(out)

@@ -107,7 +107,11 @@ struct Emit {
 
   Value idx(int64_t v) { return b.create<arith::ConstantIndexOp>(loc, v); }
   Value i32(int64_t v) { return b.create<arith::ConstantIntOp>(loc, v, 32); }
-  Value f64(double v) { return b.create<arith::ConstantFloatOp>(loc, APFloat(v), b.getF64Type()); }
+  // Zero of a float type (f32 or f64: the precision of the arrays a kernel works on).
+  Value zero(Type t) {
+    auto ft = cast<FloatType>(t);
+    return b.create<arith::ConstantFloatOp>(loc, APFloat::getZero(ft.getFloatSemantics()), ft);
+  }
   Value add(Value x, Value y) { return b.create<arith::AddIOp>(loc, x, y); }
   Value sub(Value x, Value y) { return b.create<arith::SubIOp>(loc, x, y); }
   Value mul(Value x, Value y) { return b.create<arith::MulIOp>(loc, x, y); }
@@ -136,6 +140,7 @@ struct Dss {
   Value counting, edgeDir, vertDir, partials;   // with an epilogue
   Value faceL, faceMap, edgeL, cornerL, bit;   // constant globals
   Value localValues;                      // size(values): copies past it are ghosts
+  Type real;                              // the copies' element type (f32 or f64)
 
   // Local copy i: values[i], or values[i] - minus[i] for the DSS of a residual.
   Value local(OpBuilder &b, Location loc, Value i) const {
@@ -167,7 +172,7 @@ struct Dss {
                 function_ref<Value(Emit &, Value)> copyOf) const {
     Emit x{b, loc};
     auto loop = b.create<scf::ForOp>(
-        loc, x.toIndex(begin), x.toIndex(end), x.idx(4), ValueRange{x.f64(0.0)},
+        loc, x.toIndex(begin), x.toIndex(end), x.idx(4), ValueRange{x.zero(real)},
         [&](OpBuilder &lb, Location l, Value m, ValueRange acc) {
           Emit y{lb, l};
           const Value stop = y.toIndex(end);
@@ -188,7 +193,7 @@ struct Dss {
             v[j] = lb.create<scf::IfOp>(
                          l, valid[j],
                          [&](OpBuilder &tb, Location tl) { tb.create<scf::YieldOp>(tl, value(tb, tl, copy[j])); },
-                         [&](OpBuilder &eb, Location el) { eb.create<scf::YieldOp>(el, Emit{eb, el}.f64(0.0)); })
+                         [&](OpBuilder &eb, Location el) { eb.create<scf::YieldOp>(el, Emit{eb, el}.zero(real)); })
                        .getResult(0);
           // A skipped entry leaves the sum untouched (adding 0.0 would turn -0.0 into +0.0).
           Value s = acc[0];
@@ -369,6 +374,7 @@ LogicalResult lowerOne(mir::DssOp op) {
   d.Ed = P - 1;
   d.values = op.getValues();
   d.ghost = op.getGhost();
+  d.real = cast<MemRefType>(d.values.getType()).getElementType();
   d.minus = op.getMinus();
   d.faceNbr = op.getFaceNbr();
   d.faceCode = op.getFaceCode();
@@ -409,7 +415,7 @@ LogicalResult lowerOne(mir::DssOp op) {
         const Value e = y.toIndex(e32);
         const Value base = y.mul(e, y.idx(d.n3));
         auto stage = eb.create<memref::AllocaOp>(
-            l, MemRefType::get({(int64_t)d.n * d.n * (d.n + 1)}, eb.getF64Type()));
+            l, MemRefType::get({(int64_t)d.n * d.n * (d.n + 1)}, d.real));
         stage->setAttr("mir.scratch", eb.getUnitAttr());
 
         // The element's Dirichlet mask: bit b set when entity b is a Dirichlet entity.
@@ -501,7 +507,8 @@ LogicalResult lowerOne(mir::DssOp op) {
           return;
         }
         const Value countingBits = y.load(d.counting, e);
-        SmallVector<Value> zeros(reductions, y.f64(0.0));
+        SmallVector<Value> zeros(reductions, reductions ? y.zero(cast<MemRefType>(d.partials.getType()).getElementType())
+                                                        : Value());
         const SmallVector<Value> sums = reduceLanes(
             eb, l, d.n3, zeros,
             addf, [&](OpBuilder &pb, Location pl, Value node) -> SmallVector<Value> {
@@ -569,7 +576,8 @@ LogicalResult lowerOne(mir::CellwiseOp op) {
           lanes(eb, l, n3, [&](OpBuilder &pb, Location pl, Value node) { copy(pb, pl, node); });
           return;
         }
-        SmallVector<Value> zeros(reductions, y.f64(0.0));
+        SmallVector<Value> zeros(reductions, reductions ? y.zero(cast<MemRefType>(partials.getType()).getElementType())
+                                                        : Value());
         const SmallVector<Value> sums = reduceLanes(eb, l, n3, zeros, addf, copy);
         for (int64_t j = 0; j < reductions; ++j)
           y.store(sums[j], partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
@@ -588,11 +596,12 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
   Emit x{b, loc};
   Value elements = op.getElements(), M = op.getMatrix(), in = op.getInput(), out = op.getOutput();
   const bool accumulate = op.getAccumulate();
+  const Type real = cast<MemRefType>(in.getType()).getElementType();   // f32 or f64
   Value count = b.create<memref::DimOp>(loc, elements, 0);
   // sum_{q < C} M[row][q] * value(q), in order of q.
   auto contract = [&](Emit &z, Value row, function_ref<Value(Emit &, Value)> value) {
     auto loop = z.b.create<scf::ForOp>(
-        z.loc, z.idx(0), z.idx(C), z.idx(1), ValueRange{z.f64(0.0)},
+        z.loc, z.idx(0), z.idx(C), z.idx(1), ValueRange{z.zero(real)},
         [&](OpBuilder &lb, Location ll, Value q, ValueRange acc) {
           Emit u{lb, ll};
           const Value m = u.load(M, u.add(u.mul(row, u.idx(C)), q));
@@ -607,7 +616,7 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
         const Value e = y.toIndex(y.load(elements, w[0]));
         const Value baseIn = y.mul(e, y.idx(C * C * C)), baseOut = y.mul(e, y.idx(R * R * R));
         auto scratch = [&](int64_t size) {
-          auto a = eb.create<memref::AllocaOp>(l, MemRefType::get({size}, eb.getF64Type()));
+          auto a = eb.create<memref::AllocaOp>(l, MemRefType::get({size}, real));
           a->setAttr("mir.scratch", eb.getUnitAttr());
           return a.getResult();
         };

@@ -5,6 +5,10 @@
 //
 // The warp semantics come from emu_warp_runtime.h.
 //
+// -DMIR_EMU_REAL=float (hl_gpu_pipeline.py --f32): the kernel in single precision; the
+// inputs are rounded to float first and the oracle runs in double on them, so the
+// difference is the kernel's own rounding, checked relative to the result's size.
+//
 // Build + run: python3 test/hl_gpu_pipeline.py [p] --emulate [--emu-e=E]
 #include <cmath>
 #include <cstdint>
@@ -16,10 +20,15 @@
 #include "emu_warp_runtime.h"
 #include "knaus_oracle.h"
 
+#ifndef MIR_EMU_REAL
+#define MIR_EMU_REAL double
+#endif
+using Real = MIR_EMU_REAL;
+
 // Argument order is the operator's: (u, Btil, Dtil, W, D, G) then the out-param.
-extern "C" void _mlir_ciface_laplacian_apply(Desc<double, 4>*, Desc<double, 2>*, Desc<double, 2>*,
-                                             Desc<double, 2>*, Desc<double, 2>*, Desc<double, 6>*,
-                                             Desc<double, 4>*);
+extern "C" void _mlir_ciface_laplacian_apply(Desc<Real, 4>*, Desc<Real, 2>*, Desc<Real, 2>*,
+                                             Desc<Real, 2>*, Desc<Real, 2>*, Desc<Real, 6>*,
+                                             Desc<Real, 4>*);
 extern "C" int64_t laplacian_apply__threads();   // the block size the kernel was built for
 
 int main(int argc, char** argv)
@@ -44,16 +53,27 @@ int main(int argc, char** argv)
         for (long long i = 0; i < gElem; ++i)
             G[(size_t)(e * gElem + i)] = hashVal(e, (size_t)i, 0x9e37u);
     }
+    // The kernel's inputs in its precision; the oracle sees the same (rounded) values.
+    auto narrow = [](std::vector<double>& v) {
+        std::vector<Real> r(v.size());
+        for (size_t i = 0; i < v.size(); ++i) {
+            r[i] = (Real)v[i];
+            v[i] = (double)r[i];
+        }
+        return r;
+    };
+    std::vector<Real> rU = narrow(U), rG = narrow(G), rBt = narrow(hBt), rDt = narrow(hDt), rDm = narrow(hDm),
+                      rW = narrow(hW);
     // NaN, not zero: an entry of Y the kernel never writes must not pass.
-    std::vector<double> Y((size_t)E * n3, std::nan(""));
+    std::vector<Real> Y((size_t)E * n3, (Real)std::nan(""));
 
-    Desc<double, 4> dU{U.data(), U.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
-    Desc<double, 4> dY{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
-    Desc<double, 2> dBt{hBt.data(), hBt.data(), 0, {n, n}, {n, 1}};
-    Desc<double, 2> dDt{hDt.data(), hDt.data(), 0, {n, n}, {n, 1}};
-    Desc<double, 2> dW{hW.data(), hW.data(), 0, {n, n}, {n, 1}};
-    Desc<double, 2> dDm{hDm.data(), hDm.data(), 0, {n, n}, {n, 1}};
-    Desc<double, 6> dG{G.data(), G.data(), 0, {E, 3, p, 3, n, n},   // [dir][face][component][row][col]
+    Desc<Real, 4> dU{rU.data(), rU.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
+    Desc<Real, 4> dY{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
+    Desc<Real, 2> dBt{rBt.data(), rBt.data(), 0, {n, n}, {n, 1}};
+    Desc<Real, 2> dDt{rDt.data(), rDt.data(), 0, {n, n}, {n, 1}};
+    Desc<Real, 2> dW{rW.data(), rW.data(), 0, {n, n}, {n, 1}};
+    Desc<Real, 2> dDm{rDm.data(), rDm.data(), 0, {n, n}, {n, 1}};
+    Desc<Real, 6> dG{rG.data(), rG.data(), 0, {E, 3, p, 3, n, n},   // [dir][face][component][row][col]
                {gElem, (int64_t)p * 3 * nn, 3LL * nn, (int64_t)nn, n, 1}};
 
     // One block at a time: the kernel's workgroup buffers are process-wide
@@ -73,7 +93,7 @@ int main(int argc, char** argv)
         for (auto& t : lanes) t.join();
     }
 
-    double err = 0;
+    double err = 0, scale = 0;
     std::vector<double> ref(n3);
     for (long long e = 0; e < E; ++e) {
         oracle(p, &U[(size_t)e * n3], hBt.data(), hDt.data(), hDm.data(), hW.data(),
@@ -89,8 +109,12 @@ int main(int argc, char** argv)
         printf("  e=%-3lld max|out|=%.3e  max|ref|=%.3e  max|out-ref|=%.3e\n",
                e, mo, mr, eo);
         err = fmax(err, eo);
+        scale = fmax(scale, mr);
     }
-    printf("WARP EMULATION (p=%d, E=%lld, %d threads per block): max|err| = %.3e  %s\n",
-           p, E, w.bar.threads, err, err < 1e-11 ? "PASS" : "FAIL");
-    return err < 1e-11 ? 0 : 1;
+    // double: the absolute bound of the FP64 gates; float: relative to the result.
+    const bool single = sizeof(Real) == sizeof(float);
+    const bool ok = single ? err < 1e-5 * scale : err < 1e-11;
+    printf("WARP EMULATION (p=%d, E=%lld, %d threads per block, %s): max|err| = %.3e%s  %s\n", p, E, w.bar.threads,
+           single ? "f32" : "f64", err, single ? " (relative bound 1e-5)" : "", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
 }

@@ -63,7 +63,7 @@ protected:
     }
 
     // The first 11 arguments: copies (local, ghost), the element list and the tables.
-    std::vector<Arg> topology_args(const double* d_in, const double* d_ghost, const cellwise::UnstructuredTopology& T,
+    std::vector<Arg> topology_args(const void* d_in, const void* d_ghost, const cellwise::UnstructuredTopology& T,
                                    const cellwise::ElementList& set, long long values_per_element = 0)
     {
         const long long m = values_per_element ? values_per_element : n3();
@@ -106,9 +106,11 @@ protected:
     }
 
     // `elements`: how many the kernel visits (its element list, or its loop count).
-    // Integer (index) and then real (f64) arguments follow the memrefs.
+    // Integer (index) and then real arguments follow the memrefs; Real = float for the
+    // f32 kernels.
+    template <typename Real = double>
     void launch(CUfunction fn, std::vector<Arg>& args, long long elements, cudaStream_t stream,
-                std::vector<long long> integers = {}, std::vector<double> reals = {})
+                std::vector<long long> integers = {}, std::vector<Real> reals = {})
     {
         const Shape shape = shapes_.at(fn);
         const long long blocks = (elements + shape.per_block - 1) / shape.per_block;
@@ -122,7 +124,7 @@ protected:
             params[5 * i + 4] = &one_;
         }
         for (long long& v : integers) params.push_back(&v);
-        for (double& v : reals) params.push_back(&v);
+        for (Real& v : reals) params.push_back(&v);
         MARS_MARSIR_CU(
             cuLaunchKernel(fn, (unsigned)blocks, 1, 1, shape.threads, 1, 1, 0, (CUstream)stream, params.data(), nullptr));
     }

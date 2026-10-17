@@ -71,11 +71,12 @@ def main():
     precond = "--precond" in sys.argv
     bicg = "--bicgstab" in sys.argv
     pmg = "--pmg" in sys.argv
+    real = "f32" if "--f32" in sys.argv else "f64"   # --pmg --f32: the single-precision V-cycle kernels
     emitter = "emit_pmg" if pmg else "emit_bicgstab" if bicg else ("emit_dss_precond_all" if precond else "emit_dss")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(MARS, 'marsir-compiler')!r})
 from marsir.backends import mlir_ir
-sys.stdout.write(mlir_ir.{emitter}({'' if pmg else p}))
+sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
 """], "")
     early_cleanup = [] if bicg or pmg else ["--canonicalize", "--cse"]
     ir = run([MIROPT, "-", "--mir-lower-cellwise", *early_cleanup,
@@ -98,12 +99,13 @@ sys.stdout.write(mlir_ir.{emitter}({'' if pmg else p}))
     ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    name = "pmg" if pmg else f"bicgstab_p{p}" if bicg else (f"precond_p{p}" if precond else f"dss_p{p}")
+    name = ("pmg_f32" if real == "f32" else "pmg") if pmg else f"bicgstab_p{p}" if bicg else (f"precond_p{p}" if precond else f"dss_p{p}")
     out = os.path.join(ROOT, "generated", f"{name}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
     checks = [
-        ("kernel entries", ptx.count(".visible .entry") == (20 if pmg else 18 if bicg else 4 if precond else 1)),
+        ("kernel entries", ptx.count(".visible .entry") == ((21 if real == "f32" else 20) if pmg else 18 if bicg
+                                                             else 4 if precond else 1)),
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", "tid.x" in ptx),
         ("no local memory", ptx.count(".local") == 0),
@@ -147,9 +149,12 @@ def emulate(ir, p, precond, bicg, pmg=False):
     cc = "/usr/bin/clang" if tsan else os.path.join(LLVM, "bin", "clang")
     run([cc, *san, "-c", os.path.join(work, "kernel.ll"),
          "-o", os.path.join(work, "kernel.o")], "")
-    exe = os.path.join(work, f"emu_{'pmg' if pmg else 'bicg' if bicg else 'precond' if precond else 'dss'}_p{p}")
+    f32 = pmg and "--f32" in sys.argv
+    exe = os.path.join(work, f"emu_{'pmg' if pmg else 'bicg' if bicg else 'precond' if precond else 'dss'}_p{p}"
+                       + ("_f32" if f32 else ""))
     run(["/usr/bin/clang++", "-std=c++20", "-ffp-contract=off", *san, f"-DMIR_DSS_P={p}"]
         + (["-DMIR_DSS_PRECOND"] if precond else [])
+        + (["-DMIR_EMU_F32"] if f32 else [])
         + (["-DMIR_EMU_TSAN"] if tsan else []) +
         ["-I", MARS, os.path.join(ROOT, "tools", "emu_pmg.cpp" if pmg else "emu_bicg.cpp" if bicg else "emu_dss.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")

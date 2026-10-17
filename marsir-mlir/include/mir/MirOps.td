@@ -239,9 +239,9 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
   }];
 
   let arguments = (ins
-      Arg<MemRefRankOf<[F64], [1]>, "local copies", [MemRead]>:$values,
-      Arg<MemRefRankOf<[F64], [1]>, "ghost copies", [MemRead]>:$ghost,
-      Arg<Optional<MemRefRankOf<[F64], [1]>>, "subtracted from the local copies", [MemRead]>:$minus,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "local copies", [MemRead]>:$values,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "ghost copies", [MemRead]>:$ghost,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "subtracted from the local copies", [MemRead]>:$minus,
       Arg<MemRefRankOf<[I32], [1]>, "elements to write", [MemRead]>:$elements,
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$face_nbr,
       Arg<MemRefRankOf<[I8], [1]>, "", [MemRead]>:$face_code,
@@ -252,9 +252,9 @@ def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_off,
       Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_ent,
       Arg<Variadic<AnyMemRef>, "counting, edge_dirichlet, vert_dirichlet", [MemRead]>:$flags,
-      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy epilogue inputs", [MemRead]>:$copies,
-      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
-      Arg<Optional<MemRefRankOf<[F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy epilogue inputs", [MemRead]>:$copies,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
       I64Attr:$degree,
       DefaultValuedAttr<I64Attr, "0">:$reductions);
   let regions = (region AnyRegion:$epilogue);
@@ -308,9 +308,9 @@ def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
       Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
       Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
       Arg<Variadic<AnyMemRef>, "face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet", [MemRead]>:$dirichlet,
-      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy inputs", [MemRead]>:$inputs,
-      Arg<Variadic<MemRefRankOf<[F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
-      Arg<Optional<MemRefRankOf<[F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy inputs", [MemRead]>:$inputs,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
       I64Attr:$degree,
       DefaultValuedAttr<I64Attr, "0">:$reductions);
   let regions = (region SizedRegion<1>:$body);
@@ -344,9 +344,9 @@ def Mir_InterpolateOp : Mir_Op<"interpolate"> {
   }];
   let arguments = (ins
       Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
-      Arg<MemRefRankOf<[F64], [1]>, "rows x cols, row-major", [MemRead]>:$matrix,
-      Arg<MemRefRankOf<[F64], [1]>, "", [MemRead]>:$input,
-      Arg<MemRefRankOf<[F64], [1]>, "", [MemRead, MemWrite]>:$output,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "rows x cols, row-major", [MemRead]>:$matrix,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead]>:$input,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead, MemWrite]>:$output,
       I64Attr:$rows,
       I64Attr:$cols,
       UnitAttr:$accumulate);

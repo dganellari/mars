@@ -309,7 +309,9 @@ dimension an input does not depend on runs inside the thread: the sweep's column
 for all faces, as in the hand kernel) and fused sibling reduction loops. Remaining: 1.14x /
 1.25x of the hand kernels (BoomerAMG V-cycle not re-measured since fusion: 37.2 ms).
 
-## Mixed precision (numpy, `marsir-mlir/test/cellwise_mixed_ref.py`)
+## Mixed precision
+
+Numpy reference: `marsir-mlir/test/cellwise_mixed_ref.py`.
 
 Can the V-cycle run in FP32 inside the FP64 Krylov solver? Not with today's
 left-preconditioned BiCGStab: an FP32 V-cycle is not linear at the 1e-7 level, the
@@ -330,6 +332,24 @@ identical to right FP32 in every case.) So the path is a right-preconditioned Bi
 (one more DSS per operator application, to assemble the residual) with an FP32 V-cycle:
 one more iteration at matched accuracy, for V-cycles that move half the bytes. GPU cost
 not measured yet.
+
+GPU form (`--right --f32` in `mars_marsir_cellwise_solve`, one rank, pre = 0): the
+generators take the value type from the operands, so the FP32 kernels come from the same
+specs as the FP64 ones, with no new op:
+
+- operators at p = 7, 3, 1: `hl_gpu_pipeline.py p --cellwise --f32`
+  (`hl_cellwise_p{p}_f32_sm90.ptx`). At p = 7 the pipeline halves the warps per block
+  until the shared memory fits in 48 KB (64 threads, 2 elements per block, 31 KB);
+- Chebyshev steps, masked copies, transfers, and conversions at p = 7 (the V-cycle's input
+  and output) and p = 1 (around BoomerAMG, which stays FP64): `dss_gpu_pipeline.py --pmg
+  --f32` (`pmg_f32_sm90.ptx`).
+
+CPU gates: the f32 operators are within 1e-5 relative of the FP64 host formula, and the
+V-cycle kernels are bit-exact against the same formulas in float (TSan clean).
+`marsir::PmgPtxF32` runs the recursion of `PMultigrid` on float copies of the metrics,
+diagonals and matrices. Setup (diagonals, lambda_max) stays FP64, and the Chebyshev
+coefficients come from the shared `cellwise::chebyshev_steps`. Several ranks need an FP32
+ghost exchange, which does not exist yet.
 
 ## Validation
 
