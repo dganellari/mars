@@ -346,7 +346,8 @@ equal registers. Every other cell-wise operator got faster:
 p = 7 it alone also pushed ptxas to 254 registers, so it is not used.) The pipeline
 therefore pads at p <= 3 only (`hl_gpu_pipeline.py`); the p = 7 FP32 operator is the
 earlier kernel again. The slot offsets apply everywhere, and the p = 1 Chebyshev steps are
-unchanged by them.
+unchanged by them. Whole V-cycle at 64^3 with this layout, same iterations and errors:
+FP64 (left) 53.4 -> 51.9 ms, solve 817 -> 797 ms; FP32 (right) 37.7 -> 37.6 ms.
 
 ## Mixed precision
 
