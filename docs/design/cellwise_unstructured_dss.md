@@ -389,8 +389,16 @@ Against today's left-preconditioned FP64 solve (same binary, tol 1e-10):
 - BoomerAMG: left takes 10 iterations, error 3.2e-11, 974 ms. After the same 10 iterations
   right FP32 is at 8.6e-10, 27x less accurate. The right form reduces the true residual,
   and the left form the preconditioned one, which for a good multigrid is close to the
-  error. So at matched accuracy the right form needs more iterations (count not measured
-  yet).
+  error. So at matched accuracy the right form needs more iterations.
+
+At matched accuracy:
+- Chebyshev coarse: right FP32 needs 8 iterations (after 7 the error is 3.3e-9), 803 ms
+  against left FP64 815 ms. Break-even.
+- BoomerAMG: right FP32 at tol 1e-9 (and 3e-10) takes 11 iterations, error 4.3e-12, 870 to
+  885 ms, against left FP64 974 ms. 1.1x faster and more accurate.
+
+So with today's kernels, mixed precision gains at most about 10% end to end, and the
+fastest solve is still the one with the Chebyshev coarse solve (803 to 815 ms).
 
 Where the time goes (nsys, Chebyshev coarse; per V-cycle, from the per-call averages):
 
@@ -407,6 +415,20 @@ Where the time goes (nsys, Chebyshev coarse; per V-cycle, from the per-call aver
 The p = 7 operator is the largest item and gains the least: 16.0 ns/element in FP32 on
 CUDA cores against 22.8 for the FP64 tensor-core kernel. With BoomerAMG at p = 1 (about
 1 ms, by subtraction), it is 47% of the FP32 V-cycle (12.6 of 26.7 ms).
+
+ncu (at base clocks, so slower than the nsys times):
+
+| p = 7 operator | FP32, cell-wise schedule | FP64, tensor cores |
+|---|---|---|
+| L1/TEX throughput | 90% | 74% |
+| DRAM / L2 throughput | 25% / 27% | 56% / 76% |
+| registers, shared memory per block | 168, 31.7 KB (64 threads) | 96, 8.2 KB (32 threads) |
+| occupancy (theoretical / achieved) | 18.8% / 18.6% | 31.3% / 30.5% |
+| cycles per issued instruction | 5.7 | 46.6 |
+
+The FP32 kernel is limited by L1/TEX throughput. With DRAM and L2 low, that is most likely
+its shared-memory traffic between the sum-factorization phases, not memory bandwidth or
+occupancy.
 
 ## Validation
 
