@@ -292,21 +292,22 @@ keep their code. GH200, 64^3, deform 0.05, rotated frames:
 
 | | hand | MARSIR |
 |---|---|---|
-| V-cycle, 100 Chebyshev steps at p = 1 | 76.6 ms | 56.2 ms |
+| V-cycle, 100 Chebyshev steps at p = 1 | 76.6 ms | 53.0 ms |
 | V-cycle, BoomerAMG at p = 1 | 41.7 ms | 37.2 ms |
-| solve (6 / 10 iterations) | 1130 / 1096 ms | 860 / 995 ms |
+| solve (6 / 10 iterations) | 1130 / 1096 ms | 812 / 995 ms |
 | Chebyshev step p = 1 / p = 7 | 0.30 / 4.08 ms | 0.11 / 3.60 ms |
 | prolong / restrict 7 <-> 3 | 3.0 / 2.8 ms | 0.56 / 0.47 ms |
-| operator p = 1 / p = 3 | 0.060 / 0.456 ms | 0.073 / 0.634 ms |
+| operator p = 1 / p = 3 | 0.060 / 0.465 ms | 0.068 / 0.580 ms |
 
 Same iterations everywhere (7 at ne = 8 on 1 rank and on 4 ranks from an ElementDomain).
 The operator numbers are after `--mir-fuse-phases` (phases with the same iteration space
 and only same-point dependences merged, also across non-conflicting phases, so the faces'
 same steps form one phase; p = 3: 91 -> 21 phases, 77 -> 19 barriers) and with 4 warps per
 block at p = 3 (11% faster than 8: 30 instead of 61 KB of shared memory); before fusion they
-were about 0.09 / 1.3 ms. Open: the remaining 1.2x / 1.4x, where the hand kernel keeps a
-column in registers and reuses it for all faces (one load, P outputs) while the generated
-phases load per output.
+were about 0.09 / 1.3 ms, and 0.073 / 0.634 ms before register blocking (a short parallel
+dimension an input does not depend on runs inside the thread: the sweep's column loaded once
+for all faces, as in the hand kernel) and fused sibling reduction loops. Remaining: 1.14x /
+1.25x of the hand kernels (BoomerAMG V-cycle not re-measured since fusion: 37.2 ms).
 
 ## Validation
 
