@@ -91,7 +91,16 @@ int main(int argc, char** argv)
                 _mlir_ciface_laplacian_apply(&dU, &dBt, &dDt, &dW, &dDm, &dG, &dY);
             });
         for (auto& t : lanes) t.join();
+#ifdef MIR_EMU_TRACE
+        if (e == 0)
+            trace_block(w.bar.threads);
+        else
+            for (int L = 0; L < w.bar.threads; ++L) g_trace[L].clear();
+#endif
     }
+#ifdef MIR_EMU_TRACE
+    trace_report();
+#endif
 
     double err = 0, scale = 0;
     std::vector<double> ref(n3);

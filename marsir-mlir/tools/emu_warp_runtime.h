@@ -145,3 +145,99 @@ double mir_emu_mma(double a, double b, double c0, double c1)
 }
 double mir_emu_mma_hi() { return tlHi; }
 }  // extern "C"
+
+#ifdef MIR_EMU_TRACE
+// --mir-trace-shared: every lane logs its shared accesses in order; after a block,
+// trace_block() groups the k-th execution of each access by the lanes of a warp
+// into one warp instruction and counts its wavefronts: 32 banks of 4 bytes; an
+// 8-byte access is served per half warp, a 16-byte one per quarter; lanes reading
+// the same word share it. ideal is the count without bank conflicts.
+#include <algorithm>
+#include <cstdio>
+#include <map>
+#include <set>
+#include <utility>
+#include <vector>
+
+namespace {
+struct SharedAccess {
+    int64_t id, byte, bytes, store;
+};
+struct TraceCount {
+    int64_t instructions = 0, wavefronts = 0, ideal = 0, bytes = 0, store = 0;
+};
+std::vector<SharedAccess> g_trace[1024];
+std::map<int64_t, TraceCount> g_counts;
+
+void trace_instruction(const std::vector<std::pair<int, int64_t>>& lanes, int64_t bytes, TraceCount& c)
+{
+    const int span = bytes <= 4 ? 32 : 128 / (int)bytes;   // lanes served per pass
+    const int64_t words = bytes <= 4 ? 1 : bytes / 4;
+    std::map<int, std::map<int, std::set<int64_t>>> pass;   // pass -> bank -> words
+    for (auto [lane, byte] : lanes)
+        for (int64_t w = 0; w < words; ++w) {
+            const int64_t word = byte / 4 + w;
+            pass[lane % 32 / span][(int)(word % 32)].insert(word);
+        }
+    for (auto& [p, banks] : pass) {
+        size_t worst = 0;
+        for (auto& [bank, set] : banks) worst = std::max(worst, set.size());
+        c.wavefronts += (int64_t)worst;
+        c.ideal += 1;
+    }
+    c.instructions += 1;
+}
+}  // namespace
+
+extern "C" void __mir_shared_trace(int64_t id, int64_t offset, int64_t bytes, int64_t store)
+{
+    g_trace[tlLane].push_back({id, offset * bytes, bytes, store});
+}
+
+void trace_block(int threads)
+{
+    for (int w = 0; w * kLanes < threads; ++w) {
+        std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<int, int64_t>>> groups;
+        std::map<int64_t, std::pair<int64_t, int64_t>> kind;   // id -> (bytes, store)
+        for (int l = w * kLanes; l < std::min(threads, (w + 1) * kLanes); ++l) {
+            std::map<int64_t, int64_t> seen;
+            for (const SharedAccess& a : g_trace[l]) {
+                groups[{a.id, seen[a.id]++}].push_back({l, a.byte});
+                kind[a.id] = {a.bytes, a.store};
+            }
+        }
+        for (auto& [key, lanes] : groups) {
+            TraceCount& c = g_counts[key.first];
+            c.bytes = kind[key.first].first;
+            c.store = kind[key.first].second;
+            trace_instruction(lanes, c.bytes, c);
+        }
+    }
+    for (int l = 0; l < threads; ++l) g_trace[l].clear();
+}
+
+// Per block: the accesses with conflicts, worst first, then the totals.
+void trace_report()
+{
+    std::vector<std::pair<int64_t, TraceCount>> rows(g_counts.begin(), g_counts.end());
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        return a.second.wavefronts - a.second.ideal > b.second.wavefronts - b.second.ideal;
+    });
+    TraceCount load, store;
+    printf("  shared accesses of one block (trace id: warp instructions, wavefronts, conflict-free)\n");
+    for (auto& [id, c] : rows) {
+        TraceCount& t = c.store ? store : load;
+        t.instructions += c.instructions;
+        t.wavefronts += c.wavefronts;
+        t.ideal += c.ideal;
+        if (c.wavefronts > c.ideal)
+            printf("    id %4lld %s %lldB: %6lld instr  %7lld wavefronts  %7lld ideal\n", (long long)id,
+                   c.store ? "st" : "ld", (long long)c.bytes, (long long)c.instructions, (long long)c.wavefronts,
+                   (long long)c.ideal);
+    }
+    printf("  loads:  %lld instr, %lld wavefronts, %lld conflict-free\n", (long long)load.instructions,
+           (long long)load.wavefronts, (long long)load.ideal);
+    printf("  stores: %lld instr, %lld wavefronts, %lld conflict-free\n", (long long)store.instructions,
+           (long long)store.wavefronts, (long long)store.ideal);
+}
+#endif

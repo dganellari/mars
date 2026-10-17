@@ -58,6 +58,10 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 
+#include <map>
+#include <optional>
+#include <set>
+
 using namespace mlir;
 
 namespace {
@@ -120,6 +124,277 @@ bool conflict(const Accesses &a, const Accesses &b) {
   return false;
 }
 
+// Scratch layout: the strides each buffer gets in shared memory. Row-major is the
+// default; padding grows the stride of one dimension (the dimensions after it stay
+// one contiguous block). Register blocking keeps one axis inside the thread, so a
+// warp's lanes can spread over axes whose power-of-two strides land on a few of the
+// 32 banks (measured: 4- and 8-way conflicts at p = 7 and 3), while other buffers
+// are walked row by row, where the same padding would cause conflicts. So each
+// buffer's layout is chosen from its own accesses: every load and store of the
+// buffer is evaluated for the lanes of one element at the first iteration of its
+// loops (indices are integer expressions of the thread id and loop counters),
+// counted in wavefronts as the hardware serves them, and weighted by how often it
+// runs; the cheapest candidate wins, row-major on ties. A collapse_shape of the
+// buffer fixes the boundaries it merges.
+struct Layout {
+  SmallVector<int64_t> strides;
+  int64_t size = 0;
+};
+
+Layout rowMajor(ArrayRef<int64_t> shape) {
+  Layout l;
+  l.strides.assign(shape.size(), 1);
+  for (int d = (int)shape.size() - 2; d >= 0; --d) l.strides[d] = l.strides[d + 1] * shape[d + 1];
+  l.size = shape.empty() ? 1 : l.strides[0] * shape[0];
+  return l;
+}
+
+// Dimension d's stride grows by pad; the dimensions after it stay row-major.
+Layout padded(ArrayRef<int64_t> shape, int64_t d, int64_t pad) {
+  Layout l = rowMajor(shape);
+  l.strides[d] += pad;
+  for (int k = (int)d - 1; k >= 0; --k) l.strides[k] = l.strides[k + 1] * shape[k + 1];
+  l.size = l.strides[0] * shape[0];
+  return l;
+}
+
+// The value of an index expression for thread `tid`, loop counters at their first
+// iteration; none when it depends on anything else.
+struct IndexEval {
+  explicit IndexEval(int64_t t) : tid(t) {}
+  int64_t tid;
+  DenseMap<Value, std::optional<int64_t>> memo;
+
+  std::optional<int64_t> operator()(OpFoldResult f) {
+    if (auto a = dyn_cast<Attribute>(f))
+      return cast<IntegerAttr>(a).getInt();
+    return (*this)(cast<Value>(f));
+  }
+
+  std::optional<int64_t> operator()(Value v) {
+    if (auto it = memo.find(v); it != memo.end())
+      return it->second;
+    std::optional<int64_t> r = compute(v);
+    memo[v] = r;
+    return r;
+  }
+
+  std::optional<int64_t> compute(Value v) {
+    if (auto arg = dyn_cast<BlockArgument>(v)) {
+      auto loop = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+      if (loop && arg == loop.getInductionVar())
+        return (*this)(loop.getLowerBound());
+      return std::nullopt;
+    }
+    Operation *op = v.getDefiningOp();
+    if (auto c = dyn_cast<arith::ConstantOp>(op)) {
+      if (auto i = dyn_cast<IntegerAttr>(c.getValue()))
+        return i.getValue().getSExtValue();
+      return std::nullopt;
+    }
+    if (isa<gpu::ThreadIdOp>(op))
+      return tid;
+    if (isa<gpu::BlockIdOp>(op))
+      return 0;
+    if (isa<arith::IndexCastOp, arith::IndexCastUIOp, arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op))
+      return (*this)(op->getOperand(0));
+    if (auto sel = dyn_cast<arith::SelectOp>(op)) {
+      std::optional<int64_t> c = (*this)(sel.getCondition());
+      if (!c)
+        return std::nullopt;
+      return (*this)(*c ? sel.getTrueValue() : sel.getFalseValue());
+    }
+    if (op->getNumOperands() != 2)
+      return std::nullopt;
+    std::optional<int64_t> a = (*this)(op->getOperand(0)), b = (*this)(op->getOperand(1));
+    if (!a || !b)
+      return std::nullopt;
+    if (auto cmp = dyn_cast<arith::CmpIOp>(op)) {
+      switch (cmp.getPredicate()) {
+      case arith::CmpIPredicate::eq: return *a == *b;
+      case arith::CmpIPredicate::ne: return *a != *b;
+      case arith::CmpIPredicate::slt: case arith::CmpIPredicate::ult: return *a < *b;
+      case arith::CmpIPredicate::sle: case arith::CmpIPredicate::ule: return *a <= *b;
+      case arith::CmpIPredicate::sgt: case arith::CmpIPredicate::ugt: return *a > *b;
+      case arith::CmpIPredicate::sge: case arith::CmpIPredicate::uge: return *a >= *b;
+      }
+    }
+    if (isa<arith::AddIOp>(op)) return *a + *b;
+    if (isa<arith::SubIOp>(op)) return *a - *b;
+    if (isa<arith::MulIOp>(op)) return *a * *b;
+    if (isa<arith::MinSIOp, arith::MinUIOp>(op)) return std::min(*a, *b);
+    if (isa<arith::MaxSIOp, arith::MaxUIOp>(op)) return std::max(*a, *b);
+    if (*b == 0)
+      return std::nullopt;
+    if (isa<arith::DivUIOp, arith::DivSIOp>(op)) return *a / *b;
+    if (isa<arith::RemUIOp, arith::RemSIOp>(op)) return *a % *b;
+    return std::nullopt;
+  }
+};
+
+// The indices into `root` that an access to its view `m` at `idx` touches.
+std::optional<SmallVector<int64_t>> rootIndices(Value m, SmallVector<int64_t> idx, Value root, IndexEval &eval) {
+  while (m != root) {
+    Operation *def = m.getDefiningOp();
+    if (auto sv = dyn_cast_or_null<memref::SubViewOp>(def)) {
+      const llvm::SmallBitVector dropped = sv.getDroppedDims();
+      SmallVector<int64_t> src;
+      unsigned k = 0;
+      for (unsigned d = 0; d < (unsigned)sv.getSourceType().getRank(); ++d) {
+        std::optional<int64_t> off = eval(sv.getMixedOffsets()[d]), st = eval(sv.getMixedStrides()[d]);
+        if (!off || !st)
+          return std::nullopt;
+        src.push_back(*off + (dropped.test(d) ? 0 : idx[k++]) * *st);
+      }
+      idx = src;
+      m = sv.getSource();
+    } else if (auto ex = dyn_cast_or_null<memref::ExpandShapeOp>(def)) {
+      ArrayRef<int64_t> shape = ex.getResultType().getShape();
+      SmallVector<int64_t> src;
+      for (const ReassociationIndices &group : ex.getReassociationIndices()) {
+        int64_t lin = 0;
+        for (int64_t d : group) lin = lin * shape[d] + idx[d];
+        src.push_back(lin);
+      }
+      idx = src;
+      m = ex.getSrc();
+    } else if (auto co = dyn_cast_or_null<memref::CollapseShapeOp>(def)) {
+      ArrayRef<int64_t> shape = co.getSrcType().getShape();
+      SmallVector<int64_t> src(shape.size());
+      SmallVector<ReassociationIndices> groups = co.getReassociationIndices();
+      for (size_t g = 0; g < groups.size(); ++g) {
+        int64_t lin = idx[g];
+        for (int k = (int)groups[g].size() - 1; k >= 0; --k) {
+          src[groups[g][k]] = lin % shape[groups[g][k]];
+          lin /= shape[groups[g][k]];
+        }
+      }
+      idx = src;
+      m = co.getSrc();
+    } else if (auto cast = dyn_cast_or_null<memref::CastOp>(def)) {
+      m = cast.getSource();
+    } else {
+      return std::nullopt;
+    }
+  }
+  return idx;
+}
+
+// Shared-memory wavefronts of one warp instruction: 32 banks of 4 bytes, an access
+// wider than 4 bytes served per half (8 bytes) or quarter warp (16), lanes reading
+// the same word sharing it.
+int64_t wavefronts(ArrayRef<std::pair<int64_t, int64_t>> laneBytes, int64_t bytes) {
+  const int64_t span = bytes <= 4 ? kWarp : 128 / bytes, words = std::max<int64_t>(1, bytes / 4);
+  std::map<int64_t, std::map<int64_t, std::set<int64_t>>> passes;   // pass -> bank -> words
+  for (auto [lane, byte] : laneBytes)
+    for (int64_t w = 0; w < words; ++w) passes[lane % kWarp / span][(byte / 4 + w) % kWarp].insert(byte / 4 + w);
+  int64_t total = 0;
+  for (auto &[p, banks] : passes) {
+    size_t worst = 0;
+    for (auto &[bank, set] : banks) worst = std::max(worst, set.size());
+    total += (int64_t)worst;
+  }
+  return total;
+}
+
+// The layout of one scratch buffer (see Layout above). `lanes`: lanes per element.
+Layout chooseLayout(memref::AllocaOp alloca, Block *body, int64_t lanes) {
+  MemRefType type = alloca.getType();
+  ArrayRef<int64_t> shape = type.getShape();
+  const int64_t rank = shape.size();
+  const int64_t bytes = std::max<int64_t>(1, type.getElementTypeBitWidth() / 8);
+  Layout best = rowMajor(shape);
+  if (rank < 2)
+    return best;
+  // Accesses (loads and stores through views) and the boundaries a collapse fixes.
+  SmallVector<bool> fixed(rank - 1, false);
+  struct Use {
+    Value memref;
+    Operation *op;
+    ValueRange indices;
+  };
+  SmallVector<Use> uses;
+  SmallVector<Value> work{alloca.getResult()};
+  while (!work.empty()) {
+    Value v = work.pop_back_val();
+    for (Operation *user : v.getUsers()) {
+      if (auto c = dyn_cast<memref::CollapseShapeOp>(user)) {
+        if (v == alloca.getResult())
+          for (const ReassociationIndices &group : c.getReassociationIndices())
+            for (size_t k = 0; k + 1 < group.size(); ++k) fixed[group[k]] = true;
+        else
+          fixed.assign(fixed.size(), true);   // a reshape behind another view: not followed
+      }
+      if (auto view = dyn_cast<ViewLikeOpInterface>(user); view && view.getViewSource() == v) {
+        for (Value r : user->getResults()) work.push_back(r);
+      } else if (auto l = dyn_cast<memref::LoadOp>(user)) {
+        uses.push_back({v, user, l.getIndices()});
+      } else if (auto st = dyn_cast<memref::StoreOp>(user)) {
+        uses.push_back({v, user, st.getIndices()});
+      }
+    }
+  }
+  // Root indices of every access for the lanes of one element, and its weight.
+  struct Sample {
+    SmallVector<std::pair<int64_t, SmallVector<int64_t>>> lanes;   // (tid, root indices)
+    int64_t weight = 1;
+  };
+  SmallVector<Sample> samples;
+  for (const Use &u : uses) {
+    Sample s;
+    for (int64_t tid = 0; tid < std::min<int64_t>(lanes, kWarp); ++tid) {
+      IndexEval eval(tid);
+      SmallVector<int64_t> idx;
+      for (Value i : u.indices)
+        if (std::optional<int64_t> x = eval(i))
+          idx.push_back(*x);
+      if (idx.size() != u.indices.size())
+        break;
+      if (std::optional<SmallVector<int64_t>> r = rootIndices(u.memref, idx, alloca.getResult(), eval))
+        s.lanes.push_back({tid, *r});
+    }
+    IndexEval eval0(0);
+    for (Operation *p = u.op->getParentOp(); p && p != body->getParentOp(); p = p->getParentOp())
+      if (auto loop = dyn_cast<scf::ForOp>(p)) {
+        std::optional<int64_t> lb = eval0(loop.getLowerBound()), ub = eval0(loop.getUpperBound()),
+                               st = eval0(loop.getStep());
+        if (lb && ub && st && *st > 0 && *ub > *lb)
+          s.weight *= (*ub - *lb + *st - 1) / *st;
+      }
+    if (!s.lanes.empty())
+      samples.push_back(std::move(s));
+  }
+  auto cost = [&](const Layout &l) {
+    int64_t total = 0;
+    for (const Sample &s : samples) {
+      SmallVector<std::pair<int64_t, int64_t>> laneBytes;
+      for (auto &[tid, idx] : s.lanes) {
+        int64_t lin = 0;
+        for (int64_t d = 0; d < rank; ++d) lin += idx[d] * l.strides[d];
+        laneBytes.push_back({tid, lin * bytes});
+      }
+      total += s.weight * wavefronts(laneBytes, bytes);
+    }
+    return total;
+  };
+  int64_t bestCost = cost(best);
+  for (int64_t d = rank - 2; d >= 0; --d) {
+    int64_t inner = 1;
+    for (int64_t k = d + 1; k < rank; ++k) inner *= shape[k];
+    if (fixed[d] || inner < 4)
+      continue;
+    for (int64_t pad : {1, 2}) {
+      Layout l = padded(shape, d, pad);
+      const int64_t c = cost(l);
+      if (c < bestCost || (c == bestCost && l.size < best.size)) {
+        best = l;
+        bestCost = c;
+      }
+    }
+  }
+  return best;
+}
+
 // Packs an element body's scratch buffers into one shared buffer per element
 // type, G group parts of S slots each: buffers whose lifetimes (first to last
 // access, in the body's top-level order) do not overlap share slots, first fit
@@ -129,7 +404,7 @@ bool conflict(const Accesses &a, const Accesses &b) {
 // body has none in between. Each buffer becomes a view at group * S + its offset
 // (`group` null: one element per block, offset static).
 LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::AllocaOp> allocas, Value group,
-                          int64_t G) {
+                          int64_t G, int64_t lanes, bool pad) {
   DenseMap<Operation *, int> pos;
   int k = 0;
   for (Operation &op : *body) pos[&op] = k++;
@@ -139,13 +414,15 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
   };
   struct Item {
     memref::AllocaOp alloca;
+    Layout layout;
     int64_t size = 0, offset = 0;
     int first = INT_MAX, last = -1;
     Operation *firstOp = nullptr;
   };
   SmallVector<Item> items;
   for (memref::AllocaOp a : allocas) {
-    Item it{a, a.getType().getNumElements()};
+    Layout layout = pad ? chooseLayout(a, body, lanes) : rowMajor(a.getType().getShape());
+    Item it{a, layout, layout.size};
     SmallVector<Value> work{a.getResult()};
     while (!work.empty()) {
       Value v = work.pop_back_val();
@@ -209,6 +486,16 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
       placed.push_back(i);
       S = std::max(S, it.offset + it.size);
     }
+    // Several elements' lanes are served in one pass over the 32 banks (a warp for
+    // 4-byte values, a half warp for 8-byte ones) when lanes x words < 32. Their
+    // slots then must not start on the same bank, or the same access of each element
+    // conflicts (measured: 2-way on every access at p = 1). S = lanes (mod 32 /
+    // words) puts them lanes x words words apart, so they tile the banks.
+    const int64_t words = std::max<int64_t>(1, (int64_t)type.getIntOrFloatBitWidth() / 32);
+    if (group && lanes * words < 32) {
+      const int64_t period = 32 / words;
+      S += ((lanes - S) % period + period) % period;
+    }
     const unsigned at = func.getNumArguments();
     func.insertArgument(at, MemRefType::get({G * S}, type),
                         b.getDictionaryAttr(b.getNamedAttr("mir.workgroup", b.getUnitAttr())), loc);
@@ -217,8 +504,7 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
       Item &it = items[i];
       MemRefType t = it.alloca.getType();
       OpBuilder vb(it.alloca);
-      SmallVector<int64_t> strides(t.getRank(), 1);
-      for (int d = (int)t.getRank() - 2; d >= 0; --d) strides[d] = strides[d + 1] * t.getDimSize(d + 1);
+      ArrayRef<int64_t> strides = it.layout.strides;
       SmallVector<OpFoldResult> sizes, strideFolds;
       for (int d = 0; d < t.getRank(); ++d) {
         sizes.push_back(vb.getIndexAttr(t.getDimSize(d)));
@@ -243,7 +529,7 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
   return success();
 }
 
-LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
+LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padScratch) {
   if (elements.getNumLoops() != 1 || !elements.getInitVals().empty())
     return elements.emitOpError("{mir.elements} must be a one-dimensional loop without reductions");
   if (getConstantIntValue(elements.getLowerBound()[0]) != 0 || getConstantIntValue(elements.getStep()[0]) != 1)
@@ -429,7 +715,7 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
       alloca.replaceAllUsesWith(func.getArgument(at));
       alloca.erase();
     }
-  } else if (failed(packScratch(func, body, allocas, single ? Value() : group, G))) {
+  } else if (failed(packScratch(func, body, allocas, single ? Value() : group, G, L, padScratch))) {
     return failure();
   }
   if (anyScratch)   // the next element must not overwrite scratch a slower lane still reads
@@ -445,6 +731,12 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements) {
 
 struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(WarpPerElementPass)
+
+  WarpPerElementPass() = default;
+  WarpPerElementPass(const WarpPerElementPass &other) : PassWrapper(other) {}
+  Option<bool> padScratch{*this, "pad-scratch",
+                          llvm::cl::desc("choose each scratch buffer's padding by its bank conflicts"),
+                          llvm::cl::init(true)};
 
   StringRef getArgument() const final { return "mir-warp-per-element"; }
   StringRef getDescription() const final {
@@ -468,7 +760,7 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
         return signalPassFailure();
       }
       for (scf::ParallelOp p : loops)
-        if (failed(mapElements(func, p)))
+        if (failed(mapElements(func, p, padScratch)))
           return signalPassFailure();
     }
   }

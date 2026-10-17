@@ -48,6 +48,10 @@ levels) instead of the tensor-core one. After the same lowering to bufferized li
      for p >= 3, else 8: measured), written to hl_cellwise_p{p}_w{W}_sm90.ptx when
      given.
 
+--emulate --trace-shared: also count the shared-memory wavefronts of the emulated block
+0, access by access, against the conflict-free count (--mir-trace-shared; the accesses
+are listed in build/emu/trace_map.txt).
+
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
 import os
@@ -241,9 +245,13 @@ def emulate(ir, p):
     compiled for the CPU and run with 32 threads per element by
     tools/emu_hl_mma.cpp against the Knaus oracle."""
     E = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--emu-e=")), 3)
-    ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
     work = os.path.join(ROOT, "build", "emu")
     os.makedirs(work, exist_ok=True)
+    # --trace-shared: count the shared-memory wavefronts of block 0, access by access
+    # (bank conflicts); the trace ids are listed in build/emu/trace_map.txt.
+    trace = "--trace-shared" in sys.argv
+    ir = run([MIROPT, "-"] + ([f"--mir-trace-shared=map-file={os.path.join(work, 'trace_map.txt')}"] if trace else [])
+             + ["--mir-emulate-warp"], ir)
     # TSan reports point at lines of THIS text (the debug scopes below), so keep it.
     with open(os.path.join(work, "kernel_in.mlir"), "w") as f:
         f.write(ir)
@@ -281,7 +289,7 @@ def emulate(ir, p):
          "-o", os.path.join(work, "kernel.o")], "")
     exe = os.path.join(work, "emu_hl_mma")
     run(["/usr/bin/clang++", "-std=c++20", *san] + (["-DMIR_EMU_TSAN"] if tsan else []) +
-        (["-DMIR_EMU_REAL=float"] if "--f32" in sys.argv else []) +
+        (["-DMIR_EMU_REAL=float"] if "--f32" in sys.argv else []) + (["-DMIR_EMU_TRACE"] if trace else []) +
         [os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
     env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")

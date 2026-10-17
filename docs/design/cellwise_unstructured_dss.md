@@ -309,6 +309,27 @@ dimension an input does not depend on runs inside the thread: the sweep's column
 for all faces, as in the hand kernel) and fused sibling reduction loops. Remaining: 1.14x /
 1.25x of the hand kernels (BoomerAMG V-cycle not re-measured since fusion: 37.2 ms).
 
+**Shared-memory bank conflicts** (ncu, 64^3): 38% of the shared-memory wavefronts of the
+FP32 p = 7 operator and 31% of the FP64 p = 3 one were conflict replays, in kernels limited
+by L1/TEX throughput. Cause: register blocking keeps one axis inside the thread, so a
+warp's lanes spread over axes whose power-of-two strides fall on a few banks (8- and 4-way).
+At p = 1 the cause is different: several elements share a warp, and their scratch slots all
+start on the same bank (2-way on every access). `--mir-warp-per-element` now lays out each
+scratch buffer from its own accesses. Every load and store is evaluated per lane,
+counted in wavefronts, and weighted by trip count, and the cheapest of row-major and a
+padded stride wins. Element slots are offset so the elements served together tile the
+banks. The CPU tracer (`hl_gpu_pipeline.py --emulate --trace-shared`, `--mir-trace-shared`)
+counts the wavefronts per access. Its store counts match ncu's within 2%; its load counts
+are higher, because ptxas merges some loads. Wavefronts per block (loads + stores):
+
+| kernel | before | now | conflict-free |
+|---|---|---|---|
+| p = 7 FP32 | 7008 | 4524 | 4280 |
+| p = 3 FP64 | 3584 | 2552 | 2384 |
+| p = 1 FP64 | 2560 | 1504 | 1280 |
+
+Shared memory per block grows 5-8% at p = 3 / 7 and 21% at p = 1. GPU timing pending.
+
 ## Mixed precision
 
 Numpy reference: `marsir-mlir/test/cellwise_mixed_ref.py`.

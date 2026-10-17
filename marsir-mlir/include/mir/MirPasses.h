@@ -45,6 +45,7 @@ void registerWarpPerElementPass();
 void registerNoaliasDescriptorsPass();
 void registerCellwiseSchedulePass();
 void registerFusePhasesPass();
+void registerTraceSharedPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

@@ -4511,7 +4511,7 @@ $L__BB5_74:
 	.reg .f32 	%f<34>;
 	.reg .b64 	%rd<169>;
 	// demoted variable
-	.shared .align 16 .b8 __wg_cheb_first0_p1_f32_0[768];
+	.shared .align 16 .b8 __wg_cheb_first0_p1_f32_0[2560];
 	ld.param.u64 	%rd58, [cheb_first0_p1_f32_param_18];
 	mov.u32 	%r5, %ctaid.x;
 	cvt.u64.u32 	%rd162, %r5;
@@ -4554,7 +4554,7 @@ $L__BB5_74:
 	mov.u32 	%r6, %nctaid.x;
 	cvt.u64.u32 	%rd18, %r6;
 	add.s64 	%rd19, %rd58, -1;
-	mul.lo.s64 	%rd74, %rd15, 48;
+	mul.lo.s64 	%rd74, %rd15, 160;
 	mov.u64 	%rd75, __wg_cheb_first0_p1_f32_0;
 	add.s64 	%rd20, %rd75, %rd74;
 	shl.b64 	%rd76, %rd14, 2;
@@ -4919,7 +4919,7 @@ $L__BB6_28:
 	.reg .f32 	%f<52>;
 	.reg .b64 	%rd<172>;
 	// demoted variable
-	.shared .align 16 .b8 __wg_cheb_first_p1_f32_0[768];
+	.shared .align 16 .b8 __wg_cheb_first_p1_f32_0[2560];
 	ld.param.u64 	%rd56, [cheb_first_p1_f32_param_18];
 	mov.u32 	%r5, %ctaid.x;
 	cvt.u64.u32 	%rd165, %r5;
@@ -4964,7 +4964,7 @@ $L__BB6_28:
 	mov.u32 	%r6, %nctaid.x;
 	cvt.u64.u32 	%rd19, %r6;
 	add.s64 	%rd20, %rd56, -1;
-	mul.lo.s64 	%rd73, %rd16, 48;
+	mul.lo.s64 	%rd73, %rd16, 160;
 	mov.u64 	%rd74, __wg_cheb_first_p1_f32_0;
 	add.s64 	%rd21, %rd74, %rd73;
 	shl.b64 	%rd75, %rd15, 2;
@@ -5358,7 +5358,7 @@ $L__BB7_37:
 	.reg .f32 	%f<56>;
 	.reg .b64 	%rd<172>;
 	// demoted variable
-	.shared .align 16 .b8 __wg_cheb_next_p1_f32_0[768];
+	.shared .align 16 .b8 __wg_cheb_next_p1_f32_0[2560];
 	ld.param.u64 	%rd56, [cheb_next_p1_f32_param_18];
 	mov.u32 	%r5, %ctaid.x;
 	cvt.u64.u32 	%rd165, %r5;
@@ -5404,7 +5404,7 @@ $L__BB7_37:
 	mov.u32 	%r6, %nctaid.x;
 	cvt.u64.u32 	%rd19, %r6;
 	add.s64 	%rd20, %rd56, -1;
-	mul.lo.s64 	%rd73, %rd16, 48;
+	mul.lo.s64 	%rd73, %rd16, 160;
 	mov.u64 	%rd74, __wg_cheb_next_p1_f32_0;
 	add.s64 	%rd21, %rd74, %rd73;
 	shl.b64 	%rd75, %rd15, 2;

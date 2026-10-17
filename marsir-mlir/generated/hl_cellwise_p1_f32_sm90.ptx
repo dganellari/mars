@@ -83,7 +83,7 @@
 	.reg .f32 	%f<208>;
 	.reg .b64 	%rd<113>;
 	// demoted variable
-	.shared .align 16 .b8 __wg_laplacian_apply_p1_f32_0[14336];
+	.shared .align 16 .b8 __wg_laplacian_apply_p1_f32_0[17408];
 	ld.param.u64 	%rd67, [laplacian_apply_p1_f32_param_3];
 	mov.u32 	%r2, %ctaid.x;
 	cvt.u64.u32 	%rd106, %r2;
@@ -113,7 +113,7 @@
 	cvt.u64.u32 	%rd13, %r3;
 	add.s64 	%rd14, %rd67, -1;
 	mov.u64 	%rd76, __wg_laplacian_apply_p1_f32_0;
-	mul.lo.s64 	%rd77, %rd10, 224;
+	mul.lo.s64 	%rd77, %rd10, 272;
 	add.s64 	%rd78, %rd76, %rd77;
 	add.s64 	%rd79, %rd78, 64;
 	add.s64 	%rd80, %rd78, 128;
