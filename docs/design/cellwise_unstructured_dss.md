@@ -381,11 +381,32 @@ per V-cycle (36.6 -> 37.6 ms at 64^3).
 | BoomerAMG (FP64) | FP32 | 26.7 ms | 10 | 8.6e-10 | 795 ms |
 
 The FP32 V-cycle is 1.40x / 1.36x faster, and the solve 1.31x / 1.24x faster, with the
-same iterations and error. ne = 8: 7 iterations, error 6.3e-11. Compared with today's
-left-preconditioned FP64 solve (tol 1e-10; table above: 812 ms in 6 iterations, 995 ms in
-10), the right form needs 2 more iterations with the Chebyshev coarse solve, so it gains
-nothing there. With BoomerAMG it takes the same 10 iterations: 795 against 995 ms. The
-left runs did not record their error, so these two are not compared at matched accuracy.
+same iterations and error. ne = 8: 7 iterations, error 6.3e-11.
+
+Against today's left-preconditioned FP64 solve (same binary, tol 1e-10):
+- Chebyshev coarse: left takes 6 iterations, error 2.3e-11, 815 ms. Right FP32 takes 803 ms,
+  error 1.3e-11: the same time, slightly more accurate.
+- BoomerAMG: left takes 10 iterations, error 3.2e-11, 974 ms. After the same 10 iterations
+  right FP32 is at 8.6e-10, 27x less accurate. The right form reduces the true residual,
+  and the left form the preconditioned one, which for a good multigrid is close to the
+  error. So at matched accuracy the right form needs more iterations (count not measured
+  yet).
+
+Where the time goes (nsys, Chebyshev coarse; per V-cycle, from the per-call averages):
+
+| part | FP64 | FP32 | ratio |
+|---|---|---|---|
+| p = 7 operator, 3 calls | 17.9 ms (tensor cores, DMMA) | 12.6 ms (cell-wise schedule) | 1.42x |
+| p = 7 Chebyshev steps, 3 | 10.7 ms | 6.2 ms | 1.73x |
+| p = 3 operator + Chebyshev | 4.1 ms | 3.1 ms | 1.31x |
+| p = 1: 100 Chebyshev steps (200 launches) | 18.0 ms | 11.8 ms | 1.52x |
+| conversions + continuity DSS | | 1.8 ms | |
+| copies, transfers, gaps (by subtraction) | 2.0 ms | 2.1 ms | |
+| V-cycle (measured) | 52.7 ms | 37.6 ms | 1.40x |
+
+The p = 7 operator is the largest item and gains the least: 16.0 ns/element in FP32 on
+CUDA cores against 22.8 for the FP64 tensor-core kernel. With BoomerAMG at p = 1 (about
+1 ms, by subtraction), it is 47% of the FP32 V-cycle (12.6 of 26.7 ms).
 
 ## Validation
 
