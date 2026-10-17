@@ -297,10 +297,16 @@ keep their code. GH200, 64^3, deform 0.05, rotated frames:
 | solve (6 / 10 iterations) | 1130 / 1096 ms | 860 / 995 ms |
 | Chebyshev step p = 1 / p = 7 | 0.30 / 4.08 ms | 0.11 / 3.60 ms |
 | prolong / restrict 7 <-> 3 | 3.0 / 2.8 ms | 0.56 / 0.47 ms |
-| operator p = 1 / p = 3 | 0.059 / 0.45 ms | about 0.09 / 1.3 ms |
+| operator p = 1 / p = 3 | 0.060 / 0.456 ms | 0.073 / 0.634 ms |
 
 Same iterations everywhere (7 at ne = 8 on 1 rank and on 4 ranks from an ElementDomain).
-Open: the generated p = 3 and p = 1 operators trail the hand kernels.
+The operator numbers are after `--mir-fuse-phases` (phases with the same iteration space
+and only same-point dependences merged, also across non-conflicting phases, so the faces'
+same steps form one phase; p = 3: 91 -> 21 phases, 77 -> 19 barriers) and with 4 warps per
+block at p = 3 (11% faster than 8: 30 instead of 61 KB of shared memory); before fusion they
+were about 0.09 / 1.3 ms. Open: the remaining 1.2x / 1.4x, where the hand kernel keeps a
+column in registers and reuses it for all faces (one load, P outputs) while the generated
+phases load per output.
 
 ## Validation
 
