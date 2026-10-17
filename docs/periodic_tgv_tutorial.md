@@ -286,7 +286,8 @@ places that know about the halo and the periodic copies.
 
 ## 8. Running and checking
 
-Build the example (it needs a CUDA build with `-DMARS_ENABLE_HYPRE=ON`) and generate a 16³ unit
+Build the example (it needs a CUDA or HIP build with `-DMARS_ENABLE_HYPRE=ON`; for AMD see the
+HIP build in the README) and generate a 16³ unit
 cube, from the repository root:
 
 ```bash

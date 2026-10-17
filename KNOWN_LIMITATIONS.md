@@ -74,7 +74,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   built for HIP: the build and 20 release checks pass, including the cavity, channel and
   Taylor–Green examples on 1 and 4 ranks. Not tested on AMD: the Poiseuille checks (no netCDF
   there), more than one node, and performance. The `wmma_tensor` and `wgmma_tensor` assembly
-  kernels need NVIDIA tensor cores and stop with a message on AMD.
+  kernels need NVIDIA tensor cores and stop with a message on AMD. A HIP build compiles the
+  drivers of the tutorials and the release checks; the AMR and research drivers are CUDA only.
   With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
   `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
@@ -92,7 +93,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   mesh then fails at runtime with a clear error, and the binary directory format still works.
 - Multi-GPU runs: the drivers of the release tests and the tutorials select GPU
   `rank % deviceCount`. Some research drivers do not; give each of their ranks one GPU with the
-  launcher (a binding wrapper or `CUDA_VISIBLE_DEVICES`), otherwise every rank uses GPU 0.
+  launcher (a binding wrapper, `CUDA_VISIBLE_DEVICES`, or `ROCR_VISIBLE_DEVICES` on AMD), otherwise
+  every rank uses GPU 0.
 - CMake fetches cornerstone-octree, and googletest when tests are on and no system googletest
   is found, at configure time, so a network connection is needed for a fresh configure.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`

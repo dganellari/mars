@@ -1,6 +1,6 @@
 # GPU Acceleration
 
-GPU acceleration provides CUDA-based parallel processing for unstructured mesh operations, enabling high-performance computing on NVIDIA GPUs.
+GPU acceleration provides parallel processing for unstructured mesh operations on NVIDIA GPUs (CUDA) and AMD GPUs (HIP).
 
 ## Purpose
 

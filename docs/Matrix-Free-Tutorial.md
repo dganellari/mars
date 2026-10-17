@@ -69,7 +69,8 @@ On several ranks three more pieces are needed:
 
 ## Build
 
-The drivers are part of the FEM examples and need CUDA:
+The drivers are part of the FEM examples and need a CUDA or HIP build (the timings below are
+from NVIDIA GH200; for AMD see the HIP build in the README):
 
 ```bash
 cmake -B build -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_FEM_EXAMPLES=ON -DCMAKE_CUDA_ARCHITECTURES=90

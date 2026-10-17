@@ -70,7 +70,7 @@ Every kernel below is a different point on these trade-offs:
   a low-register / direct-scatter kernel; the name is historical.) The tradeoff is
   **many more atomics** — it wins when atomics are cheap (modern hardware atomics) and
   occupancy was the limiter.
-- **`Team`** — a **warp-per-element** mapping: 32 threads cooperate, lanes process the
+- **`Team`** — a **32-lane-per-element** mapping (a warp on NVIDIA, half a wavefront on AMD), lanes process the
   12 sub-control-surfaces in parallel and reduce the local matrix in **shared memory**
   before scattering, so per-thread state collapses and there are fewer *global*
   atomics. The tradeoff is that lanes 12–31 idle during the surface loop (low lane
@@ -122,7 +122,8 @@ element-specific diffusion-coefficient matrix. Two kernels offload that 8×8 ont
 **FP64 tensor cores**:
 
 - **`WmmaTensor`** — one warp per element, using the `wmma` FP64 mma API (SM80+,
-  i.e. A100/H100/GH200), with a non-tensor-core fallback below SM80.
+  i.e. A100/H100/GH200), with a non-tensor-core fallback below SM80. NVIDIA only: on AMD both
+  tensor-core kernels stop with a message.
 - **`WgmmaTensor`** — kept under its name from an experiment with Hopper's asynchronous
   `wgmma`; FP64 has no `wgmma` instruction, so it runs the same WMMA path as `WmmaTensor`.
 

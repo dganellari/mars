@@ -27,7 +27,7 @@ The main features of MARS are:
    method, Hypre BoomerAMG), validated on Poiseuille flow and the Taylor–Green vortex.
 
 5. Distributed multi-rank execution via MPI, including a per-node halo for solver
-   communication (CUDA-aware MPI) on top of the cornerstone element halo.
+   communication (GPU-aware MPI) on top of the cornerstone element halo.
 
 6. Experimental: high-order matrix-free CVFEM operators, and GPU-native adaptive mesh
    refinement (mark → refine → rebuild → solution transfer).

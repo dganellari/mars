@@ -3,7 +3,7 @@
 MARS runs distributed across multiple GPUs with MPI. Each rank owns a contiguous
 space-filling-curve (SFC) chunk of the mesh plus a halo; all mesh data lives on the
 device, and MPI is used only to partition the mesh and to exchange ghost data on the
-device (CUDA-aware MPI, no host round-trips).
+device (GPU-aware MPI, no host round-trips).
 
 This page is the conceptual overview. The concrete distributed mechanics are documented
 in detail elsewhere — this page points to them rather than re-deriving them:
