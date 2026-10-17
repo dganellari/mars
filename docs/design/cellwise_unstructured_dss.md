@@ -328,7 +328,25 @@ are higher, because ptxas merges some loads. Wavefronts per block (loads + store
 | p = 3 FP64 | 3584 | 2552 | 2384 |
 | p = 1 FP64 | 2560 | 1504 | 1280 |
 
-Shared memory per block grows 5-8% at p = 3 / 7 and 21% at p = 1. GPU timing pending.
+Shared memory per block grows 5-8% at p = 3 / 7 and 21% at p = 1.
+
+On the GPU (nsys per call, 64^3; ncu for registers): the FP32 p = 7 operator's conflicts
+fell by 94% (loads) and 73% (stores), but the kernel got slower, 4.16 -> 5.81 ms. ptxas
+went from 168 to 254 registers (6 -> 4 blocks per SM), and the kernel was still slower at
+equal registers. Every other cell-wise operator got faster:
+
+| operator | before | slot offsets | + padding |
+|---|---|---|---|
+| p = 3 FP64 | 0.547 ms | 0.566 ms* | 0.502 ms |
+| p = 3 FP32 | 0.348 ms | 0.285 ms* | 0.267 ms |
+| p = 1 FP64 | 65.0 us | 55.2 us* | 55.1 us |
+| p = 1 FP32 | 35.9 us | 32.5 us* | 32.4 us |
+
+(* measured with 32-bit shared pointers, `-nvptx-short-ptr`, which helped nowhere; at
+p = 7 it alone also pushed ptxas to 254 registers, so it is not used.) The pipeline
+therefore pads at p <= 3 only (`hl_gpu_pipeline.py`); the p = 7 FP32 operator is the
+earlier kernel again. The slot offsets apply everywhere, and the p = 1 Chebyshev steps are
+unchanged by them.
 
 ## Mixed precision
 

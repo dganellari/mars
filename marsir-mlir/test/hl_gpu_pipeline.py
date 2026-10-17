@@ -46,7 +46,8 @@ levels) instead of the tensor-core one. After the same lowering to bufferized li
      laplacian_apply_p{p}_f32, file hl_cellwise_p{p}_f32_sm90.ptx), for an FP32 V-cycle
      under right-preconditioned BiCGStab. --warps=W sets the warps per block (default 4
      for p >= 3, else 8: measured), written to hl_cellwise_p{p}_w{W}_sm90.ptx when
-     given.
+     given. Scratch padding against bank conflicts at p <= 3 only (measured; --no-pad
+     turns it off).
 
 --emulate --trace-shared: also count the shared-memory wavefronts of the emulated block
 0, access by access, against the conflict-free count (--mir-trace-shared; the accesses
@@ -126,13 +127,19 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
         # A kernel declares its shared memory statically, at most 48 KB: without --warps,
         # the warps per block are halved from that default until it fits (p = 7 in f32).
         default_warps = 4 if p >= 3 else 8
+        # Scratch padding against bank conflicts (--mir-warp-per-element): measured on
+        # GH200 at 64^3, p = 3 runs 8% (FP64) / 6% (FP32) faster with it, but the p = 7
+        # FP32 operator slower (4.16 -> 5.81 ms: ptxas goes from 168 to 254 registers,
+        # 6 -> 4 blocks per SM, and it stays slower at equal registers), so p = 7 has none.
+        pad = p <= 3 and "--no-pad" not in sys.argv
+        warp_per_element = "--mir-warp-per-element" + ("" if pad else "=pad-scratch=0")
         given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
         warps = given or default_warps
         bufferized = ir
         while True:
             ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
                       "--mir-fuse-phases", "--canonicalize", "--cse",
-                      "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
+                      warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
             if "--emulate" in sys.argv:
                 return emulate(ir, p)
             suffix = "_f32" if real == "f32" else ""
@@ -190,6 +197,8 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
     tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
     return finish(run([MIROPT, "-", "--mir-batch-elements"], ir), p, tag, no_chain,
                   stats=(mma_ir, shfl_ir, barriers))
+
+
 
 
 def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
