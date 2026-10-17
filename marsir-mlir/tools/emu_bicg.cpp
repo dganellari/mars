@@ -32,6 +32,10 @@ extern "C" {
 void MIR_CAT(_mlir_ciface_bicg_update_p_p, MIR_DSS_P)(D32*, D64*, D64*, D64*, D64*);
 void MIR_CAT(_mlir_ciface_bicg_update_s_p, MIR_DSS_P)(D32*, D64*, D64*, D64*, D64*);
 void MIR_CAT(_mlir_ciface_bicg_update_xr_p, MIR_DSS_P)(D32*, D32*, D64*, D64*, D64*, D64*, D64*, D64*, D64*, D64*);
+void MIR_CAT(_mlir_ciface_rbicg_update_p_p, MIR_DSS_P)(D32*, D32*, D64*, D64*, D64*, D64*, D64*);
+void MIR_CAT(_mlir_ciface_rbicg_update_s_p, MIR_DSS_P)(D32*, D32*, D64*, D64*, D64*, D64*, D64*);
+void MIR_CAT(_mlir_ciface_rbicg_update_xr_p, MIR_DSS_P)(D32*, D32*, D64*, D64*, D64*, D64*, D64*, D64*, D64*, D64*,
+                                                        D64*);
 void _mlir_ciface_fold_nv2(D64*, D64*, int64_t);
 void _mlir_ciface_finish_start(D64*, D64*, int64_t);
 void _mlir_ciface_finish_alpha(D64*, D64*, int64_t);
@@ -162,6 +166,54 @@ int main()
         report("update_xr x", differ(x, xref), x.size());
         report("update_xr r", differ(r, rref), r.size());
         report("update_xr partials", differ(part, pref), part.size());
+    }
+    {   // right-preconditioned form: the weighted copies and x/r from separate arrays
+        auto weight = [&](long long e, long long l) {
+            const int bit = cw::entity_bit(cw::local_entity<P>(l / (n * n), (l / n) % n, l % n));
+            return (((uint32_t)counting[e] >> bit) & 1u) ? 1.0 : 0.0;
+        };
+        std::vector<double> r = vec(E * n3), v = vec(E * n3), p = vec(E * n3), pw(E * n3, std::nan("")),
+                            s(E * n3, std::nan("")), sw(E * n3, std::nan(""));
+        std::vector<double> pref = p, pwref = pw, sref = s, swref = sw;
+        for (int32_t e : list)
+            for (int l = 0; l < n3; ++l) {
+                const long long t = (long long)e * n3 + l;
+                pref[t] = r[t] + sc[kBeta] * (p[t] - sc[kOmega] * v[t]);
+                pwref[t] = pref[t] * weight(e, l);
+                sref[t] = r[t] - sc[kAlpha] * v[t];
+                swref[t] = sref[t] * weight(e, l);
+            }
+        D64 dr = desc(r), dv = desc(v), dp = desc(p), dpw = desc(pw), ds = desc(s), dsw = desc(sw);
+        emulate(32, (long long)list.size(), [&] {
+            MIR_CAT(_mlir_ciface_rbicg_update_p_p, MIR_DSS_P)(&dl, &dcnt, &dr, &dv, &dp, &dpw, &dsc);
+        });
+        emulate(32, (long long)list.size(), [&] {
+            MIR_CAT(_mlir_ciface_rbicg_update_s_p, MIR_DSS_P)(&dl, &dcnt, &dr, &dv, &ds, &dsw, &dsc);
+        });
+        report("rbicg_update_p", differ(p, pref) + differ(pw, pwref), p.size() + pw.size());
+        report("rbicg_update_s", differ(s, sref) + differ(sw, swref), s.size() + sw.size());
+
+        std::vector<double> x = vec(E * n3), ph = vec(E * n3), sh = vec(E * n3), s2 = vec(E * n3), t = vec(E * n3),
+                            rh = vec(E * n3), r2(E * n3, std::nan("")), part(list.size() * 2, std::nan(""));
+        std::vector<double> xref = x, rref = r2, partref(part.size());
+        for (size_t w = 0; w < list.size(); ++w) {
+            const long long e = list[w], base = e * n3;
+            for (int l = 0; l < n3; ++l) {
+                xref[base + l] = x[base + l] + (sc[kAlpha] * ph[base + l] + sc[kOmega] * sh[base + l]);
+                rref[base + l] = s2[base + l] - sc[kOmega] * t[base + l];
+            }
+            partref[2 * w] = lane_sum(0, n3, [&](long long l) { return rref[base + l] * rref[base + l] * weight(e, l); });
+            partref[2 * w + 1] = lane_sum(0, n3, [&](long long l) { return rh[base + l] * rref[base + l] * weight(e, l); });
+        }
+        D64 dx = desc(x), dph = desc(ph), dsh = desc(sh), ds2 = desc(s2), dt = desc(t), drh = desc(rh), dr2 = desc(r2),
+            dpart = desc(part);
+        emulate(32, (long long)list.size(), [&] {
+            MIR_CAT(_mlir_ciface_rbicg_update_xr_p, MIR_DSS_P)(&dl, &dcnt, &dx, &dph, &dsh, &ds2, &dt, &drh, &dr2, &dsc,
+                                                               &dpart);
+        });
+        report("rbicg_update_xr x", differ(x, xref), x.size());
+        report("rbicg_update_xr r", differ(r2, rref), r2.size());
+        report("rbicg_update_xr part", differ(part, partref), part.size());
     }
     {   // fold: 101 partial pairs into 4 block pairs
         const long long count = 101, blocks = 4, per = (count + blocks - 1) / blocks;

@@ -206,6 +206,9 @@ public:
         update_p_ = function("bicg_update_p_p" + q);
         update_s_ = function("bicg_update_s_p" + q);
         update_xr_ = function("bicg_update_xr_p" + q);
+        rupdate_p_ = function("rbicg_update_p_p" + q);
+        rupdate_s_ = function("rbicg_update_s_p" + q);
+        rupdate_xr_ = function("rbicg_update_xr_p" + q);
         fold_[0] = function("fold_nv1");
         fold_[1] = function("fold_nv2");
         totals_[0] = function("totals_nv1");
@@ -240,6 +243,33 @@ public:
         std::vector<Arg> a{all(L), vec(T.counting), {x, m}, {p, m}, {sv, m}, {t, m}, {rh, m}, {r, m}, {sc, 7},
                            {partials, 2 * L}};
         launch(update_xr_, a, L, s);
+    }
+
+    // The right-preconditioned form (bicgstab_right): the same updates, plus the
+    // copies weighted by the counting bits (pw, sw: unassembled forms of p and s for
+    // the V-cycle), and x / r from separate arrays (x += alpha ph + omega sh, r = s - omega t).
+    void update_p_right(double* p, double* pw, const double* r, const double* v, const double* sc,
+                        const cellwise::UnstructuredTopology& T, cudaStream_t s)
+    {
+        const long long L = T.local, m = L * n3();
+        std::vector<Arg> a{all(L), vec(T.counting), {r, m}, {v, m}, {p, m}, {pw, m}, {sc, 7}};
+        launch(rupdate_p_, a, L, s);
+    }
+    void update_s_right(double* sv, double* sw, const double* r, const double* v, const double* sc,
+                        const cellwise::UnstructuredTopology& T, cudaStream_t s)
+    {
+        const long long L = T.local, m = L * n3();
+        std::vector<Arg> a{all(L), vec(T.counting), {r, m}, {v, m}, {sv, m}, {sw, m}, {sc, 7}};
+        launch(rupdate_s_, a, L, s);
+    }
+    void update_xr_right(double* x, double* r, const double* ph, const double* sh, const double* sv, const double* t,
+                         const double* rh, const double* sc, const cellwise::UnstructuredTopology& T, double* partials,
+                         cudaStream_t s)
+    {
+        const long long L = T.local, m = L * n3();
+        std::vector<Arg> a{all(L), vec(T.counting), {x, m}, {ph, m}, {sh, m}, {sv, m}, {t, m}, {rh, m}, {r, m},
+                           {sc, 7}, {partials, 2 * L}};
+        launch(rupdate_xr_, a, L, s);
     }
 
     // Per-element partials (count x NV) -> block partials in `blocks` (fold_blocks()
@@ -281,7 +311,8 @@ private:
         return element_list(set, local);
     }
 
-    CUfunction update_p_, update_s_, update_xr_, fold_[2], totals_[2], finish_[4], step_[4];
+    CUfunction update_p_, update_s_, update_xr_, rupdate_p_, rupdate_s_, rupdate_xr_, fold_[2], totals_[2], finish_[4],
+        step_[4];
     int fold_blocks_ = 0;
 };
 

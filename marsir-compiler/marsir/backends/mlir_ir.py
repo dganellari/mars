@@ -601,7 +601,14 @@ def emit_bicgstab(p=7):
                            range each, fixed order); grid = size(dst) / nv
       finish_<step>        block partials -> totals -> the Krylov step (one block)
       totals_nv{1,2}       block partials -> totals in sc[t0], sc[t1] (for MPI)
-      step_<step>          sc[t0], sc[t1] -> the Krylov step (after MPI)"""
+      step_<step>          sc[t0], sc[t1] -> the Krylov step (after MPI)
+    and for the right-preconditioned form (A M y = b, x = M y; the residual is the
+    assembled b - A x, so an FP32 V-cycle can be M, see cellwise_mixed_ref.py):
+      rbicg_update_p_p{p}  p = r + beta (p - omega v), and pw = p on the counting copy
+                           of each node, 0 elsewhere (an unassembled form for M)
+      rbicg_update_s_p{p}  s = r - alpha v, and sw likewise
+      rbicg_update_xr_p{p} x += alpha ph + omega sh (ph = M pw, sh = M sw), r = s - omega t,
+                           per-element partials of <r, r> and <rh, r>"""
     out = []
     out.append(_cellwise(f"bicg_update_p_p{p}", p, ["r", "v", "p"], ["p"],
                          ["%ov = arith.mulf %omega, %v_t : f64", "%d = arith.subf %p_t, %ov : f64",
@@ -617,6 +624,24 @@ def emit_bicgstab(p=7):
                           "%one = arith.constant 1.0 : f64", "%zw = arith.constant 0.0 : f64",
                           "%w = arith.select %counted, %one, %zw : f64",
                           "%rr = arith.mulf %rn, %rn : f64", "%rrw = arith.mulf %rr, %w : f64",
+                          "%hr = arith.mulf %rh_t, %rn : f64", "%hrw = arith.mulf %hr, %w : f64"],
+                         ["%xn", "%rn", "%rrw", "%hrw"], counting=True, reductions=2, scalars=("alpha", "omega")))
+    weigh = ["%one = arith.constant 1.0 : f64", "%zw = arith.constant 0.0 : f64",
+             "%w = arith.select %counted, %one, %zw : f64"]
+    out.append(_cellwise(f"rbicg_update_p_p{p}", p, ["r", "v", "p"], ["p", "pw"],
+                         ["%ov = arith.mulf %omega, %v_t : f64", "%d = arith.subf %p_t, %ov : f64",
+                          "%bd = arith.mulf %beta, %d : f64", "%pn = arith.addf %r_t, %bd : f64"] + weigh +
+                         ["%pwn = arith.mulf %pn, %w : f64"],
+                         ["%pn", "%pwn"], counting=True, scalars=("beta", "omega")))
+    out.append(_cellwise(f"rbicg_update_s_p{p}", p, ["r", "v"], ["s", "sw"],
+                         ["%av = arith.mulf %alpha, %v_t : f64", "%sn = arith.subf %r_t, %av : f64"] + weigh +
+                         ["%swn = arith.mulf %sn, %w : f64"],
+                         ["%sn", "%swn"], counting=True, scalars=("alpha",)))
+    out.append(_cellwise(f"rbicg_update_xr_p{p}", p, ["x", "ph", "sh", "s", "t", "rh"], ["x", "r"],
+                         ["%ap = arith.mulf %alpha, %ph_t : f64", "%os = arith.mulf %omega, %sh_t : f64",
+                          "%inc = arith.addf %ap, %os : f64", "%xn = arith.addf %x_t, %inc : f64",
+                          "%ot = arith.mulf %omega, %t_t : f64", "%rn = arith.subf %s_t, %ot : f64"] + weigh +
+                         ["%rr = arith.mulf %rn, %rn : f64", "%rrw = arith.mulf %rr, %w : f64",
                           "%hr = arith.mulf %rh_t, %rn : f64", "%hrw = arith.mulf %hr, %w : f64"],
                          ["%xn", "%rn", "%rrw", "%hrw"], counting=True, reductions=2, scalars=("alpha", "omega")))
     for nv in (1, 2):

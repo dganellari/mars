@@ -11,6 +11,8 @@
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 
+#include <thrust/device_vector.h>
+
 #include <cmath>
 
 namespace mars {
@@ -59,6 +61,68 @@ cellwise::SolveResult bicgstab(Apply&& apply, const Precond& precond, BicgstabPt
         apply(ws.s, ws.q);
         reduce(2, 2, precond.template per_element<true, true>(ws.q, ws.t, ws.s, stream));
         vec.update_xr(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh, sc, T, partials, stream);
+        reduce(3, 2, L);
+        res.residual = norm();
+        res.history.push_back(res.residual);
+        res.iterations = k + 1;
+        if (res.residual <= tol * res.residual0) break;
+    }
+    return res;
+}
+
+// Right-preconditioned BiCGStab on A M y = b, x = M y: the residual is the true
+// assembled b - A x and M may vary between calls, so M may be an FP32 V-cycle
+// (marsir-mlir/test/cellwise_mixed_ref.py: with left preconditioning its rounding
+// stalls the true error near 1e-8 while the recursive residual reaches the tolerance).
+// `M(b, x)`: x = M b for an unassembled b (here the counting-weighted copy pw, whose
+// DSS is p); `assemble`: a MarsirJacobi with diag = 1 (assembled, zero on Dirichlet
+// nodes, with the dot products). Stops on the assembled residual, a stricter test
+// than the left form's preconditioned one: matched accuracy needs a looser tolerance.
+template <typename Apply, typename VCycle>
+cellwise::SolveResult bicgstab_right(Apply&& apply, VCycle&& M, const MarsirJacobi& assemble, BicgstabPtx& vec,
+                                     const cellwise::UnstructuredTopology& T, const double* d_rhs, double* d_x,
+                                     MPI_Comm comm, double tol, int max_iterations, cudaStream_t stream = 0)
+{
+    const long long L = T.local, n = L * vec.values_per_element();
+    cellwise::Workspace ws(n, comm);
+    thrust::device_vector<double> pw(n), sw(n), ph(n), sh(n);
+    double *dpw = thrust::raw_pointer_cast(pw.data()), *dsw = thrust::raw_pointer_cast(sw.data()),
+           *dph = thrust::raw_pointer_cast(ph.data()), *dsh = thrust::raw_pointer_cast(sh.data());
+    double* sc = ws.red.scalars;
+    double* blocks = ws.red.partial;
+    double* host = ws.red.host;
+    double* partials = assemble.scratch;
+
+    auto reduce = [&](int step, int nv, long long count) {
+        const int b = vec.fold(nv, partials, count, blocks, stream);
+        vec.finish(step, nv, blocks, b, sc, host, comm, stream);
+    };
+    auto norm = [&] {
+        double h = 0.0;
+        MARS_CELLWISE_CK(cudaMemcpyAsync(&h, sc + cellwise::kRR, sizeof(double), cudaMemcpyDeviceToHost, stream));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream));
+        return std::sqrt(h);
+    };
+
+    MARS_CELLWISE_CK(cudaMemsetAsync(d_x, 0, n * sizeof(double), stream));
+    MARS_CELLWISE_CK(cudaMemsetAsync(ws.p, 0, n * sizeof(double), stream));
+    MARS_CELLWISE_CK(cudaMemsetAsync(ws.v, 0, n * sizeof(double), stream));
+    reduce(0, 1, assemble.template per_element<false, true>(d_rhs, ws.r, nullptr, stream));   // r = b - A 0, assembled
+    MARS_CELLWISE_CK(cudaMemcpyAsync(ws.rh, ws.r, n * sizeof(double), cudaMemcpyDeviceToDevice, stream));
+
+    cellwise::SolveResult res;
+    res.residual0 = norm();
+    res.residual = res.residual0;
+    for (int k = 0; k < max_iterations; ++k) {
+        vec.update_p_right(ws.p, dpw, ws.r, ws.v, sc, T, stream);
+        M(dpw, dph);
+        apply(dph, ws.q);
+        reduce(1, 1, assemble.template per_element<true, false>(ws.q, ws.v, ws.rh, stream));   // v = A ph
+        vec.update_s_right(ws.s, dsw, ws.r, ws.v, sc, T, stream);
+        M(dsw, dsh);
+        apply(dsh, ws.q);
+        reduce(2, 2, assemble.template per_element<true, true>(ws.q, ws.t, ws.s, stream));    // t = A sh
+        vec.update_xr_right(d_x, ws.r, dph, dsh, ws.s, ws.t, ws.rh, sc, T, partials, stream);
         reduce(3, 2, L);
         res.residual = norm();
         res.history.push_back(res.residual);
