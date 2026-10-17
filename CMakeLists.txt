@@ -10,7 +10,7 @@ endif()
 
 project(
   mars
-  VERSION 0.1.0
+  VERSION 0.1.1
   LANGUAGES "CXX" "C"
   HOMEPAGE_URL "https://github.com/dganellari/mars"
   DESCRIPTION

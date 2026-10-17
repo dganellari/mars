@@ -7,6 +7,8 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-17
+
 ### Added
 - HIP build for AMD GPUs, tested on MI300A: the tutorial examples pass their release checks on 1
   and 4 ranks, including the cavity, channel and Taylor–Green examples with Hypre built for HIP. The CUDA runtime,
@@ -134,4 +136,5 @@ re-tested for this release, also handle simplices up to dimension 4.
 See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the full stable / experimental /
 unsupported breakdown.
 
+[0.1.1]: https://github.com/dganellari/mars/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dganellari/mars/releases/tag/v0.1.0

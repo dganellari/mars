@@ -6,7 +6,7 @@ and stored on the device; the DOF numbering, the sparsity pattern and the assemb
 MARS uses the cornerstone-octree library for the SFC decomposition and the element halo, and MPI
 between GPUs.
 
-This documentation covers **v0.1.0**. The major version is 0, so the API can change between minor
+This documentation covers **v0.1.1**. The major version is 0, so the API can change between minor
 releases.
 
 ## Start here
@@ -32,7 +32,7 @@ releases.
 - **[Known limitations](https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md)**:
   what is stable, what is experimental, and what is not supported yet.
 - **[Changelog](https://github.com/dganellari/mars/blob/master/CHANGELOG.md)**: what changed in
-  v0.1.0.
+  each release.
 
 Stable in v0.1: the GPU mesh and assembly pipeline on one and on several ranks, and the
 incompressible Navier–Stokes solver on hexahedral meshes (`mars_poiseuille_flow`, `mars_tgv`,

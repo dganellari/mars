@@ -43,7 +43,7 @@ through the host.
 
 ## Releases & status ##
 
-Current release: **v0.1.0** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
+Current release: **v0.1.1** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
 experimental / unsupported breakdown (what to rely on and what is still under
 development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
 `0`, so the public API may change between minor releases.
