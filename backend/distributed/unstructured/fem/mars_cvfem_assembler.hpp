@@ -134,9 +134,10 @@ public:
                 break;
 
             case CvfemKernelVariant::Team: {
-                // Team kernel uses 32 threads per element (one warp per element)
-                int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
-                cvfem_hex_assembly_kernel_team<KeyType, RealType, 256><<<teamBlocks, blockSize, 0, config.stream>>>(
+                // 32 lanes per element; its shared arrays are sized for 256 threads, whatever --block-size says
+                constexpr int teamBlock = 256;
+                const auto teamBlocks = unsigned((numElements * size_t(laneGroup) + teamBlock - 1) / teamBlock);
+                cvfem_hex_assembly_kernel_team<KeyType, RealType, teamBlock><<<teamBlocks, teamBlock, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -481,8 +482,9 @@ public:
 #endif
 
             case CvfemKernelVariant::Team: {
-                int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
-                cvfem_hex_assembly_kernel_team<KeyType, RealType><<<teamBlocks, blockSize, 0, config.stream>>>(
+                constexpr int teamBlock = 256;
+                const auto teamBlocks = unsigned((numElements * size_t(laneGroup) + teamBlock - 1) / teamBlock);
+                cvfem_hex_assembly_kernel_team<KeyType, RealType, teamBlock><<<teamBlocks, teamBlock, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,

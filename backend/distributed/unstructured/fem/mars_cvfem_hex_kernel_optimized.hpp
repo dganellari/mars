@@ -295,16 +295,16 @@ __global__ void cvfem_hex_assembly_kernel_team(
     CSRMatrix<RealType>* matrix,
     RealType* __restrict__ d_rhs)
 {
-    // Each warp (32 threads) processes one element
-    // Within a warp: threads 0-11 handle one SCS each, others idle during SCS loop
+    // Each 32-lane group processes one element
+    // Within the group: threads 0-11 handle one SCS each, others idle during SCS loop
     // Then all threads help with assembly
 
     constexpr int THREADS_PER_ELEM = laneGroup;  // one lane group per element
-    int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / THREADS_PER_ELEM;
+    // 64-bit: the thread count passes 2^32 above 134M elements
+    const size_t elemIdx = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) / THREADS_PER_ELEM;
     int laneId = threadIdx.x % THREADS_PER_ELEM;
 
-    if (warpId >= numElements) return;
-    int elemIdx = warpId;
+    if (elemIdx >= numElements) return;
 
     // Shared memory for team scratch
     __shared__ double s_coords[BLOCK_SIZE / THREADS_PER_ELEM][8][3];

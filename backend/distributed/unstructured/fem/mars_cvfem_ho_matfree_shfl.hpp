@@ -75,7 +75,7 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
     }
     if constexpr (Recompute)        // 8 corners/element into smem, shared by the element's lanes
         for (int c = lane; c < 24; c += tpe) my_cn[c] = valid ? d_corners[e * 24 + c] : RealType(0);
-    __syncwarp();
+    syncWarp();
 
     // store-d_G base ptr -- under !Recompute compiles to the original (d_G + offset), no extra check;
     // stays null + unused under Recompute (the d_G arithmetic lives only in the !Recompute branch).
@@ -123,7 +123,7 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
                 my_y[ho_idx<N, NN>(dir, l,     s, r)] -= intf;
                 my_y[ho_idx<N, NN>(dir, l + 1, s, r)] += intf;
             }
-            __syncwarp();   // serialize the my_y accumulation across dir (column ownership is per-dir)
+            syncWarp();   // serialize the my_y accumulation across dir (column ownership is per-dir)
         }
     }
 
@@ -176,7 +176,7 @@ ho_cvfem_apply_kernel_shfl_nek(const RealType* __restrict__ d_u,
         my_u[l] = (valid && edof[l] >= 0) ? d_u[edof[l]] : RealType(0);
         my_y[l] = RealType(0);
     }
-    __syncwarp();
+    syncWarp();
 
     const GStore* Gbase = d_G + (valid ? e : 0) * (size_t)(3 * P * NN * 3);
     const int s = (lane < NN) ? lane / N : 0;
@@ -211,7 +211,7 @@ ho_cvfem_apply_kernel_shfl_nek(const RealType* __restrict__ d_u,
                 my_y[ho_idx<N, NN>(dir, l,     s, r)] -= intf;
                 my_y[ho_idx<N, NN>(dir, l + 1, s, r)] += intf;
             }
-            __syncwarp();
+            syncWarp();
         }
     }
 
