@@ -85,7 +85,8 @@ def read_events(path):
     result = []
     for line in text.splitlines():
         value = json.loads(line)
-        if not isinstance(value, dict) or value.get('event') not in shapes:
+        if (not isinstance(value, dict) or not isinstance(value.get('event'), str)
+                or value['event'] not in shapes):
             raise ValueError('unsupported trace event')
         if set(value) != shapes[value['event']] | {'event', 'exchange'} or not integer(value['exchange']):
             raise ValueError('invalid trace event')
@@ -102,7 +103,9 @@ def read_events(path):
     return result
 
 
-def active_exchange(events, rank, ranks):
+def trace_state(events, rank, ranks):
+    if not events:
+        raise ValueError('empty trace')
     current, active, setup = None, False, False
     for value in events:
         kind = value['event']
@@ -148,9 +151,46 @@ def active_exchange(events, rank, ranks):
                         current['wait'] = None
                 else:
                     current['wait'] = value
+    return current, active, setup
+
+
+def active_exchange(events, rank, ranks):
+    current, active, setup = trace_state(events, rank, ranks)
     if not setup or not active or current is None:
         raise ValueError('no unfinished exchange')
     return current
+
+
+TRACE_REJECTIONS = {
+    'trace too large': 'size_limit', 'partial final event': 'partial_record',
+    'unsupported trace event': 'unsupported_event', 'invalid trace event': 'invalid_event',
+    'invalid trace integer': 'invalid_integer', 'invalid trace flag': 'invalid_flag',
+    'untracked request': 'untracked_request', 'empty trace': 'empty_trace',
+    'nested setup': 'nested_setup', 'invalid setup return': 'invalid_setup_return',
+    'unsupported exchange': 'unsupported_exchange', 'missing exchange': 'missing_exchange',
+    'event outside active exchange': 'event_outside_exchange', 'invalid message': 'invalid_message',
+    'invalid call return': 'invalid_call_return', 'request is not a posted operation': 'unposted_request',
+    'completion without wait': 'completion_without_wait',
+}
+
+
+def rank_trace(directory, rank, ranks):
+    summary = dict(records_valid=False, state='unknown', rejection='unreadable_record')
+    try:
+        events = read_events(directory / ('protocol-{}.jsonl'.format(rank)))
+        current, active, setup = trace_state(events, rank, ranks)
+        state = ('inside_exchange' if active else 'between_exchanges' if setup and current else
+                 'setup_before_first_exchange' if setup else 'setup_returned')
+        summary.update(records_valid=True, state=state, rejection='none')
+        return summary, current if active else None
+    except FileNotFoundError:
+        summary['rejection'] = 'missing_file'
+    except ValueError as error:
+        # Only literal parser errors may cross the public boundary.
+        summary['rejection'] = TRACE_REJECTIONS.get(str(error), 'invalid_record')
+    except OSError:
+        pass
+    return summary, None
 
 
 def report(directory, ranks):
@@ -160,12 +200,19 @@ def report(directory, ranks):
     try:
         if type(ranks) is not int or not 1 <= ranks <= 4:
             raise ValueError('unsupported ranks')
-        traces = []
+        traces, summaries = [], {}
         for rank in range(ranks):
-            result['failed_check'] = 'trace_file'
-            events = read_events(directory / ('protocol-{}.jsonl'.format(rank)))
-            result['failed_check'] = 'trace_sequence'
-            traces.append(active_exchange(events, rank, ranks))
+            summary, trace = rank_trace(directory, rank, ranks)
+            summaries[str(rank)] = summary
+            traces.append(trace)
+        result['rank_trace_checks'] = summaries
+        result['failed_check'] = 'trace_records'
+        if not all(s['records_valid'] for s in summaries.values()):
+            return result
+        result['metadata_verified'] = True
+        if any(t is None for t in traces):
+            result.update(assessment='not_all_ranks_inside_exchange', failed_check='active_exchange')
+            return result
         result.update(metadata_verified=True,
                       same_exchange_ordinal=len({t['entry']['exchange'] for t in traces}) == 1,
                       same_exchange_round=len({t['entry']['round'] for t in traces}) == 1,

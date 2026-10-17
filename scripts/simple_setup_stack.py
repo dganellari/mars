@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -167,6 +168,75 @@ def communication_value(value, final_stack):
                 exchange_active_at_final_sample=(last['entered'] > last['returned'] if tracked else None))
 
 
+SIGNALS = frozenset(('SIGSEGV', 'SIGBUS', 'SIGABRT', 'SIGFPE', 'SIGILL', 'SIGTRAP',
+                     'SIGTERM', 'SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGUSR1', 'SIGUSR2',
+                     'SIGPIPE', 'SIGALRM', 'SIGCHLD', 'SIGSTOP', 'SIGCONT', 'SIGWINCH',
+                     'SIGXCPU', 'SIGXFSZ', 'SIGSYS', 'SIGURG', 'SIGIO', 'SIGPOLL',
+                     'SIGPROF', 'SIGVTALRM', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU'))
+
+
+def saved_signals(path):
+    result = dict(log_read=False, log_status='unreadable', known_signals=[], unrecognized_signal_seen=False)
+    pattern = re.compile(r'^\s*(?:Thread [0-9]+(?:\.[0-9]+)?(?: "[^"\n]*")?|Program)'
+                         r' received signal (SIG[A-Z0-9]+)[,.]')
+    found = set()
+    try:
+        if not path.is_file():
+            result['log_status'] = 'missing'
+            return result
+        if path.stat().st_size > 64 * 1024 * 1024:
+            result['log_status'] = 'size_limit'
+            return result
+        with path.open(errors='replace') as stream:
+            for line in stream:
+                match = pattern.match(line)
+                if match:
+                    found.add(match.group(1))
+    except OSError:
+        return result
+    result.update(log_read=True, log_status='read', known_signals=sorted(found & SIGNALS),
+                  unrecognized_signal_seen=bool(found - SIGNALS))
+    return result
+
+
+def inspect_protocol(source, saved, public):
+    import simple_setup_protocol as protocol
+
+    public.update(failed_check='saved_protocol_records',
+                  scope='saved_protocol_states_and_debugger_signal_names_not_fault_cause',
+                  original_stall_reproduction_verified=False, protocol_cause_verified=False,
+                  interposer_cause_verified=False)
+    ranks = saved.get('ranks_expected')
+    if (saved.get('schema') != SCHEMA or saved.get('solver_launched') is not True
+            or type(ranks) is not int or not 1 <= ranks <= 4
+            or not isinstance(saved.get('rank_stacks'), dict)
+            or set(saved['rank_stacks']) != {str(i) for i in range(ranks)}):
+        raise ValueError('missing saved rank reports')
+    stacks = {}
+    for rank in range(ranks):
+        stack = safe_report(read_json(source / 'private' / ('stack-{}.json'.format(rank))))
+        if stack != saved['rank_stacks'][str(rank)]:
+            raise ValueError('saved reports disagree')
+        stacks[str(rank)] = stack
+    public['saved_reports_consistent'] = True
+    public['failed_check'] = 'saved_signal_logs'
+    signals = {}
+    for rank in range(ranks):
+        check = saved_signals(source / 'private' / ('debugger-{}.log'.format(rank)))
+        unexpected = stacks[str(rank)]['unexpected_signal_seen']
+        check['unexpected_stop_recorded'] = unexpected
+        check['unexpected_signal_identified'] = unexpected and any(s != 'SIGINT' for s in check['known_signals'])
+        signals[str(rank)] = check
+    public.update(rank_signal_checks=signals, rank_stacks=stacks,
+                  protocol_checks=protocol.report(source / 'private', ranks),
+                  unexpected_rank_stop_seen=any(s['unexpected_signal_seen'] for s in stacks.values()),
+                  stopped_with_interposer=True, solver_launched=False)
+    public.update(comparison_status='inspection_complete', failed_check='none',
+                  assessment=('unexpected_rank_stops_require_classification'
+                              if public['unexpected_rank_stop_seen'] else 'saved_protocol_state_inspected'))
+    return 0
+
+
 def inspect_communication(source, output, public):
     # Reuse the stopped records; inspecting them must never start GDB or the solver.
     public.update(comparison_status='invalid_evidence', failed_check='saved_communication_records',
@@ -176,6 +246,8 @@ def inspect_communication(source, output, public):
         raise ValueError('output overlaps evidence')
     output.mkdir(mode=0o700)
     saved = read_json(source / 'public.json')
+    if saved.get('diagnostic_preload_used') is True:
+        return inspect_protocol(source, saved, public)
     ranks = saved.get('ranks_expected')
     if (saved.get('schema') != SCHEMA or saved.get('comparison_status') != 'diagnostic_complete'
             or saved.get('failed_check') != 'none' or type(ranks) is not int or not 1 <= ranks <= 4):
@@ -310,6 +382,8 @@ def run(pair, output, public, communication_progress=False, protocol_trace=False
         and (bool(r['main_thread_functions']) or r['setup_return_seen']) for r in reports)
     if code != 0 or not public['all_rank_stacks_present'] or any(r['debugger_error'] for r in reports):
         public.update(comparison_status='diagnostic_incomplete', failed_check='rank_stack_capture')
+    elif any(r['unexpected_signal_seen'] for r in reports):
+        public.update(comparison_status='diagnostic_incomplete', failed_check='unexpected_rank_signal')
     elif not public['all_rank_stacks_usable']:
         public.update(comparison_status='diagnostic_incomplete', failed_check='stack_unreadable')
     elif any(r['unwind_incomplete'] for r in reports):
@@ -340,7 +414,7 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--pair', type=Path)
     mode.add_argument('--inspect-dir', type=Path,
-                      help='Compare saved exchange ordinals across ranks without launching a solver.')
+                      help='Inspect saved exchange counters or protocol states/signals without launching a solver.')
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--communication-progress', action='store_true',
                         help='Track host exchange entry/return and take a second sample after all ranks resume.')

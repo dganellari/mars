@@ -173,6 +173,46 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.recheck(self.root)
 
+    def test_between_exchanges_is_valid_evidence_not_a_broken_trace(self):
+        self.fixture()
+        self.traces[1].append(dict(event='exchange_return', exchange=12345))
+        self.save()
+        result = self.result()
+        self.assertTrue(result['metadata_verified'])
+        self.assertEqual(result['assessment'], 'not_all_ranks_inside_exchange')
+        self.assertEqual(result['rank_trace_checks']['0']['state'], 'inside_exchange')
+        self.assertEqual(result['rank_trace_checks']['1']['state'], 'between_exchanges')
+        self.assertNotIn('rank_waits', result)
+
+    def test_setup_before_exchange_and_setup_return_keep_their_states(self):
+        self.fixture()
+        self.traces[0] = [dict(event='setup_entry', exchange=0)]
+        self.traces[1].extend([dict(event='exchange_return', exchange=12345),
+                               dict(event='setup_return', exchange=12345)])
+        self.save()
+        checks = self.result()['rank_trace_checks']
+        self.assertEqual(checks['0']['state'], 'setup_before_first_exchange')
+        self.assertEqual(checks['1']['state'], 'setup_returned')
+
+    def test_each_rank_keeps_its_fixed_rejection_reason(self):
+        self.fixture()
+        self.traces[0][-1]['requests'] = [9999]
+        self.traces[1][-1]['event'] = ['SECRET']
+        self.save()
+        result = self.result()
+        self.assertFalse(result['metadata_verified'])
+        self.assertEqual(result['rank_trace_checks']['0']['rejection'], 'unposted_request')
+        self.assertEqual(result['rank_trace_checks']['1']['rejection'], 'unsupported_event')
+
+    def test_missing_and_partial_files_do_not_hide_the_other_rank(self):
+        self.fixture()
+        (self.root / 'protocol-0.jsonl').unlink()
+        with (self.root / 'protocol-1.jsonl').open('a') as stream:
+            stream.write('SECRET')
+        checks = self.result()['rank_trace_checks']
+        self.assertEqual(checks['0']['rejection'], 'missing_file')
+        self.assertEqual(checks['1']['rejection'], 'partial_record')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -742,7 +742,7 @@ class SavedCaseTests(unittest.TestCase):
             (readable_report(main_thread_functions=['MPI_Wait'], unwind_incomplete=True,
                              stack_errors=['older_frame']), 0, 'diagnostic_partial', 'stack_unwind'),
             (readable_report(main_thread_functions=['MPI_Wait'], unexpected_signal_seen=True),
-             0, 'diagnostic_incomplete', 'stack_unreadable'),
+             0, 'diagnostic_incomplete', 'unexpected_rank_signal'),
             (None, 0, 'diagnostic_incomplete', 'rank_stack_capture'),
             (readable_report(main_thread_functions=['MPI_Wait']),
              255, 'diagnostic_incomplete', 'rank_stack_capture'),
@@ -880,6 +880,112 @@ class SavedCommunicationTests(unittest.TestCase):
         code, result = self.inspect()
         self.assertEqual(code, 1)
         self.assertFalse(result['saved_reports_consistent'])
+
+
+class SavedProtocolTests(unittest.TestCase):
+    setUp = SavedCommunicationTests.setUp
+    inspect = SavedCommunicationTests.inspect
+
+    def fixture(self):
+        saved = dict(schema=trace.SCHEMA, comparison_status='diagnostic_incomplete',
+                     failed_check='stack_unreadable', diagnostic_preload_used=True,
+                     solver_launched=True, ranks_expected=4, rank_stacks={})
+        for rank in range(4):
+            functions = (['hypre_DataExchangeList'] if rank == 0 else
+                         ['hypre_LocateAssumedPartition'] if rank == 1 else
+                         ['hypre_ParCSRMatrixRAPKTDevice'])
+            stack = readable_report(setup_entry_seen=True, main_thread_functions=functions,
+                                    interrupt_seen=rank < 2, unexpected_signal_seen=rank >= 2)
+            trace.write_json(self.private / ('stack-{}.json'.format(rank)), stack)
+            saved['rank_stacks'][str(rank)] = stack
+            events = [dict(event='setup_entry', exchange=0),
+                      dict(event='exchange_entry', exchange=12345, round=1,
+                           rank=rank, ranks=4, comm_world=True)]
+            if rank:
+                events.append(dict(event='exchange_return', exchange=12345))
+            (self.private / ('protocol-{}.jsonl'.format(rank))).write_text(
+                ''.join(json.dumps(v) + '\n' for v in events))
+            signal_name = 'SIGINT' if rank < 2 else 'SIGSEGV'
+            (self.private / ('debugger-{}.log'.format(rank))).write_text(
+                'SECRET_CASE_OUTPUT\nThread 1 "SECRET_NAME" received signal ' + signal_name +
+                ', PRIVATE_DESCRIPTION\n0xPRIVATE_ADDRESS\n')
+        trace.write_json(self.source / 'public.json', saved)
+
+    def test_existing_stop_is_classified_without_launch_or_library_queries(self):
+        self.fixture()
+        with patch.object(startup, 'runtime_libraries', side_effect=AssertionError('library query')), \
+                patch.object(trace.subprocess, 'Popen', side_effect=AssertionError('process launch')):
+            code, result = self.inspect()
+        self.assertEqual(code, 0)
+        self.assertTrue(result['unexpected_rank_stop_seen'])
+        self.assertFalse(result['interposer_cause_verified'])
+        self.assertFalse(result['original_stall_reproduction_verified'])
+        self.assertTrue(result['protocol_checks']['metadata_verified'])
+        checks = result['protocol_checks']['rank_trace_checks']
+        self.assertEqual(checks['0']['state'], 'inside_exchange')
+        self.assertEqual(checks['2']['state'], 'between_exchanges')
+        for rank in ('2', '3'):
+            signals = result['rank_signal_checks'][rank]
+            self.assertEqual(signals['known_signals'], ['SIGSEGV'])
+            self.assertTrue(signals['unexpected_signal_identified'])
+
+    def test_arbitrary_signal_text_never_crosses_the_public_boundary(self):
+        self.fixture()
+        (self.private / 'debugger-2.log').write_text(
+            'Thread 1 "SECRET" received signal SIGSECRETVALUE, SECRET\n'
+            'arbitrary quoted Program received signal SIGABRT, SECRET\n')
+        _, result = self.inspect()
+        check = result['rank_signal_checks']['2']
+        self.assertTrue(check['unrecognized_signal_seen'])
+        self.assertEqual(check['known_signals'], [])
+        self.assertFalse(check['unexpected_signal_identified'])
+
+    def test_missing_signal_log_is_explicit(self):
+        self.fixture()
+        (self.private / 'debugger-2.log').unlink()
+        _, result = self.inspect()
+        check = result['rank_signal_checks']['2']
+        self.assertFalse(check['log_read'])
+        self.assertTrue(check['unexpected_stop_recorded'])
+        self.assertFalse(check['unexpected_signal_identified'])
+        self.assertEqual(check['log_status'], 'missing')
+
+    def test_unreadable_log_does_not_discard_saved_stack_evidence(self):
+        path = self.private / 'debugger-0.log'
+        path.write_text('SECRET')
+        with patch.object(Path, 'open', side_effect=PermissionError('SECRET_PATH')):
+            result = trace.saved_signals(path)
+        self.assertEqual(result['log_status'], 'unreadable')
+        self.assertFalse(result['log_read'])
+        self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_bad_trace_keeps_other_states_and_signal_information(self):
+        self.fixture()
+        (self.private / 'protocol-0.jsonl').write_text('{"SECRET":')
+        _, result = self.inspect()
+        self.assertFalse(result['protocol_checks']['metadata_verified'])
+        self.assertEqual(result['protocol_checks']['rank_trace_checks']['0']['rejection'], 'partial_record')
+        self.assertEqual(result['protocol_checks']['rank_trace_checks']['1']['state'], 'between_exchanges')
+        self.assertEqual(result['rank_signal_checks']['3']['known_signals'], ['SIGSEGV'])
+
+    def test_changed_stack_refuses_inspection(self):
+        self.fixture()
+        path = self.private / 'stack-2.json'
+        value = trace.read_json(path)
+        value['unexpected_signal_seen'] = False
+        path.write_text(json.dumps(value))
+        code, result = self.inspect()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['saved_reports_consistent'])
+        self.assertNotIn('rank_signal_checks', result)
+
+    def test_program_signal_format_and_threaded_traps_are_supported(self):
+        self.fixture()
+        (self.private / 'debugger-2.log').write_text('Program received signal SIGBUS, PRIVATE\n')
+        (self.private / 'debugger-3.log').write_text('Thread 1.2 received signal SIGTRAP, PRIVATE\n')
+        _, result = self.inspect()
+        self.assertEqual(result['rank_signal_checks']['2']['known_signals'], ['SIGBUS'])
+        self.assertEqual(result['rank_signal_checks']['3']['known_signals'], ['SIGTRAP'])
 
 
 if __name__ == '__main__':

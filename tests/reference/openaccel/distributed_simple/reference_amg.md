@@ -341,7 +341,59 @@ phases or communicators. Missing records, inconsistent summaries, incomplete
 tracking, nested active exchanges or progress during the interval remain
 invalid or inconclusive. No solver settings should be changed from this flag alone.
 
+## Inspect the protocol run that stopped on signals
+
+The `simple-setup-protocol-ox40BU/trace/public.json` report records unexpected
+signals on ranks 2 and 3, stopped in `hypre_ParCSRMatrixRAPKTDevice`. Ranks 0 and
+1 were in communication; their waits may follow the other ranks stopping.
+This instrumented run does not prove the original stall's cause or establish
+that the interposer caused the new stops. Do not rerun it or ignore the signals
+before classifying the existing evidence.
+
+`--inspect-dir` now recognizes a saved protocol capture. It checks the saved
+stack reports against the public capture and exports each rank's trace state
+and a fixed parser rejection label where needed. A valid trace ending between
+exchanges is no longer described as a broken sequence. It also extracts only
+allowlisted signal names from the private GDB logs. Raw log lines, addresses,
+peer lists, tags, counters and message contents are not exported.
+
+Run this block in one terminal. It uses only the Python standard library and
+the already saved files: no rebuild, GDB process, library loading, solver launch
+or GPU allocation. The original capture is left unchanged.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-protocol-inspection-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_setup_stack.py" \
+  --inspect-dir "$scratch/simple-setup-protocol-ox40BU/trace" \
+  --output-dir "$run/check" || status=$?
+cat "$run/check/public.json"
+printf 'Share only: %s\n' "$run/check/public.json"
+exit "$status"
+)
+```
+
+`inspection_complete` means the saved records were processed, not that setup
+succeeded. `rank_signal_checks` retains missing logs and unknown signal names
+explicitly. `protocol_checks.rank_trace_checks` distinguishes valid active,
+between-exchange, pre-exchange and returned setup states from malformed data.
+Signal names come from debugger text; they do not identify the faulting
+instruction or establish the reason for the original uninstrumented wait.
+
 ## Identify the unfinished protocol stage
+
+The offline inspection above supersedes another protocol launch for the
+reported `ox40BU` result. Keep the following recipe for a future justified
+capture after its unexpected stops have been explained.
 
 The saved sequence inspection reports the same observed exchange ordinal on all
 four ranks, with no entry or return between samples. It does not identify the
