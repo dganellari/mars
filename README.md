@@ -35,8 +35,8 @@ The main features of MARS are:
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
-The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A). The
-Navier–Stokes examples need Hypre and are tested on NVIDIA GPUs only. The older Kokkos backend
+The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A),
+including the Navier–Stokes examples. The older Kokkos backend
 covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
@@ -70,9 +70,10 @@ cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
 cmake --build build -j
 ```
 
-HIP build for AMD GPUs (MI300A is `gfx942`). It builds the example programs of the tutorials and the release checks,
-except the Navier–Stokes ones, which need Hypre built for HIP. Use a C++20 host compiler (GCC 13 on
-Beverin), passed explicitly if the system `g++` is older:
+HIP build for AMD GPUs (MI300A is `gfx942`). It builds the example programs of the tutorials and the
+release checks; add `-DMARS_ENABLE_HYPRE=ON` for the Navier–Stokes ones, which need Hypre built for
+HIP (see below). Use a C++20 host compiler (GCC 13 on Beverin), passed explicitly if the system `g++`
+is older:
 
 ```bash
 cd mars
@@ -87,6 +88,21 @@ themselves:
 
 ```bash
 export MPICH_GPU_SUPPORT_ENABLED=1 MPICH_GPU_IPC_ENABLED=0
+```
+
+If no Hypre built for HIP is installed, Hypre 2.33 builds for MI300A with ROCm 7.2 given two extra
+settings: HIP code at C++17 (rocPRIM needs it), and HIP's own warp-sync functions off (Hypre defines
+its own `__syncwarp`). Then point MARS at it with `HYPRE_DIR`:
+
+```bash
+git clone --depth 1 -b v2.33.0 https://github.com/hypre-space/hypre.git
+cmake -S hypre/src -B hypre-build -DCMAKE_INSTALL_PREFIX=$PWD/hypre-install -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DBUILD_SHARED_LIBS=ON \
+      -DHYPRE_ENABLE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx942 -DHYPRE_ENABLE_GPU_AWARE_MPI=ON \
+      -DCMAKE_HIP_STANDARD=17 -DCMAKE_HIP_FLAGS=-DHIP_DISABLE_WARP_SYNC_BUILTINS \
+      -DHYPRE_ENABLE_ROCRAND=OFF -DHYPRE_ENABLE_ROCSOLVER=OFF
+cmake --build hypre-build -j && cmake --install hypre-build
+export HYPRE_DIR=$PWD/hypre-install
 ```
 
 CPU-only build. This builds the core library; the unstructured backend needs CUDA or HIP:
@@ -109,7 +125,8 @@ cd build
 ctest -L release
 ```
 
-Every test must pass: 22 tests with Hypre and netCDF, 15 without Hypre (and in a HIP build).
+Every test must pass: 22 tests with Hypre and netCDF, 20 with Hypre but without netCDF (the
+Poiseuille checks read an Exodus mesh), 15 without Hypre.
 
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson

@@ -8,15 +8,24 @@ public API may change between minor releases.
 ## [Unreleased]
 
 ### Added
-- HIP build for AMD GPUs, tested on MI300A: the tutorial examples build, and the release checks
-  without Hypre pass on 1 and 4 ranks. The CUDA runtime, cuSPARSE/cuBLAS, Thrust and CUB calls map
-  to HIP through one header layer on top of cornerstone's; warp-level kernels keep 32-lane
-  groups inside AMD's 64-lane wavefronts.
+- HIP build for AMD GPUs, tested on MI300A: the tutorial examples pass their release checks on 1
+  and 4 ranks, including the cavity, channel and Taylor–Green examples with Hypre built for HIP. The CUDA runtime,
+  cuSPARSE/cuBLAS, Thrust and CUB calls map to HIP through one header layer on top of
+  cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts. The
+  README shows how to build Hypre 2.33 for HIP.
 
 ### Changed
 - The matrix-free weak-scaling driver overlaps the halo exchange by default (`--no-overlap` to wait).
 - GPU runtime calls in the domain setup (copies, allocations, synchronizations) are checked; a
   failure stops every rank with its location instead of continuing.
+
+### Fixed
+- AMR refinement levels (used by `mars_tgv` and the AMR drivers) read cornerstone's device copy of
+  the tree leaves. They read the host copy, which only worked where the GPU can read CPU memory.
+- The `team` assembly kernel indexes elements in 64 bits (its thread index wrapped above about
+  134 million elements) and always launches the 256-thread block its shared memory is sized for
+  (`--block-size` above 256 overflowed it).
+- `HYPRE_DIR` is also searched in `lib64`.
 
 ## [0.1.0] — 2026-10-11
 
