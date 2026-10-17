@@ -215,7 +215,9 @@ public:
         // marker can correctly gate at maxLevel and reach a true adaptive
         // distribution of base + L1 + L2 cells.
         const auto& cstoneDom = domain.getDomain();
-        const auto  leavesView = cstoneDom.focusTree().treeLeaves();
+        // the device copy: treeLeaves() is cornerstone's host copy, which the GPU can only read on
+        // systems with unified CPU-GPU memory (GH200), not on MI300A
+        const auto  leavesView = cstoneDom.focusTree().treeLeavesAcc();
         size_t      numLeaves  = (leavesView.size() > 0) ? (leavesView.size() - 1) : 0;
         const KeyType* d_leaves = leavesView.data();
 
