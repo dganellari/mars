@@ -354,8 +354,18 @@ before classifying the existing evidence.
 stack reports against the public capture and exports each rank's trace state
 and a fixed parser rejection label where needed. A valid trace ending between
 exchanges is no longer described as a broken sequence. It also extracts only
-allowlisted signal names from the private GDB logs. Raw log lines, addresses,
-peer lists, tags, counters and message contents are not exported.
+allowlisted signal names from the private GDB logs. The saved inspection
+`simple-protocol-inspection-9qwk4T` identifies SIGABRT on ranks 2 and 3 and
+rejects messages on ranks 0 and 1; this is not a normal timed stall sample.
+
+The same command now extracts fixed assertion, CUDA, allocation and C++
+termination message flags from those existing logs. Three exact Hypre 2.33
+RAPKT assertions have fixed labels: coarse-product row dimensions, column
+dimensions, and diagonal ordering. Other assertion expressions remain
+unclassified. Message validation separately reports a nonpositive ID, a
+duplicate ID, or a peer outside the recorded communicator. None of these
+checks changes what records are accepted. Raw log lines, assertion expressions,
+addresses, peer lists, tags, counters and message contents are not exported.
 
 Run this block in one terminal. It uses only the Python standard library and
 the already saved files: no rebuild, GDB process, library loading, solver launch
@@ -388,6 +398,11 @@ explicitly. `protocol_checks.rank_trace_checks` distinguishes valid active,
 between-exchange, pre-exchange and returned setup states from malformed data.
 Signal names come from debugger text; they do not identify the faulting
 instruction or establish the reason for the original uninstrumented wait.
+Likewise, `abort_message_checks` and `recognized_hypre_assertions` report text
+present in a saved rank log, not a causal stack trace. `abort_cause_verified`
+remains false. An empty list does not rule out an assertion or runtime error:
+the relevant text may not have reached the log. Do not weaken an assertion,
+change AMG controls, or accept a failed solve based only on these flags.
 
 ## Identify the unfinished protocol stage
 

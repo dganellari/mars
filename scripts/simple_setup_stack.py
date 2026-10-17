@@ -175,8 +175,33 @@ SIGNALS = frozenset(('SIGSEGV', 'SIGBUS', 'SIGABRT', 'SIGFPE', 'SIGILL', 'SIGTRA
                      'SIGPROF', 'SIGVTALRM', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU'))
 
 
+# Exact expressions from Hypre 2.33 RAPKTDevice; never export arbitrary assertion text.
+RAP_ASSERTIONS = {
+    'hypre_CSRMatrixNumRows(Cbar)==hypre_ParCSRMatrixNumCols(R)+hypre_CSRMatrixNumCols(R_offd)':
+        'coarse_product_row_dimensions',
+    'hypre_CSRMatrixNumCols(Cbar)==hypre_ParCSRMatrixNumCols(P)+num_cols_offd':
+        'coarse_product_column_dimensions',
+    '!hypre_CSRMatrixCheckDiagFirstDevice(hypre_ParCSRMatrixDiag(C))':
+        'coarse_diagonal_not_first',
+}
+ABORT_MARKERS = {
+    'hypre_assertion_message_seen': r'hypre_assert failed:',
+    'c_assertion_message_seen': r'Assertion .+ failed\.',
+    'cpp_termination_message_seen': r'terminate called (?:after throwing|without an active exception)',
+    'bad_allocation_message_seen': r'\bstd::bad_alloc\b',
+    'cuda_illegal_address_message_seen': r'\bcudaErrorIllegalAddress\b|an illegal memory access was encountered',
+    'cuda_assertion_message_seen': r'\bcudaErrorAssert\b|device-side assert triggered',
+    'cuda_allocation_message_seen': r'\bcudaErrorMemoryAllocation\b',
+    'cuda_launch_failure_message_seen': r'\bcudaErrorLaunchFailure\b|unspecified launch failure',
+    'interposer_symbol_error_seen': r'^Setup protocol: required symbol unavailable:',
+}
+
+
 def saved_signals(path):
-    result = dict(log_read=False, log_status='unreadable', known_signals=[], unrecognized_signal_seen=False)
+    result = dict(log_read=False, log_status='unreadable', known_signals=[], unrecognized_signal_seen=False,
+                  abort_message_checks={key: False for key in ABORT_MARKERS},
+                  recognized_hypre_assertions=[], unclassified_hypre_assertion_seen=False,
+                  abort_cause_verified=False)
     pattern = re.compile(r'^\s*(?:Thread [0-9]+(?:\.[0-9]+)?(?: "[^"\n]*")?|Program)'
                          r' received signal (SIG[A-Z0-9]+)[,.]')
     found = set()
@@ -192,10 +217,21 @@ def saved_signals(path):
                 match = pattern.match(line)
                 if match:
                     found.add(match.group(1))
+                for key, marker in ABORT_MARKERS.items():
+                    if re.search(marker, line):
+                        result['abort_message_checks'][key] = True
+                if 'hypre_assert failed:' in line:
+                    location, expression = line.split('hypre_assert failed:', 1)
+                    label = RAP_ASSERTIONS.get(re.sub(r'\s+', '', expression))
+                    if label and re.search(r'(?:^\[|[/\\])par_csr_triplemat_device\.c,\s*[0-9]+\]\s*$', location):
+                        result['recognized_hypre_assertions'].append(label)
+                    else:
+                        result['unclassified_hypre_assertion_seen'] = True
     except OSError:
         return result
     result.update(log_read=True, log_status='read', known_signals=sorted(found & SIGNALS),
-                  unrecognized_signal_seen=bool(found - SIGNALS))
+                  unrecognized_signal_seen=bool(found - SIGNALS),
+                  recognized_hypre_assertions=sorted(set(result['recognized_hypre_assertions'])))
     return result
 
 

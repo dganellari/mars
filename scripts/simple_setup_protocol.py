@@ -131,8 +131,12 @@ def trace_state(events, rank, ranks):
             if kind == 'exchange_return':
                 active = False
             elif kind in ('send', 'recv', 'isend', 'irecv'):
-                if value['id'] <= 0 or value['id'] in current['messages'] or value['peer'] >= ranks:
-                    raise ValueError('invalid message')
+                if value['id'] <= 0:
+                    raise ValueError('nonpositive message id')
+                if value['id'] in current['messages']:
+                    raise ValueError('duplicate message id')
+                if value['peer'] >= ranks:
+                    raise ValueError('message peer outside communicator')
                 current['messages'][value['id']] = value
             elif kind == 'call_return':
                 if value['id'] not in current['messages'] or value['id'] in current['returned']:
@@ -168,7 +172,9 @@ TRACE_REJECTIONS = {
     'untracked request': 'untracked_request', 'empty trace': 'empty_trace',
     'nested setup': 'nested_setup', 'invalid setup return': 'invalid_setup_return',
     'unsupported exchange': 'unsupported_exchange', 'missing exchange': 'missing_exchange',
-    'event outside active exchange': 'event_outside_exchange', 'invalid message': 'invalid_message',
+    'event outside active exchange': 'event_outside_exchange',
+    'nonpositive message id': 'nonpositive_message_id', 'duplicate message id': 'duplicate_message_id',
+    'message peer outside communicator': 'peer_outside_communicator',
     'invalid call return': 'invalid_call_return', 'request is not a posted operation': 'unposted_request',
     'completion without wait': 'completion_without_wait',
 }

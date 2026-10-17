@@ -213,6 +213,24 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(checks['0']['rejection'], 'missing_file')
         self.assertEqual(checks['1']['rejection'], 'partial_record')
 
+    def test_message_rejections_distinguish_ids_from_peer_range(self):
+        for defect, expected in (('zero', 'nonpositive_message_id'),
+                                 ('duplicate', 'duplicate_message_id'),
+                                 ('peer', 'peer_outside_communicator')):
+            with self.subTest(defect=defect):
+                self.fixture()
+                if defect == 'zero':
+                    self.traces[0][2]['id'] = 0
+                elif defect == 'duplicate':
+                    self.traces[0].insert(3, dict(self.traces[0][2]))
+                else:
+                    self.traces[0][2]['peer'] = 12345
+                self.save()
+                result = self.result()
+                self.assertFalse(result['metadata_verified'])
+                self.assertEqual(result['rank_trace_checks']['0']['rejection'], expected)
+                self.assertTrue(result['rank_trace_checks']['1']['records_valid'])
+
 
 if __name__ == '__main__':
     unittest.main()

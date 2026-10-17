@@ -987,6 +987,73 @@ class SavedProtocolTests(unittest.TestCase):
         self.assertEqual(result['rank_signal_checks']['2']['known_signals'], ['SIGBUS'])
         self.assertEqual(result['rank_signal_checks']['3']['known_signals'], ['SIGTRAP'])
 
+    def test_saved_abort_assertion_is_classified_without_exposing_text(self):
+        self.fixture()
+        (self.private / 'debugger-2.log').write_text(
+            '[SECRET/par_csr_triplemat_device.c, 12345] hypre_assert failed: '
+            'hypre_CSRMatrixNumRows(Cbar) == hypre_ParCSRMatrixNumCols(R) + hypre_CSRMatrixNumCols(R_offd)\n'
+            "SECRET: Assertion `0' failed.\n"
+            'Thread 1 received signal SIGABRT, SECRET\n')
+        (self.private / 'debugger-3.log').write_text(
+            '[SECRET/other.c, 12345] hypre_assert failed: SECRET_CASE_VARIABLE == 12345\n'
+            'terminate called after throwing an instance of SECRET\n'
+            'Thread 1 received signal SIGABRT, SECRET\n')
+        code, result = self.inspect()
+        self.assertEqual(code, 0)
+        first, second = (result['rank_signal_checks'][str(rank)] for rank in (2, 3))
+        self.assertEqual(first['recognized_hypre_assertions'], ['coarse_product_row_dimensions'])
+        self.assertTrue(first['abort_message_checks']['hypre_assertion_message_seen'])
+        self.assertTrue(first['abort_message_checks']['c_assertion_message_seen'])
+        self.assertFalse(first['unclassified_hypre_assertion_seen'])
+        self.assertEqual(second['recognized_hypre_assertions'], [])
+        self.assertTrue(second['unclassified_hypre_assertion_seen'])
+        self.assertTrue(second['abort_message_checks']['cpp_termination_message_seen'])
+        self.assertFalse(first['abort_cause_verified'])
+        self.assertFalse(result['original_stall_reproduction_verified'])
+
+    def test_exact_assertion_and_source_are_both_required(self):
+        path = self.private / 'debugger-0.log'
+        for expression, label in trace.RAP_ASSERTIONS.items():
+            for source in ('par_csr_triplemat_device.c', 'SECRET/par_csr_triplemat_device.c', 'SECRET/other.c'):
+                with self.subTest(label=label, source=source):
+                    path.write_text('[{}, 12345] hypre_assert failed: {}\n'.format(source, expression))
+                    value = trace.saved_signals(path)
+                    matched = source.endswith('par_csr_triplemat_device.c')
+                    self.assertEqual(value['recognized_hypre_assertions'], [label] if matched else [])
+                    self.assertEqual(value['unclassified_hypre_assertion_seen'], not matched)
+                    self.assertNotIn('SECRET', json.dumps(value))
+        path.write_text('[par_csr_triplemat_device.c, 12345] hypre_assert failed: '
+                        'hypre_CSRMatrixNumCols(Cbar)==SECRET\n')
+        value = trace.saved_signals(path)
+        self.assertEqual(value['recognized_hypre_assertions'], [])
+        self.assertTrue(value['unclassified_hypre_assertion_seen'])
+
+    def test_saved_cuda_and_allocation_markers_only_export_fixed_booleans(self):
+        path = self.private / 'debugger-0.log'
+        cases = {
+            'cuda_illegal_address_message_seen': 'cudaErrorIllegalAddress SECRET_ADDRESS',
+            'cuda_assertion_message_seen': 'device-side assert triggered SECRET',
+            'cuda_allocation_message_seen': 'cudaErrorMemoryAllocation SECRET_BYTES',
+            'cuda_launch_failure_message_seen': 'unspecified launch failure SECRET_KERNEL',
+            'bad_allocation_message_seen': "terminate called after throwing an instance of 'std::bad_alloc' SECRET",
+            'interposer_symbol_error_seen': 'Setup protocol: required symbol unavailable: SECRET_SYMBOL',
+        }
+        for key, message in cases.items():
+            with self.subTest(key=key):
+                path.write_text(message + '\n')
+                value = trace.saved_signals(path)
+                self.assertTrue(value['abort_message_checks'][key])
+                self.assertNotIn('SECRET', json.dumps(value))
+                self.assertFalse(value['abort_cause_verified'])
+
+    def test_abort_without_message_does_not_invent_assertion_or_cuda_failure(self):
+        path = self.private / 'debugger-0.log'
+        path.write_text('Thread 1 received signal SIGABRT, SECRET\n')
+        value = trace.saved_signals(path)
+        self.assertEqual(value['known_signals'], ['SIGABRT'])
+        self.assertFalse(any(value['abort_message_checks'].values()))
+        self.assertEqual(value['recognized_hypre_assertions'], [])
+
 
 if __name__ == '__main__':
     unittest.main()
