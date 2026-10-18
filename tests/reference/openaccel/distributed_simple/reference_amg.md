@@ -347,8 +347,8 @@ The `simple-setup-protocol-ox40BU/trace/public.json` report records unexpected
 signals on ranks 2 and 3, stopped in `hypre_ParCSRMatrixRAPKTDevice`. Ranks 0 and
 1 were in communication; their waits may follow the other ranks stopping.
 This instrumented run does not prove the original stall's cause or establish
-that the interposer caused the new stops. Do not rerun it or ignore the signals
-before classifying the existing evidence.
+that the interposer caused the new stops. The saved inspections below classify
+the available evidence; the ownership diagnostic then targets its invalid peers.
 
 `--inspect-dir` now recognizes a saved protocol capture. It checks the saved
 stack reports against the public capture and exports each rank's trace state
@@ -419,11 +419,44 @@ does not prove an ABI mismatch and must never be used to truncate or repair
 an MPI rank. Missing abort text also does not rule out an external signal or
 an error whose message was not captured. Keep both causes unverified.
 
-## Identify the unfinished protocol stage
+## Locate invalid ownership inputs
 
-The offline inspection above supersedes another protocol launch for the
-reported `ox40BU` result. Keep the following recipe for a future justified
-capture after its unexpected stops have been explained.
+The `simple-protocol-peers-AxEHpK` inspection found out-of-range recorded peers
+on ranks 0 and 1. Those calls used the exchange communicator, had unique return
+records, and at least one returned an error on each rank. None exceeded signed
+32-bit range; reducing to the low 32 bits did not make all peers valid. The
+simple garbage-upper-bits explanation does not fit these records. The aborts
+on ranks 2 and 3 remain unexplained.
+
+Hypre 2.33's communication-package construction derives contact ranks through
+`hypre_GetAssumedPartitionProcFromRow`. For a valid global column in the declared
+partition interval, its quotient/remainder formula returns a valid rank. An
+out-of-range column can instead produce an out-of-range peer. This source fact
+does not establish which occurred in this run.
+
+The next bounded capture adds an ownership-lookup hook. It records only whether
+the scalar input is in its declared interval, whether the communicator query
+succeeded and refers to world, whether the returned owner is in range, and
+whether Hypre returned a nonzero error flag. It neither reads matrix arrays nor
+records indices, sizes or field values. It forwards the unchanged arguments to
+the captured Hypre library; an invalid input is recorded before the call in case
+the routine aborts. No invalid index or peer is repaired.
+
+`protocol_checks.rank_trace_checks.<rank>.partition_checks` distinguishes
+`input_out_of_range` from `invalid_owner_from_valid_input`. The latter directs
+attention to the lookup/runtime rather than the caller's index. Valid observed
+lookups do not rule out corruption later or peers produced by another path.
+`no_lookup_observed`, unsupported communicators and incomplete records remain
+inconclusive. Old captures report `not_recorded` and cannot answer this question.
+The returned Hypre error flag may predate the lookup. These flags do not prove
+an ABI defect, explain SIGABRT, or reproduce the original uninstrumented stall.
+
+The ownership trace stops at 100,000 records per rank; truncation invalidates its
+assessment. Private file writes can slow setup, so this remains a bounded
+diagnostic rather than a timing measurement. The following recipe supersedes
+further offline reclassification of `ox40BU` for the ownership question.
+
+## Capture ownership and protocol checks
 
 The saved sequence inspection reports the same observed exchange ordinal on all
 four ranks, with no entry or return between samples. It does not identify the
@@ -468,7 +501,7 @@ python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
 umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
-run=$(mktemp -d "$scratch/simple-setup-protocol-XXXXXX")
+run=$(mktemp -d "$scratch/simple-setup-ownership-XXXXXX")
 printf 'Private diagnostic directory: %s\n' "$run"
 status=0
 python3 "$repo/scripts/simple_setup_stack.py" \
@@ -496,6 +529,12 @@ refusal and inferior-only preload. The standalone public
 matrix and runs HMIS/interpolation setup. The interposer was compiled with
 warnings as errors and exercised with real CPU Hypre 2.33/OpenMPI on 1, 2 and 4
 local ranks. Every setup completed and its exchange records passed parsing.
+The added ownership hook reports valid lookups on the two- and four-rank
+fixtures; the one-rank setup does not call it. The fixture's `--partition-check`
+mode checks one valid and one deliberately invalid public index on every rank,
+without sending the invalid peer to MPI. All three rank counts complete and
+report `input_out_of_range`. Python tests cover invalid owners from valid
+inputs, incomplete calls, malformed records and privacy.
 This does not validate the Linux preload or CUDA/Cray execution; the bounded
 user-run diagnostic supplies that evidence.
 

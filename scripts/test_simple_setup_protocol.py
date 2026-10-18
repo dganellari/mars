@@ -284,6 +284,74 @@ class ProtocolTests(unittest.TestCase):
         for rank in ('0', '1'):
             self.assertNotIn('invalid_peer_checks', result['rank_trace_checks'][rank])
 
+    def partition_fixture(self, valid_input=True, valid_owner=True):
+        return [dict(event='setup_entry'),
+                dict(event='lookup', id=1, input_in_range=valid_input, size_query_ok=True, comm_world=True),
+                dict(event='lookup_return', id=1, owner_in_range=valid_owner, hypre_error_nonzero=False)]
+
+    def partition_result(self, events):
+        path = self.root / 'partition-0.jsonl'
+        path.write_text(''.join(json.dumps(v) + '\n' for v in events))
+        result = protocol.partition_checks(path)
+        for private in ('SECRET', '12345', str(self.root)):
+            self.assertNotIn(private, json.dumps(result))
+        self.assertFalse(result['original_stall_cause_verified'])
+        return result
+
+    def test_partition_input_error_and_owner_error_are_distinct(self):
+        for valid_input, valid_owner, assessment in ((True, True, 'lookups_in_range'),
+                (False, False, 'input_out_of_range'), (True, False, 'invalid_owner_from_valid_input')):
+            with self.subTest(assessment=assessment):
+                result = self.partition_result(self.partition_fixture(valid_input, valid_owner))
+                self.assertTrue(result['records_valid'])
+                self.assertEqual(result['assessment'], assessment)
+                self.assertEqual(result['any_input_out_of_range'], not valid_input)
+                self.assertEqual(result['any_valid_input_produced_invalid_owner'], valid_input and not valid_owner)
+
+    def test_partition_pending_lookup_is_preserved_on_abort(self):
+        result = self.partition_result(self.partition_fixture(False)[:-1])
+        self.assertTrue(result['records_valid'])
+        self.assertTrue(result['lookup_incomplete'])
+        self.assertTrue(result['any_input_out_of_range'])
+        self.assertFalse(result['any_valid_input_produced_invalid_owner'])
+
+    def test_partition_refuses_payloads_and_broken_sequence(self):
+        for mode in ('payload', 'return_id', 'duplicate_return', 'duplicate_setup', 'flag_type', 'outside_setup', 'empty', 'truncated'):
+            with self.subTest(mode=mode):
+                events = self.partition_fixture()
+                if mode == 'payload': events[1]['column'] = 'SECRET12345'
+                elif mode == 'return_id': events[-1]['id'] = 12345
+                elif mode == 'duplicate_return': events.append(dict(events[-1]))
+                elif mode == 'duplicate_setup': events.insert(1, dict(events[0]))
+                elif mode == 'flag_type': events[1]['input_in_range'] = 1
+                elif mode == 'empty': events = []
+                elif mode == 'truncated': events.append(dict(event='truncated'))
+                else: events.pop(0)
+                self.assertFalse(self.partition_result(events)['records_valid'])
+
+    def test_partition_missing_and_no_lookup_are_distinct(self):
+        path = self.root / 'missing.jsonl'
+        self.assertEqual(protocol.partition_checks(path)['assessment'], 'not_recorded')
+        result = self.partition_result([dict(event='setup_entry')])
+        self.assertTrue(result['records_valid'])
+        self.assertEqual(result['assessment'], 'no_lookup_observed')
+
+    def test_partition_query_failure_and_nonworld_scope_remain_unverified(self):
+        for key in ('size_query_ok', 'comm_world'):
+            events = self.partition_fixture()
+            events[1][key] = False
+            result = self.partition_result(events)
+            self.assertEqual(result['assessment'], 'communicator_unverified')
+
+    def test_partition_checks_survive_invalid_message_records(self):
+        self.fixture()
+        self.partition_result(self.partition_fixture(False, False))
+        self.traces[0][2]['peer'] = 12345
+        self.save()
+        result = self.result()
+        self.assertFalse(result['metadata_verified'])
+        self.assertEqual(result['rank_trace_checks']['0']['partition_checks']['assessment'], 'input_out_of_range')
+
 
 if __name__ == '__main__':
     unittest.main()

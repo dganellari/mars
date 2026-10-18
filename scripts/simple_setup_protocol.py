@@ -205,8 +205,73 @@ def invalid_peer_checks(events, ranks):
         mpi_argument_corruption_verified=False, abi_mismatch_verified=False)
 
 
+def partition_checks(path):
+    result = dict(records_valid=False, assessment='not_recorded', lookup_seen=False,
+                  scope='scalar_ownership_lookup_checks_no_indices_or_matrix_payloads',
+                  original_stall_cause_verified=False)
+    try:
+        if not path.is_file():
+            return result
+        result['assessment'] = 'invalid_records'
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return result
+        text = path.read_text()
+        if not text.endswith('\n'):
+            return result
+        setup, pending, last, entries = False, None, 0, 0
+        invalid_input = invalid_owner = query_error = context_differs = hypre_error = False
+        for line in text.splitlines():
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                return result
+            kind = value.get('event')
+            if kind in ('setup_entry', 'setup_return'):
+                if set(value) != {'event'} or pending is not None or setup == (kind == 'setup_entry'):
+                    return result
+                setup = kind == 'setup_entry'
+                entries += int(setup)
+            elif kind == 'lookup':
+                flags = {'input_in_range', 'size_query_ok', 'comm_world'}
+                if (not setup or pending is not None or set(value) != flags | {'event', 'id'}
+                        or not integer(value['id']) or value['id'] != last + 1
+                        or any(type(value[k]) is not bool for k in flags)):
+                    return result
+                pending, last = value, value['id']
+                invalid_input |= not value['input_in_range']
+                query_error |= not value['size_query_ok']
+                context_differs |= not value['comm_world']
+            elif kind == 'lookup_return':
+                flags = {'owner_in_range', 'hypre_error_nonzero'}
+                if (pending is None or set(value) != flags | {'event', 'id'}
+                        or not integer(value['id']) or value['id'] != pending['id']
+                        or any(type(value[k]) is not bool for k in flags)):
+                    return result
+                invalid_owner |= pending['input_in_range'] and pending['size_query_ok'] and not value['owner_in_range']
+                hypre_error |= value['hypre_error_nonzero']
+                pending = None
+            else:
+                return result
+        if not entries:
+            return result
+        result.update(records_valid=True, lookup_seen=last > 0,
+                      any_input_out_of_range=invalid_input,
+                      any_valid_input_produced_invalid_owner=invalid_owner,
+                      any_communicator_query_failed=query_error,
+                      any_nonworld_communicator=context_differs,
+                      any_hypre_error_return=hypre_error, lookup_incomplete=pending is not None,
+                      assessment=('no_lookup_observed' if not last else
+                                  'communicator_unverified' if query_error or context_differs else
+                                  'input_out_of_range' if invalid_input else
+                                  'invalid_owner_from_valid_input' if invalid_owner else
+                                  'lookup_incomplete' if pending is not None else 'lookups_in_range'))
+    except (OSError, ValueError, TypeError):
+        result['assessment'] = 'invalid_records'
+    return result
+
+
 def rank_trace(directory, rank, ranks):
-    summary = dict(records_valid=False, state='unknown', rejection='unreadable_record')
+    summary = dict(records_valid=False, state='unknown', rejection='unreadable_record',
+                   partition_checks=partition_checks(directory / ('partition-{}.jsonl'.format(rank))))
     try:
         events = read_events(directory / ('protocol-{}.jsonl'.format(rank)))
         peer_checks = invalid_peer_checks(events, ranks)

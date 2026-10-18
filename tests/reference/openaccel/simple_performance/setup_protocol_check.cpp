@@ -6,6 +6,21 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <dlfcn.h>
+
+// Exercise the hook with an invalid public index without sending it to MPI.
+static HYPRE_Int partition_setup(HYPRE_Solver, HYPRE_ParCSRMatrix, HYPRE_ParVector, HYPRE_ParVector) {
+    using Lookup = HYPRE_Int(*)(MPI_Comm,HYPRE_BigInt,HYPRE_BigInt,HYPRE_BigInt,HYPRE_Int*);
+    auto lookup = reinterpret_cast<Lookup>(dlsym(RTLD_DEFAULT, "hypre_GetAssumedPartitionProcFromRow"));
+    int rank, ranks;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+    HYPRE_Int owner = -1;
+    const HYPRE_BigInt total = 40 * ranks;
+    if (!lookup || lookup(MPI_COMM_WORLD, 40 * rank, 0, total, &owner) || owner != rank) return 1;
+    if (lookup(MPI_COMM_WORLD, total, 0, total, &owner) || owner != ranks) return 1;
+    return 0;
+}
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -47,7 +62,9 @@ int main(int argc, char** argv) {
     HYPRE_BoomerAMGSetCoarsenType(amg, 10);
     HYPRE_BoomerAMGSetInterpType(amg, 6);
     HYPRE_BoomerAMGSetMaxCoarseSize(amg, 9);
-    HYPRE_ParCSRGMRESSetPrecond(solver, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
+    const bool partition_test = argc == 2 && std::string(argv[1]) == "--partition-check";
+    HYPRE_ParCSRGMRESSetPrecond(solver, HYPRE_BoomerAMGSolve,
+                              partition_test ? partition_setup : HYPRE_BoomerAMGSetup, amg);
     int code = HYPRE_ParCSRGMRESSetup(solver, a, b, x);
     HYPRE_ParCSRGMRESDestroy(solver);
     HYPRE_BoomerAMGDestroy(amg);

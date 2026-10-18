@@ -18,8 +18,11 @@ extern "C" {
 namespace {
 struct Trace {
     FILE* file = nullptr;
+    FILE* partition_file = nullptr;
     bool setup = false, active = false, failed = false;
+    bool partition_failed = false;
     unsigned long exchange = 0, next = 0, lines = 0;
+    unsigned long lookup = 0, partition_lines = 0;
     MPI_Comm comm = MPI_COMM_NULL;
     std::map<MPI_Request*, unsigned long> requests;
     std::string wait;
@@ -51,7 +54,20 @@ void emit(const std::string& value) {
     if (std::fprintf(trace.file, "%s\n", value.c_str()) < 0 || std::fflush(trace.file)) trace.failed = true;
 }
 
+void emit_partition(const std::string& value) {
+    if (!trace.partition_file || trace.partition_failed) return;
+    if (++trace.partition_lines > 100000) {
+        std::fputs("{\"event\":\"truncated\"}\n", trace.partition_file);
+        std::fflush(trace.partition_file);
+        trace.partition_failed = true;
+        return;
+    }
+    if (std::fprintf(trace.partition_file, "%s\n", value.c_str()) < 0 || std::fflush(trace.partition_file))
+        trace.partition_failed = true;
+}
+
 std::string number(long long value) { return std::to_string(value); }
+const char* flag(bool value) { return value ? "true" : "false"; }
 std::string event(const char* name) {
     return "{\"event\":\"" + std::string(name) + "\",\"exchange\":" + number(trace.exchange);
 }
@@ -65,8 +81,13 @@ void begin_setup() {
         std::string path = std::string(directory) + "/protocol-" + rank + ".jsonl";
         trace.file = std::fopen(path.c_str(), "wx");
     }
+    if (!trace.partition_file) {
+        std::string path = std::string(directory) + "/partition-" + rank + ".jsonl";
+        trace.partition_file = std::fopen(path.c_str(), "wx");
+    }
     trace.setup = true;
     emit(event("setup_entry") + "}");
+    emit_partition("{\"event\":\"setup_entry\"}");
 }
 
 unsigned long message(const char* name, HYPRE_Int peer, HYPRE_Int tag,
@@ -115,6 +136,7 @@ extern "C" HYPRE_Int HYPRE_ParCSRGMRESSetup(HYPRE_Solver solver, HYPRE_ParCSRMat
     static auto real = next_function<decltype(&HYPRE_ParCSRGMRESSetup)>("HYPRE_ParCSRGMRESSetup");
     begin_setup();
     const auto code = real(solver, matrix, rhs, x);
+    emit_partition("{\"event\":\"setup_return\"}");
     emit(event("setup_return") + "}"); trace.setup = false;
     return code;
 }
@@ -124,7 +146,31 @@ extern "C" HYPRE_Int HYPRE_ParCSRFlexGMRESSetup(HYPRE_Solver solver, HYPRE_ParCS
     static auto real = next_function<decltype(&HYPRE_ParCSRFlexGMRESSetup)>("HYPRE_ParCSRFlexGMRESSetup");
     begin_setup();
     const auto code = real(solver, matrix, rhs, x);
+    emit_partition("{\"event\":\"setup_return\"}");
     emit(event("setup_return") + "}"); trace.setup = false;
+    return code;
+}
+
+extern "C" HYPRE_Int hypre_GetAssumedPartitionProcFromRow(MPI_Comm comm, HYPRE_BigInt row,
+    HYPRE_BigInt first, HYPRE_BigInt count, HYPRE_Int* owner) {
+    using Function = HYPRE_Int(*)(MPI_Comm,HYPRE_BigInt,HYPRE_BigInt,HYPRE_BigInt,HYPRE_Int*);
+    static auto real = next_function<Function>("hypre_GetAssumedPartitionProcFromRow");
+    if (!trace.setup) return real(comm,row,first,count,owner);
+    int size = 0, comparison = MPI_UNEQUAL;
+    const bool size_ok = PMPI_Comm_size(comm, &size) == MPI_SUCCESS && size > 0;
+    const bool world = PMPI_Comm_compare(comm, MPI_COMM_WORLD, &comparison) == MPI_SUCCESS && comparison == MPI_IDENT;
+    // Unsigned subtraction avoids overflow even for malformed signed indices.
+    const bool in_range = count > 0 && row >= first &&
+        static_cast<unsigned long long>(row) - static_cast<unsigned long long>(first) <
+        static_cast<unsigned long long>(count);
+    const auto id = ++trace.lookup;
+    const std::string key = ",\"id\":" + number(id);
+    emit_partition("{\"event\":\"lookup\"" + key + ",\"input_in_range\":" + flag(in_range) +
+                   ",\"size_query_ok\":" + flag(size_ok) + ",\"comm_world\":" + flag(world) + "}");
+    const auto code = real(comm,row,first,count,owner);
+    emit_partition("{\"event\":\"lookup_return\"" + key + ",\"owner_in_range\":" +
+                   flag(size_ok && owner && *owner >= 0 && *owner < size) +
+                   ",\"hypre_error_nonzero\":" + flag(code != 0) + "}");
     return code;
 }
 
