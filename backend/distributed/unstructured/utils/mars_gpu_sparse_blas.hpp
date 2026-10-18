@@ -36,6 +36,7 @@
 #define cublasDaxpy hipblasDaxpy
 #define cublasDcopy hipblasDcopy
 #define cublasDdot hipblasDdot
+#define cublasDgemm hipblasDgemm
 #define cublasDestroy hipblasDestroy
 #define cublasDgemv hipblasDgemv
 #define cublasDscal hipblasDscal

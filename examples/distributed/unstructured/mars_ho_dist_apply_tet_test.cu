@@ -11,7 +11,7 @@
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet_gpu.hpp"
 #include <mpi.h>
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>

@@ -33,7 +33,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/execution_policy.h>
 
 #include <memory>
 #include <mpi.h>

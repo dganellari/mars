@@ -16,7 +16,7 @@
 #include "backend/distributed/unstructured/fem/mars_spectral_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <cstdio>
 #include <cmath>
 #include <random>

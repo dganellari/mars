@@ -7,29 +7,11 @@ if(NOT MARS_ENABLE_UNSTRUCTURED OR NOT (MARS_ENABLE_CUDA OR MARS_ENABLE_HIP))
     return()
 endif()
 
-# AMD GPUs: the documented drivers and the drivers of the release checks. The other drivers below use
-# CUDA-only libraries (cuSPARSE, cuBLAS, the driver API) or FP64 tensor cores.
+# CUDA and HIP build the same drivers. Source-file properties are directory-scoped, so the top-level
+# LANGUAGE HIP setting does not reach the sources here.
 if(MARS_ENABLE_HIP)
-    set(_mars_hip_drivers mars_cvfem_graph mars_cvfem_graph_tet mars_cvfem_poisson mars_ex1_poisson
-                          mars_cvfem_ho_matfree_test mars_ho_dist_apply_test mars_cvfem_ho_weakscale)
-    if(MARS_ENABLE_HYPRE)
-        list(APPEND _mars_hip_drivers mars_poiseuille_flow mars_tgv mars_lid_driven_cavity)
-    endif()
-    foreach(_driver IN LISTS _mars_hip_drivers)
-        set_source_files_properties(${_driver}.cu PROPERTIES LANGUAGE HIP)
-        add_executable(${_driver} ${_driver}.cu)
-        target_link_libraries(${_driver} PRIVATE mars)
-        install(TARGETS ${_driver} RUNTIME DESTINATION bin/examples)
-    endforeach()
-    target_compile_definitions(mars_cvfem_graph PRIVATE MARS_DISABLE_NVTX)
-    target_compile_definitions(mars_cvfem_graph_tet PRIVATE MARS_DISABLE_NVTX)
-    if(TARGET mars_tgv)
-        target_include_directories(mars_tgv PRIVATE ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr)
-    endif()
-    if(MARS_ENABLE_TESTS)
-        include(${CMAKE_SOURCE_DIR}/tests/release/ReleaseTests.cmake)
-    endif()
-    return()
+    file(GLOB _mars_example_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cu)
+    set_source_files_properties(${_mars_example_sources} PROPERTIES LANGUAGE HIP)
 endif()
 
 # Poisson example - simple user-facing template
@@ -58,12 +40,12 @@ install(TARGETS mars_cvfem_full RUNTIME DESTINATION bin/examples)
 
 # CVFEM matrix-free vs matrix-based (assembled CSR + cuSPARSE SpMV) comparison
 add_executable(mars_cvfem_matfree_compare mars_cvfem_matfree_compare.cu)
-target_link_libraries(mars_cvfem_matfree_compare PRIVATE mars CUDA::cusparse)
+target_link_libraries(mars_cvfem_matfree_compare PRIVATE mars)
 install(TARGETS mars_cvfem_matfree_compare RUNTIME DESTINATION bin/examples)
 
 # HO matrix-free CVFEM (Knaus Alg 2) vs assembled CSR + cuSPARSE SpMV (p=1 order comparison)
 add_executable(mars_cvfem_ho_compare mars_cvfem_ho_compare.cu)
-target_link_libraries(mars_cvfem_ho_compare PRIVATE mars CUDA::cusparse)
+target_link_libraries(mars_cvfem_ho_compare PRIVATE mars)
 install(TARGETS mars_cvfem_ho_compare RUNTIME DESTINATION bin/examples)
 
 # CVFEM weak-scaling with procedural per-rank cube generation (no mesh file) -> trillions
@@ -108,7 +90,7 @@ install(TARGETS mars_cvfem_ho_tet_test RUNTIME DESTINATION bin/examples)
 
 # High-order TET single-GPU perf sweep (throughput + B/DOF, hex-talk counterpart numbers)
 add_executable(mars_ho_tet_perf mars_ho_tet_perf.cu)
-target_link_libraries(mars_ho_tet_perf PRIVATE mars CUDA::cublas)
+target_link_libraries(mars_ho_tet_perf PRIVATE mars)
 install(TARGETS mars_ho_tet_perf RUNTIME DESTINATION bin/examples)
 
 # Optimized HO-CVFEM matrix-free diffusion apply: GPU bit-exact + patch + perf gate

@@ -10,8 +10,8 @@
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_tet.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet_gpu.hpp"
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_sparse_blas.hpp"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>

@@ -17,6 +17,9 @@
 // recomputed from the collapse Jacobian at apply time (matrix-free style, no stored d_G).
 
 #include "mars_ho_tet_basis.hpp"
+#if defined(USE_CUDA)
+#include "../utils/mars_gpu_runtime.hpp"
+#endif
 #include <vector>
 #include <array>
 #include <cmath>

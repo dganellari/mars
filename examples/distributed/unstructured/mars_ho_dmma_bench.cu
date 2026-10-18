@@ -18,7 +18,7 @@
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_dmma.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <array>
 #include <cstdio>
 #include <cmath>

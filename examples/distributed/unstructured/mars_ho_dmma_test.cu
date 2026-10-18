@@ -15,7 +15,7 @@
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_dmma.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <array>
 #include <cstdio>
 #include <cmath>
@@ -116,11 +116,11 @@ bool runDmmaParity(int E)
     };
 
     // DMMA path: one warp per element, dynamic smem opt-in handled by the
-    // header launcher. block is fixed at 128 (4 warps) to match the launcher.
+    // header launcher, with its default block (4 elements on CUDA, 2 on AMD).
     auto applyDmma = [&](const std::vector<Real>& u, std::vector<Real>& y) -> bool {
         CK(cudaMemcpy(dU, u.data(), nDof*sizeof(Real), cudaMemcpyHostToDevice));
         CK(cudaMemset(dY, 0, nDof*sizeof(Real)));
-        CK((ho_laplacian_dmma_launch<Real, P, 128>(dU, dY, dElemDof, dD, dG, nEl)));
+        CK((ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl)));
         CK(cudaDeviceSynchronize());
         y.resize(nDof);
         CK(cudaMemcpy(y.data(), dY, nDof*sizeof(Real), cudaMemcpyDeviceToHost));
@@ -171,6 +171,7 @@ int main()
 {
     bool ok = true;
     ok &= runDmmaParity<7>(2);
+    ok &= runDmmaParity<7>(3);   // 27 elements: an odd count leaves the last element without a partner
     printf("DMMA FP64 tensor-core Laplacian parity (vs scalar reference): %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

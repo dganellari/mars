@@ -17,7 +17,7 @@
 #include <thrust/reduce.h>
 #include <thrust/inner_product.h>
 #include <thrust/transform.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/execution_policy.h>
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>

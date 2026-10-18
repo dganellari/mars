@@ -16,7 +16,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/inner_product.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/execution_policy.h>
 #include <mpi.h>
 #include <chrono>
 #include <iomanip>

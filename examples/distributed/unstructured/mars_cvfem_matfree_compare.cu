@@ -19,8 +19,8 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_matfree.hpp"
 
-#include <cusparse.h>
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_sparse_blas.hpp"
 #include <mpi.h>
 #include <cstdio>
 #include <cmath>
