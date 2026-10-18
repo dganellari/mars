@@ -180,10 +180,38 @@ TRACE_REJECTIONS = {
 }
 
 
+def invalid_peer_checks(events, ranks):
+    # Inspect only serialized call metadata; never repair a rank or accept the trace.
+    messages = [v for v in events if v['event'] in ('send', 'recv', 'isend', 'irecv')]
+    invalid = [v for v in messages if v['peer'] >= ranks]
+    if not invalid:
+        return None
+    identities = Counter((v['exchange'], v['id']) for v in messages)
+    returns = {}
+    for value in events:
+        if value['event'] == 'call_return':
+            returns.setdefault((value['exchange'], value['id']), []).append(value['ok'])
+    statuses = [returns.get((v['exchange'], v['id']), []) for v in invalid]
+    unambiguous = all(identities[(v['exchange'], v['id'])] == 1 and len(s) == 1
+                      for v, s in zip(invalid, statuses))
+    return dict(
+        scope='serialized_call_arguments_not_verified_mpi_arguments_or_abi',
+        call_kinds=sorted({v['event'] for v in invalid}),
+        all_use_exchange_communicator=all(v['same_comm'] for v in invalid),
+        all_have_unique_return_records=unambiguous,
+        all_calls_reported_success=all(s[0] for s in statuses) if unambiguous else None,
+        any_peer_exceeds_signed_32_bit=any(v['peer'] > 2**31 - 1 for v in invalid),
+        all_low_32_bits_are_valid_ranks=all((v['peer'] & (2**32 - 1)) < ranks for v in invalid),
+        mpi_argument_corruption_verified=False, abi_mismatch_verified=False)
+
+
 def rank_trace(directory, rank, ranks):
     summary = dict(records_valid=False, state='unknown', rejection='unreadable_record')
     try:
         events = read_events(directory / ('protocol-{}.jsonl'.format(rank)))
+        peer_checks = invalid_peer_checks(events, ranks)
+        if peer_checks is not None:
+            summary['invalid_peer_checks'] = peer_checks
         current, active, setup = trace_state(events, rank, ranks)
         state = ('inside_exchange' if active else 'between_exchanges' if setup and current else
                  'setup_before_first_exchange' if setup else 'setup_returned')

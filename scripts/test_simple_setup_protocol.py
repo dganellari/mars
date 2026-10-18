@@ -231,6 +231,59 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(result['rank_trace_checks']['0']['rejection'], expected)
                 self.assertTrue(result['rank_trace_checks']['1']['records_valid'])
 
+    def test_invalid_peer_context_keeps_return_and_integer_width_checks(self):
+        self.fixture()
+        self.traces[0][2]['peer'] = 2**40 + 1
+        self.save()
+        result = self.result()
+        check = result['rank_trace_checks']['0']['invalid_peer_checks']
+        self.assertEqual(check['call_kinds'], ['irecv'])
+        self.assertTrue(check['all_use_exchange_communicator'])
+        self.assertTrue(check['all_have_unique_return_records'])
+        self.assertTrue(check['all_calls_reported_success'])
+        self.assertTrue(check['any_peer_exceeds_signed_32_bit'])
+        self.assertTrue(check['all_low_32_bits_are_valid_ranks'])
+        self.assertFalse(check['mpi_argument_corruption_verified'])
+        self.assertFalse(check['abi_mismatch_verified'])
+        self.assertFalse(result['metadata_verified'])
+        self.assertNotIn(str(2**40 + 1), json.dumps(result))
+
+    def test_invalid_peer_in_another_communicator_is_not_assumed_a_world_rank(self):
+        self.fixture()
+        self.traces[0][2].update(peer=12345, same_comm=False)
+        self.traces[0][3]['ok'] = False
+        self.save()
+        result = self.result()
+        check = result['rank_trace_checks']['0']['invalid_peer_checks']
+        self.assertFalse(check['all_use_exchange_communicator'])
+        self.assertFalse(check['all_calls_reported_success'])
+        self.assertFalse(check['any_peer_exceeds_signed_32_bit'])
+        self.assertFalse(check['all_low_32_bits_are_valid_ranks'])
+        self.assertFalse(result['metadata_verified'])
+
+    def test_missing_or_duplicate_return_cannot_certify_invalid_peer_success(self):
+        for mode in ('missing', 'duplicate_return', 'duplicate_message'):
+            with self.subTest(mode=mode):
+                self.fixture()
+                self.traces[0][2]['peer'] = 12345
+                if mode == 'missing':
+                    del self.traces[0][3]
+                else:
+                    index = 3 if mode == 'duplicate_return' else 2
+                    self.traces[0].insert(index, dict(self.traces[0][index]))
+                self.save()
+                result = self.result()
+                check = result['rank_trace_checks']['0']['invalid_peer_checks']
+                self.assertFalse(check['all_have_unique_return_records'])
+                self.assertIsNone(check['all_calls_reported_success'])
+                self.assertFalse(result['metadata_verified'])
+
+    def test_valid_messages_do_not_get_invalid_peer_checks(self):
+        self.fixture()
+        result = self.result()
+        for rank in ('0', '1'):
+            self.assertNotIn('invalid_peer_checks', result['rank_trace_checks'][rank])
+
 
 if __name__ == '__main__':
     unittest.main()

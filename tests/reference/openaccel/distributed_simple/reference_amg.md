@@ -404,6 +404,21 @@ remains false. An empty list does not rule out an assertion or runtime error:
 the relevant text may not have reached the log. Do not weaken an assertion,
 change AMG controls, or accept a failed solve based only on these flags.
 
+The saved `simple-protocol-abort-YRM5JF` inspection found no recognized abort
+message and classified the rank 0/1 trace failures as peers outside the
+communicator. These are recorded arguments, not yet verified MPI arguments.
+Reusing the command above now adds `invalid_peer_checks`: the call types,
+whether they used the exchange communicator, whether unique return records
+report success, and whether only the low 32 bits would represent valid ranks.
+No argument values or counts are exported. Duplicate or missing return records
+give a null success result, and the trace remains invalid.
+
+This distinguishes a recorded MPI failure from a suspicious argument-width or
+tracing discrepancy without another solver launch. A valid low-word pattern
+does not prove an ABI mismatch and must never be used to truncate or repair
+an MPI rank. Missing abort text also does not rule out an external signal or
+an error whose message was not captured. Keep both causes unverified.
+
 ## Identify the unfinished protocol stage
 
 The offline inspection above supersedes another protocol launch for the
