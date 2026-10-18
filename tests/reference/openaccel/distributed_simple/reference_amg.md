@@ -456,6 +456,52 @@ assessment. Private file writes can slow setup, so this remains a bounded
 diagnostic rather than a timing measurement. The following recipe supersedes
 further offline reclassification of `ox40BU` for the ownership question.
 
+## Attribute the first invalid lookup
+
+The `simple-setup-ownership-VH3a6X` report observes out-of-range lookup inputs
+on ranks 0 and 1, with valid ownership records on all ranks. No observed valid
+input produced an invalid owner. This does not establish whether the input
+index or its declared range is wrong. Both off-process columns and partition
+endpoints reach this routine. The original pressure matrix and AMG-generated
+matrices must therefore be distinguished before choosing a fix.
+
+The same opt-in capture now includes
+`partition_checks.first_invalid_input_context` on each rank. Its fixed labels
+identify the object being used by the enclosing communication-package or
+assumed-partition call:
+
+- `original`: the matrix pointer passed to GMRES setup.
+- `original_clone`: a tracked clone of that object.
+- `galerkin_product`: an object returned by the traced RAPKT coarse-product call.
+- `galerkin_clone`: a tracked clone of such a product.
+- `other` or `unscoped`: attribution is incomplete; do not infer an origin.
+
+`lookup_path` distinguishes communication-package construction from assumed
+partition construction; `inside_galerkin_product` records whether the lookup
+occurs before RAPKT returns. A newly constructed object used inside RAPKT can
+still be `other` until its return pointer is known. Destruction removes labels
+so a reused address cannot inherit an earlier object's role. Addresses and
+matrix contents are neither exported nor dereferenced by these hooks.
+
+These are object identities at the lookup, not input-validity certificates or
+proof of the first corruption point. An `original` label does not prove the
+matrix was invalid when MARS supplied it. An AMG product label directs the
+review to its construction and inputs, without proving which component caused
+the defect. Old captures have a null first-invalid context and cannot be
+retrospectively attributed. The ownership result remains usable even when the
+message trace is rejected. No solver tolerance, matrix or algorithm is changed.
+
+The declarations for the additional hooks are extracted from the captured
+Hypre headers; unsupported declarations fail compilation rather than guessing
+an ABI. A public CPU fixture exercises original matrices, clones and a RAPKT
+product followed by a clone on 1, 2 and 4 ranks. Multi-rank reports distinguish
+the original, original-clone and product-clone roles. The synthetic invalid
+index fixture remains unscoped, as intended. This does not validate GPU/Cray
+execution or reproduce the pump failure.
+
+Run the block below once in the MARS terminal. It supersedes repeating the
+older ownership capture without context; only the tracer is rebuilt.
+
 ## Capture ownership and protocol checks
 
 The saved sequence inspection reports the same observed exchange ordinal on all
@@ -501,7 +547,7 @@ python3 -c 'import numpy, netCDF4, yaml; print("Python dependencies OK")'
 umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
-run=$(mktemp -d "$scratch/simple-setup-ownership-XXXXXX")
+run=$(mktemp -d "$scratch/simple-setup-origin-XXXXXX")
 printf 'Private diagnostic directory: %s\n' "$run"
 status=0
 python3 "$repo/scripts/simple_setup_stack.py" \

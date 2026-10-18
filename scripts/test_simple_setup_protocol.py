@@ -352,6 +352,56 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(result['metadata_verified'])
         self.assertEqual(result['rank_trace_checks']['0']['partition_checks']['assessment'], 'input_out_of_range')
 
+    def test_partition_first_invalid_context_is_preserved(self):
+        events = self.partition_fixture()
+        context = dict(matrix_role='original', lookup_path='assumed_partition', inside_galerkin_product=False)
+        events[1].update(context)
+        for ident, role in ((2, 'galerkin_product'), (3, 'original_clone')):
+            pair = self.partition_fixture(False, False)[1:]
+            pair[0].update(context, id=ident)
+            pair[0]['matrix_role'] = role
+            pair[1]['id'] = ident
+            events.extend(pair)
+        result = self.partition_result(events)
+        self.assertEqual(result['first_invalid_input_context']['matrix_role'], 'galerkin_product')
+        self.assertEqual(result['observed_matrix_roles'], ['galerkin_product', 'original', 'original_clone'])
+        self.assertTrue(result['records_valid'])
+
+    def test_partition_context_is_allowlisted_and_complete(self):
+        context = dict(matrix_role='original', lookup_path='communication_package', inside_galerkin_product=False)
+        for key, bad in (('matrix_role', 'SECRET12345'), ('lookup_path', 'SECRET12345'),
+                         ('inside_galerkin_product', 1), ('matrix_role', [])):
+            events = self.partition_fixture(False)
+            events[1].update(context)
+            events[1][key] = bad
+            self.assertFalse(self.partition_result(events)['records_valid'])
+        events = self.partition_fixture(False)
+        events[1]['matrix_role'] = 'original'
+        self.assertFalse(self.partition_result(events)['records_valid'])
+
+    def test_legacy_partition_context_remains_unknown(self):
+        result = self.partition_result(self.partition_fixture(False))
+        self.assertIsNone(result['first_invalid_input_context'])
+        self.assertEqual(result['observed_matrix_roles'], [])
+
+    def test_matrix_declarations_come_from_matching_headers(self):
+        declarations = [
+            'HYPRE_Int hypre_MatvecCommPkgCreate ( hypre_ParCSRMatrix *A );',
+            'HYPRE_Int hypre_ParCSRMatrixCreateAssumedPartition ( hypre_ParCSRMatrix *A );',
+            'hypre_ParCSRMatrix *hypre_ParCSRMatrixRAPKT( hypre_ParCSRMatrix *R, hypre_ParCSRMatrix *A, hypre_ParCSRMatrix *P, HYPRE_Int keep );',
+            'hypre_ParCSRMatrix* hypre_ParCSRMatrixClone_v2( hypre_ParCSRMatrix *A, HYPRE_Int data, HYPRE_MemoryLocation location );',
+            'HYPRE_Int hypre_ParCSRMatrixDestroy ( hypre_ParCSRMatrix *A );']
+        source = self.root / '_hypre_parcsr_mv.h'
+        source.write_text('\n'.join(declarations))
+        header = protocol.matrix_header(self.root, self.root).read_text()
+        for declaration in declarations:
+            self.assertIn(declaration, header)
+        self.assertNotIn('#include', header)
+        for text in ('\n'.join(declarations[:-1]), '\n'.join(declarations + [declarations[0]])):
+            source.write_text(text)
+            with self.assertRaises(ValueError):
+                protocol.matrix_header(self.root, self.root)
+
 
 if __name__ == '__main__':
     unittest.main()

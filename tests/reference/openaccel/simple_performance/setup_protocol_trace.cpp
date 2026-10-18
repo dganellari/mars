@@ -9,6 +9,7 @@
 
 extern "C" {
 #include "setup-protocol-exchange.h"
+#include "setup-protocol-matrix.h"
 }
 
 #if HYPRE_RELEASE_NUMBER != 23300 || defined(HYPRE_SEQUENTIAL)
@@ -24,6 +25,10 @@ struct Trace {
     unsigned long exchange = 0, next = 0, lines = 0;
     unsigned long lookup = 0, partition_lines = 0;
     MPI_Comm comm = MPI_COMM_NULL;
+    HYPRE_ParCSRMatrix original = nullptr, current_matrix = nullptr;
+    std::map<HYPRE_ParCSRMatrix, std::string> matrix_roles;
+    const char* lookup_path = "unscoped";
+    bool inside_product = false;
     std::map<MPI_Request*, unsigned long> requests;
     std::string wait;
 };
@@ -72,7 +77,7 @@ std::string event(const char* name) {
     return "{\"event\":\"" + std::string(name) + "\",\"exchange\":" + number(trace.exchange);
 }
 
-void begin_setup() {
+void begin_setup(HYPRE_ParCSRMatrix matrix) {
     if (trace.setup) { emit(event("nested_setup") + "}"); return; }
     const char* directory = std::getenv("MARS_SETUP_PROTOCOL_DIR");
     const char* rank = std::getenv("SLURM_PROCID");
@@ -85,6 +90,7 @@ void begin_setup() {
         std::string path = std::string(directory) + "/partition-" + rank + ".jsonl";
         trace.partition_file = std::fopen(path.c_str(), "wx");
     }
+    trace.original = matrix; trace.matrix_roles.clear();
     trace.setup = true;
     emit(event("setup_entry") + "}");
     emit_partition("{\"event\":\"setup_entry\"}");
@@ -134,7 +140,7 @@ void tested(const std::string& ids, HYPRE_Int code, bool complete) {
 extern "C" HYPRE_Int HYPRE_ParCSRGMRESSetup(HYPRE_Solver solver, HYPRE_ParCSRMatrix matrix,
                                            HYPRE_ParVector rhs, HYPRE_ParVector x) {
     static auto real = next_function<decltype(&HYPRE_ParCSRGMRESSetup)>("HYPRE_ParCSRGMRESSetup");
-    begin_setup();
+    begin_setup(matrix);
     const auto code = real(solver, matrix, rhs, x);
     emit_partition("{\"event\":\"setup_return\"}");
     emit(event("setup_return") + "}"); trace.setup = false;
@@ -144,11 +150,71 @@ extern "C" HYPRE_Int HYPRE_ParCSRGMRESSetup(HYPRE_Solver solver, HYPRE_ParCSRMat
 extern "C" HYPRE_Int HYPRE_ParCSRFlexGMRESSetup(HYPRE_Solver solver, HYPRE_ParCSRMatrix matrix,
                                                HYPRE_ParVector rhs, HYPRE_ParVector x) {
     static auto real = next_function<decltype(&HYPRE_ParCSRFlexGMRESSetup)>("HYPRE_ParCSRFlexGMRESSetup");
-    begin_setup();
+    begin_setup(matrix);
     const auto code = real(solver, matrix, rhs, x);
     emit_partition("{\"event\":\"setup_return\"}");
     emit(event("setup_return") + "}"); trace.setup = false;
     return code;
+}
+
+namespace {
+std::string matrix_role(HYPRE_ParCSRMatrix matrix) {
+    if (!matrix) return "unscoped";
+    if (matrix == trace.original) return "original";
+    auto found = trace.matrix_roles.find(matrix);
+    return found == trace.matrix_roles.end() ? "other" : found->second;
+}
+struct MatrixScope {
+    HYPRE_ParCSRMatrix previous = trace.current_matrix;
+    const char* path = trace.lookup_path;
+    MatrixScope(HYPRE_ParCSRMatrix matrix, const char* next_path) {
+        trace.current_matrix = matrix; trace.lookup_path = next_path;
+    }
+    ~MatrixScope() { trace.current_matrix = previous; trace.lookup_path = path; }
+};
+}
+
+extern "C" HYPRE_Int hypre_MatvecCommPkgCreate(hypre_ParCSRMatrix* matrix) {
+    static auto real = next_function<decltype(&hypre_MatvecCommPkgCreate)>("hypre_MatvecCommPkgCreate");
+    MatrixScope scope(matrix, "communication_package");
+    return real(matrix);
+}
+
+extern "C" HYPRE_Int hypre_ParCSRMatrixCreateAssumedPartition(hypre_ParCSRMatrix* matrix) {
+    static auto real = next_function<decltype(&hypre_ParCSRMatrixCreateAssumedPartition)>("hypre_ParCSRMatrixCreateAssumedPartition");
+    MatrixScope scope(matrix, "assumed_partition");
+    return real(matrix);
+}
+
+extern "C" hypre_ParCSRMatrix* hypre_ParCSRMatrixRAPKT(hypre_ParCSRMatrix* r,
+    hypre_ParCSRMatrix* a, hypre_ParCSRMatrix* p, HYPRE_Int keep) {
+    static auto real = next_function<decltype(&hypre_ParCSRMatrixRAPKT)>("hypre_ParCSRMatrixRAPKT");
+    const bool previous = trace.inside_product;
+    trace.inside_product = true;
+    auto result = real(r,a,p,keep);
+    trace.inside_product = previous;
+    if (trace.setup && result) trace.matrix_roles[result] = "galerkin_product";
+    return result;
+}
+
+extern "C" hypre_ParCSRMatrix* hypre_ParCSRMatrixClone_v2(hypre_ParCSRMatrix* a,
+    HYPRE_Int data, HYPRE_MemoryLocation location) {
+    static auto real = next_function<decltype(&hypre_ParCSRMatrixClone_v2)>("hypre_ParCSRMatrixClone_v2");
+    const auto role = matrix_role(a);
+    auto result = real(a,data,location);
+    if (trace.setup && result && result != a) {
+        if (role == "original" || role == "original_clone") trace.matrix_roles[result] = "original_clone";
+        else if (role == "galerkin_product" || role == "galerkin_clone") trace.matrix_roles[result] = "galerkin_clone";
+    }
+    return result;
+}
+
+extern "C" HYPRE_Int hypre_ParCSRMatrixDestroy(hypre_ParCSRMatrix* matrix) {
+    static auto real = next_function<decltype(&hypre_ParCSRMatrixDestroy)>("hypre_ParCSRMatrixDestroy");
+    // Forget dead objects so address reuse cannot inherit a matrix role.
+    trace.matrix_roles.erase(matrix);
+    if (matrix == trace.original) trace.original = nullptr;
+    return real(matrix);
 }
 
 extern "C" HYPRE_Int hypre_GetAssumedPartitionProcFromRow(MPI_Comm comm, HYPRE_BigInt row,
@@ -166,7 +232,10 @@ extern "C" HYPRE_Int hypre_GetAssumedPartitionProcFromRow(MPI_Comm comm, HYPRE_B
     const auto id = ++trace.lookup;
     const std::string key = ",\"id\":" + number(id);
     emit_partition("{\"event\":\"lookup\"" + key + ",\"input_in_range\":" + flag(in_range) +
-                   ",\"size_query_ok\":" + flag(size_ok) + ",\"comm_world\":" + flag(world) + "}");
+                   ",\"size_query_ok\":" + flag(size_ok) + ",\"comm_world\":" + flag(world) +
+                   ",\"matrix_role\":\"" + matrix_role(trace.current_matrix) +
+                   "\",\"lookup_path\":\"" + trace.lookup_path +
+                   "\",\"inside_galerkin_product\":" + flag(trace.inside_product) + "}");
     const auto code = real(comm,row,first,count,owner);
     emit_partition("{\"event\":\"lookup_return\"" + key + ",\"owner_in_range\":" +
                    flag(size_ok && owner && *owner >= 0 && *owner < size) +

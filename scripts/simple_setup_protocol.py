@@ -2,6 +2,7 @@
 
 from collections import Counter
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -17,6 +18,23 @@ def exchange_header(include, directory):
         raise ValueError('unsupported exchange declaration')
     target = directory / 'setup-protocol-exchange.h'
     target.write_text(marker + fragment + '#endif\n')
+    return target
+
+
+def matrix_header(include, directory):
+    # Keep internal signatures tied to the captured headers, without CUDA internals.
+    text = (include / '_hypre_parcsr_mv.h').read_text()
+    declarations = []
+    for name in ('hypre_MatvecCommPkgCreate', 'hypre_ParCSRMatrixCreateAssumedPartition',
+                 'hypre_ParCSRMatrixRAPKT', 'hypre_ParCSRMatrixClone_v2', 'hypre_ParCSRMatrixDestroy'):
+        pattern = r'(?:HYPRE_Int|hypre_ParCSRMatrix\s*\*)\s*' + name + r'\s*\([^;{}]*\)\s*;'
+        matches = re.findall(pattern, text)
+        if len(matches) != 1:
+            raise ValueError('unsupported matrix declaration')
+        declarations.append(matches[0])
+    target = directory / 'setup-protocol-matrix.h'
+    target.write_text('typedef struct hypre_ParCSRMatrix_struct hypre_ParCSRMatrix;\n' +
+                      '\n'.join(declarations) + '\n')
     return target
 
 
@@ -40,6 +58,8 @@ def prepare(directory, identity, build_cache, environment, public):
     inputs.update({str(p): digest(p) for p in include.glob('*.h')})
     public['failed_check'] = 'protocol_exchange_header'
     header = exchange_header(include, directory)
+    inputs[str(header)] = digest(header)
+    header = matrix_header(include, directory)
     inputs[str(header)] = digest(header)
     command = [compiler, '-std=c++11', '-O2', '-fPIC', '-shared', '-I' + str(include), '-I' + str(directory)]
     command += flags + [str(source)] + links + ['-ldl', '-o', str(target)]
@@ -220,6 +240,7 @@ def partition_checks(path):
             return result
         setup, pending, last, entries = False, None, 0, 0
         invalid_input = invalid_owner = query_error = context_differs = hypre_error = False
+        first_invalid_context, observed_roles = None, set()
         for line in text.splitlines():
             value = json.loads(line)
             if not isinstance(value, dict):
@@ -232,11 +253,23 @@ def partition_checks(path):
                 entries += int(setup)
             elif kind == 'lookup':
                 flags = {'input_in_range', 'size_query_ok', 'comm_world'}
-                if (not setup or pending is not None or set(value) != flags | {'event', 'id'}
+                context_keys = {'matrix_role', 'lookup_path', 'inside_galerkin_product'}
+                has_context = bool(context_keys & set(value))
+                if has_context:
+                    roles = {'original', 'original_clone', 'galerkin_product', 'galerkin_clone', 'other', 'unscoped'}
+                    if (not context_keys <= set(value) or value['matrix_role'] not in roles
+                            or value['lookup_path'] not in {'communication_package', 'assumed_partition', 'unscoped'}
+                            or type(value['inside_galerkin_product']) is not bool):
+                        return result
+                if (not setup or pending is not None or set(value) != flags | {'event', 'id'} | (context_keys if has_context else set())
                         or not integer(value['id']) or value['id'] != last + 1
                         or any(type(value[k]) is not bool for k in flags)):
                     return result
                 pending, last = value, value['id']
+                if has_context:
+                    observed_roles.add(value['matrix_role'])
+                if not invalid_input and not value['input_in_range']:
+                    first_invalid_context = {k: value[k] for k in sorted(context_keys)} if has_context else None
                 invalid_input |= not value['input_in_range']
                 query_error |= not value['size_query_ok']
                 context_differs |= not value['comm_world']
@@ -254,6 +287,8 @@ def partition_checks(path):
         if not entries:
             return result
         result.update(records_valid=True, lookup_seen=last > 0,
+                      first_invalid_input_context=first_invalid_context,
+                      observed_matrix_roles=sorted(observed_roles),
                       any_input_out_of_range=invalid_input,
                       any_valid_input_produced_invalid_owner=invalid_owner,
                       any_communicator_query_failed=query_error,

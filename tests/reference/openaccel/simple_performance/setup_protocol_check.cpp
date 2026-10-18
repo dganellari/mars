@@ -22,6 +22,32 @@ static HYPRE_Int partition_setup(HYPRE_Solver, HYPRE_ParCSRMatrix, HYPRE_ParVect
     return 0;
 }
 
+// Exercise object lineage with public matrices; no private case is loaded.
+static HYPRE_Int context_setup(HYPRE_Solver, HYPRE_ParCSRMatrix a, HYPRE_ParVector, HYPRE_ParVector) {
+    using Matrix = HYPRE_ParCSRMatrix;
+    using Clone = Matrix(*)(Matrix,HYPRE_Int,HYPRE_MemoryLocation);
+    using Product = Matrix(*)(Matrix,Matrix,Matrix,HYPRE_Int);
+    using MatrixCall = HYPRE_Int(*)(Matrix);
+    auto clone = reinterpret_cast<Clone>(dlsym(RTLD_DEFAULT,"hypre_ParCSRMatrixClone_v2"));
+    auto product = reinterpret_cast<Product>(dlsym(RTLD_DEFAULT,"hypre_ParCSRMatrixRAPKT"));
+    auto communicate = reinterpret_cast<MatrixCall>(dlsym(RTLD_DEFAULT,"hypre_MatvecCommPkgCreate"));
+    auto destroy = reinterpret_cast<MatrixCall>(dlsym(RTLD_DEFAULT,"hypre_ParCSRMatrixDestroy"));
+    if (!clone || !product || !communicate || !destroy) return 1;
+    auto copy = clone(a,1,HYPRE_MEMORY_HOST);
+    if (!copy) return 1;
+    HYPRE_Int code = communicate(copy);
+    destroy(copy);
+    // RAPKT expects the restriction communication package to exist on entry.
+    code |= communicate(a);
+    auto coarse = product(a,a,a,0);
+    if (!coarse) return 1;
+    copy = clone(coarse,1,HYPRE_MEMORY_HOST);
+    if (copy) { code |= communicate(copy); destroy(copy); }
+    else code = 1;
+    destroy(coarse);
+    return code;
+}
+
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     int rank, ranks;
@@ -63,8 +89,9 @@ int main(int argc, char** argv) {
     HYPRE_BoomerAMGSetInterpType(amg, 6);
     HYPRE_BoomerAMGSetMaxCoarseSize(amg, 9);
     const bool partition_test = argc == 2 && std::string(argv[1]) == "--partition-check";
+    const bool context_test = argc == 2 && std::string(argv[1]) == "--context-check";
     HYPRE_ParCSRGMRESSetPrecond(solver, HYPRE_BoomerAMGSolve,
-                              partition_test ? partition_setup : HYPRE_BoomerAMGSetup, amg);
+                              partition_test ? partition_setup : context_test ? context_setup : HYPRE_BoomerAMGSetup, amg);
     int code = HYPRE_ParCSRGMRESSetup(solver, a, b, x);
     HYPRE_ParCSRGMRESDestroy(solver);
     HYPRE_BoomerAMGDestroy(amg);
