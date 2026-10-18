@@ -70,12 +70,13 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
   `-DCMAKE_CUDA_ARCHITECTURES=...`).
-- HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33
-  built for HIP: the build and 20 release checks pass, including the cavity, channel and
-  Taylor–Green examples on 1 and 4 ranks. Not tested on AMD: the Poiseuille checks (no netCDF
-  there), more than one node, and performance. The `wmma_tensor` and `wgmma_tensor` assembly
-  kernels need NVIDIA tensor cores and stop with a message on AMD. A HIP build compiles the
-  drivers of the tutorials and the release checks; the AMR and research drivers are CUDA only.
+- HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33 and
+  netCDF 4.9.3 built for it: every example program builds, and the 22 release checks and the other
+  tests pass on 1 and 4 ranks. The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
+  high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
+  tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
+  NVIDIA can be slower: the high-order DMMA operator keeps 18 KB of shared memory per element,
+  sized for NVIDIA's 228 KB, while MI300A has 64 KB per compute unit.
   With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
   `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).

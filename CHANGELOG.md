@@ -10,11 +10,12 @@ public API may change between minor releases.
 ## [0.1.1] — 2026-10-17
 
 ### Added
-- HIP build for AMD GPUs, tested on MI300A: the tutorial examples pass their release checks on 1
-  and 4 ranks, including the cavity, channel and Taylor–Green examples with Hypre built for HIP. The CUDA runtime,
-  cuSPARSE/cuBLAS, Thrust and CUB calls map to HIP through one header layer on top of
-  cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts. The
-  README shows how to build Hypre 2.33 for HIP.
+- HIP build for AMD GPUs, tested on MI300A: every example program builds, and all release checks
+  (Navier–Stokes examples included, with Hypre and netCDF built for HIP) and tests pass on 1 and 4
+  ranks. The CUDA runtime, cuSPARSE/cuBLAS, Thrust and CUB calls map to HIP through one header layer
+  on top of cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts.
+  The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor`, the high-order DMMA operator) run on
+  AMD's matrix cores (MFMA). The README shows how to build Hypre 2.33 and netCDF for HIP.
 
 ### Changed
 - The matrix-free weak-scaling driver overlaps the halo exchange by default (`--no-overlap` to wait).

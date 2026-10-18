@@ -120,8 +120,8 @@ compare them on your GPU with `--iterations=N`):
 | `tensor_perip` | `tensor` with pre-resolved CSR positions |
 | `tensor_perip_lb2` | `tensor_perip` with two blocks per SM |
 | `smem_cache` | shared-memory node cache |
-| `wmma_tensor` | FP64 tensor cores, WMMA (experimental; NVIDIA only) |
-| `wgmma_tensor` | same path as `wmma_tensor`: FP64 has no WGMMA instruction (experimental; NVIDIA only) |
+| `wmma_tensor` | FP64 tensor cores: WMMA on NVIDIA, MFMA on AMD (experimental) |
+| `wgmma_tensor` | same path as `wmma_tensor`: FP64 has no WGMMA instruction (experimental) |
 
 ---
 

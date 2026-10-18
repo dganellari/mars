@@ -70,8 +70,8 @@ cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
 cmake --build build -j
 ```
 
-HIP build for AMD GPUs (MI300A is `gfx942`). It builds the example programs of the tutorials and the
-release checks; add `-DMARS_ENABLE_HYPRE=ON` for the Navier–Stokes ones, which need Hypre built for
+HIP build for AMD GPUs (MI300A is `gfx942`). It builds the same example programs and release checks
+as the CUDA build; add `-DMARS_ENABLE_HYPRE=ON` for the Navier–Stokes ones, which need Hypre built for
 HIP (see below). Use a C++20 host compiler (GCC 13 on Beverin), passed explicitly if the system `g++`
 is older:
 
@@ -105,6 +105,19 @@ cmake --build hypre-build -j && cmake --install hypre-build
 export HYPRE_DIR=$PWD/hypre-install
 ```
 
+The Poiseuille example reads an Exodus mesh, which needs netCDF. If none is installed, netCDF-C
+builds on an installed HDF5 (here the one of the environment, under `$HDF5_ROOT`):
+
+```bash
+git clone --depth 1 -b v4.9.3 https://github.com/Unidata/netcdf-c.git
+cmake -S netcdf-c -B netcdf-build -DCMAKE_INSTALL_PREFIX=$PWD/netcdf-install -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=mpicc -DHDF5_ROOT=$HDF5_ROOT -DNETCDF_ENABLE_DAP=OFF -DNETCDF_ENABLE_BYTERANGE=OFF \
+      -DNETCDF_ENABLE_NCZARR=OFF -DNETCDF_ENABLE_PLUGINS=OFF -DNETCDF_ENABLE_LIBXML2=OFF \
+      -DNETCDF_ENABLE_EXAMPLES=OFF -DNETCDF_ENABLE_TESTS=OFF -DNETCDF_ENABLE_UNIT_TESTS=OFF
+cmake --build netcdf-build -j && cmake --install netcdf-build
+export NETCDF_DIR=$PWD/netcdf-install
+```
+
 CPU-only build. This builds the core library; the unstructured backend needs CUDA or HIP:
 
 ```bash
@@ -125,8 +138,8 @@ cd build
 ctest -L release
 ```
 
-Every test must pass: 22 tests with Hypre and netCDF, 20 with Hypre but without netCDF (the
-Poiseuille checks read an Exodus mesh), 15 without Hypre.
+Every test must pass, on NVIDIA and AMD GPUs: 22 tests with Hypre and netCDF, 20 with Hypre but
+without netCDF (the Poiseuille checks read an Exodus mesh), 15 without Hypre.
 
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson
