@@ -36,7 +36,8 @@ including element numberings that are not aligned with the coordinate axes.
 - **Segregated SIMPLE solver** (`fem/segregated/`). Under development and not built by
   default (`-DMARS_ENABLE_SEGREGATED=ON`).
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
-  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
+  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library. CUDA only: its
+  kernels are PTX loaded through the CUDA driver API.
 
 ## Not supported yet
 - **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming

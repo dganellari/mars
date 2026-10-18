@@ -30,6 +30,15 @@ public API may change between minor releases.
   (`--block-size` above 256 overflowed it).
 - `HYPRE_DIR` is also searched in `lib64`.
 
+### Experimental
+- MARSIR (CUDA only, off by default with `MARS_ENABLE_MARSIR`): in the element-local (cell-wise)
+  solve every kernel now comes from the generator, including the DSS gather, the Jacobi
+  preconditioner, the BiCGStab vector updates and the p-multigrid V-cycle. The V-cycle's p = 3 and
+  p = 1 operators come from the same operator spec. At 64^3 on one GH200 the generated V-cycle
+  is faster than the hand-written one (53 against 77 ms). Also new: a BoomerAMG coarse level,
+  right-preconditioned BiCGStab with an FP32 V-cycle (one rank), and shared-memory layouts chosen
+  against bank conflicts. Design notes and results: `docs/design/cellwise_unstructured_dss.md`.
+
 ## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
