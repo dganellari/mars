@@ -32,8 +32,9 @@ public API may change between minor releases.
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
   use Thrust as before.
 - The `tensor` CVFEM assembly kernel takes the sub-control-surface nodes as compile-time values, so
-  its per-node arrays no longer go to local memory: 2.3 times faster on H100 and 6% faster on
-  MI300A, with the same matrix.
+  it indexes its per-node arrays with constants: its local memory per thread on H100 halves (1088 to
+  512 bytes) and it runs 2.3 times faster; on MI300A it runs 6% faster but still spills registers.
+  Same matrix on both.
 - The Krylov solvers (CG, preconditioned CG, BiCGStab, GMRES) set up the sparse matrix-vector
   product once per solve instead of once per product. CG on 7.2 million unknowns takes 1.0 s
   instead of 19.9 s on MI300A, and 0.85 to 0.87 s instead of 0.97 s on H100.
