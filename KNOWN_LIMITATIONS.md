@@ -72,7 +72,7 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
   `-DCMAKE_CUDA_ARCHITECTURES=...`).
 - HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33 and
-  netCDF 4.9.3 built for it: every example program builds, and the 22 release checks and the other
+  netCDF 4.9.3 built for it: every example program builds, and the 44 release checks and the 52 other
   tests pass on 1 and 4 ranks. The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for

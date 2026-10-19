@@ -1,10 +1,15 @@
 # MARS Documentation
 
-MARS (Mesh Adaptive Refinement for Supercomputing) is a C++20 library for unstructured meshes and
-finite-element assembly on GPUs. The mesh is read, partitioned along a space-filling curve (SFC),
-and stored on the device; the DOF numbering, the sparsity pattern and the assembly run there too.
-MARS uses the cornerstone-octree library for the SFC decomposition and the element halo, and MPI
-between GPUs.
+MARS (Mesh Adaptive Refinement for Supercomputing) is an open-source, GPU-native mesh and assembly library for finite-element codes on tetrahedral
+and hexahedral meshes, running on NVIDIA and AMD GPUs. It provides the distributed mesh and the
+building blocks to assemble and solve any finite-element discretization: DOF numbering, sparsity,
+owned and ghost rows, halo exchange, and Krylov solvers. The space-filling-curve partitioning and the
+element halo come from the cornerstone-octree library. MARS ships ready-made operators for Galerkin
+finite elements (linear tetrahedra; high-order matrix-free, experimental) and for the control-volume
+finite element method (CVFEM), which its Navier–Stokes solver uses.
+
+The mesh is read, partitioned and stored on the device; the DOF numbering, the sparsity pattern and
+the assembly run there too, and MPI connects the GPUs.
 
 This documentation covers **v0.1.1**. The major version is 0, so the API can change between minor
 releases.
@@ -12,6 +17,10 @@ releases.
 ## Start here
 
 - **[Quickstart](Quickstart.md)**: build MARS, generate a cube mesh and run a GPU assembly.
+- **Step by step**, one idea per short program, for newcomers:
+  [1. the mesh](step-01-mesh.md), [2. a first GPU loop](step-02-volume.md),
+  [3. Poisson's equation](step-03-poisson.md), [4. control volumes](step-04-cvfem.md),
+  [5. your own operator](step-05-galerkin.md).
 
 ## Tutorials
 

@@ -16,8 +16,23 @@ public API may change between minor releases.
   on top of cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor`, the high-order DMMA operator) run on
   AMD's matrix cores (MFMA). The README shows how to build Hypre 2.33 and netCDF for HIP.
+- A step-by-step tutorial for newcomers (`docs/step-01-mesh.md` to `docs/step-05-galerkin.md`): the
+  mesh, a first GPU loop, Poisson's equation with linear tetrahedra, the same with CVFEM on
+  hexahedra, and your own finite-element operator. Each step is a short program with release checks
+  on 1 and N ranks.
+- `assembleElements` and `ElementValues` (`fem/mars_element_assembly.hpp`): assemble the element
+  matrix and vector of any operator written as a small GPU functor, on linear tetrahedra and
+  trilinear hexahedra. `assembleCvfemDiffusion` and `cvfemControlVolumes`
+  (`fem/mars_cvfem_diffusion.hpp`): the CVFEM diffusion operator and control volumes in one call.
 
 ### Changed
+- On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
+  each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
+  instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
+  use Thrust as before.
+- The Krylov solvers (CG, preconditioned CG, BiCGStab, GMRES) set up the sparse matrix-vector
+  product once per solve instead of once per product. CG on 7.2 million unknowns takes 1.0 s
+  instead of 19.9 s on MI300A, and 0.85 to 0.87 s instead of 0.97 s on H100.
 - The matrix-free weak-scaling driver overlaps the halo exchange by default (`--no-overlap` to wait).
 - GPU runtime calls in the domain setup (copies, allocations, synchronizations) are checked; a
   failure stops every rank with its location instead of continuing.
@@ -29,6 +44,17 @@ public API may change between minor releases.
   134 million elements) and always launches the 256-thread block its shared memory is sized for
   (`--block-size` above 256 overflowed it).
 - `HYPRE_DIR` is also searched in `lib64`.
+- `smem_cache` assembly kernel: blocks with more distinct nodes than its cache holds read the rest
+  from global memory, and its hash table holds every corner of a block (before, invalid reads or a
+  hang). Its shared-memory alignment masks are 64-bit (they cleared the high address bits, which
+  crashed on AMD), and it always launches the 256 threads it indexes with; so does
+  `tensor_perip_lb2`, whose launch bounds allow no more.
+- `wmma_tensor` zeroed twice the size of its scratch tiles, overwriting other per-element data.
+- `ElementDomain::getNodeCount()` builds the local node numbering first: on several ranks it
+  returned the count read from the file.
+- `find_package(Mars)` on a HIP install recreates the ROCm library target and cornerstone's GPU
+  library, which the installed targets link.
+- The AMR bounding box reduced the device coordinates on the host.
 
 ### Experimental
 - MARSIR (CUDA only, off by default with `MARS_ENABLE_MARSIR`): in the element-local (cell-wise)
