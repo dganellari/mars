@@ -62,8 +62,9 @@ public API may change between minor releases.
 - The AMR bounding box reduced the device coordinates on the host.
 - An installed MARS can build GPU programs against the unstructured backend: the headers are
   installed in the layout of the source tree, and `Mars::mars` carries the GPU definitions and nvcc
-  flags; `find_package(Mars)` sets `MARS_GPU_LANGUAGE` and `MARS_GPU_ARCHITECTURES`. Tested with HIP;
-  with CUDA a program outside the MARS build does not link yet (relocatable device code).
+  flags; `find_package(Mars)` sets `MARS_GPU_LANGUAGE` and `MARS_GPU_ARCHITECTURES`. With CUDA,
+  `libmars_unstructured` is device-linked when it is built. Tested on NVIDIA and AMD with the GPU
+  program of the tutorial's appendix, built outside MARS and run on 4 ranks.
 
 ### Experimental
 - MARSIR (CUDA only, off by default with `MARS_ENABLE_MARSIR`): in the element-local (cell-wise)
