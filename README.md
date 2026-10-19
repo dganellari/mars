@@ -101,7 +101,9 @@ export MPICH_GPU_SUPPORT_ENABLED=1 MPICH_GPU_IPC_ENABLED=0
 
 If no Hypre built for HIP is installed, Hypre 2.33 builds for MI300A with ROCm 7.2 given two extra
 settings: HIP code at C++17 (rocPRIM needs it), and HIP's own warp-sync functions off (Hypre defines
-its own `__syncwarp`). Then point MARS at it with `HYPRE_DIR`:
+its own `__syncwarp`). Keep rocRAND on: built without it, Hypre 2.33 still calls its rocRAND wrapper,
+and programs that link the library fail with `undefined reference to hypre_CurandUniform`. Then
+point MARS at it with `HYPRE_DIR`:
 
 ```bash
 git clone --depth 1 -b v2.33.0 https://github.com/hypre-space/hypre.git
@@ -109,7 +111,7 @@ cmake -S hypre/src -B hypre-build -DCMAKE_INSTALL_PREFIX=$PWD/hypre-install -DCM
       -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DBUILD_SHARED_LIBS=ON \
       -DHYPRE_ENABLE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx942 -DHYPRE_ENABLE_GPU_AWARE_MPI=ON \
       -DCMAKE_HIP_STANDARD=17 -DCMAKE_HIP_FLAGS=-DHIP_DISABLE_WARP_SYNC_BUILTINS \
-      -DHYPRE_ENABLE_ROCRAND=OFF -DHYPRE_ENABLE_ROCSOLVER=OFF
+      -DHYPRE_ENABLE_ROCRAND=ON -DHYPRE_ENABLE_ROCSOLVER=OFF
 cmake --build hypre-build -j && cmake --install hypre-build
 export HYPRE_DIR=$PWD/hypre-install
 ```
