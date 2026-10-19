@@ -103,3 +103,5 @@ same source serves both.
   `(3π² + 1) u_exact` as f. The error behaves as before.
 - Multiply the gradient term by a coefficient k(x) evaluated at `v.x`: a variable-coefficient
   problem in one more line.
+
+Next: [step 6](step-06-heat.md) solves a time-dependent problem with these element kernels.

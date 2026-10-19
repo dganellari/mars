@@ -1,5 +1,7 @@
 # AMR Module
 
+*Step 10b of the step-by-step tutorial (see the [index](index.md)). Previous: [step 10a](Matrix-Free-Tutorial.md); next: [the appendix](step-appendix-cmake.md).*
+
 The AMR (Adaptive Mesh Refinement) module in `backend/distributed/unstructured/amr/` provides GPU-native, multi-rank h-refinement for unstructured hex and tet meshes built on top of `ElementDomain`. The pipeline is octree-aligned: each rank emits children for its locally-owned, marked elements, and `cstone` redistributes them by SFC during the rebuild.
 
 ## What's in the module

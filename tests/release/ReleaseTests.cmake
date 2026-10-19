@@ -207,10 +207,21 @@ if(TARGET mars_step01_mesh)
                  COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 2.39e-2 --hi 2.65e-2 --
                          ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step05_galerkin> ${MPIEXEC_POSTFLAGS}
                          --mesh=${_rel_tet} --elements=tet)
+        # the heat equation with implicit Euler to t = 0.1 on h = 1/16: measured 2.244e-2 at dt = 0.01 and
+        # 1.092e-2 at dt = 0.005 (first order in time), each within 5%
+        add_test(NAME marsReleaseStep06Heat10_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 2.13e-2 --hi 2.36e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step06_heat> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex} --dt=0.01)
+        add_test(NAME marsReleaseStep06Heat20_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 1.04e-2 --hi 1.15e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step06_heat> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex} --dt=0.005)
         set_tests_properties(marsReleaseStep01_np${_np} marsReleaseStep02Volume_np${_np} marsReleaseStep02Moment_np${_np}
                              marsReleaseStep03Poisson8_np${_np} marsReleaseStep03Poisson16_np${_np}
                              marsReleaseStep04Cvfem16_np${_np} marsReleaseStep04Cvfem32_np${_np}
                              marsReleaseStep05Hex16_np${_np} marsReleaseStep05Hex32_np${_np} marsReleaseStep05Tet8_np${_np}
+                             marsReleaseStep06Heat10_np${_np} marsReleaseStep06Heat20_np${_np}
                              PROPERTIES
                              FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 300)
     endforeach()

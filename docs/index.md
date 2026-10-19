@@ -20,7 +20,11 @@ releases.
 - **Step by step**, one idea per short program, for newcomers:
   [1. the mesh](step-01-mesh.md), [2. a first GPU loop](step-02-volume.md),
   [3. Poisson's equation](step-03-poisson.md), [4. control volumes](step-04-cvfem.md),
-  [5. your own operator](step-05-galerkin.md).
+  [5. your own operator](step-05-galerkin.md), [6. the heat equation](step-06-heat.md),
+  [7. the lid-driven cavity](step-07-cavity.md), [8. Poiseuille flow](poiseuille_tutorial.md),
+  [9. the Taylor–Green vortex](periodic_tgv_tutorial.md),
+  [10. high-order matrix-free](Matrix-Free-Tutorial.md) and [adaptive refinement](AMR-Module.md);
+  appendix: [your own CMake project](step-appendix-cmake.md).
 
 ## Tutorials
 
