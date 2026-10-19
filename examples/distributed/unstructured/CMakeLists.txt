@@ -23,6 +23,13 @@ target_link_libraries(mars_ex1_poisson PRIVATE mars)
 # Install
 install(TARGETS mars_ex1_poisson RUNTIME DESTINATION bin/examples)
 
+# Step-by-step tutorial: one idea per program, walked through in docs/step-*.md
+foreach(_step mars_step01_mesh mars_step02_volume mars_step03_poisson mars_step04_cvfem mars_step05_galerkin)
+    add_executable(${_step} ${_step}.cu)
+    target_link_libraries(${_step} PRIVATE mars)
+    install(TARGETS ${_step} RUNTIME DESTINATION bin/examples)
+endforeach()
+
 # Beam-tet mesh example - MFEM validation test
 add_executable(mars_ex_beam_tet mars_ex_beam_tet.cu)
 target_link_libraries(mars_ex_beam_tet PRIVATE mars)

@@ -48,6 +48,12 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Quickstart: Quickstart.md
+  - Step by step:
+      - "Step 1: the mesh": step-01-mesh.md
+      - "Step 2: a first GPU loop": step-02-volume.md
+      - "Step 3: Poisson's equation": step-03-poisson.md
+      - "Step 4: control volumes": step-04-cvfem.md
+      - "Step 5: your own operator": step-05-galerkin.md
   - Tutorials:
       - Poiseuille channel flow: poiseuille_tutorial.md
       - Taylor–Green vortex (periodic): periodic_tgv_tutorial.md
