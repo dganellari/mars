@@ -139,6 +139,10 @@ endif()
 
 # Link to CUDA libraries
 if(MARS_ENABLE_CUDA)
+    # Device-link the library's relocatable device code here, so a program that links the installed
+    # library (find_package(Mars)) needs no device link of its own; inside this build CMake would defer
+    # it to each executable, which it cannot do for an imported library.
+    set_target_properties(mars_unstructured PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
     target_link_libraries(mars_unstructured PUBLIC 
         CUDA::cudart 
         CUDA::cusparse 
