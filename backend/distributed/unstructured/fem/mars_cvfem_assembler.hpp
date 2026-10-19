@@ -44,6 +44,9 @@ public:
         cudaStream_t stream = 0;
         const CvfemColoringData* coloring  = nullptr; // required for TensorColored
         const NodeData*          nodeData  = nullptr; // required for TensorAoS
+        // SmemCache node cache per block: 512, or 64, which sends most nodes of a block down the path for
+        // nodes that do not fit (read from global memory); the kernel check uses it to test that path
+        int smemCacheNodes = 512;
     };
 
     // Assemble CVFEM system with graph-based sparsity and diagonal lumping
@@ -241,26 +244,29 @@ public:
                 // Smem node cache: deduplicate + cooperatively load ~400 unique nodes/block.
                 // Uses dynamic smem (>48 KB limit): unlock via MaxDynamicSharedMemorySize.
                 // Node reads: ~30 cycle L2 → ~5 cycle smem. rowPtr/diagPtr also smem-cached.
-                constexpr int    SC_HT   = 2048;
-                constexpr int    SC_MN   = 512;
-                constexpr size_t smemSz  = smemCacheBytes<SC_HT, SC_MN>();
                 // The kernel indexes elements with its BlockSize, so it is launched with exactly that many
                 // threads, whatever config.blockSize says.
-                constexpr int    SC_BS   = 256;
-                auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
-                cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
-                cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
-                scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
-                    d_conn0, d_conn1, d_conn2, d_conn3,
-                    d_conn4, d_conn5, d_conn6, d_conn7,
-                    numElements,
-                    d_x, d_y, d_z,
-                    d_gamma, d_phi, d_beta,
-                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
-                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
-                    d_node_to_dof, d_ownership,
-                    d_matrix, d_rhs
-                );
+                auto launch = [&]<int SC_MN>() {
+                    constexpr int    SC_HT  = 2048;
+                    constexpr int    SC_BS  = 256;
+                    constexpr size_t smemSz = smemCacheBytes<SC_HT, SC_MN>();
+                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
+                    cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
+                    cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
+                    scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
+                        d_conn0, d_conn1, d_conn2, d_conn3,
+                        d_conn4, d_conn5, d_conn6, d_conn7,
+                        numElements,
+                        d_x, d_y, d_z,
+                        d_gamma, d_phi, d_beta,
+                        d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                        d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                        d_node_to_dof, d_ownership,
+                        d_matrix, d_rhs
+                    );
+                };
+                if (config.smemCacheNodes == 64) launch.template operator()<64>();
+                else launch.template operator()<512>();
                 break;
             }
 
