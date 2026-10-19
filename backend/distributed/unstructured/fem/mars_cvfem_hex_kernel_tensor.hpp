@@ -154,8 +154,8 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
     // ==========================================================================
     #pragma unroll
     for (int ip = 0; ip < 12; ++ip) {
-        int nodeL = hexLRSCV[ip * 2];
-        int nodeR = hexLRSCV[ip * 2 + 1];
+        const int nodeL = hexLeftNode(ip);
+        const int nodeR = hexRightNode(ip);
 
         RealType mdot = d_mdot[elemIdx * 12 + ip];
 

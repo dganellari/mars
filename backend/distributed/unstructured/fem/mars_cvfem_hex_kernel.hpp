@@ -99,6 +99,21 @@ __device__ __constant__ int hexLRSCV[24] = {
     0,4, 1,5, 2,6, 3,7   // faces connecting bottom to top
 };
 
+// The same pairs as compile-time values. In a kernel whose ip loop is unrolled, nodes indexed with
+// these are constants, so per-node arrays (rhs[8], lhs[64], phi[8], ...) stay in registers. Indexed
+// with hexLRSCV, which is read from constant memory at run time, they go to local memory (scratch).
+__host__ __device__ constexpr int hexLeftNode(int ip)
+{
+    constexpr int left[12] = {0, 1, 2, 0, 4, 5, 6, 4, 0, 1, 2, 3};
+    return left[ip];
+}
+__host__ __device__ constexpr int hexRightNode(int ip)
+{
+    constexpr int right[12] = {1, 2, 3, 3, 5, 6, 7, 7, 4, 5, 6, 7};
+    return right[ip];
+}
+static_assert(hexLeftNode(3) == 0 && hexRightNode(3) == 3 && hexLeftNode(11) == 3 && hexRightNode(11) == 7);
+
 // Hex element parametric derivatives at 12 SCS shifted integration points
 // Computed using full trilinear formulas at shifted locations (matching STK)
 __device__ __constant__ double hexDerivConst[12][8][3] = {
