@@ -30,6 +30,10 @@ endif()
 
 @PACKAGE_INIT@
 
+# CUDA or HIP, and the GPU architectures MARS was built for; empty for a CPU build
+set(MARS_GPU_LANGUAGE "@MARS_GPU_LANGUAGE@")
+set(MARS_GPU_ARCHITECTURES "@MARS_GPU_ARCHITECTURES@")
+
 ########## old style variables. Preferably you should use target_link_libraries(my_target Mars::mars) ################
 @OLD_CMAKE_CONFIG_CONTENT@
 ########## end of old style variables ####################################################################################
