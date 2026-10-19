@@ -202,7 +202,10 @@ int main(int argc, char** argv)
         else if (a.rfind("--dt=", 0) == 0) dt = std::stod(a.substr(5));
         else if (a.rfind("--time=", 0) == 0) endTime = std::stod(a.substr(7));
     }
-    if (meshDir.empty() || (elements != "hex" && elements != "tet") || !(dt > 0) || !(endTime > 0))
+    // finite, positive, and at most a million steps, before the step count becomes an int
+    const bool timesOk = std::isfinite(dt) && std::isfinite(endTime) && dt > 0 && endTime > 0 &&
+                         std::ceil(endTime / dt - 1e-9) <= 1e6;
+    if (meshDir.empty() || (elements != "hex" && elements != "tet") || !timesOk)
     {
         if (rank == 0)
             std::printf("usage: %s --mesh=DIR [--elements=hex|tet] [--dt=0.01] [--time=0.1]   (a mesh of the unit cube)\n",
