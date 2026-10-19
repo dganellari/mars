@@ -52,6 +52,7 @@
 
 #ifdef MARS_CS_CUDA
 #include "../utils/mars_gpu_runtime.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
@@ -520,7 +521,7 @@ public:
         // Envelope first: the peers cannot be asked anything until they know my extent.
         Aabb<T> myEnv = (nRange == 0)
                             ? Aabb<T>::empty()
-                            : thrust::reduce(thrust::device, d_rangeBoxes, d_rangeBoxes + nRange,
+                            : mars::reduce(d_rangeBoxes, d_rangeBoxes + nRange,
                                              Aabb<T>::empty(), detail::AabbUnion<T>{});
         const std::vector<Aabb<T>> peerEnv = detail::exchangeEnvelopes(myEnv, peers, comm);
 

@@ -33,6 +33,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace poiseuille
 {
@@ -100,8 +101,8 @@ struct OwnedTerm
 template<class Function>
 double ownedSum(const Domain& domain, Function f)
 {
-    double local = thrust::transform_reduce(
-        thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(domain.getNodeCount()),
+    double local = mars::transformReduce(
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(domain.getNodeCount()),
         OwnedTerm<Function>{domain.getNodeOwnershipMap().data(), f}, 0.0, thrust::plus<double>());
     double global = 0;
     MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -114,8 +115,8 @@ inline double nearestNodePlane(const Domain& domain, double target)
     using Candidate      = thrust::pair<double, double>;
     const double inf     = std::numeric_limits<double>::infinity();
     const RealType* x    = domain.getNodeX().data();
-    const Candidate best = thrust::transform_reduce(
-        thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(domain.getNodeCount()),
+    const Candidate best = mars::transformReduce(
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(domain.getNodeCount()),
         [x, target] __device__(size_t i) -> Candidate { return Candidate(fabs(double(x[i]) - target), double(x[i])); },
         Candidate(inf, inf),
         [] __device__(const Candidate& a, const Candidate& b) -> Candidate { return b < a ? b : a; });

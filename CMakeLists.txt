@@ -32,7 +32,7 @@ if(MARS_ENABLE_CUDA)
             set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "Target NVIDIA GPU architectures (Volta/Ampere/Hopper)")
         endif()
         # 1. Add global-scope settings to ensure CUDA includes are visible everywhere
-        include_directories(SYSTEM BEFORE ${CUDAToolkit_INCLUDE_DIRS})
+        include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
         # 2. Add via compiler flags to ensure they're used in command-line compilation
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
         add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
@@ -57,8 +57,11 @@ if(MARS_ENABLE_HIP)
         include(cmake/rocmlibs_target.cmake)
         set(CMAKE_HIP_STANDARD 20)
         add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
+        if(MARS_HIP_ROCPRIM_REDUCTIONS)
+            add_compile_definitions(MARS_HIP_ROCPRIM_REDUCTIONS)
+        endif()
 
-        include_directories(SYSTEM BEFORE ${HIP_INCLUDE_DIRS})
+        include_directories(SYSTEM ${HIP_INCLUDE_DIRS})
         add_compile_options($<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>>>:-isystem${HIP_INCLUDE_DIRS}>)
         add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-isystem${HIP_INCLUDE_DIRS}>)
 
@@ -608,6 +611,9 @@ write_basic_package_version_file(
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
         DESTINATION lib/cmake/Mars)
+if(MARS_ENABLE_HIP)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rocmlibs_target.cmake DESTINATION lib/cmake/Mars)
+endif()
 
 include(cmake/PostInstall.cmake)
 

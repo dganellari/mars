@@ -17,6 +17,7 @@
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifndef MARS_DISABLE_NVTX
 #include <nvToolsExt.h>
 #define MARS_NVTX_PUSH(name) nvtxRangePush(name)
@@ -285,11 +286,11 @@ int main(int argc, char** argv) {
     MPI_Iallreduce(sendBuf, recvSum, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD, &req[2]);
 
     auto sq = [] __host__ __device__ (RealType x) { return x * x; };
-    RealType norm2 = thrust::transform_reduce(
+    RealType norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_values.data()),
         thrust::device_pointer_cast(d_values.data() + nnz),
         sq, RealType(0.0), thrust::plus<RealType>());
-    RealType rhs_norm2 = thrust::transform_reduce(
+    RealType rhs_norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_rhs.data()),
         thrust::device_pointer_cast(d_rhs.data() + numDofs),
         sq, RealType(0.0), thrust::plus<RealType>());

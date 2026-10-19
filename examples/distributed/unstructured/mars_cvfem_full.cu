@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <chrono>
 #include <numeric>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 // Performance counter structure for detailed timing
 struct PerfCounters {
@@ -601,7 +602,7 @@ int main(int argc, char** argv) {
         return x * x;
     };
 
-    RealType local_matrix_norm2 = thrust::transform_reduce(
+    RealType local_matrix_norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_values.data()),
         thrust::device_pointer_cast(d_values.data() + nnz),
         square_op,
@@ -609,7 +610,7 @@ int main(int argc, char** argv) {
         thrust::plus<RealType>()
     );
 
-    RealType local_rhs_norm2 = thrust::transform_reduce(
+    RealType local_rhs_norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_rhs.data()),
         thrust::device_pointer_cast(d_rhs.data() + numOwnedDofs),
         square_op,

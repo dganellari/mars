@@ -222,7 +222,9 @@ public:
             case CvfemKernelVariant::TensorPeripLb2:
                 // Same as TensorPerip + __launch_bounds__(256,2).
                 // Forces 2 blocks/SM with ~7 regs of forced spilling (vs ~44 for tensor+lb2).
-                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                // The launch bounds allow at most 256 threads, whatever config.blockSize says.
+                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -239,13 +241,16 @@ public:
                 // Smem node cache: deduplicate + cooperatively load ~400 unique nodes/block.
                 // Uses dynamic smem (>48 KB limit): unlock via MaxDynamicSharedMemorySize.
                 // Node reads: ~30 cycle L2 → ~5 cycle smem. rowPtr/diagPtr also smem-cached.
-                constexpr int    SC_HT   = 1024;
+                constexpr int    SC_HT   = 2048;
                 constexpr int    SC_MN   = 512;
                 constexpr size_t smemSz  = smemCacheBytes<SC_HT, SC_MN>();
-                auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, 256, SC_HT, SC_MN>;
+                // The kernel indexes elements with its BlockSize, so it is launched with exactly that many
+                // threads, whatever config.blockSize says.
+                constexpr int    SC_BS   = 256;
+                auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
                 cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
                 cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
-                scPtr<<<numBlocks, blockSize, smemSz, config.stream>>>(
+                scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,

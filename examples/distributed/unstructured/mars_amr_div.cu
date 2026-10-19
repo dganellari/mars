@@ -43,6 +43,7 @@
 #include <limits>
 #include <vector>
 #include <algorithm>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -754,8 +755,7 @@ RealType probeDivAt(const cstone::DeviceVector<RealType>& d_x,
                           d_nodeToDof.data(), d_ownership.data()};
 
     auto init = thrust::make_pair(RealType(1e30), RealType(0));
-    auto best = thrust::transform_reduce(
-        thrust::device,
+    auto best = mars::transformReduce(
         thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(numNodes),
         op, init, MinByFirst<RealType>());
@@ -1182,8 +1182,7 @@ void runDivergenceDiagnostics(DivStepper<KeyType, RealType>& s,
     ProbeLocalNodeAt<RealType> op{probeX, probeY, probeZ,
                                   d_x.data(), d_y.data(), d_z.data()};
     auto init = thrust::make_pair(RealType(1e30), size_t(0));
-    auto best = thrust::transform_reduce(
-        thrust::device,
+    auto best = mars::transformReduce(
         thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         op, init, PairMinByFirst<RealType>());
@@ -1218,8 +1217,7 @@ void runDivergenceDiagnostics(DivStepper<KeyType, RealType>& s,
     // Find the local node closest to the broadcasted physical position on every rank.
     ProbeLocalNodeAt<RealType> op2{RealType(targetXYZ[0]), RealType(targetXYZ[1]), RealType(targetXYZ[2]),
                                    d_x.data(), d_y.data(), d_z.data()};
-    auto best2 = thrust::transform_reduce(
-        thrust::device,
+    auto best2 = mars::transformReduce(
         thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         op2, init, PairMinByFirst<RealType>());
@@ -1532,7 +1530,7 @@ int main(int argc, char** argv)
     auto sumLocal = [&](const cstone::DeviceVector<RealType>& v)
     {
         auto p = thrust::device_pointer_cast(v.data());
-        return thrust::reduce(thrust::device, p, p + s.numOwnedDofs, RealType(0));
+        return mars::reduce(p, p + s.numOwnedDofs, RealType(0));
     };
     RealType locErrInt = sumLocal(d_errSqInt);
     RealType locAnaInt = sumLocal(d_anaSqInt);
@@ -1553,8 +1551,7 @@ int main(int argc, char** argv)
         const int* dofPtr     = s.d_node_to_dof.data();
         const RealType* dPtr  = d_divU.data();
         const uint8_t* bndPtr = d_bndMask.data();
-        locMaxInt = thrust::transform_reduce(
-            thrust::device,
+        locMaxInt = mars::transformReduce(
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, dofPtr, dPtr, bndPtr] __device__(size_t i) -> RealType {
@@ -1565,8 +1562,7 @@ int main(int argc, char** argv)
                 return fabs(dPtr[i]);
             },
             RealType(0), thrust::maximum<RealType>());
-        locMaxBnd = thrust::transform_reduce(
-            thrust::device,
+        locMaxBnd = mars::transformReduce(
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, dofPtr, dPtr, bndPtr] __device__(size_t i) -> RealType {

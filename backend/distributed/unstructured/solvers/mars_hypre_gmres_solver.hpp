@@ -5,6 +5,7 @@
 // HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 #if !defined(HYPRE_RELEASE_NUMBER) || HYPRE_RELEASE_NUMBER < 30000
 // Older releases export ParVectorAxpy but declare it only in this header.
 #include <_hypre_parcsr_mv.h>
@@ -521,7 +522,7 @@ public:
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
 
         if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
-            const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+            const bool bad = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
                 thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
             require_reuse(!bad && globalDofEnd_ - globalDofStart_ == m
                           && (!fixed_graph_updates_ || (m > 0 && !precondMatrix_)),
@@ -823,17 +824,17 @@ public:
         const auto previous_b = par_b_, previous_x = par_x_;
         if (reuse_enabled_) {
             require_reuse(b.size() >= size_t(m) && x.size() >= size_t(m), "undersized RHS or solution");
-            const bool bad_b = m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+            const bool bad_b = m > 0 && mars::anyOf(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
-            const bool bad_x = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad_x = m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
             HYPRE_ClearAllErrors();
         } else if (fixed_graph_updates_ || check_inputs) {
             const bool sized = b.size() >= size_t(m) && x.size() >= size_t(m);
-            const bool bad_b = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+            const bool bad_b = sized && m > 0 && mars::anyOf(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
-            const bool bad_x = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad_x = sized && m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(sized && !bad_b && !bad_x, "undersized or nonfinite RHS/initial guess");
             HYPRE_ClearAllErrors();
@@ -949,18 +950,18 @@ public:
         }
 
         if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
-            const bool bad = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad = m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad && HYPRE_GetError() == 0 && cudaGetLastError() == cudaSuccess,
                           "nonfinite result, extraction error, or CUDA failure");
         }
         if (amg_cycle_) {
             const double local[2] = {
-                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(x.data()),
+                m > 0 ? mars::transformReduce(thrust::device_pointer_cast(x.data()),
                     thrust::device_pointer_cast(x.data() + m),
                     [] __device__(RealType v) -> double { return fabs(double(v)); },
                     0.0, thrust::maximum<double>()) : 0.0,
-                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(b.data()),
+                m > 0 ? mars::transformReduce(thrust::device_pointer_cast(b.data()),
                     thrust::device_pointer_cast(b.data() + m),
                     [] __device__(RealType v) -> double { return fabs(double(v)); },
                     0.0, thrust::maximum<double>()) : 0.0};
@@ -993,14 +994,14 @@ public:
         // units, and changing the matrix scale changes x/b without harming a solve.
         {
             double localXmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(x.data()),
                       thrust::device_pointer_cast(x.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
                       0.0, thrust::maximum<double>())
                 : 0.0;
             double localBmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(b.data()),
                       thrust::device_pointer_cast(b.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
@@ -1187,7 +1188,7 @@ public:
             thrust::raw_pointer_cast(d_row_global_.data()), values);
         require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0 && HYPRE_GetError() == 0,
                       "residual audit vector extraction failed");
-        const double local = thrust::transform_reduce(thrust::make_counting_iterator(HYPRE_Int(0)),
+        const double local = mars::transformReduce(thrust::make_counting_iterator(HYPRE_Int(0)),
             thrust::make_counting_iterator(m), [=] __device__ (HYPRE_Int row) -> double {
                 const double difference = values[row] - (expected ? expected[row] : 0.0);
                 return difference * difference;
@@ -1266,11 +1267,11 @@ public:
                 thrust::raw_pointer_cast(d_row_global_.data()), lower, m);
         }
         thrust::exclusive_scan(d_packed_counts_.begin(), d_packed_counts_.end(), d_packed_offsets_.begin());
-        require_reuse(thrust::count(d_packed_counts_.begin(), d_packed_counts_.end(), 0) == 0
-                      && thrust::count(d_graph_diagonal_.begin(), d_graph_diagonal_.end(), 0) == 0,
+        require_reuse(mars::count(d_packed_counts_.begin(), d_packed_counts_.end(), 0) == 0
+                      && mars::count(d_graph_diagonal_.begin(), d_graph_diagonal_.end(), 0) == 0,
                       "fixed graph contains an empty row or a missing diagonal");
         // Hypre's insertion API needs a host count for allocating the packed arrays.
-        const int count = thrust::reduce(d_packed_counts_.begin(), d_packed_counts_.end(), 0);
+        const int count = mars::reduce(d_packed_counts_.begin(), d_packed_counts_.end(), 0);
         d_packed_columns_.resize(count);
         d_source_slots_.resize(count);
         d_packed_values_.resize(count);
@@ -1292,7 +1293,7 @@ public:
 
     void update_matrix_values(const Matrix& A) {
         const double start = wall_stamp();
-        const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        const bool bad = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
             thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
         HYPRE_ClearAllErrors();
         thrust::gather(d_source_slots_.begin(), d_source_slots_.end(),
@@ -1340,7 +1341,7 @@ public:
         HYPRE_IJMatrixInitialize(ij_out);
 
         // Quick NaN/Inf scan on raw values (single allreduce-style reduction).
-        bool hasNaN = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        bool hasNaN = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
                                      thrust::device_pointer_cast(A.valuesPtr() + A.nnz()),
                                      IsNonFinite<RealType>());
         if (hasNaN) {
@@ -1414,8 +1415,8 @@ public:
 
         // Validation summaries (small reductions, single int copy each).
         int emptyRows = static_cast<int>(
-            thrust::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
-        int rowsMissingDiagonal = thrust::transform_reduce(
+            mars::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
+        int rowsMissingDiagonal = mars::transformReduce(
             thrust::make_counting_iterator(0),
             thrust::make_counting_iterator(static_cast<int>(m)),
             [d_perRowCount_ptr = thrust::raw_pointer_cast(d_perRowCount.data()),
@@ -1477,12 +1478,12 @@ public:
     // Single thrust reduction: NaN/Inf check + min/max/sum, printed once.
     void validateVector(const RealType* d_ptr, HYPRE_Int n, int rank, const char* label) {
         if (n <= 0) return;
-        bool hasNaN = thrust::any_of(thrust::device_pointer_cast(d_ptr),
+        bool hasNaN = mars::anyOf(thrust::device_pointer_cast(d_ptr),
                                      thrust::device_pointer_cast(d_ptr + n),
                                      IsNonFinite<RealType>());
         if (verbose_ || hasNaN) {
             // For min/max/sum we restrict to finite values by masking. Cheap pass.
-            double sumVal = thrust::transform_reduce(
+            double sumVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -1490,7 +1491,7 @@ public:
                 },
                 0.0,
                 thrust::plus<double>());
-            double minVal = thrust::transform_reduce(
+            double minVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -1498,7 +1499,7 @@ public:
                 },
                 1e100,
                 thrust::minimum<double>());
-            double maxVal = thrust::transform_reduce(
+            double maxVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {

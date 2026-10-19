@@ -10,6 +10,7 @@
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/domain.hpp"
 #include "cstone/tree/csarray.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -357,7 +358,7 @@ public:
         // Step 3: global max error
         auto le_b             = thrust::device_pointer_cast(d_leafError.data());
         auto le_e             = thrust::device_pointer_cast(d_leafError.data() + numLeaves);
-        RealType maxLeafError = thrust::reduce(thrust::device, le_b, le_e,
+        RealType maxLeafError = mars::reduce(le_b, le_e,
                                                 RealType(0), thrust::maximum<RealType>());
 
         // Step 4: weighted counts. cstone's `OctreeView` (returned by

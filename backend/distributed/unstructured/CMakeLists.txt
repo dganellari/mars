@@ -149,6 +149,10 @@ elseif(MARS_ENABLE_HIP)
         include(${CMAKE_SOURCE_DIR}/cmake/rocmlibs_target.cmake)
     endif()
     target_link_libraries(mars_unstructured PUBLIC mars::rocmlibs)
+    # also for find_package(Mars) users: their code and MARS must use the same reductions
+    if(MARS_HIP_ROCPRIM_REDUCTIONS)
+        target_compile_definitions(mars_unstructured PUBLIC MARS_HIP_ROCPRIM_REDUCTIONS)
+    endif()
 endif()
 
 # BUILD_INTERFACE only -- see the note at the matching link in the top-level

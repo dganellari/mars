@@ -21,6 +21,7 @@
 #define cusparseCreateDnVec hipsparseCreateDnVec
 #define cusparseDestroy hipsparseDestroy
 #define cusparseDestroyDnVec hipsparseDestroyDnVec
+#define cusparseDnVecSetValues hipsparseDnVecSetValues
 #define cusparseDestroySpMat hipsparseDestroySpMat
 #define cusparseDnVecDescr_t hipsparseDnVecDescr_t
 #define cusparseHandle_t hipsparseHandle_t

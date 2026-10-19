@@ -1,3 +1,5 @@
+#pragma once
+
 #include "cstone/cuda/cuda_utils.cuh" // For IsDeviceVector and the memcpy helpers
 #include <mpi.h>
 #include <tuple>

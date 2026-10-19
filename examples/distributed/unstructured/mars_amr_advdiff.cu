@@ -19,6 +19,7 @@
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparse_matrix.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #endif
@@ -765,12 +766,12 @@ void setupAdvDiffStepper(AdvDiffStepper<KeyType, RealType>& s,
     auto xb = thrust::device_pointer_cast(d_x.data());
     auto yb = thrust::device_pointer_cast(d_y.data());
     auto zb = thrust::device_pointer_cast(d_z.data());
-    RealType lxmin = thrust::reduce(thrust::device, xb, xb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lxmax = thrust::reduce(thrust::device, xb, xb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lymin = thrust::reduce(thrust::device, yb, yb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lymax = thrust::reduce(thrust::device, yb, yb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lzmin = thrust::reduce(thrust::device, zb, zb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lzmax = thrust::reduce(thrust::device, zb, zb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lxmin = mars::reduce(xb, xb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lxmax = mars::reduce(xb, xb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lymin = mars::reduce(yb, yb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lymax = mars::reduce(yb, yb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lzmin = mars::reduce(zb, zb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lzmax = mars::reduce(zb, zb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&lxmin, &s.xmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
@@ -1055,7 +1056,7 @@ RealType computeL2ErrorVsGaussian(AdvDiffStepper<KeyType, RealType>& s,
     cudaDeviceSynchronize();
 
     auto ep = thrust::device_pointer_cast(d_errSq.data());
-    RealType localSum = thrust::reduce(thrust::device, ep, ep + s.numOwnedDofs, RealType(0));
+    RealType localSum = mars::reduce(ep, ep + s.numOwnedDofs, RealType(0));
     RealType globalSum = 0;
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
@@ -1087,7 +1088,7 @@ RealType computeIntegratedMass(AdvDiffStepper<KeyType, RealType>& s,
     cudaDeviceSynchronize();
 
     auto sp = thrust::device_pointer_cast(d_mv.data());
-    RealType localSum = thrust::reduce(thrust::device, sp, sp + s.numOwnedDofs, RealType(0));
+    RealType localSum = mars::reduce(sp, sp + s.numOwnedDofs, RealType(0));
     RealType globalSum = 0;
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
@@ -1118,7 +1119,7 @@ RealType computeWeightedL2Norm(AdvDiffStepper<KeyType, RealType>& s,
     cudaDeviceSynchronize();
 
     auto sp = thrust::device_pointer_cast(d_sq.data());
-    RealType localSum = thrust::reduce(thrust::device, sp, sp + s.numOwnedDofs, RealType(0));
+    RealType localSum = mars::reduce(sp, sp + s.numOwnedDofs, RealType(0));
     RealType globalSum = 0;
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);

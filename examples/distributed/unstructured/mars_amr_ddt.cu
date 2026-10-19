@@ -67,6 +67,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -508,8 +509,7 @@ RealType ownedDot(const cstone::DeviceVector<RealType>& a,
 {
     const RealType* aPtr = a.data();
     const RealType* bPtr = b.data();
-    RealType localSum = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType localSum = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(numNodes),
         [aPtr, bPtr, d_nodeToDof, d_ownership] __device__ (size_t i) -> RealType {
             if (d_ownership[i] != 1 || d_nodeToDof[i] < 0) return RealType(0);
@@ -542,8 +542,7 @@ RealType ownedSum(const cstone::DeviceVector<RealType>& a,
                   size_t numNodes)
 {
     const RealType* aPtr = a.data();
-    RealType localSum = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType localSum = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(numNodes),
         [aPtr, d_nodeToDof, d_ownership] __device__ (size_t i) -> RealType {
             if (d_ownership[i] != 1 || d_nodeToDof[i] < 0) return RealType(0);
@@ -557,8 +556,7 @@ RealType ownedSum(const cstone::DeviceVector<RealType>& a,
 
 long long ownedCount(const int* d_nodeToDof, const uint8_t* d_ownership, size_t numNodes)
 {
-    long long local = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    long long local = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(numNodes),
         [d_nodeToDof, d_ownership] __device__ (size_t i) -> long long {
             if (d_ownership[i] != 1 || d_nodeToDof[i] < 0) return 0;
@@ -721,17 +719,17 @@ void runLinearTest(DDTStepper<KeyType, RealType>& s, RealType a, RealType b, Rea
     auto cBegin = thrust::counting_iterator<size_t>(0);
     auto cEnd   = thrust::counting_iterator<size_t>(s.nodeCount);
 
-    RealType locL2sqInt = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locL2sqInt = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, Aptr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(0);
             return Aptr[i] * Aptr[i];
         }, RealType(0), thrust::plus<RealType>());
-    RealType locMaxInt = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locMaxInt = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, Aptr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(0);
             return fabs(Aptr[i]);
         }, RealType(0), thrust::maximum<RealType>());
-    RealType locMaxBnd = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locMaxBnd = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, Aptr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] == 0) return RealType(0);
             return fabs(Aptr[i]);
@@ -811,33 +809,33 @@ SignAxisResult<RealType> runSignAxis(DDTStepper<KeyType, RealType>& s,
     auto cBegin = thrust::counting_iterator<size_t>(0);
     auto cEnd   = thrust::counting_iterator<size_t>(s.nodeCount);
 
-    RealType locSum = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locSum = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, AphiPtr, massPtr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(0);
             return AphiPtr[i] / massPtr[dofPtr[i]];
         }, RealType(0), thrust::plus<RealType>());
-    long long locCnt = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    long long locCnt = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr] __device__ (size_t i) -> long long {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return 0LL;
             return 1LL;
         }, 0LL, thrust::plus<long long>());
-    RealType locMin = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locMin = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, AphiPtr, massPtr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType( 1e300);
             return AphiPtr[i] / massPtr[dofPtr[i]];
         }, RealType(1e300), thrust::minimum<RealType>());
-    RealType locMax = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locMax = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, AphiPtr, massPtr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(-1e300);
             return AphiPtr[i] / massPtr[dofPtr[i]];
         }, RealType(-1e300), thrust::maximum<RealType>());
-    RealType locL2sqPos = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locL2sqPos = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, AphiPtr, massPtr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(0);
             RealType v = AphiPtr[i] / massPtr[dofPtr[i]] - RealType(2);
             return v * v;
         }, RealType(0), thrust::plus<RealType>());
-    RealType locL2sqNeg = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locL2sqNeg = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, bndPtr, AphiPtr, massPtr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0 || bndPtr[i] != 0) return RealType(0);
             RealType v = AphiPtr[i] / massPtr[dofPtr[i]] + RealType(2);
@@ -1022,12 +1020,12 @@ void runNullSpaceTest(DDTStepper<KeyType, RealType>& s)
     const RealType* Aptr  = Aphi.data();
     auto cBegin = thrust::counting_iterator<size_t>(0);
     auto cEnd   = thrust::counting_iterator<size_t>(s.nodeCount);
-    RealType locMax = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locMax = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, Aptr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0) return RealType(0);
             return fabs(Aptr[i]);
         }, RealType(0), thrust::maximum<RealType>());
-    RealType locL2sq = thrust::transform_reduce(thrust::device, cBegin, cEnd,
+    RealType locL2sq = mars::transformReduce(cBegin, cEnd,
         [ownPtr, dofPtr, Aptr] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1 || dofPtr[i] < 0) return RealType(0);
             return Aptr[i] * Aptr[i];
@@ -1403,8 +1401,7 @@ void runCgTest(DDTStepper<KeyType, RealType>& s, int maxIter, RealType tol)
     // |phi - phi_ref - mean|_L2 over owned, both raw and relative to |phi_ref|_L2.
     RealType errL2sq  = ownedDot(diff, diff, s.d_node_to_dof.data(), d_own.data(), s.nodeCount);
     RealType refL2sq  = ownedDot(phiRef, phiRef, s.d_node_to_dof.data(), d_own.data(), s.nodeCount);
-    RealType locMaxErr = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType locMaxErr = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [d_own_ptr = d_own.data(), dofPtr = s.d_node_to_dof.data(), dPtr = diff.data()] __device__ (size_t i) -> RealType {
             if (d_own_ptr[i] != 1 || dofPtr[i] < 0) return RealType(0);
@@ -1591,8 +1588,7 @@ void runCgJacobiTest(DDTStepper<KeyType, RealType>& s, int maxIter, RealType tol
 
     RealType errL2sq  = ownedDot(diff, diff, s.d_node_to_dof.data(), d_own.data(), s.nodeCount);
     RealType refL2sq  = ownedDot(phiRef, phiRef, s.d_node_to_dof.data(), d_own.data(), s.nodeCount);
-    RealType locMaxErr = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType locMaxErr = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [d_own_ptr = d_own.data(), dofPtr = s.d_node_to_dof.data(), dPtr = diff.data()] __device__ (size_t i) -> RealType {
             if (d_own_ptr[i] != 1 || dofPtr[i] < 0) return RealType(0);

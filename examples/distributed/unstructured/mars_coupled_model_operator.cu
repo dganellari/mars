@@ -17,6 +17,7 @@
 //   direct-solve oracle, and the published-profile comparison.
 
 #include "backend/distributed/unstructured/fem/mars_ns_solver.hpp"  // pulls domain, AMR, CVFEM, ElemTraits, SparseMatrix
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -671,7 +672,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
         const RealType* vp = thrust::raw_pointer_cast(v.data());
         const uint8_t* own = ownNodePtr;
         RealType loc = own
-            ? thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+            ? mars::transformReduce(thrust::counting_iterator<size_t>(0),
                   thrust::counting_iterator<size_t>((size_t)ND),
                   [vp, own] __device__ (size_t d) -> RealType { return own[d >> 2] ? vp[d] * vp[d] : RealType(0); },
                   RealType(0), thrust::plus<RealType>())
@@ -785,7 +786,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
             const uint8_t* own = ownNodePtr;
             const uint8_t* bcp = thrust::raw_pointer_cast(d_bcF.data());   // FREE rows only: the O(1) BC
             auto blkNorm = [&](int comp) -> RealType {   // identity rows drown the tiny physical entries
-                RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                RealType loc = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>((size_t)ND),
                     [ytp, own, bcp, comp] __device__ (size_t d) -> RealType {
                         if (own && !own[d >> 2]) return RealType(0);
@@ -798,7 +799,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
             };
             RealType xn = 0;   // owned norm of x itself (sanity: partition-independent by construction)
             { const RealType* xq = xtp; const uint8_t* ow = ownNodePtr;
-              xn = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+              xn = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                   thrust::counting_iterator<size_t>((size_t)ND),
                   [xq, ow] __device__ (size_t d) -> RealType { return (ow && !ow[d >> 2]) ? RealType(0) : xq[d] * xq[d]; },
                   RealType(0), thrust::plus<RealType>());
@@ -806,7 +807,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
               xn = std::sqrt(xn); }
             // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
             const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
-            RealType avmax = thrust::transform_reduce(d_avx.begin(), d_avx.end(),
+            RealType avmax = mars::transformReduce(d_avx.begin(), d_avx.end(),
                 [] __device__ (RealType v) -> RealType { return fabs(v); }, RealType(0), thrust::maximum<RealType>());
             if (rank == 0)
                 std::cout << std::scientific << std::setprecision(12)
@@ -833,9 +834,9 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
         cudaDeviceSynchronize();
         thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_tmp.begin(),
             [] __device__ (RealType s, RealType o) { return fabs(s - o); });
-        du = wrelax * thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+        du = wrelax * mars::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
         thrust::transform(d_sx.begin(), d_sx.end(), d_tmp.begin(), [] __device__ (RealType v) { return fabs(v); });
-        RealType uscale = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+        RealType uscale = mars::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
         if (numRanks > 1) {                          // global maxima: every rank must take the SAME Picard branch
             RealType g2[2] = {du, uscale};
             MPI_Allreduce(MPI_IN_PLACE, g2, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -903,9 +904,9 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
         thrust::copy(thrust::device_pointer_cast(xh.data()), thrust::device_pointer_cast(xh.data() + ND), d_xh.begin());
         thrust::transform(d_xa.begin(), d_xa.end(), d_xh.begin(), d_diff.begin(),
             [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-        const RealType dmax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+        const RealType dmax = mars::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
         thrust::transform(d_xa.begin(), d_xa.end(), d_diff.begin(), [] __device__ (RealType a) { return fabs(a); });
-        const RealType amax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+        const RealType amax = mars::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
         const RealType agree = dmax / (amax > 0 ? amax : RealType(1));
         std::cout << "[phase0][acm-pump] BoomerAMG-GMRES iters=" << itH << " res=" << rH << "\n";
         std::cout << "[phase0][acm-pump] solvers agree |x_acm-x_amg|rel=" << agree
@@ -1117,8 +1118,7 @@ int main(int argc, char** argv)
     auto ownedDot = [&](const thrust::device_vector<RealType>& a, const thrust::device_vector<RealType>& b) -> RealType {
         const RealType* ap = thrust::raw_pointer_cast(a.data());
         const RealType* bp = thrust::raw_pointer_cast(b.data());
-        const RealType loc = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nNodes),
+        const RealType loc = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nNodes),
             [ownPtr, ap, bp] __device__(size_t i) -> RealType { return ownPtr[i] == 1 ? ap[i] * bp[i] : RealType(0); },
             RealType(0), thrust::plus<RealType>());
         RealType g = 0; MPI_Allreduce(&loc, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); return g;   // RealType=double here
@@ -1586,10 +1586,10 @@ int main(int argc, char** argv)
                          thrust::device_pointer_cast(xH.data() + ND), d_xh.begin());
             thrust::transform(d_xh.begin(), d_xh.end(), d_xref.begin(), d_df.begin(),
                 [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-            RealType dmax = thrust::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
+            RealType dmax = mars::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
             thrust::transform(d_xref.begin(), d_xref.end(), d_df.begin(),
                 [] __device__ (RealType c) { return fabs(c); });
-            RealType rmax = thrust::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
+            RealType rmax = mars::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
             RealType rel = dmax / (rmax > 0 ? rmax : RealType(1));
             // rel guards the false-x=0 collapse (rel~1 = AMG returned ~0). A real
             // GMRES solve to a 1e-8 RESIDUAL tol on a kappa-growing saddle operator
@@ -1614,14 +1614,14 @@ int main(int argc, char** argv)
                 thrust::device_vector<RealType> d_absref(ND);
                 thrust::transform(d_xref.begin(), d_xref.end(), d_absref.begin(),
                     [] __device__ (RealType c) { return fabs(c); });
-                const RealType rmax = thrust::reduce(d_absref.begin(), d_absref.end(), RealType(0), thrust::maximum<RealType>());
+                const RealType rmax = mars::reduce(d_absref.begin(), d_absref.end(), RealType(0), thrust::maximum<RealType>());
                 auto relErr = [&](Vec& xv) -> RealType {
                     thrust::device_vector<RealType> xt(ND);
                     thrust::copy(thrust::device_pointer_cast(xv.data()),
                                  thrust::device_pointer_cast(xv.data() + ND), xt.begin());
                     thrust::transform(xt.begin(), xt.end(), d_xref.begin(), xt.begin(),
                         [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-                    RealType dmax = thrust::reduce(xt.begin(), xt.end(), RealType(0), thrust::maximum<RealType>());
+                    RealType dmax = mars::reduce(xt.begin(), xt.end(), RealType(0), thrust::maximum<RealType>());
                     return dmax / (rmax > 0 ? rmax : RealType(1));
                 };
 
@@ -1647,9 +1647,9 @@ int main(int argc, char** argv)
                 thrust::copy(thrust::device_pointer_cast(xi.data()), thrust::device_pointer_cast(xi.data() + ND), xiv.begin());
                 thrust::transform(xpv.begin(), xpv.end(), xiv.begin(), xiv.begin(),
                     [] __device__ (RealType a, RealType b) { return fabs(a - b); });
-                const RealType ddiff = thrust::reduce(xiv.begin(), xiv.end(), RealType(0), thrust::maximum<RealType>());
+                const RealType ddiff = mars::reduce(xiv.begin(), xiv.end(), RealType(0), thrust::maximum<RealType>());
                 thrust::transform(xpv.begin(), xpv.end(), xpv.begin(), [] __device__ (RealType a) { return fabs(a); });
-                const RealType dpmax = thrust::reduce(xpv.begin(), xpv.end(), RealType(0), thrust::maximum<RealType>());
+                const RealType dpmax = mars::reduce(xpv.begin(), xpv.end(), RealType(0), thrust::maximum<RealType>());
                 const RealType relZ = ddiff / (dpmax > 0 ? dpmax : RealType(1));
                 const bool gate1 = (itP == itI) && (relZ < 1e-10);
                 std::cout << "[phase0][acm4b][gate1] FGMRES(I)==plain GMRES (Z-basis): iters " << itP << "/" << itI
@@ -1866,7 +1866,7 @@ int main(int argc, char** argv)
                 cudaDeviceSynchronize();
                 thrust::transform(d_avx.begin(), d_avx.end(), d_uprev.begin(), d_tmp.begin(),
                     [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-                du = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+                du = mars::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
                 thrust::copy(d_avx.begin(), d_avx.end(), d_uprev.begin());
                 if (du < 1e-8) { ++it; break; }
             }

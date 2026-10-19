@@ -2,6 +2,7 @@
 
 #include "../fem/mars_sparse_matrix.hpp"
 #include "../utils/mars_gpu_sparse_blas.hpp"
+#include "mars_spmv_plan.hpp"
 #include <iostream>
 #include <cmath>
 #include <functional>
@@ -164,6 +165,7 @@ public:
             std::cout << "CG: Initial residual norm: " << std::sqrt(rho) << std::endl;
         }
 
+        SpmvPlan<RealType, Matrix, Vector> spmvPlan(cusparseHandle_, A, p, Ap);
         int iter = 0;
         for (iter = 0; iter < maxIter_; ++iter)
         {
@@ -174,7 +176,7 @@ public:
             }
 
             // Ap = A * p
-            spmv(A, p, Ap);
+            spmvPlan.apply(p, Ap);
 
             // alpha = rho / (p^T * Ap)
             RealType pAp = dot(p, Ap);  // This handles ghost DOFs correctly
@@ -236,64 +238,6 @@ public:
     }
 
 private:
-    // Sparse matrix-vector product: y = A * x
-    void spmv(const Matrix& A, const Vector& x, Vector& y)
-    {
-        const RealType alpha = 1.0;
-        const RealType beta  = 0.0;
-
-        // Create matrix descriptor
-        cusparseSpMatDescr_t matA;
-        cusparseDnVecDescr_t vecX, vecY;
-
-        if constexpr (std::is_same_v<RealType, double>)
-        {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_64F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_64F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-        else
-        {
-            // Float version
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_32F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_32F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-
-        cusparseDestroySpMat(matA);
-        cusparseDestroyDnVec(vecX);
-        cusparseDestroyDnVec(vecY);
-    }
 
     // Helper functions using cuBLAS
     RealType dot(const Vector& a, const Vector& b) {

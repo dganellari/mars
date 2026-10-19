@@ -41,6 +41,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars {
 
@@ -394,7 +395,7 @@ inline void acmColorBlockGraphGpu(int nN, const thrust::device_vector<int>& brow
     acmHashKernel<<<g, blk>>>(acmRaw(rho), nN);
     for (int round = 0; round < 128; ++round) {                            // capped; JP converges in ~O(log nN) rounds
         acmJPColorKernel<<<g, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(color), acmRaw(rho), nN);
-        if (thrust::count(color.begin(), color.end(), -1) == 0) break;     // 1 int D2H/round (control)
+        if (mars::count(color.begin(), color.end(), -1) == 0) break;     // 1 int D2H/round (control)
     }
     numColors = static_cast<int>(*thrust::max_element(color.begin(), color.end())) + 1;
     nodesByColor.resize(nN);

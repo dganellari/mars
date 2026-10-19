@@ -1,4 +1,5 @@
 #pragma once
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 // GPT/Codex, 2026-09-10. Opt-in checks for the public channel integration fixture.
 struct OutletChannelMoments
@@ -49,8 +50,7 @@ struct OutletChannelCheck
         auto difference = [&](const cstone::DeviceVector<RealType>& a,
                               const cstone::DeviceVector<RealType>& b, bool owned_only) {
             const auto* ap = a.data(); const auto* bp = b.data();
-            double local = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            double local = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 [=] __device__(size_t i) -> double {
                     if (owned_only && own[i] != 1) return 0.;
                     return isfinite(ap[i]) && isfinite(bp[i]) ? fabs(double(ap[i]-bp[i])) : INFINITY;
@@ -90,8 +90,7 @@ struct OutletChannelCheck
         {
             const RealType cut = RealType(j + 1);
             cuts[j] = double(interiorCutFlux(s, 0, cut, &s.vmsCtx));
-            double local = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            double local = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 [=] __device__(size_t i) -> double { return own[i] == 1 && x[i] <= cut ? double(r[i]) : 0.; },
                 0., thrust::plus<double>());
             double low_rows = 0;
@@ -116,8 +115,7 @@ struct OutletChannelCheck
         const auto* u = s.d_u.data(); const auto* v = s.d_v.data(); const auto* w = s.d_w.data();
         const auto* p = s.d_p.data(); const auto* trace = s.d_pTraceOutlet.data();
         const auto* area = s.d_outletAreaScalar.data();
-        const auto local = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        const auto local = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
             [=] __device__(size_t i) -> OutletChannelMoments {
                 if (own[i] != 1) return {};
                 const double m = mass[i], a = area[i];

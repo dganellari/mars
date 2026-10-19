@@ -19,6 +19,7 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars {
 namespace fem {
@@ -499,14 +500,14 @@ public:
         // both be reported NOT converged so the caller never scatters a bad phi.
         {
             double localXmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(x.data()),
                       thrust::device_pointer_cast(x.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
                       0.0, thrust::maximum<double>())
                 : 0.0;
             double localBmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(b.data()),
                       thrust::device_pointer_cast(b.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
@@ -557,7 +558,7 @@ public:
         HYPRE_IJMatrixInitialize(A_hypre_);
 
         // Quick NaN/Inf scan on raw values (single allreduce-style reduction).
-        bool hasNaN = thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        bool hasNaN = mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
                                      thrust::device_pointer_cast(A.valuesPtr() + A.nnz()),
                                      IsNonFinite<RealType>());
         if (hasNaN) {
@@ -631,8 +632,8 @@ public:
 
         // Validation summaries (small reductions, single int copy each).
         int emptyRows = static_cast<int>(
-            thrust::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
-        int rowsMissingDiagonal = thrust::transform_reduce(
+            mars::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
+        int rowsMissingDiagonal = mars::transformReduce(
             thrust::make_counting_iterator(0),
             thrust::make_counting_iterator(static_cast<int>(m)),
             [d_perRowCount_ptr = thrust::raw_pointer_cast(d_perRowCount.data()),
@@ -691,12 +692,12 @@ public:
     // Single thrust reduction: NaN/Inf check + min/max/sum, printed once.
     void validateVector(const RealType* d_ptr, HYPRE_Int n, int rank, const char* label) {
         if (n <= 0) return;
-        bool hasNaN = thrust::any_of(thrust::device_pointer_cast(d_ptr),
+        bool hasNaN = mars::anyOf(thrust::device_pointer_cast(d_ptr),
                                      thrust::device_pointer_cast(d_ptr + n),
                                      IsNonFinite<RealType>());
         if (verbose_ || hasNaN) {
             // For min/max/sum we restrict to finite values by masking. Cheap pass.
-            double sumVal = thrust::transform_reduce(
+            double sumVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -704,7 +705,7 @@ public:
                 },
                 0.0,
                 thrust::plus<double>());
-            double minVal = thrust::transform_reduce(
+            double minVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -712,7 +713,7 @@ public:
                 },
                 1e100,
                 thrust::minimum<double>());
-            double maxVal = thrust::transform_reduce(
+            double maxVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {

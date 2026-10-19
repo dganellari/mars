@@ -13,6 +13,7 @@
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/domain.hpp"
 #include "cstone/tree/csarray.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -241,7 +242,7 @@ public:
     cstone::DeviceVector<uint8_t> markForRefinement(const RealType* d_errorPerElement, size_t numElements)
     {
         RealType maxError =
-            thrust::reduce(thrust::device_pointer_cast(d_errorPerElement),
+            mars::reduce(thrust::device_pointer_cast(d_errorPerElement),
                            thrust::device_pointer_cast(d_errorPerElement + numElements), RealType(0),
                            thrust::maximum<RealType>());
 

@@ -3,6 +3,7 @@
 #include "../fem/mars_sparse_matrix.hpp"
 #include "mars_cg_solver_with_preconditioner.hpp"   // Preconditioner base (pluggable + flexible GMRES)
 #include "../utils/mars_gpu_sparse_blas.hpp"
+#include "mars_spmv_plan.hpp"
 #include <mpi.h>
 #include <functional>
 #include <iostream>
@@ -12,6 +13,7 @@
 #include <thrust/transform_reduce.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/counting_iterator.h>
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -41,7 +43,6 @@ public:
     {
         cublasDestroy(cublasHandle_);
         cusparseDestroy(cusparseHandle_);
-        if (spmvBuffer_) cudaFree(spmvBuffer_);
     }
 
     bool solve(const Matrix& A, const Vector& b, Vector& x, bool usePreconditioner = false)
@@ -95,6 +96,7 @@ public:
 
         Vector r(n);
         Vector w(n);
+        SpmvPlan<RealType, Matrix, Vector> spmvPlan(cusparseHandle_, A, x, r);
 
         int totalIter = 0;
 
@@ -102,7 +104,7 @@ public:
         for (int outer = 0; outer < maxIter_ / m; ++outer)
         {
             // r = b - A*x
-            spmv(A, x, r);
+            spmvPlan.apply(x, r);
             // r = b - r
             thrust::transform(thrust::device_pointer_cast(b.data()),
                              thrust::device_pointer_cast(b.data() + b.size()),
@@ -151,7 +153,7 @@ public:
             for (j = 0; j < m; ++j, ++totalIter)
             {
                 // w = A * V[j]
-                spmv(A, V[j], w);
+                spmvPlan.apply(V[j], w);
 
                 // Apply preconditioner: w = M^{-1} * w
                 if (usePreconditioner) {
@@ -281,7 +283,7 @@ public:
         if (ownedDof_) {
             const RealType* xp = x.data(); const RealType* yp = y.data();
             const uint8_t* own = ownedDof_;
-            loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+            loc = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(x.size()),
                 [xp, yp, own] __device__ (size_t i) -> RealType { return own[i] ? xp[i] * yp[i] : RealType(0); },
                 RealType(0), thrust::plus<RealType>());
@@ -305,8 +307,6 @@ private:
     bool verbose_;
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;
-    void* spmvBuffer_ = nullptr;        // persistent cusparse SpMV workspace, grown on demand -> no per-iter cudaMalloc/Free
-    size_t spmvBufferBytes_ = 0;
     std::function<void(Vector&)> haloCb_;      // multi-rank: refresh ghost DOFs from owners (empty on 1 rank)
     const uint8_t* ownedDof_ = nullptr;        // multi-rank: per-DOF ownership mask (device)
     bool mpiPar_ = false;
@@ -343,12 +343,13 @@ private:
         std::vector<std::vector<RealType>> H(m + 1, std::vector<RealType>(m, 0.0));
         std::vector<RealType> s(m + 1), cs(m), sn(m);
         Vector r(n), w(n);
+        SpmvPlan<RealType, Matrix, Vector> spmvPlan(cusparseHandle_, A, x, r);
         int totalIter = 0;
 
         for (int outer = 0; outer < maxIter_ / m; ++outer)
         {
             if (haloCb_) haloCb_(x);                                // owned-row matvec reads ghost COLUMNS -> refresh from owners
-            spmv(A, x, r);                                          // r = A x
+            spmvPlan.apply(x, r);                                          // r = A x
             thrust::transform(thrust::device_pointer_cast(b.data()),
                              thrust::device_pointer_cast(b.data() + b.size()),
                              thrust::device_pointer_cast(r.data()),
@@ -374,7 +375,7 @@ private:
                 if (haloCb_) haloCb_(vj);                          // give the rank-local V-cycle owner values on its ghosts
                 precond_->apply(vj, Z[j]);                         // Z[j] = M^-1 V[j]  (rank-local preconditioner = Schwarz)
                 if (haloCb_) haloCb_(Z[j]);                        // matvec input: ghost columns must carry owner values
-                spmv(A, Z[j], w);                                  // w = A Z[j]
+                spmvPlan.apply(Z[j], w);                                  // w = A Z[j]
                 zeroGhosts(w);                                     // keep the Krylov ghost-zero invariant
                 // batched CGS2 vs V[0..j]: 4 gemv (async) + 1 D2H of the coefficients, not j+1 synced dots
                 const int k = j + 1;
@@ -441,53 +442,6 @@ private:
         lastIters_ = totalIter;
         if (verbose_) std::cout << "FGMRES did not converge in " << maxIter_ << " iters\n";
         return false;
-    }
-
-    void spmv(const Matrix& A, const Vector& x, Vector& y)
-    {
-        const RealType alpha = 1.0;
-        const RealType beta  = 0.0;
-
-        cusparseSpMatDescr_t matA;
-        cusparseDnVecDescr_t vecX, vecY;
-
-        if constexpr (std::is_same_v<RealType, double>) {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_64F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_64F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-            if (bufferSize > spmvBufferBytes_) {   // grow once (matrix size is constant -> alloc on the first SpMV, then reused)
-                if (spmvBuffer_) cudaFree(spmvBuffer_);
-                cudaMalloc(&spmvBuffer_, bufferSize); spmvBufferBytes_ = bufferSize;
-            }
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, spmvBuffer_);
-        } else {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_32F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_32F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-            if (bufferSize > spmvBufferBytes_) {
-                if (spmvBuffer_) cudaFree(spmvBuffer_);
-                cudaMalloc(&spmvBuffer_, bufferSize); spmvBufferBytes_ = bufferSize;
-            }
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, spmvBuffer_);
-        }
-
-        cusparseDestroySpMat(matA);
-        cusparseDestroyDnVec(vecX);
-        cusparseDestroyDnVec(vecY);
     }
 
     RealType dot(const Vector& x, const Vector& y)

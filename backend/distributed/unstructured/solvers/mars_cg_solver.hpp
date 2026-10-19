@@ -2,6 +2,7 @@
 
 #include "../fem/mars_sparse_matrix.hpp"
 #include "../utils/mars_gpu_sparse_blas.hpp"
+#include "mars_spmv_plan.hpp"
 #include <iostream>
 #include <cmath>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <thrust/transform_reduce.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/execution_policy.h>
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -27,8 +29,7 @@ template<typename RealType>
 RealType maskedOwnedDot(const RealType* x, const RealType* y,
                         const uint8_t* mask, int n)
 {
-    return thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<int>(0),
+    return mars::transformReduce(thrust::counting_iterator<int>(0),
         thrust::counting_iterator<int>(n),
         [x, y, mask] __device__ (int i) -> RealType {
             return mask[i] ? RealType(0) : x[i] * y[i];
@@ -39,7 +40,7 @@ RealType maskedOwnedDot(const RealType* x, const RealType* y,
 template<typename RealType>
 RealType maxAbsEntry(const RealType* v, size_t n)
 {
-    return thrust::transform_reduce(thrust::device, v, v + n,
+    return mars::transformReduce(v, v + n,
         [] __device__ (RealType a) -> RealType { return fabs(a); }, RealType(0), thrust::maximum<RealType>());
 }
 
@@ -236,6 +237,7 @@ public:
         const RealType cgDiagB  = b_norm;
 
         // PCG iterations
+        SpmvPlan<RealType, Matrix, Vector> spmvPlan(cusparseHandle_, A, p, Ap);
         bool warnedNegativePAp = false;
         for (int iter = 0; iter < maxIter_; ++iter)
         {
@@ -245,7 +247,7 @@ public:
             }
 
             // Ap = A * p
-            spmv(A, p, Ap);
+            spmvPlan.apply(p, Ap);
 
             // Post-SpMV cross-rank coupling enforcement (periodic-pair Ap sync,
             // etc). Without this, cross-rank periodic slave+master rows hold
@@ -404,63 +406,10 @@ public:
     // Ap's allocation when Ap is owned-sized but p is total-sized).
     void setOwnedSize(int ownedSize) { ownedSize_ = ownedSize; }
 
-    // Sparse matrix-vector product: y = A * x (public for debugging)
+    // One product y = A * x (public for debugging); solve() keeps one plan for all its products.
     void spmv(const Matrix& A, const Vector& x, Vector& y)
     {
-        const RealType alpha = 1.0;
-        const RealType beta  = 0.0;
-
-        // Create matrix descriptor
-        cusparseSpMatDescr_t matA;
-        cusparseDnVecDescr_t vecX, vecY;
-
-        if constexpr (std::is_same_v<RealType, double>)
-        {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_64F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_64F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-        else
-        {
-            // Float version
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_32F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_32F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-
-        cusparseDestroySpMat(matA);
-        cusparseDestroyDnVec(vecX);
-        cusparseDestroyDnVec(vecY);
+        SpmvPlan<RealType, Matrix, Vector>(cusparseHandle_, A, x, y).apply(x, y);
     }
 
 private:

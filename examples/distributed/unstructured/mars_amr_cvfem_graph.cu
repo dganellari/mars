@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -318,12 +319,12 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::executio
     auto xb = thrust::device_pointer_cast(d_x.data());
     auto yb = thrust::device_pointer_cast(d_y.data());
     auto zb = thrust::device_pointer_cast(d_z.data());
-    RealType lxmin = thrust::reduce(thrust::device, xb, xb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lxmax = thrust::reduce(thrust::device, xb, xb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lymin = thrust::reduce(thrust::device, yb, yb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lymax = thrust::reduce(thrust::device, yb, yb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lzmin = thrust::reduce(thrust::device, zb, zb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lzmax = thrust::reduce(thrust::device, zb, zb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lxmin = mars::reduce(xb, xb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lxmax = mars::reduce(xb, xb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lymin = mars::reduce(yb, yb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lymax = mars::reduce(yb, yb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lzmin = mars::reduce(zb, zb + nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lzmax = mars::reduce(zb, zb + nodeCount, RealType(-1e30), thrust::maximum<RealType>());
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     RealType xmin, xmax, ymin, ymax, zmin, zmax;
@@ -652,9 +653,9 @@ int main(int argc, char** argv)
     {
         size_t nNodes = d_nodeSolution.size();
         auto sol_ptr  = thrust::device_pointer_cast(d_nodeSolution.data());
-        RealType solMin = thrust::reduce(thrust::device, sol_ptr, sol_ptr + nNodes,
+        RealType solMin = mars::reduce(sol_ptr, sol_ptr + nNodes,
                                           std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-        RealType solMax = thrust::reduce(thrust::device, sol_ptr, sol_ptr + nNodes,
+        RealType solMax = mars::reduce(sol_ptr, sol_ptr + nNodes,
                                           std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
         RealType solNorm = std::sqrt(
             thrust::inner_product(thrust::device, sol_ptr, sol_ptr + nNodes, sol_ptr, RealType(0)));

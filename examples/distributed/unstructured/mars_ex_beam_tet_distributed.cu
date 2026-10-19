@@ -29,6 +29,7 @@
 #include "backend/distributed/unstructured/fem/mars_unstructured_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dm.hpp"
 #include "backend/distributed/unstructured/fem/mars_form_linear_system.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #endif
@@ -1409,7 +1410,7 @@ int main(int argc, char** argv) {
     double u_max_local = *thrust::max_element(thrust::device_pointer_cast(u_full.data()),
                                              thrust::device_pointer_cast(u_full.data() + numOwnedDofsForStats));
 
-    double u_norm_sq_local = thrust::transform_reduce(thrust::device_pointer_cast(u_full.data()),
+    double u_norm_sq_local = mars::transformReduce(thrust::device_pointer_cast(u_full.data()),
                                                      thrust::device_pointer_cast(u_full.data() + numOwnedDofsForStats),
                                                      [] __host__ __device__ (double x) { return x * x; },
                                                      0.0, thrust::plus<double>());

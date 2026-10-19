@@ -73,6 +73,7 @@
 #include <mpi.h>
 #include <type_traits>
 #include <vector>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -132,8 +133,8 @@ auto boundingBox(const Domain& domain)
     Box<RealType> box;
     for (int d = 0; d < 3; ++d)
     {
-        RealType lo = thrust::reduce(thrust::device, coord[d], coord[d] + n, inf, thrust::minimum<RealType>());
-        RealType hi = thrust::reduce(thrust::device, coord[d], coord[d] + n, -inf, thrust::maximum<RealType>());
+        RealType lo = mars::reduce(coord[d], coord[d] + n, inf, thrust::minimum<RealType>());
+        RealType hi = mars::reduce(coord[d], coord[d] + n, -inf, thrust::maximum<RealType>());
         MPI_Allreduce(&lo, &box.lo[d], 1, mpiDatatype<RealType>(), MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(&hi, &box.hi[d], 1, mpiDatatype<RealType>(), MPI_MAX, MPI_COMM_WORLD);
     }
@@ -1097,8 +1098,8 @@ public:
     double maxContinuity()
     {
         fluxDivergence(div_, vel());
-        double local = thrust::transform_reduce(
-            thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
+        double local = mars::transformReduce(
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
             NsContinuityTerm<RealType>{space_.isDof(), pressureFixed_.data(), massDof_.data(), div_.data()}, 0.0,
             thrust::maximum<double>());
         double global = 0;
@@ -1119,8 +1120,8 @@ public:
                                         massDof_.data(),  divStar_.data(),       after.data(),
                                         action.data(),    comps_,                cview(openArea_),
                                         cview(target_),   cview(vel()),          dtEff / prm_.rho};
-        NsProjectionSums local = thrust::transform_reduce(
-            thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), term,
+        NsProjectionSums local = mars::transformReduce(
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), term,
             NsProjectionSums{}, thrust::plus<NsProjectionSums>());
         NsProjectionSums g;
         MPI_Allreduce(local.sum, g.sum, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -1494,7 +1495,7 @@ private:
         // One layer of elements between two z planes, so w = 0 and nothing depends on z.
         const RealType eps = RealType(1e-8) * box_.extent();
         long long bad =
-            thrust::count_if(thrust::device, z(), z() + n_, NsOffPlanes<RealType>{box_.lo[2], box_.hi[2], eps});
+            mars::countIf(z(), z() + n_, NsOffPlanes<RealType>{box_.lo[2], box_.hi[2], eps});
         MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (bad > 0 || !(box_.hi[2] > box_.lo[2]))
         {
@@ -1552,7 +1553,7 @@ private:
         dofIndex_.resize(n_);
         thrust::transform(thrust::device, space_.isDof(), space_.isDof() + n_, dofIndex_.data(), NsToInt{});
         thrust::exclusive_scan(thrust::device, dofIndex_.data(), dofIndex_.data() + n_, dofIndex_.data());
-        numOwned_ = int(thrust::count(thrust::device, space_.isDof(), space_.isDof() + n_, uint8_t(1)));
+        numOwned_ = int(mars::count(space_.isDof(), space_.isDof() + n_, uint8_t(1)));
 
         long long owned = numOwned_;
         MPI_Exscan(&owned, &dofStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1561,7 +1562,7 @@ private:
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
         cudaCheckError();
         space_.prolong(gid_);
-        long long missing = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
+        long long missing = mars::countIf(thrust::counting_iterator<size_t>(0),
                                              thrust::counting_iterator<size_t>(n_),
                                              NsSyncedWithoutId<RealType>{space_.isSynced(), gid_.data()});
         MPI_Allreduce(MPI_IN_PLACE, &missing, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1573,7 +1574,7 @@ private:
         rhs_.resize(numOwned_);
         x_.resize(numOwned_);
 
-        long long fixedPressure = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
+        long long fixedPressure = mars::countIf(thrust::counting_iterator<size_t>(0),
                                                    thrust::counting_iterator<size_t>(n_),
                                                    NsFlaggedDof<RealType>{space_.isDof(), pressureFixed_.data()});
         MPI_Allreduce(MPI_IN_PLACE, &fixedPressure, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1661,8 +1662,8 @@ private:
             cudaCheckError();
             if (asymmetry)
             {
-                thrust::tuple<double, double> local = thrust::transform_reduce(
-                    thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
+                thrust::tuple<double, double> local = mars::transformReduce(
+                    thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
                     NsRowAsymmetry{csrRowPtr_.data(), csrCols_.data(), v}, thrust::make_tuple(0.0, 0.0), NsMaxPair{});
                 double loc[2] = {thrust::get<0>(local), thrust::get<1>(local)}, glob[2];
                 MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -1739,8 +1740,8 @@ private:
         pressure_->apply(xDof.data(), assembled.data());
         NsOperatorDifference<RealType> diff{space_.isDof(), pressureFixed_.data(), dofIndex_.data(), matFree.data(),
                                             assembled.data()};
-        thrust::tuple<double, double> local = thrust::transform_reduce(
-            thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), diff,
+        thrust::tuple<double, double> local = mars::transformReduce(
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), diff,
             thrust::make_tuple(0.0, 0.0), NsMaxPair{});
         double loc[2] = {thrust::get<0>(local), thrust::get<1>(local)}, glob[2];
         MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -1758,7 +1759,7 @@ private:
     template<class Term>
     double dofSum(Term term) const
     {
-        double local = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+        double local = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                                                 thrust::counting_iterator<size_t>(n_), term, 0.0,
                                                 thrust::plus<double>());
         double global = 0;

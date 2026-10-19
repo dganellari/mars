@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <chrono>
 #include <cmath>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -454,9 +455,9 @@ int main(int argc, char** argv)
     // Final solution statistics
     if (rank == 0)
     {
-        RealType solMin = thrust::reduce(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(),
+        RealType solMin = mars::reduce(d_nodeSolution.begin(), d_nodeSolution.end(),
                                           std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-        RealType solMax = thrust::reduce(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(),
+        RealType solMax = mars::reduce(d_nodeSolution.begin(), d_nodeSolution.end(),
                                           std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
         RealType solNorm = std::sqrt(
             thrust::inner_product(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(), d_nodeSolution.begin(), RealType(0)));

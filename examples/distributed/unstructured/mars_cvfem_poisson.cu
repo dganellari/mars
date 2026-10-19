@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <chrono>
 #include <cmath>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -303,9 +304,9 @@ int main(int argc, char** argv) {
     const RealType* coords[3] = {d_x.data(), d_y.data(), d_z.data()};
     RealType lo[3], hi[3];
     for (int d = 0; d < 3; ++d) {
-        lo[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+        lo[d] = mars::reduce(coords[d], coords[d] + nodeCount,
                                std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-        hi[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+        hi[d] = mars::reduce(coords[d], coords[d] + nodeCount,
                                std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
     MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
@@ -336,7 +337,7 @@ int main(int argc, char** argv) {
                          values[diagPtr[dof]] = RealType(1);
                          rhs[dof] = RealType(0);
                      });
-    long numBoundaryDofs = thrust::reduce(thrust::device, d_isBoundary.data(), d_isBoundary.data() + numOwnedDofs, 0L);
+    long numBoundaryDofs = mars::reduce(d_isBoundary.data(), d_isBoundary.data() + numOwnedDofs, 0L);
     MPI_Allreduce(MPI_IN_PLACE, &numBoundaryDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
     if (rank == 0) {
@@ -387,9 +388,9 @@ int main(int argc, char** argv) {
 
     // Solution statistics over the owned DOFs of all ranks
     const RealType* xOwned = x.data();
-    RealType solMin = thrust::reduce(thrust::device, xOwned, xOwned + numOwnedDofs,
+    RealType solMin = mars::reduce(xOwned, xOwned + numOwnedDofs,
                                      std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-    RealType solMax = thrust::reduce(thrust::device, xOwned, xOwned + numOwnedDofs,
+    RealType solMax = mars::reduce(xOwned, xOwned + numOwnedDofs,
                                      std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     RealType solSq  = thrust::inner_product(thrust::device, xOwned, xOwned + numOwnedDofs, xOwned, RealType(0));
     MPI_Allreduce(MPI_IN_PLACE, &solMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);

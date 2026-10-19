@@ -18,6 +18,7 @@
 #include "backend/distributed/unstructured/fem/mars_unstructured_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dm.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver_with_preconditioner.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #endif
@@ -459,7 +460,7 @@ int main(int argc, char** argv) {
     // Debug: Check RHS values on all ranks
     {
         auto& rhs = dm.get_data<1>();
-        double rhs_sum = thrust::reduce(thrust::device_pointer_cast(rhs.data()),
+        double rhs_sum = mars::reduce(thrust::device_pointer_cast(rhs.data()),
                                         thrust::device_pointer_cast(rhs.data() + rhs.size()),
                                         0.0, thrust::plus<double>());
         double rhs_max = *thrust::max_element(thrust::device_pointer_cast(rhs.data()),
@@ -628,7 +629,7 @@ int main(int argc, char** argv) {
                                       thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
     double u_max = *thrust::max_element(thrust::device_pointer_cast(u_full.data()), 
                                       thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
-    double u_norm_sq = thrust::transform_reduce(thrust::device_pointer_cast(u_full.data()), 
+    double u_norm_sq = mars::transformReduce(thrust::device_pointer_cast(u_full.data()), 
                                              thrust::device_pointer_cast(u_full.data() + numOwnedDofs), 
                                              [] __host__ __device__ (double x) { return x*x; }, 
                                              0.0, thrust::plus<double>());

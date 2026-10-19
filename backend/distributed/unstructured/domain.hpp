@@ -56,6 +56,7 @@ using std::get;
 #include "mars.hpp"
 #include "mars_globals.hpp"
 #include "mars_domain_utils.hpp"
+#include "utils/mars_gpu_reduce.hpp"
 // #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
@@ -829,7 +830,13 @@ public:
     }
 
     // Get element/node counts
-    std::size_t getNodeCount() const { return nodeCount_; }
+    // The local node numbering is built on first use; before that nodeCount_ is still the count read from
+    // the file, which on several ranks is not the number of nodes the rank holds after the sync.
+    std::size_t getNodeCount() const
+    {
+        ensureSfcMap();
+        return nodeCount_;
+    }
     std::size_t getElementCount() const { return elementCount_; }
 
     // Access to cornerstone domain
@@ -1868,8 +1875,8 @@ public:
         const RealType longest = std::max({box.xmax() - box.xmin(), box.ymax() - box.ymin(), box.zmax() - box.zmin()});
         const RealType apart   = RealType(1e-9) * longest;
         long collisions        = nodeCount_ < 2 ? 0
-                                 : thrust::transform_reduce(
-                                       thrust::device, thrust::counting_iterator<size_t>(1),
+                                 : mars::transformReduce(
+                                       thrust::counting_iterator<size_t>(1),
                                        thrust::counting_iterator<size_t>(nodeCount_),
                                        [k = sorted.data(), o = order.data(), px = x.data(), py = y.data(), pz = z.data(),
                                         apart] __device__(size_t i) -> long
@@ -2534,12 +2541,12 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
         auto xb = thrust::device_pointer_cast(d_x.data());
         auto yb = thrust::device_pointer_cast(d_y.data());
         auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -3837,12 +3844,12 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
         auto xb = thrust::device_pointer_cast(d_x.data());
         auto yb = thrust::device_pointer_cast(d_y.data());
         auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;

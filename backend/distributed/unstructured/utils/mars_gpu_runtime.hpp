@@ -8,6 +8,7 @@
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
 
 #define cudaDevAttrMaxSharedMemoryPerBlockOptin hipDeviceAttributeSharedMemPerBlockOptin
+#define cudaDevAttrMultiProcessorCount hipDeviceAttributeMultiprocessorCount
 #define cudaDeviceGetAttribute hipDeviceGetAttribute
 #define cudaErrorIllegalAddress hipErrorIllegalAddress
 #define cudaErrorInvalidConfiguration hipErrorInvalidConfiguration

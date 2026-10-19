@@ -157,18 +157,15 @@ cvfem_hex_assembly_kernel_tensor_wmma(
     // =========================================================================
     // Phase 2 — Distribute loads + zero-init all accumulators
     //
-    // smem_A[96] + smem_B[96] = 192 doubles → 6 doubles/lane (exact).
+    // smem_A[96] and smem_B[96]: 3 doubles of each per lane.
     // rhs[8] + lhs[64] = 72 doubles; lanes 0-7 zero rhs + lhs (9 doubles each).
     // smem_C is written by WMMA before it is read, so no init needed.
     // =========================================================================
 
-    // Zero smem_A and smem_B: 192 doubles / 32 lanes = 6 doubles per lane
     {
-        const int base = laneId * 6;
-        w.smem_A[base]     = 0.0;  w.smem_A[base + 1] = 0.0;  w.smem_A[base + 2] = 0.0;
-        w.smem_A[base + 3] = 0.0;  w.smem_A[base + 4] = 0.0;  w.smem_A[base + 5] = 0.0;
-        w.smem_B[base]     = 0.0;  w.smem_B[base + 1] = 0.0;  w.smem_B[base + 2] = 0.0;
-        w.smem_B[base + 3] = 0.0;  w.smem_B[base + 4] = 0.0;  w.smem_B[base + 5] = 0.0;
+        const int base = laneId * 3;
+        w.smem_A[base] = 0.0;  w.smem_A[base + 1] = 0.0;  w.smem_A[base + 2] = 0.0;
+        w.smem_B[base] = 0.0;  w.smem_B[base + 1] = 0.0;  w.smem_B[base + 2] = 0.0;
     }
 
     // Lanes 0-7: load node data + zero rhs and lhs row

@@ -7,6 +7,7 @@ option(MARS_ENABLE_CUDAUVM "Use as default memory space CUDAUVM. This has only a
 option(MARS_ENABLE_RDMA "Build mars with RDMA support" ON)
 
 option(MARS_ENABLE_HIP "Build mars with cuda support" OFF)
+option(MARS_HIP_ROCPRIM_REDUCTIONS "On AMD, reductions through rocPRIM (Thrust) instead of MARS kernels; much longer compile" OFF)
 
 option(MARS_ENABLE_ADIOS2 "Uses ADIOS2 IO" OFF)
 

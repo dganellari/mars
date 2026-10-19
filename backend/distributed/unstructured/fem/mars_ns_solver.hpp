@@ -35,6 +35,7 @@
 #include "backend/distributed/unstructured/fem/mars_sparse_matrix.hpp"
 #include "backend/distributed/unstructured/fem/mars_periodic_bc.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_gmres_solver.hpp"
@@ -2626,12 +2627,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const auto& d_x  = s.domain.getNodeX();
         const auto& d_y  = s.domain.getNodeY();
         const auto& d_z  = s.domain.getNodeZ();
-        RealType lxmin = thrust::reduce(thrust::device, d_x.data(), d_x.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-        RealType lxmax = thrust::reduce(thrust::device, d_x.data(), d_x.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-        RealType lymin = thrust::reduce(thrust::device, d_y.data(), d_y.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-        RealType lymax = thrust::reduce(thrust::device, d_y.data(), d_y.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-        RealType lzmin = thrust::reduce(thrust::device, d_z.data(), d_z.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-        RealType lzmax = thrust::reduce(thrust::device, d_z.data(), d_z.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lxmin = mars::reduce(d_x.data(), d_x.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lxmax = mars::reduce(d_x.data(), d_x.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lymin = mars::reduce(d_y.data(), d_y.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lymax = mars::reduce(d_y.data(), d_y.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lzmin = mars::reduce(d_z.data(), d_z.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lzmax = mars::reduce(d_z.data(), d_z.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
         RealType xmin, xmax, ymin, ymax, zmin, zmax;
         MPI_Datatype mpiType = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
         MPI_Allreduce(&lxmin, &xmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
@@ -2645,8 +2646,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         long long localOnMin = 0;
         if (numHalo > 0)
         {
-            localOnMin = thrust::count_if(
-                thrust::device,
+            localOnMin = mars::countIf(
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.elementCount),
                 [startE, endE,
@@ -2799,8 +2799,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                           });
         cudaDeviceSynchronize();
 
-        int nLive = int(thrust::reduce(thrust::device,
-                                        d_isLive.begin(), d_isLive.end(), 0));
+        int nLive = int(mars::reduce(d_isLive.begin(), d_isLive.end(), 0));
 
         // Pass 4: rewrite nodeToDof through the compact map.
         // - Owned nodes whose dof is in [0, numOwned): apply compact[].
@@ -2936,18 +2935,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             for (int f = 0; f < NSCS; ++f) { sx += ax[base+f]; sy += ay[base+f]; sz += az[base+f]; }
             return sx*sx + sy*sy + sz*sz;
         };
-        RealType ownedMaxSq = thrust::transform_reduce(
-            thrust::device, thrust::counting_iterator<size_t>(startE),
+        RealType ownedMaxSq = mars::transformReduce(
+            thrust::counting_iterator<size_t>(startE),
             thrust::counting_iterator<size_t>(endE), closureMagSq,
             RealType(0), thrust::maximum<RealType>());
         RealType haloMaxSq = RealType(0);
         if (nElem > numOwn) {
-            RealType h1 = (startE > 0) ? thrust::transform_reduce(
-                thrust::device, thrust::counting_iterator<size_t>(0),
+            RealType h1 = (startE > 0) ? mars::transformReduce(
+                thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(startE), closureMagSq,
                 RealType(0), thrust::maximum<RealType>()) : RealType(0);
-            RealType h2 = (nElem > endE) ? thrust::transform_reduce(
-                thrust::device, thrust::counting_iterator<size_t>(endE),
+            RealType h2 = (nElem > endE) ? mars::transformReduce(
+                thrust::counting_iterator<size_t>(endE),
                 thrust::counting_iterator<size_t>(nElem), closureMagSq,
                 RealType(0), thrust::maximum<RealType>()) : RealType(0);
             haloMaxSq = std::max(h1, h2);
@@ -2988,8 +2987,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const KeyType* c2p = std::get<2>(d_conn).data(); const KeyType* c3p = std::get<3>(d_conn).data();
         const KeyType* c4p = std::get<4>(d_conn).data(); const KeyType* c5p = std::get<5>(d_conn).data();
         const KeyType* c6p = std::get<6>(d_conn).data(); const KeyType* c7p = std::get<7>(d_conn).data();
-        RealType lxmin = thrust::reduce(thrust::device, xp, xp + s.nodeCount, RealType( 1e30), thrust::minimum<RealType>());
-        RealType lxmax = thrust::reduce(thrust::device, xp, xp + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lxmin = mars::reduce(xp, xp + s.nodeCount, RealType( 1e30), thrust::minimum<RealType>());
+        RealType lxmax = mars::reduce(xp, xp + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
         RealType xmin = 0, xmax = 0;
         MPI_Datatype mt2 = std::is_same<RealType,double>::value ? MPI_DOUBLE : MPI_FLOAT;
         MPI_Allreduce(&lxmin, &xmin, 1, mt2, MPI_MIN, MPI_COMM_WORLD);
@@ -3014,12 +3013,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         };
         auto pickMaster = [=] __device__ (size_t e) -> RealType { return sideAccPicker(e, 1); };
         auto pickSlave  = [=] __device__ (size_t e) -> RealType { return sideAccPicker(e, 2); };
-        RealType locM = thrust::transform_reduce(thrust::device,
-                          thrust::counting_iterator<size_t>(startE),
+        RealType locM = mars::transformReduce(thrust::counting_iterator<size_t>(startE),
                           thrust::counting_iterator<size_t>(endE),
                           pickMaster, RealType(0), thrust::plus<RealType>());
-        RealType locS = thrust::transform_reduce(thrust::device,
-                          thrust::counting_iterator<size_t>(startE),
+        RealType locS = mars::transformReduce(thrust::counting_iterator<size_t>(startE),
                           thrust::counting_iterator<size_t>(endE),
                           pickSlave, RealType(0), thrust::plus<RealType>());
         RealType lpair[2] = { locM, locS };
@@ -3074,23 +3071,19 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const uint8_t* ownPtr  = s.ownershipMap().data();
         const int*     partPtr = s.periodicMap->d_periodicPartner.data();
         const RealType* onesP  = d_ones.data();
-        double locSum = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        double locSum = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
                 if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;  // slave folded away
                 return double(onesP[i]); }, 0.0, thrust::plus<double>());
-        double locMax = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        double locMax = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
                 if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;
                 return double(onesP[i]); }, 0.0, thrust::maximum<double>());
-        long long locResid = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        long long locResid = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, partPtr, onesP] __device__ (size_t i) -> long long {
                 if (ownPtr[i] != 1 || partPtr[i] < 0) return 0LL;
                 return (onesP[i] != RealType(0)) ? 1LL : 0LL; }, 0LL, thrust::plus<long long>());
-        long long locOwned = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        long long locOwned = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr] __device__ (size_t i) -> long long { return (ownPtr[i] == 1) ? 1LL : 0LL; },
             0LL, thrust::plus<long long>());
         double gSum = 0, gMax = 0; long long gResid = 0, gOwned = 0;
@@ -3115,8 +3108,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         long long lOver1=0, lOver2=0, lOver4=0, lOver8=0;
         long long lG1=0, lG2=0, lG4=0, lG8=0;
         auto countOver = [&](double thr) {
-            return thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            return mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 [ownPtr, partPtr, onesP, thr] __device__ (size_t i) -> long long {
                     if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
                     return (double(onesP[i]) > thr + 0.5) ? 1LL : 0LL;
@@ -3132,8 +3124,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         lOver8 = countOver(8.0);   // >8 -> OVER-FOLDED, must be 0
         // And exact group buckets (= per-mask popcount expectations):
         auto countEq = [&](double tgt) {
-            return thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            return mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 [ownPtr, partPtr, onesP, tgt] __device__ (size_t i) -> long long {
                     if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
                     return (double(onesP[i]) > tgt - 0.5 && double(onesP[i]) < tgt + 0.5) ? 1LL : 0LL;
@@ -3253,8 +3244,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     const int*     partPtr  = s.periodicMap->d_periodicPartner.data();
                     const RealType* mPtr    = s.d_massNode.data();
                     const size_t nN = s.nodeCount;
-                    long long localZeroSlaves = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<size_t>(0),
+                    long long localZeroSlaves = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                         thrust::counting_iterator<size_t>(nN),
                         [ownPtr, maskPtr, partPtr, mPtr] __device__ (size_t i) -> long long {
                             if (ownPtr[i] != 1) return 0;
@@ -3262,15 +3252,13 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                             if (partPtr[i] >= 0) return 0;
                             return (double(mPtr[i]) < 1e-30) ? 1 : 0;
                         }, (long long)0, thrust::plus<long long>());
-                    double localMaxMirroredMass = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<size_t>(0),
+                    double localMaxMirroredMass = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                         thrust::counting_iterator<size_t>(nN),
                         [ownPtr, maskPtr, partPtr, mPtr] __device__ (size_t i) -> double {
                             if (ownPtr[i] != 1 || maskPtr[i] == 0 || partPtr[i] < 0) return 0.0;
                             return double(mPtr[i]);
                         }, 0.0, thrust::maximum<double>());
-                    long long localOwnedSlaves = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<size_t>(0),
+                    long long localOwnedSlaves = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                         thrust::counting_iterator<size_t>(nN),
                         [ownPtr, maskPtr] __device__ (size_t i) -> long long {
                             return (ownPtr[i] == 1 && maskPtr[i] != 0) ? 1 : 0;
@@ -3306,8 +3294,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // mass is already represented in its master (and its DOF). partner>=0
             // marks a slave.
             const int* partnerP = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
-            double localMass = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0),
+            double localMass = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
                 [ownPtr, mP, partnerP] __device__ (size_t i) -> double {
                     if (ownPtr[i] != 1) return 0.0;
@@ -3539,16 +3526,14 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const RealType* vv   = s.d_valuesVel.data();
         const RealType* mass = s.d_mass.data();
         RealType invdt = RealType(1) / dt;
-        double localKsum = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<int>(0),
+        double localKsum = mars::transformReduce(thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(s.numOwnedDofs),
             [dptr, vv, mass, invdt] __device__ (int r) -> double {
                 int dp = dptr[r];
                 if (dp < 0) return 0.0;
                 return double(vv[dp] - mass[r] * invdt);   // nu*K diagonal part
             }, 0.0, thrust::plus<double>());
-        RealType localKmax = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<int>(0),
+        RealType localKmax = mars::transformReduce(thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(s.numOwnedDofs),
             [dptr, vv, mass, invdt] __device__ (int r) -> RealType {
                 int dp = dptr[r];
@@ -3651,12 +3636,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     auto xb = thrust::device_pointer_cast(d_x.data());
     auto yb = thrust::device_pointer_cast(d_y.data());
     auto zb = thrust::device_pointer_cast(d_z.data());
-    RealType lxmin = thrust::reduce(thrust::device, xb, xb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lxmax = thrust::reduce(thrust::device, xb, xb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lymin = thrust::reduce(thrust::device, yb, yb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lymax = thrust::reduce(thrust::device, yb, yb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
-    RealType lzmin = thrust::reduce(thrust::device, zb, zb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
-    RealType lzmax = thrust::reduce(thrust::device, zb, zb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lxmin = mars::reduce(xb, xb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lxmax = mars::reduce(xb, xb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lymin = mars::reduce(yb, yb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lymax = mars::reduce(yb, yb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+    RealType lzmin = mars::reduce(zb, zb + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+    RealType lzmax = mars::reduce(zb, zb + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&lxmin, &s.xmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
@@ -3779,8 +3764,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // ranks -- the direct cause of u* (and KE*) differing from step 1.
     {
         const uint8_t* bnd = s.d_isBdryDof.data();
-        long long locBnd = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<int>(0),
+        long long locBnd = mars::transformReduce(thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(s.numOwnedDofs),
             [bnd] __device__ (int d) -> long long { return bnd[d] ? 1LL : 0LL; },
             0LL, thrust::plus<long long>());
@@ -3791,8 +3775,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const RealType* uT = s.d_uTarget.data();
         const RealType* vT = s.d_vTarget.data();
         const RealType* wT = s.d_wTarget.data();
-        double locTgt = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0),
+        double locTgt = mars::transformReduce(thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, dofPtr, uT, vT, wT] __device__ (size_t i) -> double {
                 if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0.0;
@@ -4647,8 +4630,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // MARS_DDT_JACOBI_CLIP_FRAC=F sets eps = F * max(diag).
     if (s.d_diagDDT.size() == static_cast<size_t>(s.numOwnedDofs) && s.numOwnedDofs > 0)
     {
-        RealType localMax = thrust::reduce(
-            thrust::device,
+        RealType localMax = mars::reduce(
             thrust::device_pointer_cast(s.d_diagDDT.data()),
             thrust::device_pointer_cast(s.d_diagDDT.data() + s.numOwnedDofs),
             RealType(0), thrust::maximum<RealType>());
@@ -5425,8 +5407,7 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
             const uint8_t* ownP = d_nodeOwnership.data();
             const size_t N = s.nodeCount;
             // find first owned slave with cross-rank ghost master
-            long long localFirst = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0),
+            long long localFirst = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(N),
                 [partnerP, ownP, N] __device__ (size_t i) -> long long {
                     if (ownP[i] != 1) return (long long)N;
@@ -5747,8 +5728,7 @@ RealType dotDof(const cstone::DeviceVector<RealType>& a,
 {
     const RealType* aPtr = a.data();
     const RealType* bPtr = b.data();
-    RealType localSum = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<int>(0),
+    RealType localSum = mars::transformReduce(thrust::counting_iterator<int>(0),
         thrust::counting_iterator<int>(numOwnedDofs),
         [aPtr, bPtr, xrSlaveMask] __device__ (int i) -> RealType {
             if (xrSlaveMask && xrSlaveMask[i]) return RealType(0);
@@ -5879,8 +5859,7 @@ RealType ownedDot(const cstone::DeviceVector<RealType>& a,
     const RealType* aPtr = a.data();
     const RealType* bPtr = b.data();
     const int* dofPtr    = d_nodeToDof.data();
-    RealType localSum = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType localSum = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(numNodes),
         [aPtr, bPtr, dofPtr, d_ownership, d_partner] __device__ (size_t i) -> RealType {
             if (d_ownership[i] != 1 || dofPtr[i] < 0) return RealType(0);
@@ -5948,15 +5927,13 @@ void removeMeanDof(NSStepper<KeyType, RealType, ElementTag>& s,
     if (s.numOwnedDofs <= 0) return;
     const uint8_t* xrMask = nullptr;
     RealType* vp = vec_dof.data();
-    RealType localSum = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<int>(0),
+    RealType localSum = mars::transformReduce(thrust::counting_iterator<int>(0),
         thrust::counting_iterator<int>(s.numOwnedDofs),
         [vp, xrMask] __device__ (int i) -> RealType {
             if (xrMask && xrMask[i]) return RealType(0);
             return vp[i];
         }, RealType(0), thrust::plus<RealType>());
-    long long localN = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<int>(0),
+    long long localN = mars::transformReduce(thrust::counting_iterator<int>(0),
         thrust::counting_iterator<int>(s.numOwnedDofs),
         [xrMask] __device__ (int i) -> long long {
             return (xrMask && xrMask[i]) ? 0LL : 1LL;
@@ -6483,8 +6460,7 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             // returns 0 on non-owners so MPI_SUM picks exactly one contributor.
             auto readAt = [&](int targetDof, bool ownerHere) -> RealType {
                 if (!ownerHere) return RealType(0);
-                RealType acc = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                RealType acc = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [n2dPtr, ownPtr, targetDof, a = ApE.data()] __device__ (size_t k) -> RealType {
                         return (ownPtr[k] == 1 && n2dPtr[k] == targetDof) ? a[k] : RealType(0);
@@ -6687,8 +6663,7 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                 const uint8_t*  ownP  = d_nodeOwnership.data();
                 const int*      parP  = partnerPtr;
                 // local pAp (same gate as ownedDot, but keep the un-reduced value)
-                RealType localPap = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                RealType localPap = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [pPtr, ApPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
                         if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
@@ -6696,16 +6671,14 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                         return pPtr[i] * ApPtr[i];
                     }, RealType(0), thrust::plus<RealType>());
                 // local |p|^2 and |Ap|^2 over owned (same gate)
-                RealType localPP = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                RealType localPP = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [pPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
                         if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
                         if (parP && parP[i] >= 0) return RealType(0);
                         return pPtr[i] * pPtr[i];
                     }, RealType(0), thrust::plus<RealType>());
-                RealType localApAp = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                RealType localApAp = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [ApPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
                         if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
@@ -6915,8 +6888,7 @@ RealType rmsOwnedInterior3(NSStepper<KeyType, RealType, ElementTag>& s,
     const RealType* gxP   = d_gx.data();
     const RealType* gyP   = d_gy.data();
     const RealType* gzP   = d_gz.data();
-    RealType locSumSq = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType locSumSq = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, dofPtr, bnd, pmask, gxP, gyP, gzP] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1) return RealType(0);
@@ -6926,8 +6898,7 @@ RealType rmsOwnedInterior3(NSStepper<KeyType, RealType, ElementTag>& s,
             RealType gx = gxP[i], gy = gyP[i], gz = gzP[i];
             return gx*gx + gy*gy + gz*gz;
         }, RealType(0), thrust::plus<RealType>());
-    long long locCnt = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    long long locCnt = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, dofPtr, bnd, pmask] __device__ (size_t i) -> long long {
             if (ownPtr[i] != 1) return 0LL;
@@ -6959,8 +6930,7 @@ RealType rmsOwnedInterior1(NSStepper<KeyType, RealType, ElementTag>& s,
     const uint8_t* pmask  = (s.d_isPressureBdryDof.size() > 0)
                             ? s.d_isPressureBdryDof.data() : nullptr;
     const RealType* qP    = d_q.data();
-    RealType locSumSq = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType locSumSq = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, dofPtr, bnd, pmask, qP] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1) return RealType(0);
@@ -6970,8 +6940,7 @@ RealType rmsOwnedInterior1(NSStepper<KeyType, RealType, ElementTag>& s,
             RealType q = qP[i];
             return q * q;
         }, RealType(0), thrust::plus<RealType>());
-    long long locCnt = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    long long locCnt = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, dofPtr, bnd, pmask] __device__ (size_t i) -> long long {
             if (ownPtr[i] != 1) return 0LL;
@@ -6999,8 +6968,7 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
     const uint8_t* pmask  = (s.d_isPressureBdryDof.size() > 0)
                             ? s.d_isPressureBdryDof.data() : nullptr;
     const RealType* qP    = d_q.data();
-    RealType locMax = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType locMax = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, dofPtr, bnd, pmask, qP] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1) return RealType(0);
@@ -7529,8 +7497,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // slave's advection is already represented in its master (which IS
             // counted). Skipping keeps the owned-sum rank-invariant.
             const int* partPtr = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
-            double locSum = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0),
+            double locSum = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
                 [ownPtr, dofPtr, aP, partPtr] __device__ (size_t i) -> double {
                     if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0.0;
@@ -7806,14 +7773,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         const uint8_t* bndPtr = s.d_isBdryDof.data();
         const RealType* dP    = d_divAccNode.data();
         size_t nN = s.nodeCount;
-        long long locBadAll = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
+        long long locBadAll = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
             [ownPtr, dofPtr, dP] __device__ (size_t i) -> long long {
                 if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0LL;
                 return isfinite(static_cast<double>(dP[i])) ? 0LL : 1LL;
             }, 0LL, thrust::plus<long long>());
-        long long locBadBnd = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
+        long long locBadBnd = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
             [ownPtr, dofPtr, bndPtr, dP] __device__ (size_t i) -> long long {
                 if (ownPtr[i] != 1) return 0LL;
                 int dof = dofPtr[i];
@@ -7880,7 +7845,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.numOwnedDofs > 0)
         {
             auto bp = thrust::device_pointer_cast(b.data());
-            RealType localSum = thrust::reduce(thrust::device, bp, bp + s.numOwnedDofs,
+            RealType localSum = mars::reduce(bp, bp + s.numOwnedDofs,
                                                 RealType(0), thrust::plus<RealType>());
             RealType globalSum = 0;
             long long localN = s.numOwnedDofs, globalN = 0;
@@ -8015,13 +7980,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.numOwnedDofs > 0 && std::getenv("MARS_DDT_RHS_TRACE"))
             {
                 auto bp = thrust::device_pointer_cast(b.data());
-                long long localBad = thrust::transform_reduce(thrust::device,
-                    bp, bp + s.numOwnedDofs,
+                long long localBad = mars::transformReduce(bp, bp + s.numOwnedDofs,
                     [] __device__ (RealType v) -> long long {
                         return isfinite(static_cast<double>(v)) ? 0LL : 1LL;
                     }, 0LL, thrust::plus<long long>());
-                RealType localMax = thrust::transform_reduce(thrust::device,
-                    bp, bp + s.numOwnedDofs,
+                RealType localMax = mars::transformReduce(bp, bp + s.numOwnedDofs,
                     [] __device__ (RealType v) -> RealType {
                         double d = static_cast<double>(v);
                         return isfinite(d) ? static_cast<RealType>(fabs(d)) : RealType(0);
@@ -8052,16 +8015,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 // and count run over every owned DOF, matching the canonical-DOF
                 // mean removeMean uses on the K/matrix-free paths.
                 const uint8_t* xrMask = nullptr;
-                RealType localSum = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<int>(0),
+                RealType localSum = mars::transformReduce(thrust::counting_iterator<int>(0),
                     thrust::counting_iterator<int>(s.numOwnedDofs),
                     [bptr = b.data(), xrMask] __device__ (int i) -> RealType {
                         if (xrMask && xrMask[i]) return RealType(0);
                         double d = static_cast<double>(bptr[i]);
                         return isfinite(d) ? static_cast<RealType>(d) : RealType(0);
                     }, RealType(0), thrust::plus<RealType>());
-                long long localN = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<int>(0),
+                long long localN = mars::transformReduce(thrust::counting_iterator<int>(0),
                     thrust::counting_iterator<int>(s.numOwnedDofs),
                     [xrMask] __device__ (int i) -> long long {
                         return (xrMask && xrMask[i]) ? 0LL : 1LL;
@@ -8215,20 +8176,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                     // seam-master DOFs (partner table has entries pointing to them).
                     const RealType* a1 = Aphi.data();
                     const RealType* a2 = Aphi2.data();
-                    RealType locDiff = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<int>(0),
+                    RealType locDiff = mars::transformReduce(thrust::counting_iterator<int>(0),
                         thrust::counting_iterator<int>(n),
                         [a1, a2] __device__ (int i) -> RealType {
                             return fabs(a1[i] - a2[i]);
                         }, RealType(0), thrust::maximum<RealType>());
-                    RealType locMaxA = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<int>(0),
+                    RealType locMaxA = mars::transformReduce(thrust::counting_iterator<int>(0),
                         thrust::counting_iterator<int>(n),
                         [a1] __device__ (int i) -> RealType {
                             return fabs(a1[i]);
                         }, RealType(0), thrust::maximum<RealType>());
-                    RealType locMaxB = thrust::transform_reduce(thrust::device,
-                        thrust::counting_iterator<int>(0),
+                    RealType locMaxB = mars::transformReduce(thrust::counting_iterator<int>(0),
                         thrust::counting_iterator<int>(n),
                         [a2] __device__ (int i) -> RealType {
                             return fabs(a2[i]);
@@ -8529,9 +8487,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                         double d = double(dPhi[i]) - double(dPhi[j]);
                         return d < 0 ? -d : d;
                     };
-                    double locXr = thrust::transform_reduce(thrust::device, begIt, endIt,
+                    double locXr = mars::transformReduce(begIt, endIt,
                         pickXr, 0.0, thrust::maximum<double>());
-                    double locSr = thrust::transform_reduce(thrust::device, begIt, endIt,
+                    double locSr = mars::transformReduce(begIt, endIt,
                         pickSr, 0.0, thrust::maximum<double>());
                     double loc[2] = {locXr, locSr};
                     double glb[2] = {0.0, 0.0};
@@ -8560,8 +8518,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 const int* partnerP = s.periodicMap->d_periodicPartner.data();
                 const uint8_t* ownP = d_nodeOwnership.data();
                 const size_t N = s.nodeCount;
-                long long localFirst = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                long long localFirst = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(N),
                     [partnerP, ownP, N] __device__ (size_t i) -> long long {
                         if (ownP[i] != 1) return (long long)N;
@@ -8595,8 +8552,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 const int* partnerP = s.periodicMap->d_periodicPartner.data();
                 const uint8_t* ownP = d_nodeOwnership.data();
                 const size_t N = s.nodeCount;
-                long long localFirst = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                long long localFirst = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(N),
                     [partnerP, ownP, N] __device__ (size_t i) -> long long {
                         if (ownP[i] != 1) return (long long)N;
@@ -8734,11 +8690,11 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     };
                     auto cit0 = thrust::counting_iterator<size_t>(0);
                     auto citN = thrust::counting_iterator<size_t>(N);
-                    RealType locMaxRel = thrust::transform_reduce(thrust::device, cit0, citN,
+                    RealType locMaxRel = mars::transformReduce(cit0, citN,
                         relK, RealType(0), thrust::maximum<RealType>());
-                    RealType locAbsS = thrust::transform_reduce(thrust::device, cit0, citN,
+                    RealType locAbsS = mars::transformReduce(cit0, citN,
                         absSk, RealType(0), thrust::maximum<RealType>());
-                    RealType locAbsD = thrust::transform_reduce(thrust::device, cit0, citN,
+                    RealType locAbsD = mars::transformReduce(cit0, citN,
                         absDk, RealType(0), thrust::maximum<RealType>());
                     RealType loc[3] = {locMaxRel, locAbsD, locAbsS}, glb[3] = {0,0,0};
                     auto mt3 = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -8766,7 +8722,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     // Search for first i with own[i]==1, partner[i]>=0, own[partner[i]]==0
                     auto cit0 = thrust::counting_iterator<size_t>(0);
                     auto citN = thrust::counting_iterator<size_t>(N);
-                    long long localFirst = thrust::transform_reduce(thrust::device, cit0, citN,
+                    long long localFirst = mars::transformReduce(cit0, citN,
                         [partnerP, ownP, N] __device__ (size_t i) -> long long {
                             if (ownP[i] != 1) return (long long)N;
                             int m = partnerP[i];
@@ -9024,7 +8980,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             auto cit0 = thrust::counting_iterator<size_t>(0);
             auto citN = thrust::counting_iterator<size_t>(N);
             // First pass: max abs value
-            RealType locMaxAbs = thrust::transform_reduce(thrust::device, cit0, citN,
+            RealType locMaxAbs = mars::transformReduce(cit0, citN,
                 [dN, ownP, n2dP] __device__ (size_t i) -> RealType {
                     if (ownP[i] != 1) return RealType(0);
                     if (n2dP[i] < 0)  return RealType(0);
@@ -9036,7 +8992,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // Each rank: does it own the global max? If yes, find index.
             long long localIdx = -1;
             if (locMaxAbs >= gMaxAbs - RealType(1e-15)) {
-                localIdx = thrust::transform_reduce(thrust::device, cit0, citN,
+                localIdx = mars::transformReduce(cit0, citN,
                     [dN, ownP, n2dP, gMaxAbs, N] __device__ (size_t i) -> long long {
                         if (ownP[i] != 1 || n2dP[i] < 0) return (long long)N;
                         return (fabs(dN[i]) >= gMaxAbs - RealType(1e-15))
@@ -9100,8 +9056,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const RealType* wP = s.d_w.data();
             const int* partnerP = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
             const uint8_t* ownP = d_nodeOwnership.data();
-            RealType localMax = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0),
+            RealType localMax = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
                 [uP, vP, wP, partnerP, ownP] __device__ (size_t i) -> RealType {
                     if (!partnerP || partnerP[i] < 0 || ownP[i] != 1) return RealType(0);
@@ -9316,8 +9271,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         const uint8_t* pmask  = (s.d_isPressureBdryDof.size() > 0)
                                 ? s.d_isPressureBdryDof.data() : nullptr;
         const RealType* dPtr  = d_divNorm.data();
-        RealType localMax = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0),
+        RealType localMax = mars::transformReduce(thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
             [ownPtr, dofPtr, bnd, pmask, dPtr] __device__ (size_t i) -> RealType {
                 if (ownPtr[i] != 1) return RealType(0);
@@ -9362,11 +9316,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 if (partP && partP[i] >= 0)      return 0.0;
                 return fabs(double(dP[i]));
             };
-            double locS = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            double locS = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 signedOf, 0.0, thrust::plus<double>());
-            double locA = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            double locA = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
                 absOf, 0.0, thrust::plus<double>());
             double gS = 0, gA = 0;
             MPI_Allreduce(&locS, &gS, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -9409,8 +9361,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const RealType* dP    = d_divNorm.data();
             // (sumSq, count) for boundary and interior separately.
             auto accum = [&] (bool wantBoundary) {
-                RealType locSq = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                RealType locSq = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [ownPtr, dofPtr, bndPtr, dP, wantBoundary] __device__ (size_t i) -> RealType {
                         if (ownPtr[i] != 1) return RealType(0);
@@ -9419,8 +9370,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                         if (isB != wantBoundary) return RealType(0);
                         RealType q = dP[i]; return q * q;
                     }, RealType(0), thrust::plus<RealType>());
-                long long locCnt = thrust::transform_reduce(thrust::device,
-                    thrust::counting_iterator<size_t>(0),
+                long long locCnt = mars::transformReduce(thrust::counting_iterator<size_t>(0),
                     thrust::counting_iterator<size_t>(s.nodeCount),
                     [ownPtr, dofPtr, bndPtr, wantBoundary] __device__ (size_t i) -> long long {
                         if (ownPtr[i] != 1) return 0LL;
@@ -9469,8 +9419,8 @@ inline RealType maxAbsOwned(const cstone::DeviceVector<RealType>& v, size_t n)
 {
     if (n == 0) return RealType(0);
     auto bp = thrust::device_pointer_cast(v.data());
-    auto mm = thrust::transform_reduce(
-        thrust::device, bp, bp + n,
+    auto mm = mars::transformReduce(
+        bp, bp + n,
         [] __device__ (RealType x) -> RealType {
             return isnan(x) ? RealType(-1) : fabs(x);
         },
@@ -9489,8 +9439,7 @@ inline RealType keOwned(NSStepper<KeyType, RealType, ElementTag>& s,
 {
     const auto& d_own = s.domain.getNodeOwnershipMap();
     size_t n = s.nodeCount;
-    RealType local = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType local = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(n),
         [own = d_own.data(), n2d = s.d_node_to_dof.data(),
          mass = s.d_mass.data(), nOwn = s.numOwnedDofs,
@@ -9515,8 +9464,7 @@ inline RealType sumOwned(NSStepper<KeyType, RealType, ElementTag>& s,
 {
     const auto& d_own = s.domain.getNodeOwnershipMap();
     size_t n = s.nodeCount;
-    RealType local = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0),
+    RealType local = mars::transformReduce(thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(n),
         [own = d_own.data(), n2d = s.d_node_to_dof.data(),
          nOwn = s.numOwnedDofs, vp = v.data()] __device__ (size_t i) -> RealType {
@@ -9809,7 +9757,7 @@ RealType computeWeightedL2Norm(NSStepper<KeyType, RealType, ElementTag>& s,
                       });
     cudaDeviceSynchronize();
     auto sp = thrust::device_pointer_cast(d_sq.data());
-    RealType localSum = thrust::reduce(thrust::device, sp, sp + s.numOwnedDofs, RealType(0));
+    RealType localSum = mars::reduce(sp, sp + s.numOwnedDofs, RealType(0));
     RealType globalSum = 0;
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);

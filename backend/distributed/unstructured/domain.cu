@@ -13,6 +13,7 @@
 #include <climits>
 #include <map>
 #include <string>
+#include "utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -2192,7 +2193,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
 
     // ghost nodes grouped by owner; within an owner, node ids and therefore keys ascend
     auto isGhost     = [own, needed, full] __device__(int n) { return own[n] == 0 && (full || needed[n]); };
-    size_t numGhosts = thrust::count_if(thrust::device, thrust::counting_iterator<int>(0),
+    size_t numGhosts = mars::countIf(thrust::counting_iterator<int>(0),
                                         thrust::counting_iterator<int>(int(nodeCount)), isGhost);
     thrust::device_vector<int> d_ghostNode(numGhosts), d_ghostOwner(numGhosts);
     thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(nodeCount)),
@@ -2232,7 +2233,7 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromS
                          size_t n           = pos - keys;
                          sendIds[i]         = (n < nodeCount && keys[n] == requested[i] && own[n] == 1) ? int(n) : -1;
                      });
-    size_t unresolved = thrust::count(thrust::device, d_sendIds.begin(), d_sendIds.end(), -1);
+    size_t unresolved = mars::count(d_sendIds.begin(), d_sendIds.end(), -1);
     if (unresolved > 0)
     {
         std::cerr << "[Rank " << rank << "] NodeHaloTopology: " << unresolved
@@ -2330,7 +2331,7 @@ bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, Acceler
     // only elements at the partition boundary have destinations: size the buffers to those
     auto first         = thrust::counting_iterator<size_t>(cstoneDomain.startIndex());
     auto last          = thrust::counting_iterator<size_t>(cstoneDomain.endIndex());
-    size_t numBoundary = thrust::count_if(thrust::device, first, last, destinations);
+    size_t numBoundary = mars::countIf(first, last, destinations);
     thrust::device_vector<size_t> d_boundary(numBoundary);
     thrust::copy_if(thrust::device, first, last, d_boundary.begin(), destinations);
 
