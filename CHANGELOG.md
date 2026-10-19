@@ -16,10 +16,11 @@ public API may change between minor releases.
   on top of cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor`, the high-order DMMA operator) run on
   AMD's matrix cores (MFMA). The README shows how to build Hypre 2.33 and netCDF for HIP.
-- A step-by-step tutorial for newcomers (`docs/step-01-mesh.md` to `docs/step-05-galerkin.md`): the
-  mesh, a first GPU loop, Poisson's equation with linear tetrahedra, the same with CVFEM on
-  hexahedra, and your own finite-element operator. Each step is a short program with release checks
-  on 1 and N ranks.
+- A step-by-step tutorial for newcomers, ten steps and an appendix: the mesh, a first GPU loop,
+  Poisson's equation with linear tetrahedra, the same with CVFEM on hexahedra, your own
+  finite-element operator, the heat equation, the lid-driven cavity, Poiseuille flow, the
+  Taylor–Green vortex, the high-order operator and adaptive refinement, and your own CMake project.
+  The new programs (steps 1 to 6) have release checks on 1 and N ranks.
 - `assembleElements` and `ElementValues` (`fem/mars_element_assembly.hpp`): assemble the element
   matrix and vector of any operator written as a small GPU functor, on linear tetrahedra and
   trilinear hexahedra. `assembleCvfemDiffusion` and `cvfemControlVolumes`
@@ -30,6 +31,9 @@ public API may change between minor releases.
   each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
   use Thrust as before.
+- The `tensor` CVFEM assembly kernel takes the sub-control-surface nodes as compile-time values, so
+  its per-node arrays no longer go to local memory: 2.3 times faster on H100 and 6% faster on
+  MI300A, with the same matrix.
 - The Krylov solvers (CG, preconditioned CG, BiCGStab, GMRES) set up the sparse matrix-vector
   product once per solve instead of once per product. CG on 7.2 million unknowns takes 1.0 s
   instead of 19.9 s on MI300A, and 0.85 to 0.87 s instead of 0.97 s on H100.
@@ -55,6 +59,10 @@ public API may change between minor releases.
 - `find_package(Mars)` on a HIP install recreates the ROCm library target and cornerstone's GPU
   library, which the installed targets link.
 - The AMR bounding box reduced the device coordinates on the host.
+- An installed MARS can build GPU programs against the unstructured backend: the headers are
+  installed in the layout of the source tree, and `Mars::mars` carries the GPU definitions and nvcc
+  flags; `find_package(Mars)` sets `MARS_GPU_LANGUAGE` and `MARS_GPU_ARCHITECTURES`. Tested with HIP;
+  with CUDA a program outside the MARS build does not link yet (relocatable device code).
 
 ### Experimental
 - MARSIR (CUDA only, off by default with `MARS_ENABLE_MARSIR`): in the element-local (cell-wise)
