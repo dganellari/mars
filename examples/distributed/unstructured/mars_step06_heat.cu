@@ -17,6 +17,7 @@
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform_reduce.h>
 #include <mpi.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -85,6 +86,10 @@ bool solve(const std::string& meshDir, double dt, double endTime, int rank, int 
     long numGlobal = numOwned;
     MPI_Allreduce(MPI_IN_PLACE, &numGlobal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
+    // the fewest steps of at most dt that end exactly at endTime (dt shrinks to endTime / steps)
+    const int steps = std::max(1, int(std::ceil(endTime / dt - 1e-9)));
+    dt              = endTime / steps;
+
     // 1. The two matrices, assembled once. A = M + Δt K is the matrix of every step; M gives its
     //    right-hand side. The element vectors are not used here.
     Matrix A, M;
@@ -126,7 +131,7 @@ bool solve(const std::string& meshDir, double dt, double endTime, int rank, int 
     }
 
     // 4. Time steps. M u^n reads the ghost values of u, so they are refreshed from their owners first; the
-    //    product is set up once (SpmvPlan) and applied at every step. CG starts from the previous u.
+    //    product is set up once (SpmvPlan) and applied at every step.
     ConjugateGradientSolver<double, int, cstone::execution::Gpu> cg(2000, 1e-10);
     cg.setVerbose(false);
     cg.setOwnedSize(numOwned);
@@ -136,7 +141,6 @@ bool solve(const std::string& meshDir, double dt, double endTime, int rank, int 
     cusparseCreate(&handle);
     bool converged = true;
     int iterations = 0;
-    const int steps = int(std::lround(endTime / dt));
     {
         SpmvPlan<double, Matrix, Vector> massTimes(handle, M, u, b);
         for (int step = 0; step < steps; ++step)

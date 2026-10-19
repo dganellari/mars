@@ -70,7 +70,8 @@ for (int step = 0; step < steps; ++step)
 The right-hand side M u^n needs u at the ghost nodes of the rank, whose values belong to other
 ranks: `exchangeNodeHalo` brings them from their owners. `SpmvPlan` sets up the sparse product
 y = M x once (the cuSPARSE or hipSPARSE descriptors and work buffer) and applies it at every step.
-CG starts from the previous solution, which is already close to the new one.
+The number of steps is the smallest that keeps each step at most `--dt` and ends exactly at
+`--time`; the program prints the step it used.
 
 ## Try this
 
