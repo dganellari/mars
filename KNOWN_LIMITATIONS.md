@@ -73,7 +73,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   `-DCMAKE_CUDA_ARCHITECTURES=...`).
 - HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33 and
   netCDF 4.9.3 built for it: the production-integration run builds all examples and passes 48
-  release tests plus 40 other tests; 12 other tests are skipped. The suite includes 1/4-rank checks. The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
+  release tests plus 40 other tests; 12 other tests are skipped. The suite includes 1/4-rank checks.
+  The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
   NVIDIA can be slower. The direct P7 MFMA path uses 32 KiB per two-element block; its measured

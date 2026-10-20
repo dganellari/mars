@@ -6,13 +6,16 @@
 
 **[Read the Full Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
 
-MARS is an open-source, GPU-native mesh and assembly library for finite-element codes on tetrahedral
+MARS is an open-source, GPU-native mesh and assembly library for finite-element codes on 3D tetrahedral
 and hexahedral meshes, running on NVIDIA and AMD GPUs. It provides the distributed mesh and the
 building blocks to assemble and solve any finite-element discretization: DOF numbering, sparsity,
 owned and ghost rows, halo exchange, and Krylov solvers. The space-filling-curve partitioning and the
 element halo come from the cornerstone-octree library. MARS ships ready-made operators for Galerkin
 finite elements (linear tetrahedra; high-order matrix-free, experimental) and for the control-volume
 finite element method (CVFEM), which its Navier–Stokes solver uses.
+The older serial and Kokkos backends also handle simplices up to dimension 4; they are
+outside the GPU release checks. MARS uses C++20, with element type, floating-point
+precision and SFC key type as template parameters.
 
 The main features of MARS are:
 
@@ -47,7 +50,7 @@ through the host.
 
 ## Releases & status ##
 
-Current release: **v0.1.1** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
+Release candidate: **v0.1.1** (not tagged yet) — see [CHANGELOG.md](CHANGELOG.md). For the stable /
 experimental / unsupported breakdown (what to rely on and what is still under
 development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
 `0`, so the public API may change between minor releases.
