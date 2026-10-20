@@ -15,24 +15,28 @@
 // (K=8 = two k-tiles of 4). This first phase targets P=7 only -- the native
 // 8-wide tile -- so there is no tile padding and the whole warp stays busy.
 //
-// Organisation: ONE WARP per element, all 32 lanes drive every WMMA op (the API
+// The staged kernel below uses ONE WARP per element, all 32 lanes drive every WMMA op (the API
 // requires the full warp). A block holds several warps. Per warp we stage in
 // shared memory: D, D^T, the input tensor, the three derivative tensors, the
 // output accumulator, and one reusable A/B/C tile triplet for the MMA.
 //
-// Launch contract (the caller must honor these; see ho_laplacian_dmma_launch):
+// The public HIP launchers use the direct 32 KiB MFMA kernel instead.
+// Staged kernel launch contract:
 //   - grid.x = ceil(numElements / WarpsPerBlock), block = BlockSize.
 //   - d_y_dof zeroed before launch (scatter is additive via atomicAdd).
 //   - per-element smem is 17920 B, so a 4-element block needs 70 KB DYNAMIC smem,
 //     above the 48 KB static cap. The launcher must opt in once via
 //     cudaFuncSetAttribute(..., cudaFuncAttributeMaxDynamicSharedMemorySize, ...)
 //     and pass WarpsPerBlock*sizeof(HoLaplacianDmmaWarpData) as the 3rd <<<>>>
-//     argument. ho_laplacian_dmma_launch below does exactly this.
+//     argument. ho_laplacian_dmma_launch_impl below does exactly this.
 
 #include "../utils/mars_gpu_runtime.hpp"
 #include "../utils/mars_gpu_mma.cuh"
 #include <cstddef>
 #include <type_traits>
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+#include "mars_ho_laplacian_mfma_direct.hpp"
+#endif
 #if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
 #include <mma.h>
 #endif
@@ -507,8 +511,15 @@ inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
                                             size_t numElements,
                                             cudaStream_t stream = 0)
 {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
+    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
+    return ho_laplacian_mfma_direct_launch<0>(
+        d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+#else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+#endif
 }
 
 // Affine metric (straight-sided hexes). d_Ghat is [numElements * 6] (constant
@@ -524,16 +535,21 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
                                                    size_t numElements,
                                                    cudaStream_t stream = 0)
 {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
+    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
+    return ho_laplacian_mfma_direct_launch<1>(
+        d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+#else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+#endif
 }
 
 // Matched-structure SCALAR baseline: identical warp-per-element + smem kernel as
 // the affine DMMA path, but the 8x8x8 contraction runs on CUDA cores instead of
-// tensor cores (TileMode=1). Differs from ho_laplacian_dmma_launch_affine in
-// exactly one thing -- the tile op -- so (affine DMMA time)/(this time) isolates
-// the tensor-core speedup, free of the memory-structure advantage that the
-// thread-per-element ho_laplacian_apply_cg reference also carries.
+// tensor cores (TileMode=1). This matches the staged kernel, not the direct
+// AMD kernel. Use the staged TileMode=0 launcher to isolate tile arithmetic.
 template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_smem_scalar_launch_affine(const RealType* d_u_dof,
                                                           RealType* d_y_dof,

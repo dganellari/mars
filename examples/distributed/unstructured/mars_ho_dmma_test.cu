@@ -17,6 +17,7 @@
 
 #include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <array>
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <random>
@@ -27,11 +28,12 @@ using namespace mars::fem;
 #define CK(call) do { cudaError_t e=(call); if(e!=cudaSuccess){ \
   printf("CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); return false; } } while(0)
 
-template<int P>
+template<int P, bool Affine = false, bool Varying = false>
 bool runDmmaParity(int E)
 {
     constexpr int n  = P + 1;
     constexpr int N3 = n * n * n;
+    static_assert(!Affine || !Varying);
     using Real = double;
     const Real h = 1.0 / E;
 
@@ -79,6 +81,12 @@ bool runDmmaParity(int E)
     std::vector<Real> G(nEl * N3 * 6);
     for (size_t e = 0; e < nEl; ++e) std::copy(Gelem.begin(), Gelem.end(), G.begin() + e*N3*6);
 
+    if constexpr (Varying)
+        for (size_t e = 0; e < nEl; ++e)
+            for (int p = 0; p < N3; ++p)
+                for (int c = 0; c < 6; ++c)
+                    G[(e * N3 + p) * 6 + c] *= 1 + .1 * std::sin(double(e * N3 + p));
+
     std::vector<Real>    dofX(nDof, 0.0);
     std::vector<uint8_t> isBdry(nDof, 0);
     auto coord1d = [&](int e_ijk, int loc) { return (e_ijk + 0.5*(x[loc]+1.0)) * h; };
@@ -92,10 +100,17 @@ bool runDmmaParity(int E)
             isBdry[dof] = b ? 1 : 0;
         }
 
-    int *dElemDof; Real *dD, *dG, *dU, *dY;
+    int *dElemDof; Real *dD, *dG, *dU, *dY, *dGhat, *dW;
     CK(cudaMalloc(&dElemDof, dh.elemDof.size()*sizeof(int)));
     CK(cudaMalloc(&dD, Dr.size()*sizeof(Real)));
     CK(cudaMalloc(&dG, G.size()*sizeof(Real)));
+    std::vector<Real> Ghat(nEl * 6);
+    const Real metric[6] = {hhalf, .15*hhalf, .10*hhalf, hhalf, .05*hhalf, hhalf};
+    for(size_t e=0; e<nEl; ++e) std::copy(metric, metric+6, Ghat.data()+6*e);
+    CK(cudaMalloc(&dGhat, Ghat.size()*sizeof(Real)));
+    CK(cudaMalloc(&dW, w.size()*sizeof(Real)));
+    CK(cudaMemcpy(dGhat, Ghat.data(), Ghat.size()*sizeof(Real), cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(dW, w.data(), w.size()*sizeof(Real), cudaMemcpyHostToDevice));
     CK(cudaMalloc(&dU, nDof*sizeof(Real)));
     CK(cudaMalloc(&dY, nDof*sizeof(Real)));
     CK(cudaMemcpy(dElemDof, dh.elemDof.data(), dh.elemDof.size()*sizeof(int), cudaMemcpyHostToDevice));
@@ -112,19 +127,27 @@ bool runDmmaParity(int E)
         CK(cudaDeviceSynchronize());
         y.resize(nDof);
         CK(cudaMemcpy(y.data(), dY, nDof*sizeof(Real), cudaMemcpyDeviceToHost));
-        return true;
+        return std::all_of(y.begin(), y.end(), [](Real v) { return std::isfinite(v); });
     };
 
-    // DMMA path: one warp per element, dynamic smem opt-in handled by the
-    // header launcher, with its default block (4 elements on CUDA, 2 on AMD).
+    // A non-default stream checks that the public launcher preserves caller ordering.
+    cudaStream_t stream;
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    CK(hipStreamCreateWithFlags(&stream, hipStreamNonBlocking));
+#else
+    CK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+#endif
     auto applyDmma = [&](const std::vector<Real>& u, std::vector<Real>& y) -> bool {
-        CK(cudaMemcpy(dU, u.data(), nDof*sizeof(Real), cudaMemcpyHostToDevice));
-        CK(cudaMemset(dY, 0, nDof*sizeof(Real)));
-        CK((ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl)));
-        CK(cudaDeviceSynchronize());
+        CK(cudaMemcpyAsync(dU, u.data(), nDof*sizeof(Real), cudaMemcpyHostToDevice, stream));
+        CK(cudaMemsetAsync(dY, 0, nDof*sizeof(Real), stream));
+        if constexpr (Affine)
+            CK((ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl, stream)));
+        else
+            CK((ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl, stream)));
+        CK(cudaStreamSynchronize(stream));
         y.resize(nDof);
         CK(cudaMemcpy(y.data(), dY, nDof*sizeof(Real), cudaMemcpyDeviceToHost));
-        return true;
+        return std::all_of(y.begin(), y.end(), [](Real v) { return std::isfinite(v); });
     };
 
     // --- Gate 1: parity on a random u ---
@@ -133,6 +156,21 @@ bool runDmmaParity(int E)
     for (auto& z : uu) z = uni(rng);
     if (!applyScalar(uu, Ys)) return false;
     if (!applyDmma(uu, Yd)) return false;
+
+    // The scatter must add to existing output, not overwrite it.
+    if constexpr (Affine)
+        CK((ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl, stream)));
+    else
+        CK((ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl, stream)));
+    CK(cudaStreamSynchronize(stream));
+    std::vector<Real> doubled(nDof);
+    CK(cudaMemcpy(doubled.data(), dY, nDof*sizeof(Real), cudaMemcpyDeviceToHost));
+    Real additiveError = 0, additiveScale = 1;
+    for (long p = 0; p < nDof; ++p) {
+        if (!std::isfinite(doubled[p])) return false;
+        additiveError = std::max(additiveError, std::abs(doubled[p] - 2 * Ys[p]));
+        additiveScale = std::max(additiveScale, std::abs(2 * Ys[p]));
+    }
 
     Real maxRel = 0, ynorm = 0;
     for (long p = 0; p < nDof; ++p) ynorm = std::max(ynorm, std::abs(Ys[p]));
@@ -153,25 +191,38 @@ bool runDmmaParity(int E)
     Real uAv=0, vAu=0; for (long p=0;p<nDof;++p){ uAv+=uu[p]*Av[p]; vAu+=vv[p]*Au[p]; }
     Real symErr = std::abs(uAv-vAu)/(std::abs(uAv)+1.0);
 
-    // --- Gate 4: continuity A*(physical x) = 0 at interior DOFs (dmma) ---
+    // A linear field cancels only for the constant metric fixtures.
+    // The varying metric fixture is checked by scalar parity instead.
     std::vector<Real> Ax;
     if (!applyDmma(dofX, Ax)) return false;
     Real interMax = 0;
-    for (long p=0;p<nDof;++p) if (!isBdry[p]) interMax = std::max(interMax, std::abs(Ax[p]));
+    for (long p=0;p<nDof;++p) if (!Varying && !isBdry[p]) interMax = std::max(interMax, std::abs(Ax[p]));
 
-    bool ok = (maxRel < 1e-10) && (nullMax < 1e-9) && (symErr < 1e-10) && (interMax < 1e-9);
+    bool ok = (additiveError/additiveScale < 1e-10) && (maxRel < 1e-10) && (nullMax < 1e-9) && (symErr < 1e-10) && (interMax < 1e-9);
+    printf("path=public-launcher metric=%s additive=%.2e ", Varying ? "varying" : (Affine ? "affine" : "per-point"), additiveError/additiveScale);
     printf("P=%d E=%d | nDof=%ld | parity(dmma vs scalar)=%.2e | null=%.2e | sym=%.2e | continuity=%.2e | %s\n",
            P, E, nDof, maxRel, nullMax, symErr, interMax, ok?"PASS":"FAIL");
 
-    cudaFree(dElemDof); cudaFree(dD); cudaFree(dG); cudaFree(dU); cudaFree(dY);
+    if constexpr (Varying) printf("Linear-field cancellation skipped for varying metric.\n");
+    CK(cudaStreamDestroy(stream));
+    cudaFree(dGhat); cudaFree(dW); cudaFree(dElemDof); cudaFree(dD); cudaFree(dG); cudaFree(dU); cudaFree(dY);
     return ok;
 }
 
 int main()
 {
     bool ok = true;
-    ok &= runDmmaParity<7>(2);
-    ok &= runDmmaParity<7>(3);   // 27 elements: an odd count leaves the last element without a partner
+    for (int E : {1, 2, 3})
+    {
+        ok &= runDmmaParity<7, false>(E);
+        ok &= runDmmaParity<7, true>(E);
+    }
+    ok &= runDmmaParity<7, false, true>(3);
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    // Empty partitions must not launch a zero-sized grid or touch any pointer.
+    ok &= ho_laplacian_dmma_launch<double, 7>(nullptr, nullptr, nullptr, nullptr, nullptr, 0) == cudaSuccess;
+    ok &= ho_laplacian_dmma_launch_affine<double, 7>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0) == cudaSuccess;
+#endif
     printf("DMMA FP64 tensor-core Laplacian parity (vs scalar reference): %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

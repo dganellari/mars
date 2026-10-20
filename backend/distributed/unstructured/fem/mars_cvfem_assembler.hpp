@@ -5,6 +5,9 @@
 #include "mars_cvfem_hex_kernel_optimized.hpp"
 #include "mars_cvfem_hex_kernel_shmem.hpp"
 #include "mars_cvfem_hex_kernel_tensor.hpp"
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+#include "mars_cvfem_hex_kernel_tensor_early.hpp"
+#endif
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
@@ -152,8 +155,13 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // Scalar full 8x8 local matrix — current best on GH200
+                // Release finished rows early on HIP to reduce register spills.
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+#endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -398,7 +406,12 @@ public:
                 break;
 
             case CvfemKernelVariant::Tensor:
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,

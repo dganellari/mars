@@ -27,6 +27,13 @@ public API may change between minor releases.
   (`fem/mars_cvfem_diffusion.hpp`): the CVFEM diffusion operator and control volumes in one call.
 
 ### Changed
+- HIP P7 FP64 Laplacian launchers use direct MFMA contractions, removing intermediate tiles.
+  On the tested MI300A P7/E32 case, per-point and affine applies are 2.37 and 2.64 times faster
+  than the staged path. These are operator timings, not full-solver speedups.
+- HIP `tensor` assembly scatters each row after its last face contribution. On public hex192,
+  one MI300A rank, assembly time falls from 30.05 to 25.77 ms (14.2% less time), excluding
+  output zeroing. Scratch storage falls from 1912 to 1084 bytes/lane; spills remain.
+  Both optimizations retain the CUDA kernel paths. See `tests/performance/AMD-*.md` for scope.
 - On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
   each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds

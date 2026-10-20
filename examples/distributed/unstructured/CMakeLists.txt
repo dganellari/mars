@@ -75,6 +75,18 @@ else()
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
 
+if(MARS_ENABLE_TESTS AND MARS_ENABLE_HIP)
+    add_executable(mars_cvfem_tensor_early_check mars_cvfem_tensor_early_check.cu)
+    target_link_libraries(mars_cvfem_tensor_early_check PRIVATE mars)
+endif()
+
+option(MARS_ENABLE_TENSOR_BASELINE_CHECK "Build the previous HIP tensor kernel for comparisons" OFF)
+if(MARS_ENABLE_TENSOR_BASELINE_CHECK AND MARS_ENABLE_HIP)
+    add_executable(mars_cvfem_graph_tensor_baseline mars_cvfem_graph.cu)
+    target_link_libraries(mars_cvfem_graph_tensor_baseline PRIVATE mars)
+    target_compile_definitions(mars_cvfem_graph_tensor_baseline PRIVATE MARS_DISABLE_NVTX MARS_CVFEM_TENSOR_BASELINE_CHECK)
+endif()
+
 # Matrix-free high-order Laplacian, Stage 0 element-local parity test
 add_executable(mars_ho_laplacian_test mars_ho_laplacian_test.cu)
 target_link_libraries(mars_ho_laplacian_test PRIVATE mars)

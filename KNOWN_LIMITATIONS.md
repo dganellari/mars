@@ -72,12 +72,14 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
   `-DCMAKE_CUDA_ARCHITECTURES=...`).
 - HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33 and
-  netCDF 4.9.3 built for it: every example program builds, and the 44 release checks and the 52 other
-  tests pass on 1 and 4 ranks. The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
+  netCDF 4.9.3 built for it: the production-integration run builds all examples and passes 48
+  release tests plus 40 other tests; 12 other tests are skipped. The suite includes 1/4-rank checks. The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
-  NVIDIA can be slower: the high-order DMMA operator keeps 18 KB of shared memory per element,
-  sized for NVIDIA's 228 KB, while MI300A has 64 KB per compute unit.
+  NVIDIA can be slower. The direct P7 MFMA path uses 32 KiB per two-element block; its measured
+  improvement is an operator result, not a full-solver speedup. The HIP tensor assembly path
+  reduces scratch storage but still spills registers. See `tests/performance/AMD-mfma.md` and
+  `tests/performance/AMD-tensor-early.md` for the measured cases and validation scope.
   With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
   `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
