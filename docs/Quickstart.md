@@ -143,7 +143,7 @@ PHASE: sparsity done, nnz=...
   octree). On several ranks each rank now holds a contiguous space-filling-curve range of
   elements plus a halo.
 - **nodeCount / elementCount**: the mesh size that rank 0 sees, owned plus halo.
-- **numDofs**: the equation rows rank 0 owns (`buildDofMappingGpu`). On one rank it equals the
+- **numDofs**: the equation rows rank 0 owns (`buildDofMapping`). On one rank it equals the
   node count. On several ranks every node is owned by exactly one rank, so the owned counts of
   all ranks add up to 4913.
 - **nnz**: the number of nonzeros of the CSR structure. The graph stencil has at most 7 nonzeros

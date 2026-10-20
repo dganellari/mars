@@ -33,7 +33,7 @@ static bool run_order(int ncells, int rank, int nranks) {
     std::vector<int> elemCorners;
     buildKuhnTetMesh(ncells, coords, elemCorners);
     const size_t nElem = elemCorners.size()/4;
-    HoTetDofHandler dh; buildGpu(dh, elemCorners, coords, nd);
+    HoTetDofHandler dh; buildDofsFromHost(dh, elemCorners, coords, nd);
     const int Np = nd.Np; const long nDof = dh.numDof;
 
     // contiguous element partition

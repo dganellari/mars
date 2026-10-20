@@ -4,7 +4,7 @@
 //
 // Same construction as the P1 Option-A node halo (domain.cu buildFromCstoneHalos):
 // RECEIVER-DRIVEN. Each rank requests its ghost DOF (dofOwner != me) from the
-// owner by the canonical DofKey from HODofHandler::buildDistributed; the owner
+// owner by the canonical DofKey from HODofHandler::buildDistributedHost; the owner
 // maps the received key -> its local DOF -> send list. So A.send[B] == B.recv[A]
 // by construction (no truncation, no ownership over-claim). Interior DOF are
 // element-local (never shared) -> never enter the halo.
@@ -53,13 +53,13 @@ namespace mars {
 namespace fem {
 
 // Resolve ownership of shared HO edge/face DOF by MIN-RANK-AMONG-HOLDERS.
-// buildDistributed sets these to provisional owner = myRank and flags them in
+// buildDistributedHost sets these to provisional owner = myRank and flags them in
 // dofShared. Each rank broadcasts its shared-DOF keys to all peers; for each local
 // shared DOF a peer also holds, owner = min(current, peer rank). The owner is thus
 // always a rank that CONTAINS the DOF -> no orphans, and all holders agree (the
 // holders of an edge/face are mutual neighbours). Corners (cstone P1 ownership) and
 // interiors (element-local) are already correct and not in dofShared -> untouched.
-inline void resolveHoDofOwnership(const std::vector<uint8_t>&               dofShared,
+inline void resolveHoDofOwnershipHost(const std::vector<uint8_t>&               dofShared,
                                   const std::vector<HODofHandler::DofKey>&  dofKey,
                                   std::vector<int>&                         dofOwner,
                                   int                                       myRank,
@@ -107,7 +107,7 @@ inline void resolveHoDofOwnership(const std::vector<uint8_t>&               dofS
     }
 }
 
-// ZERO-MPI resolveHoDofOwnership. Same result as resolveHoDofOwnership above
+// ZERO-MPI resolveHoDofOwnershipHost. Same result as resolveHoDofOwnershipHost above
 // (MIN-RANK-AMONG-HOLDERS) but with NO key exchange: it reuses cstone's per-element
 // halo, which already places a copy of every rank-boundary element on each rank that
 // touches it. Each rank therefore SEES the elements its peers own (as halo elements),
@@ -119,7 +119,7 @@ inline void resolveHoDofOwnership(const std::vector<uint8_t>&               dofS
 //   elements (createElementToNodeLocalIdMap fills all 8 columns over the full element
 //   range through the one shared SFC->localId map). So for each of its 12 edges / 6
 //   faces we recompute the canonical DofKey (kind, SORTED global corner ids, pos)
-//   with the EXACT convention buildDistributed uses -- the global-id-only key is
+//   with the EXACT convention buildDistributedHost uses -- the global-id-only key is
 //   identical on every rank that holds the entity. We binary-search that key in the
 //   local sorted shared-key list (the same `myShared` lookup the MPI path runs on
 //   peer keys). A hit is a shared DOF this rank also holds; we then take
@@ -131,13 +131,13 @@ inline void resolveHoDofOwnership(const std::vector<uint8_t>&               dofS
 // halo) to me, and the owner of each is in elemOwner. So min over {my owned elements'
 // myRank} U {halo elements' true owners} == min over ALL holder ranks == the same
 // value the MPI broadcast computes. Owned edges/faces start at provisional myRank (set
-// by buildDistributed); halo elements pull the owner DOWN to the true minimum.
+// by buildDistributedHost); halo elements pull the owner DOWN to the true minimum.
 //
 // PRECONDITION: elemCorners/elemOwner MUST include the halo elements with their true
 // owners (elemOwner[e] = cornerOwner of e's lowest-SFC corner, the cstone placement
 // key). extractDistDof fills these under MARS_HO_LOCAL_OWNERSHIP. Owned elements keep
 // elemOwner = myRank.
-inline void resolveHoDofOwnershipLocal(const std::vector<std::array<int,8>>& elemCorners,
+inline void resolveHoDofOwnershipLocalHost(const std::vector<std::array<int,8>>& elemCorners,
                                        const std::vector<long>&               cornerGid,
                                        const std::vector<int>&                elemOwner,
                                        int                                    order,
@@ -150,7 +150,7 @@ inline void resolveHoDofOwnershipLocal(const std::vector<std::array<int,8>>& ele
     const int P   = order;
     const int pm1 = P - 1;
 
-    // Same hex topology tables / corner convention as buildDistributed -- the DofKey
+    // Same hex topology tables / corner convention as buildDistributedHost -- the DofKey
     // must be byte-identical, so the edge/face traversal must match exactly.
     static const int EDGES[12][2] = {
         {0,1},{1,2},{2,3},{3,0}, {4,5},{5,6},{6,7},{7,4}, {0,4},{1,5},{2,6},{3,7} };
@@ -195,7 +195,7 @@ inline void resolveHoDofOwnershipLocal(const std::vector<std::array<int,8>>& ele
 
         // FACES: key = {2, sorted 4 global corner ids, posCanon}. Sweep the (p-1)^2
         // interior (v1,v2) cells; hex_face_canonical_pos gives the orientation-invariant
-        // pos exactly as buildDistributed (same global-id frame on every holder).
+        // pos exactly as buildDistributedHost (same global-id frame on every holder).
         for (int f = 0; f < 6; ++f) {
             const int* fc = FACES[f];
             int lcc[4] = { c[fc[0]], c[fc[1]], c[fc[2]], c[fc[3]] };
@@ -215,10 +215,10 @@ inline void resolveHoDofOwnershipLocal(const std::vector<std::array<int,8>>& ele
 }
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
-// ALL-GPU resolveHoDofOwnership: device-resident, point-to-point, CUDA-aware MPI.
-// Bit-identical result to the host resolveHoDofOwnership above (MIN-RANK-AMONG-HOLDERS)
+// ALL-GPU resolveHoDofOwnershipHost: device-resident, point-to-point, CUDA-aware MPI.
+// Bit-identical result to the host resolveHoDofOwnershipHost above (MIN-RANK-AMONG-HOLDERS)
 // but with NO host round-trip on the per-DOF arrays. The inputs are the device columns
-// buildDistributedGpu already produces (d_dofKind/G0..G3/pos/shared/owner) -- the GPU
+// buildDistributedDofsFromHost already produces (d_dofKind/G0..G3/pos/shared/owner) -- the GPU
 // path can hand them straight here instead of copying them down and re-sorting on host.
 //
 // DESIGN = TARGETED P2P (not zero-MPI). Zero-MPI is NOT possible with the current
@@ -411,8 +411,8 @@ inline long hoBuildSortedSharedKeys(long numDof, const long* d_dofKind, const lo
 }
 
 // Resolve on device. d_dofOwner is mutated in place (atomicMin). All other inputs are the
-// device columns from buildDistributedGpu. Returns with the device columns intact.
-inline void resolveHoDofOwnershipGpu(long numDof,
+// device columns from buildDistributedDofsFromHost. Returns with the device columns intact.
+inline void resolveHoDofOwnership(long numDof,
                                      const long* d_dofKind, const long* d_dofG0, const long* d_dofG1,
                                      const long* d_dofG2,   const long* d_dofG3, const int* d_dofPos,
                                      const int*  d_dofShared, int* d_dofOwner,
@@ -423,7 +423,7 @@ inline void resolveHoDofOwnershipGpu(long numDof,
     HoResolveTimer timer(myRank);
 
     // count shared DOF and assign each a contiguous slot. d_dofShared is a 0/1 lane
-    // (atomicOr'd with 1 in buildDistributedGpu), so an exclusive scan gives each shared
+    // (atomicOr'd with 1 in buildDistributedDofsFromHost), so an exclusive scan gives each shared
     // DOF its slot and the last (slot + flag) is the shared count -- no host reduce.
     thrust::device_vector<long> d_slot(numDof);
     {
@@ -501,9 +501,9 @@ inline void resolveHoDofOwnershipGpu(long numDof,
 }
 
 // ============================================================================
-// TARGETED P2P resolveHoDofOwnership (env MARS_HO_GPU_OWNERSHIP_P2P).
+// TARGETED P2P resolveHoDofOwnershipHost (env MARS_HO_GPU_OWNERSHIP_P2P).
 //
-// Same result as the all-peer resolveHoDofOwnershipGpu above (MIN-RANK-AMONG-HOLDERS),
+// Same result as the all-peer resolveHoDofOwnership above (MIN-RANK-AMONG-HOLDERS),
 // but it DROPS the exchange volume: the all-peer path broadcasts every shared key to
 // EVERY P1 peer (O(shared x peers)); this path sends each shared key only to the peers
 // that can possibly hold it.
@@ -541,7 +541,7 @@ inline void resolveHoDofOwnershipGpu(long numDof,
 // peers so a bit can't be set). The fallback can only ADD messages, never drop a holder.
 //
 // SAFETY GUARD: with MARS_HO_VERIFY_OWNERSHIP the caller runs BOTH this targeted path and
-// the all-peer resolveHoDofOwnershipGpu on a clone of d_dofOwner and asserts bit-identical
+// the all-peer resolveHoDofOwnership on a clone of d_dofOwner and asserts bit-identical
 // (MPI_Abort on mismatch) -- the proof the targeting never drops a holder.
 //
 // Peer-set representation: a 64-bit mask, bit p = "peers[p] ghosts this corner from me".
@@ -680,13 +680,13 @@ __global__ void hoKeyExpandKernel(const uint64_t* __restrict__ keyMask, int nSha
     }
 }
 
-// TARGETED resolve. Identical inputs/outputs to resolveHoDofOwnershipGpu, plus the
+// TARGETED resolve. Identical inputs/outputs to resolveHoDofOwnership, plus the
 // node-halo CSR + per-corner owner so it can target by an OWNED corner's send list.
 // d_cornerGid = device local->global corner id table; d_cornerOwner = device per-corner
 // owning rank (myRank for owned corners, the owning peer for ghost corners). nodeHalo* =
 // the topology's recv/send node lists + offsets (host offsets, device node-id arrays),
 // peer order MATCHING `peers`.
-inline void resolveHoDofOwnershipGpuTargeted(
+inline void resolveHoDofOwnershipTargeted(
         long numDof,
         const long* d_dofKind, const long* d_dofG0, const long* d_dofG1,
         const long* d_dofG2,   const long* d_dofG3, const int* d_dofPos,
@@ -921,7 +921,7 @@ inline void resolveHoDofOwnershipGpuTargeted(
 // all-peer ground truth on independent clones of d_dofOwner and asserts they are bit-
 // identical, MPI_Abort on mismatch. This is the proof the targeting never drops a holder.
 // Returns the verified targeted result in d_dofOwner. The all-peer path is the reference.
-inline void resolveHoDofOwnershipGpuVerify(
+inline void resolveHoDofOwnershipVerify(
         long numDof,
         const long* d_dofKind, const long* d_dofG0, const long* d_dofG1,
         const long* d_dofG2,   const long* d_dofG3, const int* d_dofPos,
@@ -937,11 +937,11 @@ inline void resolveHoDofOwnershipGpuVerify(
                  thrust::device_pointer_cast(d_dofOwner) + numDof, d_ref.begin());
 
     // targeted into d_dofOwner (in place), all-peer into the clone
-    resolveHoDofOwnershipGpuTargeted(numDof, d_dofKind, d_dofG0, d_dofG1, d_dofG2, d_dofG3,
+    resolveHoDofOwnershipTargeted(numDof, d_dofKind, d_dofG0, d_dofG1, d_dofG2, d_dofG3,
                                      d_dofPos, d_dofShared, d_dofOwner, myRank, peers,
                                      d_cornerGid, d_cornerOwner, nCornerLocal,
                                      d_recvNodeIds, recvOffsets, d_sendNodeIds, sendOffsets);
-    resolveHoDofOwnershipGpu(numDof, d_dofKind, d_dofG0, d_dofG1, d_dofG2, d_dofG3,
+    resolveHoDofOwnership(numDof, d_dofKind, d_dofG0, d_dofG1, d_dofG2, d_dofG3,
                              d_dofPos, d_dofShared, thrust::raw_pointer_cast(d_ref.data()),
                              myRank, peers);
 

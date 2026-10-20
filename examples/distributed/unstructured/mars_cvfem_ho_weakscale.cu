@@ -331,7 +331,7 @@ int main(int argc, char** argv)
     //     -> [0,numDofs), ghost nodes -> [numDofs, nodeCount). numTotalDofs sizes
     //     the u/y vectors so ghost-DOF slots exist for the halo round-trip. ---
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs      = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
+    int numDofs      = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
     int numTotalDofs = (int)nodeCount;
 
     const auto& d_conn = domain.getElementToNodeConnectivity();

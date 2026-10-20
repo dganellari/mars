@@ -63,7 +63,7 @@ int main(int argc, char** argv)
         // 2. Degrees of freedom: one per node. Each rank numbers its owned nodes 0 .. numOwned-1 and its
         //    ghost nodes after them, so the vectors below hold the owned values first.
         cstone::DeviceVector<int> nodeToDof(nodeCount);
-        const int numOwned = buildDofMappingGpu<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(),
+        const int numOwned = buildDofMapping<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(),
                                                           nodeCount);
         long numGlobal = numOwned;
         MPI_Allreduce(MPI_IN_PLACE, &numGlobal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);

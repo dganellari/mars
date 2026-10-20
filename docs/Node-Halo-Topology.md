@@ -159,7 +159,7 @@ solver.setHaloExchangeCallback(
 solver.solve(A, b, x);
 ```
 
-`d_node_to_dof` here is the `nodeCount`-sized array produced by `buildDofMappingGpu` (owned → `[0, numOwnedDofs)`, ghost → `[numOwnedDofs, numTotalDofs)`).
+`d_node_to_dof` here is the `nodeCount`-sized array produced by `buildDofMapping` (owned → `[0, numOwnedDofs)`, ghost → `[numOwnedDofs, numTotalDofs)`).
 
 ## Verified results (cube16, 4 ranks)
 

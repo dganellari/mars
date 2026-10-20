@@ -161,7 +161,7 @@ struct RefinerTraits<TetTag, KeyType, RealType>
 
 // Compute bounding box from device coordinate arrays via thrust + MPI
 template<typename RealType>
-cstone::Box<RealType> computeBoundingBoxGpu(cstone::DeviceVector<RealType>& d_x,
+cstone::Box<RealType> computeBoundingBox(cstone::DeviceVector<RealType>& d_x,
                                              cstone::DeviceVector<RealType>& d_y,
                                              cstone::DeviceVector<RealType>& d_z,
                                              RealType padding = 0.05)

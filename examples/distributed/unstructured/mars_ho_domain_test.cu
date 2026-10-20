@@ -68,7 +68,7 @@ bool runDomain(const std::string& meshFile)
         for (int t = 0; t < 8; ++t) ec[e][t] = (int)c[t][e];
 
     HODofHandler dh;
-    dh.build(ec, (long)nN, P);
+    dh.buildHost(ec, (long)nN, P);
     long nDof = dh.numDof;
 
     std::vector<double> gx, gw, gD;

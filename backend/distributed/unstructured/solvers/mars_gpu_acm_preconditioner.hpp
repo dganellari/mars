@@ -11,7 +11,7 @@
 // state carried between Krylov iterations.
 
 #include "mars_cg_solver_with_preconditioner.hpp"   // Preconditioner base (mars::fem)
-#include "mars_acm_vcycle.hpp"                       // AcmLevel, acmBuildHierarchy, acmVcycleGpu (mars)
+#include "mars_acm_vcycle.hpp"                       // AcmLevel, acmBuildHierarchy, acmVcycle (mars)
 #include <thrust/copy.h>
 #include <thrust/fill.h>
 #include <vector>
@@ -166,12 +166,12 @@ private:
         bool ok = false;
         do {
             if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
-            mars::acmVcycleDownGpu<RealType>(levels_, 0, pre_, omega_, true, capStream_);
+            mars::acmVcycleDown<RealType>(levels_, 0, pre_, omega_, true, capStream_);
             if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
             if (cudaGraphInstantiateWithFlags(&gDownExec_, g, 0) != cudaSuccess) break;
             cudaGraphDestroy(g); g = nullptr;
             if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
-            mars::acmVcycleUpGpu<RealType>(levels_, 0, post_, omega_, true, capStream_);
+            mars::acmVcycleUp<RealType>(levels_, 0, post_, omega_, true, capStream_);
             if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
             if (cudaGraphInstantiateWithFlags(&gUpExec_, g, 0) != cudaSuccess) break;
             cudaGraphDestroy(g); g = nullptr;
@@ -257,12 +257,12 @@ private:
         static const bool noCoarse = std::getenv("MARS_ACM_DIST_NOCOARSE") != nullptr;   // debug: pure-Schwarz A/B
         if (noCoarse) {
             cudaMemsetAsync(x, 0, sizeof(RealType) * C.ND, s);
-            mars::acmSmoothGpu(C, coarse_, omega_, /*useBlock=*/true, s);
+            mars::acmSmooth(C, coarse_, omega_, /*useBlock=*/true, s);
             return;
         }
         if (!coarseLUok_) {
             cudaMemsetAsync(x, 0, sizeof(RealType) * C.ND, s);
-            mars::acmSmoothGpu(C, coarse_, omega_, /*useBlock=*/true, s);
+            mars::acmSmooth(C, coarse_, omega_, /*useBlock=*/true, s);
             return;
         }
         cudaStreamSynchronize(s);
@@ -325,7 +325,7 @@ private:
         RealType* x = thrust::raw_pointer_cast(C.xvec.data());
         if (!coarseLUok_) {
             cudaMemsetAsync(x, 0, sizeof(RealType) * coarseN_, s);
-            mars::acmSmoothGpu(C, coarse_, omega_, /*useBlock=*/true, s);
+            mars::acmSmooth(C, coarse_, omega_, /*useBlock=*/true, s);
             return;
         }
         cudaMemcpyAsync(x, thrust::raw_pointer_cast(C.bvec.data()), sizeof(RealType) * coarseN_,
@@ -341,9 +341,9 @@ private:
     // one eager V-cycle on levels_[0].bvec/xvec on stream s: down -> dense-LU coarse -> up.
     void applyCycleEager(cudaStream_t s)
     {
-        mars::acmVcycleDownGpu<RealType>(levels_, 0, pre_, omega_, /*useBlock=*/true, s);
+        mars::acmVcycleDown<RealType>(levels_, 0, pre_, omega_, /*useBlock=*/true, s);
         solveCoarseLU(s);
-        mars::acmVcycleUpGpu<RealType>(levels_, 0, post_, omega_, /*useBlock=*/true, s);
+        mars::acmVcycleUp<RealType>(levels_, 0, post_, omega_, /*useBlock=*/true, s);
     }
 
     int kmax_, maxCoarseND_, pre_, post_, coarse_, nd_ = 0;

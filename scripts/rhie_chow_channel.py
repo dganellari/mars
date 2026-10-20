@@ -101,7 +101,7 @@ def boundary_area_vectors(nodes, tets):
 
 
 def assemble_channel(nodes, tets, nu, add_boundary_flux):
-    """Global coupled CSR (dense) mirroring assembleRhieChowGpu: momentum -> V_P/a_P^u -> divgrad -> a^pp,
+    """Global coupled CSR (dense) mirroring assembleRhieChow: momentum -> V_P/a_P^u -> divgrad -> a^pp,
     then a^up = -(1/rho)a^pu^T (interior IBP identity), then optionally the boundary-flux continuity term."""
     N = len(nodes); ND = 4 * N
     A = np.zeros((ND, ND))

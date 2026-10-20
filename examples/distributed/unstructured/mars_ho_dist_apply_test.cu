@@ -1,15 +1,15 @@
 // Multi-rank gate for the HIGH-ORDER matrix-free apply (Phase B step 3).
-// Builds the distributed HO DOF (buildDistributed + resolveHoDofOwnership + HoHalo),
+// Builds the distributed HO DOF (buildDistributedHost + resolveHoDofOwnershipHost + HoHalo),
 // then runs ONE distributed matvec with the same single-rank kernel and checks the
 // cross-rank assembly via the proven invariant A*1 == 0:
 //   u = 1 on OWNED DOF, 0 on ghost  ->  forward()  (ghosts <- owner's 1)
-//   apply owned elements (elemDof from buildDistributed is owned-only)
+//   apply owned elements (elemDof from buildDistributedHost is owned-only)
 //   reverseAdd()  (ghost contributions summed into owners)
 //   max|y| over OWNED DOF must be ~0  (the unconstrained HO Laplacian sums every
 //   row to zero; a wrong cross-rank assembly leaves O(1) residual at interfaces).
 // Run: srun -N1 -n4 ./mars_ho_dist_apply_test --ncells=16 --p=2
 //
-// NUMBERING: GPU (buildDistributedGpu) IS THE DEFAULT. Host is the opt-out:
+// NUMBERING: GPU (buildDistributedDofsFromHost) IS THE DEFAULT. Host is the opt-out:
 //   ./mars_ho_dist_apply_test --host-numbering --ncells=16 --p=2
 //   MARS_HO_HOST_NUMBERING=1 ./mars_ho_dist_apply_test --ncells=16 --p=2
 // (--gpu-numbering is still accepted, but it is now a no-op.)
@@ -510,9 +510,9 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
     if (mode == Numbering::Host) {
         if (rank == 0) { printf("[build] numbering = HOST (--host-numbering / MARS_HO_HOST_NUMBERING)\n"); fflush(stdout); }
         double tb0 = MPI_Wtime();
-        dof.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        dof.buildDistributedHost(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
         double tb1 = MPI_Wtime();
-        if (rank == 0) { printf("[build] buildDistributed (host) %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
+        if (rank == 0) { printf("[build] buildDistributedHost (host) %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
     } else if (mode == Numbering::Gpu) {
         cudaDeviceSynchronize();
         double tb0 = MPI_Wtime();
@@ -521,7 +521,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
             // DEVICE-INPUT numbering: corner tables + connectivity already device-resident
             // (Piece 1) -> zero H2D. Same core -> bit-identical numbering / A.1.
             if (rank == 0) { printf("[build] numbering = GPU (device inputs, no H2D)\n"); fflush(stdout); }
-            buildDistributedGpuDevice<KeyType>(dof, D.d_conn, (long)D.startE, (long)D.nOwnedElem,
+            buildDistributedDofs<KeyType>(dof, D.d_conn, (long)D.startE, (long)D.nOwnedElem,
                 (long)D.nodeCount, P,
                 thrust::raw_pointer_cast(D.d_cornerGid.data()),
                 thrust::raw_pointer_cast(D.d_cornerOwner.data()),
@@ -530,20 +530,20 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
                 rank, haveOwnDev ? &ownDev : nullptr);
         } else {
             if (rank == 0) { printf("[build] numbering = GPU (host inputs)\n"); fflush(stdout); }
-            buildDistributedGpu(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner,
+            buildDistributedDofsFromHost(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner,
                                 haveOwnDev ? &ownDev : nullptr);
         }
         cudaDeviceSynchronize();
         double tb1 = MPI_Wtime();
-        if (rank == 0) { printf("[build] buildDistributedGpu %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
+        if (rank == 0) { printf("[build] buildDistributedDofsFromHost %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
     } else { // SelfCheck: build BOTH, time each, then compare invariants. Use GPU for downstream.
         if (rank == 0) { printf("[build] numbering = SELF-CHECK (host vs GPU A/B)\n"); fflush(stdout); }
         double th0 = MPI_Wtime();
-        dofHost.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        dofHost.buildDistributedHost(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
         double th1 = MPI_Wtime();
         cudaDeviceSynchronize();
         double tg0 = MPI_Wtime();
-        buildDistributedGpu(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        buildDistributedDofsFromHost(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
         cudaDeviceSynchronize();
         double tg1 = MPI_Wtime();
         double thMax=0, tgMax=0, dh=th1-th0, dg=tg1-tg0;
@@ -571,12 +571,12 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
         // ZERO-MPI resolve: reuse cstone's per-element halo. Feed owned + halo elements
         // (owned first, halo appended) with their owners -- each rank reads its peers'
         // boundary-element contributions LOCALLY, so no key exchange. Result is bit-
-        // identical to the host resolveHoDofOwnership (min-rank-among-holders).
+        // identical to the host resolveHoDofOwnershipHost (min-rank-among-holders).
         std::vector<std::array<int,8>> allCorners = D.elemCorners;
         std::vector<int>               allOwner   = D.elemOwner;
         allCorners.insert(allCorners.end(), D.haloElemCorners.begin(), D.haloElemCorners.end());
         allOwner.insert(allOwner.end(),     D.haloElemOwner.begin(),   D.haloElemOwner.end());
-        resolveHoDofOwnershipLocal(allCorners, D.cornerGid, allOwner, P,
+        resolveHoDofOwnershipLocalHost(allCorners, D.cornerGid, allOwner, P,
                                    dof.dofShared, dof.dofKey, dof.dofOwner, rank);
         if (rank == 0) {
             printf("[build] resolveOwnership = LOCAL zero-MPI (MARS_HO_LOCAL_OWNERSHIP), halo elems=%zu\n",
@@ -597,21 +597,21 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
         const int*  d_pos = thrust::raw_pointer_cast(ownDev.dofPos.data());
         const int*  d_sh = thrust::raw_pointer_cast(ownDev.dofShared.data());
         if (wantVerify) {
-            resolveHoDofOwnershipGpuVerify(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own,
+            resolveHoDofOwnershipVerify(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own,
                 rank, D.peers, thrust::raw_pointer_cast(D.d_cornerGid.data()),
                 thrust::raw_pointer_cast(D.d_cornerOwner.data()), (int)D.nodeCount,
                 thrust::raw_pointer_cast(D.d_recvNodeIds.data()), D.recvOffsets,
                 thrust::raw_pointer_cast(D.d_sendNodeIds.data()), D.sendOffsets);
             if (rank == 0) { printf("[build] resolveOwnership = GPU VERIFY (targeted vs all-peer)\n"); fflush(stdout); }
         } else if (wantP2P) {
-            resolveHoDofOwnershipGpuTargeted(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own,
+            resolveHoDofOwnershipTargeted(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own,
                 rank, D.peers, thrust::raw_pointer_cast(D.d_cornerGid.data()),
                 thrust::raw_pointer_cast(D.d_cornerOwner.data()), (int)D.nodeCount,
                 thrust::raw_pointer_cast(D.d_recvNodeIds.data()), D.recvOffsets,
                 thrust::raw_pointer_cast(D.d_sendNodeIds.data()), D.sendOffsets);
             if (rank == 0) { printf("[build] resolveOwnership = GPU TARGETED P2P (default)\n"); fflush(stdout); }
         } else {
-            resolveHoDofOwnershipGpu(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own, rank, D.peers);
+            resolveHoDofOwnership(ownDev.numDof, d_kind, d_g0, d_g1, d_g2, d_g3, d_pos, d_sh, d_own, rank, D.peers);
             if (rank == 0) { printf("[build] resolveOwnership = GPU all-peer (MARS_HO_GPU_OWNERSHIP)\n"); fflush(stdout); }
         }
         // Resolved owner D2H ONLY for the small-scale host A.1 cross-check (it loops host
@@ -630,7 +630,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
         D.d_recvNodeIds = thrust::device_vector<int>();
         D.d_sendNodeIds = thrust::device_vector<int>();
     } else {
-        resolveHoDofOwnership(dof.dofShared, dof.dofKey, dof.dofOwner, rank, D.peers);
+        resolveHoDofOwnershipHost(dof.dofShared, dof.dofKey, dof.dofOwner, rank, D.peers);
     }
     double tb2 = MPI_Wtime();
     if (rank == 0) { printf("[build] resolveOwnership %.3fs\n", tb2-tb1); fflush(stdout); }
@@ -658,7 +658,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
         halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, dof.dofBoundary, rank, D.peers);
     }
     // elemDof stays DEVICE-resident: move it OUT of ownDev before the free below so the
-    // apply reads it directly (no host download in buildDistributedGpu, no H2D here). The
+    // apply reads it directly (no host download in buildDistributedDofsFromHost, no H2D here). The
     // apply needs a d_elemDof of exactly this size anyway, so this is not extra peak HBM.
     thrust::device_vector<int> d_elemDofDev;
     if (haveOwnDev) d_elemDofDev = std::move(ownDev.elemDof);

@@ -16,7 +16,7 @@ public API may change between minor releases.
   on top of cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor`, the high-order DMMA operator) run on
   AMD's matrix cores (MFMA). The README shows how to build Hypre 2.33 and netCDF for HIP.
-- A step-by-step tutorial for newcomers, ten steps and an appendix: the mesh, a first GPU loop,
+- A step-by-step tutorial, ten steps and an appendix: the mesh, a first GPU loop,
   Poisson's equation with linear tetrahedra, the same with CVFEM on hexahedra, your own
   finite-element operator, the heat equation, the lid-driven cavity, Poiseuille flow, the
   Taylor–Green vortex, the high-order operator and adaptive refinement, and your own CMake project.
@@ -27,6 +27,12 @@ public API may change between minor releases.
   (`fem/mars_cvfem_diffusion.hpp`): the CVFEM diffusion operator and control volumes in one call.
 
 ### Changed
+- Device operations no longer carry redundant `Gpu` suffixes: for example,
+  `buildDofMappingGpu` is now `buildDofMapping`. Geometry, DOF ownership and ACM helpers,
+  examples and documentation use the same convention. High-order host reference builders
+  use `buildHost`/`buildDistributedHost`; device builders use `buildDofs`/`buildDistributedDofs`,
+  with `FromHost` wrappers for host inputs. Existing callers must update these names;
+  the algorithms and execution paths are unchanged.
 - HIP P7 FP64 Laplacian launchers use direct MFMA contractions, removing intermediate tiles.
   On the tested MI300A P7/E32 case, per-point and affine applies are 2.37 and 2.64 times faster
   than the staged path. These are operator timings, not full-solver speedups.

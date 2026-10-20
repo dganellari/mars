@@ -4136,7 +4136,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
 
     // DOF mapping: owned -> [0, numOwnedDofs); ghost -> [numOwnedDofs, nodeCount).
     s.d_node_to_dof.resize(s.nodeCount);
-    s.numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
+    s.numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
     s.numTotalDofs = static_cast<int>(s.nodeCount);
 
     // PERIODIC DOF COLLAPSE: a slave node shares its master's DOF index, then
@@ -4320,7 +4320,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     s.d_areaVec_z.resize(s.elementCount * ElemTraits<ElementTag>::ScsPerElem);
     if constexpr (std::is_same_v<ElementTag, HexTag>)
     {
-        precomputeAreaVectorsGpu<KeyType, RealType>(
+        precomputeAreaVectors<KeyType, RealType>(
             std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
             std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
             std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), s.elementCount,
@@ -4329,7 +4329,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     else
     {
-        precomputeTetAreaVectorsGpu<KeyType, RealType>(
+        precomputeTetAreaVectors<KeyType, RealType>(
             std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
             std::get<2>(d_conn).data(), std::get<3>(d_conn).data(), s.elementCount,
             d_x.data(), d_y.data(), d_z.data(),
@@ -6760,7 +6760,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // tet DDT CG runs unpreconditioned and stalls at the iter cap.
         //
         // HARD DEPENDENCY: this build reads s.d_areaVec_{x,y,z} (filled by
-        // precomputeTetAreaVectorsGpu) and s.d_massNode (filled by the lumped-
+        // precomputeTetAreaVectors) and s.d_massNode (filled by the lumped-
         // mass step). Both run earlier in setupNSStepper, so they are populated
         // here. If a future refactor moves this block ahead of either, the
         // accumulator comes back all-zero -> floored to a constant 1.0 -> the

@@ -90,7 +90,7 @@ int main(int argc, char** argv)
     size_t elementCount = domain.getElementCount();
 
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
+    int numDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
     int numTotalDofs = (int)nodeCount;
 
     const auto& d_conn = domain.getElementToNodeConnectivity();

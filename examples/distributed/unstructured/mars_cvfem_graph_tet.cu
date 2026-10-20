@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
                                << " elementCount=" << elementCount << std::endl; std::cout.flush(); }
 
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs = buildDofMappingGpu<KeyType>(
+    int numDofs = buildDofMapping<KeyType>(
         d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
     int numTotalDofs = static_cast<int>(nodeCount);
     if (rank == 0) { std::cout << "PHASE: DOF mapping done, numDofs=" << numDofs
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_grad_phi_y(nodeCount);
     cstone::DeviceVector<RealType> d_grad_phi_z(nodeCount);
 
-    initFieldsGpu<RealType>(
+    initFields<RealType>(
         d_x.data(), d_y.data(), d_z.data(),
         d_phi.data(), d_gamma.data(), d_beta.data(),
         d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),

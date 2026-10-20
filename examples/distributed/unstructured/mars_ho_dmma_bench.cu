@@ -51,7 +51,7 @@ bool runBench(int E, int iters)
     long nCorner = long(E + 1) * (E + 1) * (E + 1);
 
     HODofHandler dh;
-    dh.build(elemCorners, nCorner, P);
+    dh.buildHost(elemCorners, nCorner, P);
     long nDof = dh.numDof;
     size_t nEl = elemCorners.size();
 

@@ -16,7 +16,7 @@ namespace mars
 namespace fem
 {
 
-// A: one row per owned DOF (d_nodeToDof from buildDofMappingGpu: owned DOFs first), columns over all local
+// A: one row per owned DOF (d_nodeToDof from buildDofMapping: owned DOFs first), columns over all local
 // DOFs. Row i is the diffusive flux out of node i's control volume, so A is positive definite once
 // Dirichlet rows are set. Every element the rank holds contributes, which completes the owned rows.
 template<typename RealType, typename KeyType>
@@ -54,7 +54,7 @@ void assembleCvfemDiffusion(const ElementDomain<HexTag, RealType, KeyType, cston
     Vector g(nodes, gamma), zeroNode(nodes, RealType(0)), zeroFace(elems * 12, RealType(0));
     Vector ax(elems * 12), ay(elems * 12), az(elems * 12);
     const RealType *x = domain.getNodeX().data(), *y = domain.getNodeY().data(), *z = domain.getNodeZ().data();
-    precomputeAreaVectorsGpu<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], elems, x, y, z,
+    precomputeAreaVectors<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], elems, x, y, z,
                                                 ax.data(), ay.data(), az.data());
     typename CvfemHexAssembler<KeyType, RealType>::Config config;
     config.variant = CvfemKernelVariant::Tensor;

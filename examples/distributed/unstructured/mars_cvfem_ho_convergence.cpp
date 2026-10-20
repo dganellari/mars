@@ -78,7 +78,7 @@ static double runConv(int E, long& outDof)
                       cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
         ijk.push_back({ex,ey,ez});
     }
-    HODofHandler dh; dh.build(ec, long(E+1)*(E+1)*(E+1), P);
+    HODofHandler dh; dh.buildHost(ec, long(E+1)*(E+1)*(E+1), P);
     const long nDof = dh.numDof; const size_t nEl = ec.size();
 
     // DOF coords (GLL positions), exact solution, source, boundary flag

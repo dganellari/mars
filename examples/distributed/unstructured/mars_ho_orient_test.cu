@@ -115,7 +115,7 @@ bool runStage2(int E)
     long nCorner = long(E + 1) * (E + 1) * (E + 1);
 
     HODofHandler dh;
-    dh.build(elemCorners, nCorner, P);
+    dh.buildHost(elemCorners, nCorner, P);
     long nDof = dh.numDof;
     long expect = long(E * P + 1) * (E * P + 1) * (E * P + 1);
 

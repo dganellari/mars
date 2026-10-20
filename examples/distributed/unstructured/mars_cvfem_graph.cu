@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     // All nodes get DOFs: owned → [0, numDofs), ghost → [numDofs, nodeCount)
     // Ghost DOFs are needed as CSR column indices for correct off-diagonal assembly.
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs = buildDofMappingGpu<KeyType>(
+    int numDofs = buildDofMapping<KeyType>(
         d_nodeOwnership.data(),
         d_nodeToDof.data(),
         nodeCount
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_grad_phi_z(nodeCount);
 
     // GPU kernel for field initialization
-    initFieldsGpu<RealType>(
+    initFields<RealType>(
         d_x.data(), d_y.data(), d_z.data(),
         d_phi.data(), d_gamma.data(), d_beta.data(),
         d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
 
     // Pre-compute area vectors from geometry (required for correct diffusion)
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),

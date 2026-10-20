@@ -103,7 +103,7 @@ static int runOneTet(const char* name, const RealType verts[4][3])
     cudaMemcpy(d_y, h_y, 4*sizeof(RealType), cudaMemcpyHostToDevice);
     cudaMemcpy(d_z, h_z, 4*sizeof(RealType), cudaMemcpyHostToDevice);
 
-    precomputeTetAreaVectorsGpu<KeyType, RealType>(
+    precomputeTetAreaVectors<KeyType, RealType>(
         d_c0, d_c1, d_c2, d_c3, /*numElements=*/1, d_x, d_y, d_z, d_ax, d_ay, d_az);
     cudaDeviceSynchronize();
 

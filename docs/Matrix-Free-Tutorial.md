@@ -54,7 +54,7 @@ degree of freedom (DOF); nodes on element faces, edges and corners are shared wi
 
 On several ranks three more pieces are needed:
 
-1. **Numbering.** `buildDistributedGpu` numbers the DOFs on the device. A DOF on an edge or face
+1. **Numbering.** `buildDistributedDofs` numbers the DOFs on the device. A DOF on an edge or face
    is named by the sorted global ids of the entity's corners plus its position inside the entity
    (`DofKey`). Every rank that holds the DOF computes the same name, without communication.
 2. **Ownership.** A corner DOF belongs to the rank that owns the mesh node. An edge or face DOF
@@ -117,7 +117,7 @@ The exit code is 0 if every gate passes and 1 otherwise. In the sweep table, the
 vertices have that many; see [Memory](#memory) for exact counts.
 
 `--dof-self-check` (or `MARS_HO_DOF_SELF_CHECK=1`) first compares the device numbering with the
-host `HODofHandler::build()` for `p = 1 ... 7`. The two numberings differ by a permutation, so the
+host `HODofHandler::buildHost()` for `p = 1 ... 7`. The two numberings differ by a permutation, so the
 check compares the DOF counts, the set of `DofKey`s and which element slots share a DOF.
 
 ## Several GPUs: `mars_ho_dist_apply_test`

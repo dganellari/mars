@@ -616,7 +616,7 @@ void setupAdvDiffStepper(AdvDiffStepper<KeyType, RealType>& s,
 
     // Owned nodes -> [0, numOwnedDofs); ghosts -> [numOwnedDofs, nodeCount).
     s.d_node_to_dof.resize(s.nodeCount);
-    s.numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
+    s.numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
     s.numTotalDofs = static_cast<int>(s.nodeCount);
     pt.lap("DOF mapping");
 
@@ -665,7 +665,7 @@ void setupAdvDiffStepper(AdvDiffStepper<KeyType, RealType>& s,
     s.d_areaVec_x.resize(s.elementCount * 12);
     s.d_areaVec_y.resize(s.elementCount * 12);
     s.d_areaVec_z.resize(s.elementCount * 12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
         std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), s.elementCount,

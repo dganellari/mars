@@ -110,7 +110,7 @@ distributed DOF count match the single-rank count exactly).
 
 ## DOF numbering across ranks
 
-`buildDofMappingGpu` (in `mars_cvfem_utils.hpp`) turns the ownership map into a local
+`buildDofMapping` (in `mars_cvfem_utils.hpp`) turns the ownership map into a local
 DOF numbering entirely on the device via two `exclusive_scan`s over the owned/ghost
 masks: owned nodes are numbered `[0, numOwned)`, ghosts `[numOwned, numTotalDofs)`. It
 returns `numOwned`, the number of equation rows this rank owns. The **sum of `numOwned`

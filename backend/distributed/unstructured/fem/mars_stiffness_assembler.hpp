@@ -68,7 +68,7 @@ __global__ void checkMeshQualityKernel(
 
 // CUDA kernel for stiffness matrix assembly
 // Computes local element stiffness matrices and atomically adds to global matrix
-// IndexType indexes elements and nodes, DofIndex the DOFs and the CSR (int for buildDofMappingGpu)
+// IndexType indexes elements and nodes, DofIndex the DOFs and the CSR (int for buildDofMapping)
 template<typename ElementTag, typename RealType, typename IndexType, typename DofIndex = IndexType>
 __global__ void assembleStiffnessKernel(
     const RealType* node_x,
@@ -228,7 +228,7 @@ public:
     using Domain = typename FESpace::Domain;
     using DeviceMatrix = SparseMatrix<int, RealType, AcceleratorTag>;
 
-    // Device path for a DOF map from buildDofMappingGpu (owned DOFs first, then ghosts): the owned-row
+    // Device path for a DOF map from buildDofMapping (owned DOFs first, then ghosts): the owned-row
     // sparsity is built on the device and every element the rank holds is assembled into it.
     void assemble(const Domain& domain, DeviceMatrix& K, const int* d_nodeToDof, int numOwnedDofs) {
         static_assert(std::is_same_v<ElementTag, TetTag>, "the device sparsity builder is for tetrahedra");

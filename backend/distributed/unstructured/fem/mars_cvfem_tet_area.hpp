@@ -132,7 +132,7 @@ __global__ void precomputeTetAreaVectorsKernel(
 }
 
 template<typename KeyType, typename RealType>
-void precomputeTetAreaVectorsGpu(
+void precomputeTetAreaVectors(
     const KeyType* d_conn0, const KeyType* d_conn1,
     const KeyType* d_conn2, const KeyType* d_conn3,
     size_t numElements,

@@ -19,7 +19,7 @@
 // (report the mean ratio) vs a structural per-row difference (report the spread).
 //
 // DOF sharing is the parity prerequisite: both paths use the SAME node->DOF map
-// the assembled path builds (buildDofMappingGpu). HODofHandler is NOT used here --
+// the assembled path builds (buildDofMapping). HODofHandler is NOT used here --
 // it renumbers DOFs and would break the shared-DOF parity. At p=1 the HO DOF map
 // is exactly the node DOF map, so elemDof is the node map gathered through the
 // element connectivity, reordered from MARS hex-corner order to the HO local index
@@ -176,7 +176,7 @@ int main(int argc, char** argv)
 
     // --- SHARED p=1 node DOF map (assembled path builds it; HO reuses it) ---
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
+    int numDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
     int numTotalDofs = (int)nodeCount;
 
     const auto& d_conn = domain.getElementToNodeConnectivity();
@@ -206,7 +206,7 @@ int main(int argc, char** argv)
     cstone::DeviceVector<RealType> d_gx(nodeCount, 0.0), d_gy(nodeCount, 0.0), d_gz(nodeCount, 0.0);
     cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 0.0);
     cstone::DeviceVector<RealType> d_avx(elementCount*12), d_avy(elementCount*12), d_avz(elementCount*12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
+    precomputeAreaVectors<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
         d_x.data(), d_y.data(), d_z.data(), d_avx.data(), d_avy.data(), d_avz.data());
     cudaDeviceSynchronize();
 

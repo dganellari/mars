@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
 
     // Owned nodes first, then ghosts, from the domain's node ownership (as the Navier-Stokes solvers)
     cstone::DeviceVector<int> d_node_to_dof(nodeCount);
-    int numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
+    int numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
     int numTotalDofs = int(nodeCount);
     long numGlobalDofs = numOwnedDofs;
     MPI_Allreduce(MPI_IN_PLACE, &numGlobalDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12);
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
 
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
