@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.1] — 2026-10-17
+## [0.1.1] — 2026-10-20
 
 ### Added
 - HIP build for AMD GPUs, tested on MI300A: every example program builds, and all release checks
