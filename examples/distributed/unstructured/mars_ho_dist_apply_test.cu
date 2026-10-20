@@ -33,7 +33,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree_shfl.hpp"
 
-#include <cuda_runtime.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
@@ -53,6 +53,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -678,7 +679,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
         const int blk = 256;
         ho_pack_owned_mask<<<(unsigned)((nd + blk - 1) / blk), blk>>>(
             d_own, nd, rank, thrust::raw_pointer_cast(d_ownedMask.data()));
-        locOwned = (long)thrust::count(ownDev.dofOwner.begin(), ownDev.dofOwner.end(), rank);
+        locOwned = (long)mars::count(ownDev.dofOwner.begin(), ownDev.dofOwner.end(), rank);
         cudaDeviceSynchronize();
     }
 
@@ -935,7 +936,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
                 thrust::raw_pointer_cast(d_isBoundary.data()));
         }
         cudaDeviceSynchronize();
-        nBoundary = (size_t)thrust::count(d_isBoundary.begin(), d_isBoundary.begin() + nEl, (uint8_t)1);
+        nBoundary = (size_t)mars::count(d_isBoundary.begin(), d_isBoundary.begin() + nEl, (uint8_t)1);
         nInterior = nEl - nBoundary;
         d_interiorElems.resize(nInterior > 0 ? nInterior : 1);
         d_boundaryElems.resize(nBoundary > 0 ? nBoundary : 1);
@@ -1049,8 +1050,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
     // readback ON DEVICE: max over d of (owned ? |d_y[d]| : 0), selected by the packed owned
     // mask. Same value the host loop produced, but only the scalar crosses to host (no nDof
     // D2H). transform_reduce over [0,nDof) with OwnedAbsMax.
-    double locMaxD = thrust::transform_reduce(
-        thrust::device,
+    double locMaxD = mars::transformReduce(
         thrust::counting_iterator<long>(0), thrust::counting_iterator<long>(nDof),
         OwnedAbsMax{d_y, d_mask}, 0.0, thrust::maximum<double>());
     double gMaxD = 0; MPI_Allreduce(&locMaxD, &gMaxD, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -1205,8 +1205,7 @@ static void runDistApply(DistDof& D, int rank, int numRanks, Numbering mode)
                 ho_cvfem_apply_launch_E<double, P, double>(d_u, d_y, d_elemDof, d_G, nEl, eb, smemCap);
                 halo.reverseAddDevice(d_y);
                 cudaDeviceSynchronize();
-                double locA1 = thrust::transform_reduce(
-                    thrust::device,
+                double locA1 = mars::transformReduce(
                     thrust::counting_iterator<long>(0), thrust::counting_iterator<long>(nDof),
                     OwnedAbsMax{d_y, d_mask}, 0.0, thrust::maximum<double>());
                 double gA1 = 0; MPI_Allreduce(&locA1, &gA1, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);

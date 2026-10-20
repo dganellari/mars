@@ -13,6 +13,7 @@
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/domain.hpp"
 #include "cstone/tree/csarray.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -215,7 +216,9 @@ public:
         // marker can correctly gate at maxLevel and reach a true adaptive
         // distribution of base + L1 + L2 cells.
         const auto& cstoneDom = domain.getDomain();
-        const auto  leavesView = cstoneDom.focusTree().treeLeaves();
+        // the device copy: treeLeaves() is cornerstone's host copy, which the GPU can only read on
+        // systems with unified CPU-GPU memory (GH200), not on MI300A
+        const auto  leavesView = cstoneDom.focusTree().treeLeavesAcc();
         size_t      numLeaves  = (leavesView.size() > 0) ? (leavesView.size() - 1) : 0;
         const KeyType* d_leaves = leavesView.data();
 
@@ -239,7 +242,7 @@ public:
     cstone::DeviceVector<uint8_t> markForRefinement(const RealType* d_errorPerElement, size_t numElements)
     {
         RealType maxError =
-            thrust::reduce(thrust::device_pointer_cast(d_errorPerElement),
+            mars::reduce(thrust::device_pointer_cast(d_errorPerElement),
                            thrust::device_pointer_cast(d_errorPerElement + numElements), RealType(0),
                            thrust::maximum<RealType>());
 

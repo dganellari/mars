@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_outlet_iteration.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 // Included by mars_ns_pump_solver.hpp after its flux and pressure helpers.
 // The trace, reconstructed gradient, and momentum coefficients stay frozen here.
@@ -49,14 +50,14 @@ OutletResidualNorm outlet_residual_norm(NSStepper<KeyType, RealType, ElementTag>
     const auto* r = residual.data();
     const int n_owned = s.numOwnedDofs;
     auto first = thrust::counting_iterator<size_t>(0);
-    OutletResidualMoments local = thrust::transform_reduce(thrust::device, first, first + s.nodeCount,
+    OutletResidualMoments local = mars::transformReduce(first, first + s.nodeCount,
         [own, dof, mass, r, n_owned] __device__(size_t i) -> OutletResidualMoments {
             if (own[i] != 1 || dof[i] < 0 || dof[i] >= n_owned) return {0, 0, 0, 0};
             double q = double(r[i]), v = double(mass[i]);
             if (!(v > 0) || !isfinite(v) || !isfinite(q)) return {INFINITY, 0, 0, 0};
             return {q * q / v, v, q, fabs(q)};
         }, OutletResidualMoments{0, 0, 0, 0}, OutletResidualPlus{});
-    double local_max = thrust::transform_reduce(thrust::device, first, first + s.nodeCount,
+    double local_max = mars::transformReduce(first, first + s.nodeCount,
         [own, dof, mass, r, n_owned] __device__(size_t i) -> double {
             if (own[i] != 1 || dof[i] < 0 || dof[i] >= n_owned) return 0;
             return mass[i] > RealType(0) ? fabs(double(r[i]) / double(mass[i])) : INFINITY;
@@ -221,7 +222,7 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         const auto* t = s.d_outlet_trial_residual.data();
         const auto* mass = s.d_massNode.data();
         auto first = thrust::counting_iterator<size_t>(0);
-        auto products = thrust::transform_reduce(thrust::device, first, first + s.nodeCount,
+        auto products = mars::transformReduce(first, first + s.nodeCount,
             [=] __device__(size_t i) -> OutletResidualMoments {
                 if (own[i] != 1 || dof[i] < 0 || dof[i] >= n_owned) return {0, 0, 0, 0};
                 double delta = double(t[i]) - double(r[i]), volume = double(mass[i]);

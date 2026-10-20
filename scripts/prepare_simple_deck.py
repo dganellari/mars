@@ -129,12 +129,12 @@ def check_linear_settings(value, solver, check):
             check.require(is_linear_solver(config), path + '.family', 'unsupported or missing linear-solver family')
 
 
-def reference_pressure_target(settings, solver):
-    path = 'pressure_linear_policy.reference'
+def reference_linear_target(settings, solver, equation, stage):
+    path = stage + '_linear_policy.reference'
     require(isinstance(settings, dict), path, 'expected linear_solver_settings mapping')
-    config = next((settings[key] for key in ('pressure_correction', 'segregated_flow', 'default')
+    config = next((settings[key] for key in (equation, 'segregated_flow', 'default')
                    if key in settings), None)
-    require(isinstance(config, dict), path, 'missing or malformed pressure solver definition')
+    require(isinstance(config, dict), path, 'missing or malformed ' + stage + ' solver definition')
     if 'lookup' in config:
         name = config['lookup']
         require(isinstance(name, str) and bool(name) and name not in SOLVER_CONTROLS,
@@ -142,11 +142,19 @@ def reference_pressure_target(settings, solver):
         config = solver.get(name)
         require(isinstance(config, dict), path + '.lookup', 'named linear solver not found')
     family = config.get('family')
-    require(isinstance(family, str) and family.lower() == 'hypre', path + '.family', 'requires Hypre')
+    petsc_momentum = isinstance(family, str) and family.lower() == 'petsc' and stage == 'momentum'
+    require(isinstance(family, str) and (family.lower() == 'hypre' or petsc_momentum),
+            path + '.family', 'requires Hypre or the supported PETSc momentum profile')
     for key in ('normalize_matrix', 'diagonal_scaling'):
         require(config.get(key, False) is False, path + '.' + key, 'requires false or omission')
     solver_type = 'gmres'
-    if 'options' in config:
+    if petsc_momentum:
+        raw = config.get('options')
+        require(isinstance(raw, dict) and len(raw) == 2 and all(isinstance(k, str) and isinstance(v, str) for k, v in raw.items()),
+                path + '.options', 'requires exactly ksp_type fgmres and pc_type bjacobi')
+        require({k.lower(): v.lower() for k, v in raw.items()} == dict(ksp_type='fgmres', pc_type='bjacobi'),
+                path + '.options', 'requires exactly ksp_type fgmres and pc_type bjacobi')
+    elif 'options' in config:
         options = config['options']
         require(isinstance(options, dict) and isinstance(options.get('solver'), dict),
                 path + '.options', 'requires a solver mapping')
@@ -157,7 +165,15 @@ def reference_pressure_target(settings, solver):
     atol = number(config.get('atol', 1e-16), path + '.atol')
     require(0 < rtol < 1, path + '.rtol', 'must lie in (0, 1)')
     require(atol >= 0, path + '.atol', 'must be nonnegative')
-    return ['--pressure-linear-rtol', str(rtol), '--pressure-linear-atol', str(atol)]
+    return ['--' + stage + '-linear-rtol', str(rtol), '--' + stage + '-linear-atol', str(atol)]
+
+
+def reference_pressure_target(settings, solver):
+    return reference_linear_target(settings, solver, 'pressure_correction', 'pressure')
+
+
+def reference_momentum_target(settings, solver):
+    return reference_linear_target(settings, solver, 'coupled_navier_stokes', 'momentum')
 
 
 def zero_field(value, field, check, vector=False):
@@ -173,10 +189,12 @@ def zero_field(value, field, check, vector=False):
     check.require(all(check.number(v, path) == 0 for v in items), path, 'only zero initial fields are supported')
 
 
-def translate(doc, pressure_linear_policy='mars'):
+def translate(doc, pressure_linear_policy='mars', momentum_linear_policy='mars'):
     check = Checks()
     check.require(pressure_linear_policy in ('mars', 'reference'),
                   'pressure_linear_policy', 'requires mars or reference')
+    check.require(momentum_linear_policy in ('mars', 'reference'),
+                  'momentum_linear_policy', 'requires mars or reference')
     doc = check.mapping(doc, 'mesh simulation', 'document')
     mesh = check.mapping(doc.get('mesh'), 'file_path automatic_decomposition_type', 'mesh')
     # This selects OpenAccel's partitioner; MARS partitions through Cornerstone.
@@ -289,6 +307,9 @@ def translate(doc, pressure_linear_policy='mars'):
     check_linear_settings(advanced.get('linear_solver_settings', {}), solver, check)
     if pressure_linear_policy == 'reference':
         args += check.checked(reference_pressure_target, advanced.get('linear_solver_settings', {}),
+                              solver, fallback=[])
+    if momentum_linear_policy == 'reference':
+        args += check.checked(reference_momentum_target, advanced.get('linear_solver_settings', {}),
                               solver, fallback=[])
     eq = check.mapping(advanced.get('equation_controls', {}), 'sub_iterations', 'equation_controls')
     sub = check.mapping(eq.get('sub_iterations', {}), 'pressure_correction segregated_flow', 'sub_iterations')

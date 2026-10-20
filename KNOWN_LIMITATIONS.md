@@ -1,6 +1,6 @@
-# Known Limitations (v0.1.0)
+# Known Limitations (v0.1.1)
 
-MARS v0.1.0 is the first public release. This document states plainly what is
+MARS v0.1 is the first public release; v0.1.1 adds AMD GPUs (HIP). This document states plainly what is
 validated, what is experimental, and what is not supported yet, so you can judge
 whether MARS fits your use case. The major version is `0`: APIs may change.
 
@@ -36,7 +36,8 @@ including element numberings that are not aligned with the coordinate axes.
 - **Segregated SIMPLE solver** (`fem/segregated/`). Under development and not built by
   default (`-DMARS_ENABLE_SEGREGATED=ON`).
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
-  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
+  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library. CUDA only: its
+  kernels are PTX loaded through the CUDA driver API.
 
 ## Not supported yet
 - **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming
@@ -69,8 +70,19 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 ## Build / platform notes
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
-  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) support exists (`-DMARS_ENABLE_HIP=ON`), but
-  it was not built or tested for v0.1.0, and the FEM examples are CUDA-only.
+  `-DCMAKE_CUDA_ARCHITECTURES=...`).
+- HIP (AMD, `-DMARS_ENABLE_HIP=ON`) is tested on MI300A (Beverin, ROCm 7.2) with Hypre 2.33 and
+  netCDF 4.9.3 built for it: the production-integration run builds all examples and passes 48
+  release tests plus 40 other tests; 12 other tests are skipped. The suite includes 1/4-rank checks.
+  The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
+  high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
+  tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
+  NVIDIA can be slower. The direct P7 MFMA path uses 32 KiB per two-element block; its measured
+  improvement is an operator result, not a full-solver speedup. The HIP tensor assembly path
+  reduces scratch storage but still spills registers. See `tests/performance/AMD-mfma.md` and
+  `tests/performance/AMD-tensor-early.md` for the measured cases and validation scope.
+  With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
+  `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
 - Every rank must own part of the mesh. A mesh too small for the rank count stops on every rank with a
   message, instead of leaving a rank without elements.
@@ -86,7 +98,8 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   mesh then fails at runtime with a clear error, and the binary directory format still works.
 - Multi-GPU runs: the drivers of the release tests and the tutorials select GPU
   `rank % deviceCount`. Some research drivers do not; give each of their ranks one GPU with the
-  launcher (a binding wrapper or `CUDA_VISIBLE_DEVICES`), otherwise every rank uses GPU 0.
+  launcher (a binding wrapper, `CUDA_VISIBLE_DEVICES`, or `ROCR_VISIBLE_DEVICES` on AMD), otherwise
+  every rank uses GPU 0.
 - CMake fetches cornerstone-octree, and googletest when tests are on and no system googletest
   is found, at configure time, so a network connection is needed for a fresh configure.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "cstone/cuda/cuda_utils.cuh" // For IsDeviceVector and the memcpy helpers
 #include <mpi.h>
 #include <tuple>
@@ -71,8 +73,20 @@ inline int globalBucketSize(double globalElements)
         }                                                                                                              \
     }
 
-// Add this macro near the top after includes (around line 25)
-#ifdef __CUDACC__
+// The same for a runtime call that returns its error (copy, allocation, synchronize). The variable name
+// must not appear in the calls it wraps.
+#define cudaCheckCall(call)                                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        cudaError_t marsCallErr_ = (call);                                                                             \
+        if (marsCallErr_ != cudaSuccess)                                                                               \
+        {                                                                                                              \
+            std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(marsCallErr_));      \
+            ::mars::abortAllRanks(EXIT_FAILURE);                                                                       \
+        }                                                                                                              \
+    } while (0)
+
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #define MARS_HOST_DEVICE __host__ __device__
 #else
 #define MARS_HOST_DEVICE

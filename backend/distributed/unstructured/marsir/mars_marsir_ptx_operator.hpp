@@ -5,7 +5,9 @@
 // already made current, so it mixes freely with runtime-API allocations and kernels.
 //
 // Kernel contract (see marsir-mlir/test/hl_gpu_pipeline.py): laplacian_apply(U,
-// Btil, Dtil, W, D, G, Y), one warp per element (grid = E, block = 32). Every memref
+// Btil, Dtil, W, D, G, Y); one warp per element (grid = E, block = 32) for the
+// tensor-core schedule, or the shape the kernel publishes as <kernel>__launch
+// = {threads per block, elements per block} (the cellwise schedule, --cellwise). Every memref
 // argument is passed as an MLIR descriptor (allocated ptr, aligned ptr, offset,
 // sizes, strides) and must be 16-byte aligned, which cudaMalloc guarantees.
 
@@ -33,34 +35,53 @@ namespace marsir {
         }                                                                        \
     } while (0)
 
+// Loads a MARSIR PTX file into the context the runtime API has made current.
+inline CUmodule load_ptx(const std::string& ptx_path)
+{
+    std::ifstream in(ptx_path, std::ios::binary);
+    if (!in) {
+        fprintf(stderr, "cannot open MARSIR PTX %s\n", ptx_path.c_str());
+        std::abort();
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string ptx = ss.str();
+    cudaFree(nullptr);   // make sure the runtime's primary context exists
+    MARS_MARSIR_CU(cuInit(0));
+    CUmodule module = nullptr;
+    MARS_MARSIR_CU(cuModuleLoadData(&module, ptx.c_str()));
+    return module;
+}
+
 class LaplacianPtx {
 public:
     // p = 7: U, Y are E x 8 x 8 x 8; Btil, Dtil are 8 x 8 with a zero last row (the
     // face dimension padded to a full tensor-core tile); W, D are 8 x 8; G is
     // E x [3][7][3][8][8], component-major.
-    explicit LaplacianPtx(const std::string& ptx_path, int p = 7) : p_(p)
+    // kernel: laplacian_apply (tensor-core schedule) or laplacian_apply_p{p} (cellwise).
+    explicit LaplacianPtx(const std::string& ptx_path, int p = 7, const std::string& kernel = "laplacian_apply") : p_(p)
     {
-        std::ifstream in(ptx_path, std::ios::binary);
-        if (!in) {
-            fprintf(stderr, "cannot open MARSIR PTX %s\n", ptx_path.c_str());
-            std::abort();
+        module_ = load_ptx(ptx_path);
+        MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, kernel.c_str()));
+        CUdeviceptr global = 0;
+        size_t bytes = 0;
+        if (cuModuleGetGlobal(&global, &bytes, module_, (kernel + "__launch").c_str()) == CUDA_SUCCESS &&
+            bytes == sizeof(long long[2])) {
+            long long v[2];
+            MARS_MARSIR_CU(cuMemcpyDtoH(v, global, sizeof(v)));
+            threads_ = (unsigned)v[0];
+            per_block_ = v[1];
         }
-        std::stringstream ss;
-        ss << in.rdbuf();
-        const std::string ptx = ss.str();
-        cudaFree(nullptr);   // make sure the runtime's primary context exists
-        MARS_MARSIR_CU(cuInit(0));
-        MARS_MARSIR_CU(cuModuleLoadData(&module_, ptx.c_str()));
-        MARS_MARSIR_CU(cuModuleGetFunction(&fn_, module_, "laplacian_apply"));
     }
     ~LaplacianPtx() { cuModuleUnload(module_); }
     LaplacianPtx(const LaplacianPtx&) = delete;
     LaplacianPtx& operator=(const LaplacianPtx&) = delete;
 
-    // y = A u on E elements: u continuous, y unassembled.
-    void apply(const double* d_u, const double* d_btil, const double* d_dtil, const double* d_w,
-               const double* d_d, const double* d_g, double* d_y, long long E,
-               cudaStream_t stream = 0) const
+    // y = A u on E elements: u continuous, y unassembled. Real: the kernel's value type
+    // (float for the _f32 kernels).
+    template <typename Real>
+    void apply(const Real* d_u, const Real* d_btil, const Real* d_dtil, const Real* d_w, const Real* d_d,
+               const Real* d_g, Real* d_y, long long E, cudaStream_t stream = 0) const
     {
         const long long n = p_ + 1, nn = n * n, n3 = nn * n;
         const long long g_elem = 3LL * p_ * 3 * nn;
@@ -71,8 +92,8 @@ public:
         long long g_st[6] = {g_elem, (long long)p_ * 3 * nn, 3 * nn, nn, n, 1};
         // The driver API takes pointers to each argument value, so the device
         // pointers need addressable copies.
-        const double *u = d_u, *bt = d_btil, *dt = d_dtil, *w = d_w, *d = d_d, *g = d_g;
-        double* y = d_y;
+        const Real *u = d_u, *bt = d_btil, *dt = d_dtil, *w = d_w, *d = d_d, *g = d_g;
+        Real* y = d_y;
         void* args[] = {
             &u,  &u,  &zero, &u_sz[0], &u_sz[1], &u_sz[2], &u_sz[3],
                              &u_st[0], &u_st[1], &u_st[2], &u_st[3],
@@ -85,14 +106,17 @@ public:
             &y,  &y,  &zero, &u_sz[0], &u_sz[1], &u_sz[2], &u_sz[3],
                              &u_st[0], &u_st[1], &u_st[2], &u_st[3],
         };
-        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)E, 1, 1, 32, 1, 1, 0, (CUstream)stream,
-                                      args, nullptr));
+        if (E == 0) return;
+        MARS_MARSIR_CU(cuLaunchKernel(fn_, (unsigned)((E + per_block_ - 1) / per_block_), 1, 1, threads_, 1, 1, 0,
+                                      (CUstream)stream, args, nullptr));
     }
 
 private:
     CUmodule module_ = nullptr;
     CUfunction fn_ = nullptr;
     int p_;
+    unsigned threads_ = 32;
+    long long per_block_ = 1;
 };
 
 }  // namespace marsir

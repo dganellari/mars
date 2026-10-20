@@ -2,7 +2,7 @@
 
 #include "mars_base.hpp"
 #include "mars_sparse_matrix.hpp"
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 

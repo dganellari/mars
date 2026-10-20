@@ -9,11 +9,12 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
 from prepare_simple_deck import load_deck, translate
-from simple_public_diagnostics import SafeParser
+from simple_public_diagnostics import SafeParser, progress_marker
 from simple_reference_messages import MessageMatcher, REFERENCE_REVISION, read_catalog
 from simple_snapshot_compare import (COMPLETION, HEADER, EvidenceError, controls, coordinates, digest,
                                      field_errors, mars_fields, node_ids, options,
@@ -24,7 +25,8 @@ SCHEMA = 'mars-simple-startup-v1'
 PREPARATION_ERRORS = {'saved_case_format', 'saved_deck_identity', 'saved_control_identity',
                       'saved_mesh_path', 'reference_length', 'modified_controls', 'launcher_exit',
                       'runtime_library_probe', 'runtime_libraries_unresolved',
-                      'runtime_library_paths', 'runtime_library_unreadable', 'reference_outputs'}
+                      'runtime_library_paths', 'runtime_library_unreadable',
+                      'runtime_library_metadata', 'reference_outputs'}
 
 
 def read_json(path):
@@ -93,13 +95,23 @@ def pair_inputs(pair):
     require(record['mesh_sha256'] == digest(Path(record['mesh'])))
     case = read_json(pair / 'case.json')
     mapped, mesh = translate(load_deck((pair / 'reference/input.i').read_bytes()),
-                             case.get('pressure_linear_policy', 'mars'))
+                             case.get('pressure_linear_policy', 'mars'), case.get('momentum_linear_policy', 'mars'))
     values = options(case['arguments'])
     if 'pressure_profile' in record:
         profile = record['pressure_profile']
-        require(record.get('first_step_audit') is True)
+        require(record.get('first_step_audit') is True or
+                (profile.get('kind') == 'original_twenty_steps' and record['steps'] == STEPS))
         require(profile['sha256'] == case['pressure_solver_profile_sha256'] == digest(pair / 'pressure.profile'))
         require(values.pop('--pressure-solver-profile') == str(pair.resolve() / 'pressure.profile'))
+        if 'pressure_amg_mode' in profile:
+            require(profile['pressure_amg_mode'] == 'reference' and record.get('first_step_audit') is True)
+            require(values.pop('--pressure-amg-mode') == 'reference')
+        if 'momentum' in profile:
+            require(profile['momentum']['sha256'] == case['momentum_solver_profile_sha256'] == digest(pair / 'momentum.profile'))
+            require(values.pop('--momentum-solver-profile') == str(pair.resolve() / 'momentum.profile'))
+            require(case.get('momentum_linear_policy') == 'reference')
+            if case.get('momentum_backend') == 'petsc':
+                require(values.pop('--momentum-backend') == 'petsc')
     require(Path(mesh).resolve() == Path(record['mesh']) == Path(values['--mesh']))
     require(values == dict(options(mapped), **{'--mesh': mesh, '--mesh-format': 'exodus',
                                              '--reference-length': values['--reference-length']}))
@@ -115,18 +127,56 @@ def solver_arguments(pair, solver):
         '--residual-tol', '1e-6', '--mass-tol', '1e-6', '--change-tol', '1e-6',
         '--linear-cache', '1', '--halo-overlap', '1', '--field-output', 'distributed',
         '--profile', '0', '--output-prefix', str(pair / 'mars/flow')] + (
-        ['--first-step-audit', '1'] if record.get('first_step_audit', False) else [])
+        ['--first-step-audit', '1'] if record.get('first_step_audit', False) else []) + (
+        ['--pressure-expansion', '0', '--pressure-refinement', '0']
+        if record.get('pressure_profile', {}).get('kind') == 'original_twenty_steps' else [])
+
+
+def verify_optional_libraries(executable, paths, missing, env):
+    reader = shutil.which('readelf') or shutil.which('llvm-readelf')
+    require(reader is not None, 'runtime_library_metadata')
+    auxiliary, required = set(), set()
+    for path in sorted(set([str(executable)] + paths)):
+        try:
+            result = subprocess.run([reader, '-dW', path], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError:
+            raise EvidenceError('runtime_library_metadata')
+        text = result.stdout.decode('utf-8', errors='replace')
+        require(result.returncode == 0 and not result.stderr and
+                'Dynamic section at offset' in text and '(NULL)' in text,
+                'runtime_library_metadata')
+        for line in text.splitlines():
+            tag = re.search(r'\((NEEDED|FILTER|AUXILIARY)\)', line)
+            if tag:
+                name = re.search(r'\[([^\]\r\n]+)\]\s*$', line)
+                require(name is not None, 'runtime_library_metadata')
+                (auxiliary if tag[1] == 'AUXILIARY' else required).add(name[1])
+    # An optional provider may also be required by another loaded object.
+    required |= {Path(name).name for name in required}
+    require(missing <= auxiliary and not any(name in required or Path(name).name in required
+            for name in missing), 'runtime_libraries_unresolved')
 
 
 def runtime_libraries(executable):
+    env = dict(os.environ, LC_ALL='C')
     try:
-        result = subprocess.run(['ldd', str(executable)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        result = subprocess.run(['ldd', str(executable)], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except OSError:
         raise EvidenceError('runtime_library_probe')
     text = result.stdout.decode('utf-8', errors='replace')
-    require('not found' not in text, 'runtime_libraries_unresolved')
+    missing = set()
+    for line in text.splitlines():
+        if 'not found' in line:
+            match = re.fullmatch(r'\s*(\S+)\s+=>\s+not found\s*', line)
+            require(match is not None, 'runtime_libraries_unresolved')
+            missing.add(match[1])
     require(result.returncode == 0, 'runtime_library_probe')
     paths = re.findall(r'(?:=>\s+|^\s*)(/\S+)\s+\(', text, re.M)
+    if missing:
+        require(paths, 'runtime_libraries_unresolved')
+        verify_optional_libraries(executable, paths, missing, env)
     require(paths, 'runtime_library_paths')
     try:
         return dict((p, digest(Path(p))) for p in paths)
@@ -143,7 +193,7 @@ def run_files(directory, solver):
             raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
-        files += sorted(directory.glob('flow-pressure-rank-*.settings'))
+        files += sorted(directory.glob('flow-pressure-*.settings')) + sorted(directory.glob('flow-momentum-*.settings'))
     if read_json(directory.parent / 'pair.json').get('first_step_audit', False):
         files += sorted(directory.glob('*.bin'))
     require(all(p.is_file() for p in files))
@@ -253,9 +303,42 @@ class ReferenceLogState:
         return result
 
 
+class ProgressReader:
+    def __init__(self, ranks):
+        self.ranks = ranks
+        self.pending = b''
+
+    def report(self, stream):
+        # Ignore incomplete and overlong lines, including private text around a marker.
+        for fragment in iter(lambda: stream.readline(4096), b''):
+            if self.pending is not None:
+                self.pending += fragment
+                if len(self.pending) > 256:
+                    self.pending = None
+            if fragment.endswith(b'\n'):
+                if self.pending is not None:
+                    marker = progress_marker(self.pending[:-1].decode('ascii', errors='replace'))
+                    if marker is not None and marker[0] < self.ranks:
+                        print('MARS rank {}: {}'.format(*marker), flush=True)
+                self.pending = b''
+
+
+def wait_with_progress(child, path, ranks):
+    progress = ProgressReader(ranks)
+    with path.open('rb') as stream:
+        while True:
+            try:
+                code = child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                progress.report(stream)
+                continue
+            progress.report(stream)
+            return code
+
+
 def launch(pair, solver, executable, ranks, launcher, environment=None):
     pair = pair.resolve()
-    pair_inputs(pair)
+    inputs = pair_inputs(pair)
     require(1 <= ranks <= 4 and launcher)
     executable = executable.resolve()
     require(executable.is_file() and os.access(str(executable), os.X_OK))
@@ -282,7 +365,8 @@ def launch(pair, solver, executable, ranks, launcher, environment=None):
         child = subprocess.Popen(command, cwd=str(directory), env=environment,
                                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         try:
-            code = child.wait()
+            code = (wait_with_progress(child, directory / 'run.log', ranks)
+                    if solver == 'mars' and inputs.get('first_step_audit', False) else child.wait())
         except BaseException:
             child.terminate()
             try:

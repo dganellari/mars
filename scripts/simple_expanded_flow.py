@@ -1,20 +1,62 @@
 #!/usr/bin/env python3
-"""Resume a saved short SIMPLE case with retained pressure; keep case data private."""
+"""Run a saved SIMPLE case with retained pressure; keep case data private."""
+import math
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 
 import run_simple_diagnostics as diagnostics
+import simple_convergence_summary as convergence
 import simple_pressure_replay as replay
 import simple_pressure_profile as profile
 from simple_public_diagnostics import SafeParser, summarize
 from simple_snapshot_compare import options, require
 
 SCHEMA = 'mars-simple-expanded-flow-v1'
+TARGETS = ('--residual-tol', '--mass-tol', '--change-tol')
 
 
-def flow_arguments(saved, values, output):
+def extended_launcher(saved, time_limit):
+    result = list(saved)
+    if time_limit is None:
+        return result
+    require(result and Path(result[0]).name == 'srun')
+    require(re.fullmatch(r'[0-9]{2}:[0-5][0-9]:[0-5][0-9]', time_limit)
+            and time_limit != '00:00:00')
+    # Stop at the binding program: its arguments are not scheduler options.
+    index, found = 1, False
+    valued = {'--account', '-A', '--time', '-t', '--nodes', '-N', '--ntasks', '-n',
+              '--ntasks-per-node', '--cpus-per-task', '-c', '--cpu-bind', '--export',
+              '--kill-on-bad-exit', '--gpus-per-node', '--gpus-per-task', '--partition', '-p'}
+    while index < len(result) and result[index].startswith('-'):
+        token = result[index]
+        if token in ('--time', '-t'):
+            require(not found and index + 1 < len(result))
+            result[index + 1] = time_limit
+            found = True
+            index += 2
+        elif token.startswith('--time=') or (token.startswith('-t') and not token.startswith('--')):
+            require(not found)
+            result[index] = '--time=' + time_limit
+            found = True
+            index += 1
+        elif '=' in token:
+            index += 1
+        elif token in valued:
+            require(index + 1 < len(result))
+            index += 2
+        else:
+            # Do not guess whether an unknown flag consumes a following argument.
+            require(token in ('--exclusive', '--overlap', '--unbuffered', '-u'))
+            index += 1
+    if not found:
+        result.insert(1, '--time=' + time_limit)
+    return result
+
+
+def flow_arguments(saved, values, output, iterations=None):
     target = (float(saved['--pressure-linear-atol']), float(saved['--pressure-linear-rtol']))
     require(target == (values['atol'], values['rtol']))
     require(saved.get('--pressure-expansion', '0') == '0'
@@ -26,10 +68,13 @@ def flow_arguments(saved, values, output):
     result.update({'--pressure-expansion': '1', '--snapshot-iterations': '0',
                    '--field-output': 'none', '--output-prefix': str(output / 'flow'),
                    '--pressure-solver-profile': str(output / 'pressure.profile')})
+    if iterations is not None:
+        require(type(iterations) is int and int(saved['--iterations']) <= iterations < 2**31)
+        result['--iterations'] = str(iterations)
     return result
 
 
-def prepare(capture_dir, profile_pair, executable, output, public):
+def prepare(capture_dir, profile_pair, executable, output, public, iterations=None, time_limit=None):
     public['failed_check'] = 'saved_capture'
     old = replay.captured_record(capture_dir)
     pair = Path(old['pair'])
@@ -54,7 +99,11 @@ def prepare(capture_dir, profile_pair, executable, output, public):
     require(int(saved['--iterations']) == case['steps'] == replay.startup.STEPS)
     public['failed_check'] = 'gpu_profile'
     values, dependencies = replay.gpu_configuration(profile_pair, capture_dir, old)
-    arguments = flow_arguments(saved, values, output)
+    arguments = flow_arguments(saved, values, output, iterations)
+    targets = {key: float(arguments[key]) for key in TARGETS}
+    require(all(math.isfinite(value) and value > 0 for value in targets.values()))
+    public['failed_check'] = 'launcher_controls'
+    new_launcher = extended_launcher(launcher, time_limit)
     public['failed_check'] = 'solver_environment_changed'
     public['environment_check'] = replay.probe.environment_report(
         replay.probe.environment_changes(os.environ, old['environment']))
@@ -70,19 +119,26 @@ def prepare(capture_dir, profile_pair, executable, output, public):
                            pair / 'case.json', pair / 'reference/input.i', Path(case['mesh']),
                            output / 'pressure.profile']))
     inputs.update(dependencies); inputs.update(libraries)
-    launch = list(launcher) + [str(executable)] + [word for item in arguments.items() for word in item]
+    launch = new_launcher + [str(executable)] + [word for item in arguments.items() for word in item]
     record = dict(schema=SCHEMA, command=launch, inputs=inputs, ranks=old['ranks'],
-                  steps=case['steps'], environment=replay.probe.solver_environment(environment),
+                  steps=int(arguments['--iterations']), source_steps=case['steps'], record_version=2,
+                  nonlinear_targets=targets, launcher=new_launcher, source_launcher=launcher,
+                  time_limit_override=time_limit,
+                  environment=replay.probe.solver_environment(environment),
                   pressure_target_preserved=True, saved_gpu_profile_verified=True)
     replay.startup.write_json(output / 'launch-start.json', record)
+    # Keep the exact direct launch visible to the user without publishing case arguments.
+    (output / 'launch-command.txt').write_text(' '.join(shlex.quote(word) for word in launch) + '\n')
     public.update(pressure_target_preserved=True, saved_gpu_profile_verified=True,
-                  saved_case_verified=True, launcher_preserved=True,
-                  loaded_libraries_preflight_verified=True)
+                  saved_case_verified=True, launcher_preserved=new_launcher == launcher,
+                  launcher_resources_preserved_except_time=True,
+                  iteration_budget_extended=record['steps'] > case['steps'],
+                  loaded_libraries_preflight_verified=True, fresh_zero_start=True)
     return record, environment
 
 
-def run(capture_dir, profile_pair, executable, output, public):
-    record, environment = prepare(capture_dir, profile_pair, executable, output, public)
+def run(capture_dir, profile_pair, executable, output, public, iterations=None, time_limit=None):
+    record, environment = prepare(capture_dir, profile_pair, executable, output, public, iterations, time_limit)
     public['failed_check'] = 'launch'
     code = diagnostics.capture(record['command'], output / 'run.log', output / 'run.exit',
                                output / 'diagnostics.json', environment=environment)
@@ -90,8 +146,10 @@ def run(capture_dir, profile_pair, executable, output, public):
     public['failed_check'] = 'inputs_changed'
     replay.verify(record['inputs'])
     public['inputs_unchanged'] = True
-    record.update(exit_code=code, outputs=replay.hashes(
-        [output / name for name in ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')]))
+    files = [output / name for name in ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')]
+    if (output / 'flow-metrics.csv').is_file():
+        files.append(output / 'flow-metrics.csv')
+    record.update(exit_code=code, outputs=replay.hashes(files))
     replay.startup.write_json(output / 'launch.json', record)
     return completion(record, output, code, public)
 
@@ -109,17 +167,44 @@ def completion(record, output, code, public):
              and int(steps) == record['steps']) or
             (code == 0 and status == 'converged' and label == 'CONVERGED'
              and 0 < int(steps) <= record['steps']))
-    public.update(short_run_completed=valid, nonlinear_convergence_reported=status == 'converged',
+    public.update(run_completed=valid, short_run_completed=valid and record['steps'] == replay.startup.STEPS,
+                  nonlinear_convergence_reported=status == 'converged',
+                  nonlinear_convergence_verified=False,
                   comparison_status='completed' if valid else 'run_failed',
                   failed_check='none' if valid else 'completion')
+    if valid and record.get('record_version') == 2:
+        public['comparison_status'] = 'invalid_evidence'
+        public['failed_check'] = 'convergence_evidence'
+        metrics = output / 'flow-metrics.csv'
+        require(str(metrics.resolve()) in record['outputs'])
+        with (output / 'run.log').open(errors='replace') as log, metrics.open(newline='') as rows:
+            result = convergence.summarize(log, rows, str(code),
+                                           *(record['nonlinear_targets'][key] for key in TARGETS))
+        result['targets_source'] = 'verified_launch_arguments'
+        public['convergence'] = result
+        require(result['completion_matches_supplied_targets'])
+        public['nonlinear_convergence_verified'] = status == 'converged' and result['all_final_checks_passed']
+        public['comparison_status'] = 'completed'
+        public['failed_check'] = 'none'
     return 0 if valid else 1
 
 
 def inspect_run(directory, public):
     public['failed_check'] = 'saved_launch'
     record = replay.startup.read_json(directory / 'launch.json')
-    require(record['schema'] == SCHEMA and record['steps'] == replay.startup.STEPS
-            and record['pressure_target_preserved'] and record['saved_gpu_profile_verified'])
+    require(record['schema'] == SCHEMA and record['pressure_target_preserved'] and record['saved_gpu_profile_verified'])
+    if record.get('record_version') == 2:
+        require(record['source_steps'] == replay.startup.STEPS
+                and type(record['steps']) is int and replay.startup.STEPS <= record['steps'] < 2**31)
+        require(record['launcher'] == extended_launcher(record['source_launcher'], record['time_limit_override']))
+        require(record['command'][:len(record['launcher'])] == record['launcher'])
+        arguments = options(record['command'][len(record['launcher'])+1:])
+        require(int(arguments['--iterations']) == record['steps']
+                and arguments['--pressure-expansion'] == '1'
+                and arguments['--output-prefix'] == str(directory / 'flow')
+                and record['nonlinear_targets'] == {key: float(arguments[key]) for key in TARGETS})
+    else:
+        require('record_version' not in record and record['steps'] == replay.startup.STEPS)
     public['failed_check'] = 'saved_inputs_or_outputs'
     required = {str((directory / name).resolve()) for name in
                 ('run.log', 'run.exit', 'diagnostics.json', 'launch-start.json')}
@@ -141,14 +226,17 @@ def main(argv=None):
     parser.add_argument('--gpu-profile-pair', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--inspect-run', type=Path)
+    parser.add_argument('--iterations', type=int, help='Optional larger iteration budget; starts from the saved zero state')
+    parser.add_argument('--time-limit', help='Optional srun wall-time override as HH:MM:SS')
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args(argv)
     launch_args = (args.capture_run, args.gpu_profile_pair, args.executable)
-    if (args.inspect_run and any(launch_args)) or (not args.inspect_run and not all(launch_args)):
+    if (args.inspect_run and (any(launch_args) or args.iterations is not None or args.time_limit is not None)) or (not args.inspect_run and not all(launch_args)):
         parser.error('Choose inspection or launch arguments')
     old_umask = os.umask(0o077)
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='output_directory',
-                  short_run_completed=False, nonlinear_convergence_reported=False,
+                  run_completed=False, short_run_completed=False, nonlinear_convergence_reported=False,
+                  nonlinear_convergence_verified=False,
                   openaccel_field_parity_verified=False)
     try:
         output = args.output_dir.resolve()
@@ -162,7 +250,7 @@ def main(argv=None):
             code = inspect_run(args.inspect_run.resolve(), public)
         else:
             code = run(args.capture_run.resolve(), args.gpu_profile_pair.resolve(),
-                       args.executable.resolve(), output, public)
+                       args.executable.resolve(), output, public, args.iterations, args.time_limit)
     except KeyboardInterrupt:
         public.update(comparison_status='interrupted', failed_check='interrupted')
         code = 130
@@ -172,7 +260,7 @@ def main(argv=None):
     finally:
         diagnostics.publish(output / 'public.json', public)
         os.umask(old_umask)
-    print('Short-flow status written. Share only public.json; completion is not field parity.')
+    print('Flow status written. Share only public.json; completion is not field parity.')
     return code
 
 

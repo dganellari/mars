@@ -30,6 +30,10 @@ endif()
 
 @PACKAGE_INIT@
 
+# CUDA or HIP, and the GPU architectures MARS was built for; empty for a CPU build
+set(MARS_GPU_LANGUAGE "@MARS_GPU_LANGUAGE@")
+set(MARS_GPU_ARCHITECTURES "@MARS_GPU_ARCHITECTURES@")
+
 ########## old style variables. Preferably you should use target_link_libraries(my_target Mars::mars) ################
 @OLD_CMAKE_CONFIG_CONTENT@
 ########## end of old style variables ####################################################################################
@@ -46,7 +50,12 @@ if (NOT TARGET cornerstone::cornerstone)
         INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
 endif()
 
-if (@MARS_ENABLE_CUDA@ AND NOT TARGET cstone_gpu)
+# mars_unstructured links the ROCm libraries through mars::rocmlibs; build it the same way here.
+if (@MARS_ENABLE_HIP@)
+    include("${CMAKE_CURRENT_LIST_DIR}/rocmlibs_target.cmake")
+endif()
+
+if ((@MARS_ENABLE_CUDA@ OR @MARS_ENABLE_HIP@) AND NOT TARGET cstone_gpu)
     add_library(cstone_gpu STATIC IMPORTED)
     set_target_properties(cstone_gpu PROPERTIES
         IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libcstone_gpu.a")

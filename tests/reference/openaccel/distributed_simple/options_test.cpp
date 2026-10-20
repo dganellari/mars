@@ -1,5 +1,6 @@
 #include "mars_segregated_simple_options.hpp"
 #include "mars_segregated_simple_metrics.hpp"
+#include "../simple/wall_distance_check.hpp"
 #include <iostream>
 #include <sstream>
 using namespace mars::segregated;
@@ -13,6 +14,7 @@ SimpleOptions parse(const std::string& args) {
     return simple_options(int(argv.size()),argv.data());
 }
 int main() {
+    int walls=0; WallDistanceCheck{&walls}(0); check(walls==1);
     const auto defaults=parse("");
     check(defaults.controls.density==1 && defaults.controls.viscosity==.1 && defaults.controls.inlet_speed==.1);
     check(defaults.linear_cache && defaults.halo_overlap && !defaults.profile && defaults.field_output=="gathered");
@@ -20,6 +22,20 @@ int main() {
     check(!defaults.pressure_refinement);
     check(defaults.pressure_failure_capture.empty());
     check(defaults.pressure_solver_profile.empty());
+    check(defaults.pressure_amg_mode=="device");
+    check(parse("--pressure-amg-mode reference --pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+                "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").pressure_amg_mode=="reference");
+    check(defaults.momentum_solver_profile.empty() && !defaults.momentum_tolerances);
+    const auto momentum=parse("--momentum-solver-profile momentum.profile --momentum-linear-rtol 1e-5 --momentum-linear-atol 2e-14 "
+                              "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed");
+    check(momentum.momentum_tolerances && momentum.momentum_rtol==1e-5 && momentum.momentum_atol==2e-14);
+    check(!momentum.pressure_tolerances && momentum.pressure_solver_profile.empty());
+    check(defaults.momentum_backend=="hypre");
+    check(parse("--momentum-backend petsc --momentum-solver-profile momentum.profile --momentum-linear-rtol 1e-5 --momentum-linear-atol 0 "
+                "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").momentum_backend=="petsc");
+    for (const auto* args:{"--momentum-backend unknown","--momentum-backend petsc"}) {
+        bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; } check(rejected);
+    }
     check(!defaults.controls.pressure_expansion);
     check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0").controls.pressure_expansion);
     check(parse("--pressure-expansion 1 --pressure-linear-rtol 1e-10 --pressure-linear-atol 0 --pressure-solver-profile settings").controls.pressure_expansion);
@@ -32,6 +48,11 @@ int main() {
     check(!defaults.first_step_audit);
     check(parse("--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").first_step_audit);
     check(parse("--snapshot-iterations 20 --iterations 20 --field-output distributed").snapshot_iterations==20);
+    const auto history=parse("--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+                             "--iterations 20 --snapshot-iterations 20 --field-output distributed "
+                             "--pressure-expansion 0 --pressure-refinement 0");
+    check(!history.first_step_audit && !history.controls.pressure_expansion && !history.pressure_refinement
+          && history.snapshot_iterations==20 && history.pressure_solver_profile=="settings");
     const auto pressure_options=parse("--pressure-linear-rtol=1e-6 --pressure-linear-atol 0");
     check(pressure_options.pressure_tolerances && pressure_options.pressure_rtol==1e-6 && pressure_options.pressure_atol==0);
     check(pressure_options.residual==defaults.residual && pressure_options.mass==defaults.mass && pressure_options.change==defaults.change);
@@ -56,11 +77,22 @@ int main() {
     check(!SimpleBoundaryNames{"feed","exit",{"outer wall","OUTER_WALL"}}.valid());
     check(options.iterations==20 && options.report==2);
     for (const char* args:{"--rho nan","--rho inf","--rho -1","--mu 0","--inlet-velocity 0","--outlet-pressure inf",
+        "--pressure-amg-mode unknown", "--pressure-amg-mode reference",
+        "--pressure-amg-mode reference --pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 "
+        "--iterations 20 --snapshot-iterations 20 --field-output distributed",
+        "--pressure-amg-mode reference --first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
+        "--momentum-solver-profile settings", "--momentum-linear-rtol 1e-6", "--momentum-linear-atol 0",
+        "--momentum-linear-rtol 0 --momentum-linear-atol 0", "--momentum-linear-rtol 1 --momentum-linear-atol 0",
+        "--momentum-linear-rtol nan --momentum-linear-atol 0", "--momentum-linear-rtol 1e-6 --momentum-linear-atol -1",
+        "--momentum-solver-profile settings --momentum-linear-rtol 1e-6 --momentum-linear-atol 0",
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
         "--pressure-failure-capture private",
         "--pressure-solver-profile settings",
         "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 1 --field-output distributed",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 20 --field-output gathered",
+        "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --iterations 20 --snapshot-iterations 20 --field-output distributed --pressure-failure-capture private",
         "--pressure-solver-profile settings --pressure-linear-rtol 1e-4 --pressure-linear-atol 0 --pressure-refinement 1 "
         "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
         "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --pressure-refinement 1",

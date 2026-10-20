@@ -30,6 +30,29 @@ legalisation with "'llvm.cond_br' op operand #1 ... got 'index'". Adding
 
 Numerics are gated on the GPU by tools/run_hl_mma.cpp against the Knaus oracle.
 
+--cellwise: the schedule for small elements (low degree, the p-multigrid's coarse
+levels) instead of the tensor-core one. After the same lowering to bufferized linalg:
+      --mir-cellwise-schedule      element loop, U staged in and Y out of shared
+                                   memory, face loops unrolled, one phase per linalg
+                                   op (fills fused into reductions), temporaries in
+                                   shared scratch; n^2 lanes per element, 8 warps
+      --mir-fuse-phases            neighbouring phases with lane-local dependences
+                                   merged, handed-over values kept in registers
+      --mir-warp-per-element       several elements per block, barriers where phases
+                                   share memory
+  -> hl_cellwise_p{p}_sm90.ptx: kernel laplacian_apply_p{p} (named by degree, so a
+     profile tells the levels apart), launch shape published as
+     laplacian_apply_p{p}__launch. --f32: the operator in single precision (kernel
+     laplacian_apply_p{p}_f32, file hl_cellwise_p{p}_f32_sm90.ptx), for an FP32 V-cycle
+     under right-preconditioned BiCGStab. --warps=W sets the warps per block (default 4
+     for p >= 3, else 8: measured), written to hl_cellwise_p{p}_w{W}_sm90.ptx when
+     given. Scratch padding against bank conflicts at p <= 3 only (measured; --no-pad
+     turns it off).
+
+--emulate --trace-shared: also count the shared-memory wavefronts of the emulated block
+0, access by access, against the conflict-free count (--mir-trace-shared; the accesses
+are listed in build/emu/trace_map.txt).
+
 Run from marsir-mlir/:  python3 test/hl_gpu_pipeline.py [p]
 """
 import os
@@ -68,13 +91,15 @@ def main():
     # Together they bisect a numerical failure to one feature of the chain pass.
     chain_opts = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--chain-opts=")), "")
     no_hoist = "--no-hoist" in sys.argv
+    cellwise = "--cellwise" in sys.argv
+    real = "f32" if "--f32" in sys.argv else "f64"
     tag_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--tag=")), "")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
 from marsir.backends import mlir_ir
 ea = synthesize(parse_spec_file({os.path.join(ROOT, '..', 'marsir-compiler', 'specs', 'laplacian.op')!r}))
-sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
+sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
 """], "")
 
     ir = run([MIROPT, "-", "--convert-mir-to-linalg",
@@ -91,8 +116,42 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     args = m.group(2).split(", ")
     marks = PER_ELEMENT | {len(args) - 1}
     args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
+    if cellwise:   # the element's field is staged into shared memory, its result out of it
+        args[0] = args[0].replace("{mir.element}", '{mir.element, mir.stage = "in"}')
+        args[-1] = args[-1].replace("{mir.element}", '{mir.element, mir.stage = "out"}')
     ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
           + ir[m.end(3):])
+    if cellwise:
+        # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
+        # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
+        # A kernel declares its shared memory statically, at most 48 KB: without --warps,
+        # the warps per block are halved from that default until it fits (p = 7 in f32).
+        default_warps = 4 if p >= 3 else 8
+        # Scratch padding against bank conflicts (--mir-warp-per-element): measured on
+        # GH200 at 64^3, p = 3 runs 8% (FP64) / 6% (FP32) faster with it, but the p = 7
+        # FP32 operator slower (4.16 -> 5.81 ms: ptxas goes from 168 to 254 registers,
+        # 6 -> 4 blocks per SM, and it stays slower at equal registers), so p = 7 has none.
+        pad = p <= 3 and "--no-pad" not in sys.argv
+        warp_per_element = "--mir-warp-per-element" + ("" if pad else "=pad-scratch=0")
+        given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
+        warps = given or default_warps
+        bufferized = ir
+        while True:
+            ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+                      "--mir-fuse-phases", "--canonicalize", "--cse",
+                      warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
+            if "--emulate" in sys.argv:
+                return emulate(ir, p)
+            suffix = "_f32" if real == "f32" else ""
+            named = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}{suffix}(")
+            tag = suffix + ("" if given is None else f"_w{warps}")
+            status = finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
+            ptx = open(os.path.join(ROOT, "generated", f"hl_cellwise_p{p}{tag}_sm90.ptx")).read()
+            shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
+            if shared <= 48 * 1024 or given is not None or warps == 1:
+                return status if shared <= 48 * 1024 else 1
+            warps //= 2
+            print(f"  {shared} B of shared memory > 48 KB: retrying with {warps} warp(s) per block")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
@@ -135,7 +194,16 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     if "--emulate" in sys.argv:
         return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
 
-    ir = run([MIROPT, "-", "--mir-batch-elements", "--mir-gpu-wrap"], ir)
+    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
+    return finish(run([MIROPT, "-", "--mir-batch-elements"], ir), p, tag, no_chain,
+                  stats=(mma_ir, shfl_ir, barriers))
+
+
+
+
+def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
+    """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
+    ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels {",
                     'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
     ir = run([MLIROPT, "-",
@@ -151,8 +219,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
               "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
-    out = os.path.join(ROOT, "generated", f"hl_full_p{p}{tag}_sm90.ptx")
+    out = os.path.join(ROOT, "generated", f"{prefix}_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
 
     ptx = open(out).read()
@@ -171,12 +238,13 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     for name, good in checks:
         print(f"  {'ok  ' if good else 'FAIL'} {name}")
     shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
-    print(f"  shared memory {shared} B/block, {barriers} gpu.barrier in IR")
-    print(f"  IR had {mma_ir} nvgpu.mma.sync and {shfl_ir} gpu.shuffle; "
-          f"PTX has {ptx.count('mma.sync.aligned.m8n8k4')} mma, "
-          f"{ptx.count('shfl.sync')} shfl")
+    print(f"  shared memory {shared} B/block, {ptx.count('bar.sync') + ptx.count('barrier.sync')} barriers in PTX")
+    if stats:
+        print(f"  IR had {stats[0]} nvgpu.mma.sync and {stats[1]} gpu.shuffle, {stats[2]} gpu.barrier; "
+              f"PTX has {ptx.count('mma.sync.aligned.m8n8k4')} mma, {ptx.count('shfl.sync')} shfl")
     ok = all(g for _, g in checks)
-    print("HIGH-LEVEL mir -> TENSOR-CORE PTX: PASS" if ok else "FAILED")
+    print(("HIGH-LEVEL mir -> TENSOR-CORE PTX: PASS" if prefix == "hl_full" else "HIGH-LEVEL mir -> PTX: PASS")
+          if ok else "FAILED")
     return 0 if ok else 1
 
 
@@ -186,9 +254,13 @@ def emulate(ir, p):
     compiled for the CPU and run with 32 threads per element by
     tools/emu_hl_mma.cpp against the Knaus oracle."""
     E = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--emu-e=")), 3)
-    ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
     work = os.path.join(ROOT, "build", "emu")
     os.makedirs(work, exist_ok=True)
+    # --trace-shared: count the shared-memory wavefronts of block 0, access by access
+    # (bank conflicts); the trace ids are listed in build/emu/trace_map.txt.
+    trace = "--trace-shared" in sys.argv
+    ir = run([MIROPT, "-"] + ([f"--mir-trace-shared=map-file={os.path.join(work, 'trace_map.txt')}"] if trace else [])
+             + ["--mir-emulate-warp"], ir)
     # TSan reports point at lines of THIS text (the debug scopes below), so keep it.
     with open(os.path.join(work, "kernel_in.mlir"), "w") as f:
         f.write(ir)
@@ -226,6 +298,7 @@ def emulate(ir, p):
          "-o", os.path.join(work, "kernel.o")], "")
     exe = os.path.join(work, "emu_hl_mma")
     run(["/usr/bin/clang++", "-std=c++20", *san] + (["-DMIR_EMU_TSAN"] if tsan else []) +
+        (["-DMIR_EMU_REAL=float"] if "--f32" in sys.argv else []) + (["-DMIR_EMU_TRACE"] if trace else []) +
         [os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
     env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")

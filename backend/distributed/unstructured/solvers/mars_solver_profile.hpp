@@ -5,7 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 
 namespace mars::fem {

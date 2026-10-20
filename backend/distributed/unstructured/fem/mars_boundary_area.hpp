@@ -18,7 +18,8 @@
 // Single-rank: every owned element is local. Multi-rank fold (owner-once + reverseExchangeNodeHaloAdd)
 // is deferred -- the model-operator driver is single-rank.
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_thrust.hpp"
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/execution_policy.h>
@@ -129,7 +130,7 @@ void computeBoundaryAreaVectorsGpu(
     int eBlocks = (int)((numLocal + blockSize - 1) / blockSize);
     buildTetFacesKernel<KeyType><<<eBlocks, blockSize, 0, stream>>>(
         c0, c1, c2, c3, startElem, numLocal, thrust::raw_pointer_cast(faces.data()));
-    thrust::sort(thrust::cuda::par.on(stream), faces.begin(), faces.end());
+    thrust::sort(mars::gpuPar.on(stream), faces.begin(), faces.end());
     cudaMemsetAsync(d_sBndX, 0, nNodes * sizeof(RealType), stream);
     cudaMemsetAsync(d_sBndY, 0, nNodes * sizeof(RealType), stream);
     cudaMemsetAsync(d_sBndZ, 0, nNodes * sizeof(RealType), stream);

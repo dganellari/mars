@@ -1,5 +1,7 @@
 # High-Order Matrix-Free Operator
 
+*Step 10a of the step-by-step tutorial (see the [index](index.md)). Previous: [step 9](periodic_tgv_tutorial.md); next: [step 10b](AMR-Module.md).*
+
 > **Experimental in v0.1.** The drivers below check the operator apply on one GPU and on several
 > ranks, but MARS v0.1 has no linear solver that uses it. See
 > [Known limitations](https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md).
@@ -69,7 +71,8 @@ On several ranks three more pieces are needed:
 
 ## Build
 
-The drivers are part of the FEM examples and need CUDA:
+The drivers are part of the FEM examples and need a CUDA or HIP build (the timings below are
+from NVIDIA GH200; for AMD see the HIP build in the README):
 
 ```bash
 cmake -B build -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_FEM_EXAMPLES=ON -DCMAKE_CUDA_ARCHITECTURES=90
@@ -250,22 +253,24 @@ GPU keeps 16 million elements of a cube, and each matvec does the forward halo e
 apply and the reverse halo addition. This is MARS alone: the decomposition, the halo and the
 exchange; no external solver is involved.
 
-| GPUs | DOFs | MDOF/s per GPU | vs one node | with `--overlap` | vs one node |
+| GPUs | DOFs | MDOF/s per GPU | vs one node | `--no-overlap` | vs one node |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 16.2 M | 5375 | | | |
-| 4 (one node) | 64.5 M | 4952–4969 | 100% | | |
-| 8 | 129 M | 4274–4282 | 86% | 4408 | 89% |
-| 64 | 1.03 B | 3327–3441 | 67–69% | 3785 | 76% |
-| 256 | 4.10 B | 2921–3336 | 59–67% | 3701 | 75% |
-| 1024 | 16.4 B | 3244–3245 | 65% | 3456 | 70% |
-| 2048 | 32.8 B | 2239–3081 | 45–62% | 3294 | 66% |
+| 1 | 16.2 M | 5375 | | 5375 | |
+| 4 (one node) | 64.5 M | 4751 | 100% | 4952–4969 | 100% |
+| 8 | 129 M | 4408 | 93% | 4274–4282 | 86% |
+| 64 | 1.03 B | 3785 | 80% | 3327–3441 | 67–69% |
+| 256 | 4.10 B | 3701 | 78% | 2921–3336 | 59–67% |
+| 1024 | 16.4 B | 3456 | 73% | 3244–3245 | 65% |
+| 2048 | 32.8 B | 3294 | 69% | 2239–3081 | 45–62% |
 
 MDOF/s per GPU is the global DOF count divided by the slowest rank's time per matvec and by the
 number of GPUs. Where a range is given, two runs in different allocations differ by that much.
 The apply alone takes 3.0 to 3.15 ms at every size: the work per GPU does not grow with the GPU
-count, and what is lost is the halo exchange (36% of the matvec at 1024 GPUs). `--overlap` hides
-the forward exchange behind the apply of the interior elements. With less work per GPU the exchange
-weighs more: at 2 million elements per GPU the matvec keeps 56% of the one-node rate at 1024 GPUs.
+count, and what is lost is the halo exchange (36% of the blocking matvec at 1024 GPUs). By default
+the driver hides the forward exchange behind the apply of the interior elements; `--no-overlap`
+waits for it instead. On one node the overlap costs about 4%, from 8 GPUs on it is faster. With
+less work per GPU the exchange weighs more: at 2 million elements per GPU the matvec keeps 67% of
+the one-node rate at 1024 GPUs (56% without overlap).
 The correctness gates of the driver (exchange, element stars, A·1 = 0, A·linear = 0) pass at every
 size.
 
@@ -276,7 +281,7 @@ example on 256 GPUs (64 nodes):
 
 ```bash
 srun --nodes=64 --ntasks-per-node=4 ./build/examples/distributed/unstructured/mars_cvfem_ho_weakscale \
-  --ncells=1600 --iters=50 --overlap
+  --ncells=1600 --iters=50
 ```
 
 ## Other drivers
@@ -284,7 +289,7 @@ srun --nodes=64 --ntasks-per-node=4 ./build/examples/distributed/unstructured/ma
 | Target | What it does |
 |---|---|
 | `mars_cvfem_ho_compare` | one GPU, `p = 1`: compares the matrix-free apply with the assembled 27-nonzero matrix (parity) and with the 7-nonzero graph matrix (throughput and memory). `--ncells=N` or `--mesh=DIR`, `--iters=N` |
-| `mars_cvfem_ho_weakscale` | `p = 1` distributed apply for weak-scaling runs. `--ncells=N` (global cube) or `--mesh=DIR`, `--overlap`, `--irregular` |
+| `mars_cvfem_ho_weakscale` | `p = 1` distributed apply for weak-scaling runs. `--ncells=N` (global cube) or `--mesh=DIR`, `--no-overlap`, `--irregular` |
 | `mars_ho_dist_dof_test` | distributed HO numbering and halo: global DOF count and a constant forwarded to every ghost |
 | `mars_cvfem_ho_tet_test`, `mars_ho_dist_apply_tet_test` | tetrahedral HO operators (collapsed sum factorization), also experimental |
 

@@ -18,7 +18,7 @@
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_dmma.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <array>
 #include <cstdio>
 #include <cmath>
@@ -96,26 +96,46 @@ bool runBench(int E, int iters)
     CK(cudaMemcpy(dU, uu.data(), nDof*sizeof(Real), cudaMemcpyHostToDevice));
 
     const int blockScalar = 128, gridScalar = int((nEl + blockScalar - 1)/blockScalar);
+    cudaError_t launch_error = cudaSuccess;
+    auto record = [&](cudaError_t error) { if (launch_error == cudaSuccess) launch_error = error; };
     auto scalarApply = [&]() {
-        cudaMemset(dY, 0, nDof*sizeof(Real));
+        record(cudaMemset(dY, 0, nDof*sizeof(Real)));
         ho_laplacian_apply_cg<Real, P><<<gridScalar, blockScalar>>>(dU, dY, dElemDof, dD, dG, nEl);
+        record(cudaGetLastError());
     };
     auto dmmaApply = [&]() {
-        cudaMemset(dY, 0, nDof*sizeof(Real));
-        ho_laplacian_dmma_launch<Real, P, 64>(dU, dY, dElemDof, dD, dG, nEl);
+        record(cudaMemset(dY, 0, nDof*sizeof(Real)));
+        record(ho_laplacian_dmma_launch_impl<Real, P, 64, 0, 0>(dU, dY, dElemDof, dD, dG, nullptr, nEl, 0));
     };
     auto affineApply = [&]() {
-        cudaMemset(dY, 0, nDof*sizeof(Real));
-        ho_laplacian_dmma_launch_affine<Real, P, 64>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
+        record(cudaMemset(dY, 0, nDof*sizeof(Real)));
+        record(ho_laplacian_dmma_launch_impl<Real, P, 64, 1, 0>(dU, dY, dElemDof, dD, dGhat, dW, nEl, 0));
     };
     // Matched-structure scalar: same warp+smem kernel as affine DMMA, scalar tile.
     auto smemScalarApply = [&]() {
-        cudaMemset(dY, 0, nDof*sizeof(Real));
-        ho_laplacian_smem_scalar_launch_affine<Real, P, 64>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
+        record(cudaMemset(dY, 0, nDof*sizeof(Real)));
+        record(ho_laplacian_smem_scalar_launch_affine<Real, P, 64>(dU, dY, dElemDof, dD, dGhat, dW, nEl));
     };
+
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    cudaError_t direct_error = cudaSuccess;
+    auto directApply = [&]() {
+        if (direct_error != cudaSuccess) return;
+        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (direct_error == cudaSuccess)
+            direct_error = ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl);
+    };
+    auto directAffineApply = [&]() {
+        if (direct_error != cudaSuccess) return;
+        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (direct_error == cudaSuccess)
+            direct_error = ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
+    };
+#endif
 
     // Warmup (also surfaces launch errors before timing).
     scalarApply(); dmmaApply(); affineApply(); smemScalarApply();
+    CK(launch_error);
     CK(cudaGetLastError());
     CK(cudaDeviceSynchronize());
 
@@ -129,20 +149,54 @@ bool runBench(int E, int iters)
     for (long p = 0; p < nDof; ++p) ynorm = std::max(ynorm, std::abs(Yd[p]));
     for (long p = 0; p < nDof; ++p) maxd = std::max(maxd, std::abs(Ya[p] - Yd[p]));
     const Real parity = maxd / (ynorm > 0 ? ynorm : 1.0);
+    auto checkParity = [&](auto apply, const char* name) -> bool {
+        apply();
+        CK(launch_error);
+        CK(cudaGetLastError());
+        CK(cudaDeviceSynchronize());
+        CK(cudaMemcpy(Ya.data(), dY, nDof*sizeof(Real), cudaMemcpyDeviceToHost));
+        double difference = 0;
+        for (long p=0; p<nDof; ++p) {
+            if (!std::isfinite(Ya[p]) || !std::isfinite(Yd[p])) return false;
+            difference = std::max(difference, std::abs(Ya[p]-Yd[p]));
+        }
+        const double error = difference / (ynorm > 0 ? ynorm : 1.0);
+        printf("%s vs staged per-point: %.3e %s\n", name, error, error < 1e-10 ? "PASS" : "FAIL");
+        return error < 1e-10;
+    };
+    if (!checkParity(scalarApply, "scalar") || !checkParity(affineApply, "affine") ||
+        !checkParity(smemScalarApply, "staged scalar")) return false;
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    if (!checkParity(directApply, "public MFMA") || !checkParity(directAffineApply, "public affine MFMA")) return false;
+    CK(direct_error);
+#endif
 
-    cudaEvent_t t0, t1; cudaEventCreate(&t0); cudaEventCreate(&t1);
-    auto timeIt = [&](auto fn) -> float {
-        cudaEventRecord(t0);
+
+    cudaEvent_t t0, t1;
+    CK(cudaEventCreate(&t0)); CK(cudaEventCreate(&t1));
+    auto timeIt = [&](auto fn, float& ms) -> bool {
+        CK(cudaEventRecord(t0));
         for (int it = 0; it < iters; ++it) fn();
-        cudaEventRecord(t1); cudaEventSynchronize(t1);
-        float ms = 0; cudaEventElapsedTime(&ms, t0, t1); return ms / iters;
+        CK(launch_error);
+        CK(cudaEventRecord(t1)); CK(cudaEventSynchronize(t1));
+        CK(cudaEventElapsedTime(&ms, t0, t1));
+        ms /= iters;
+        return std::isfinite(ms) && ms > 0;
     };
 
-    float msScalar     = timeIt(scalarApply);
-    float msDmma       = timeIt(dmmaApply);
-    float msAffine     = timeIt(affineApply);
-    float msSmemScalar = timeIt(smemScalarApply);
-    CK(cudaGetLastError());
+    float msScalar, msDmma, msAffine, msSmemScalar;
+    if (!timeIt(scalarApply, msScalar) || !timeIt(dmmaApply, msDmma) ||
+        !timeIt(affineApply, msAffine) || !timeIt(smemScalarApply, msSmemScalar)) return false;
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    float msDirect, msDirectAffine;
+    if (!timeIt(directApply, msDirect) || !timeIt(directAffineApply, msDirectAffine)) return false;
+    CK(direct_error);
+    CK(cudaDeviceSynchronize());
+    printf("public MFMA LDS/block=32768 vs staged=35840\n"
+           "  public G/point: %.3f ms/apply; staged/direct %.3fx\n"
+           "  public affine: %.3f ms/apply; staged/direct %.3fx\n",
+           msDirect, msDmma/msDirect, msDirectAffine, msAffine/msDirectAffine);
+#endif
 
     const double flopPerElem = 6.0 * 2.0 * std::pow((double)n, 4) + (double)N3 * 15.0;
     const double totalFlop   = flopPerElem * (double)nEl;
@@ -175,6 +229,7 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.find("--E=")==0) E = std::stoi(a.substr(4));
         else if (a.find("--iters=")==0) iters = std::stoi(a.substr(8)); }
+    if (E < 1 || iters < 1) { std::fprintf(stderr, "E and iters must be positive\n"); return 1; }
     bool ok = runBench<7>(E, iters);
     return ok ? 0 : 1;
 }

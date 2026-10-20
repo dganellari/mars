@@ -13,8 +13,7 @@ import re
 import sys
 
 
-def main(path):
-    lines = open(path).read().splitlines()
+def check(lines, offset):
     lane = set()        # registers whose value depends on the lane id
     for l in lines:
         m = re.match(r"\s*(?:@!?%p\d+\s+)?([a-z][\w.]*)\s+(%[\w]+),\s*(.*);", l)
@@ -37,7 +36,18 @@ def main(path):
             continue    # a backward branch: a loop, not a guard
         for j in range(i + 1, end):
             if re.search(r"\b(mma\.sync|shfl\.sync|bar\.sync|barrier\.sync)\b", lines[j]):
-                bad.append((j + 1, lines[j].strip()[:60], i + 1))
+                bad.append((offset + j + 1, lines[j].strip()[:60], offset + i + 1))
+    return bad
+
+
+def main(path):
+    # Each kernel on its own: PTX reuses register names in every function.
+    lines = open(path, errors="replace").read().splitlines()
+    starts = [i for i, l in enumerate(lines) if ".entry" in l] or [0]
+    bad = []
+    for k, start in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(lines)
+        bad += check(lines[start:end], start)
     for j, txt, g in bad:
         print(f"  line {j}: {txt}   (guarded by line {g})")
     print(f"{len(bad)} warp-collective instruction(s) under a lane-dependent branch")

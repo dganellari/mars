@@ -4,7 +4,7 @@
 #include <iomanip>
 #include <vector>
 #include <algorithm>
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

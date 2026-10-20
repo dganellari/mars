@@ -11,6 +11,9 @@
 // are a small waste kept for index simplicity; a compact packing is a later optimization.
 
 #include "mars_ho_tet_basis.hpp"
+#if defined(USE_CUDA)
+#include "../utils/mars_gpu_runtime.hpp"
+#endif
 #include <vector>
 #include <array>
 #include <cmath>

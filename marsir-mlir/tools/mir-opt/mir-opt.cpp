@@ -30,6 +30,12 @@ int main(int argc, char **argv) {
   mir::registerHoistInvariantReadsPass();
   mir::registerUnrollLoopsPass();
   mir::registerForwardOwnedPass();
+  mir::registerLowerCellwisePass();
+  mir::registerWarpPerElementPass();
+  mir::registerNoaliasDescriptorsPass();
+  mir::registerCellwiseSchedulePass();
+  mir::registerFusePhasesPass();
+  mir::registerTraceSharedPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

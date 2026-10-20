@@ -15,27 +15,48 @@
 // (K=8 = two k-tiles of 4). This first phase targets P=7 only -- the native
 // 8-wide tile -- so there is no tile padding and the whole warp stays busy.
 //
-// Organisation: ONE WARP per element, all 32 lanes drive every WMMA op (the API
+// The staged kernel below uses ONE WARP per element, all 32 lanes drive every WMMA op (the API
 // requires the full warp). A block holds several warps. Per warp we stage in
 // shared memory: D, D^T, the input tensor, the three derivative tensors, the
 // output accumulator, and one reusable A/B/C tile triplet for the MMA.
 //
-// Launch contract (the caller must honor these; see ho_laplacian_dmma_launch):
+// The public HIP launchers use the direct 32 KiB MFMA kernel instead.
+// Staged kernel launch contract:
 //   - grid.x = ceil(numElements / WarpsPerBlock), block = BlockSize.
 //   - d_y_dof zeroed before launch (scatter is additive via atomicAdd).
-//   - per-warp smem is 22528 B, so a 4-warp block needs 88 KB DYNAMIC smem,
+//   - per-element smem is 17920 B, so a 4-element block needs 70 KB DYNAMIC smem,
 //     above the 48 KB static cap. The launcher must opt in once via
 //     cudaFuncSetAttribute(..., cudaFuncAttributeMaxDynamicSharedMemorySize, ...)
 //     and pass WarpsPerBlock*sizeof(HoLaplacianDmmaWarpData) as the 3rd <<<>>>
-//     argument. ho_laplacian_dmma_launch below does exactly this.
+//     argument. ho_laplacian_dmma_launch_impl below does exactly this.
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
+#include "../utils/mars_gpu_mma.cuh"
 #include <cstddef>
-#include <mma.h>
 #include <type_traits>
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+#include "mars_ho_laplacian_mfma_direct.hpp"
+#endif
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
+#include <mma.h>
+#endif
+
+// Device passes with FP64 matrix instructions: CUDA SM80+ (WMMA m8n8k4) and AMD gfx90a/gfx942 (MFMA,
+// mars_gpu_mma.cuh). Other targets get no kernel body.
+#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800) || defined(MARS_HAVE_FP64_MFMA)
+#define MARS_HO_DMMA_DEVICE 1
+#endif
 
 namespace mars {
 namespace fem {
+
+// Default block: 4 elements on CUDA (70 KB of shared memory, above the 48 KB static cap); 2 on AMD,
+// whose LDS holds at most 64 KB per workgroup.
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+inline constexpr int hoDmmaBlockSize = 64;
+#else
+inline constexpr int hoDmmaBlockSize = 128;
+#endif
 
 // Per-warp shared state for the DMMA Laplacian apply at P=7 (n=8, N3=512).
 // One instance per warp in the block; sized so the host can pass the right
@@ -71,8 +92,28 @@ struct alignas(128) HoLaplacianDmmaWarpData {
     double smem_C[64];
 };
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+#if defined(MARS_HO_DMMA_DEVICE)
 
+#if defined(MARS_HAVE_FP64_MFMA)
+// The two elements of a wavefront (adjacent in the block's warp-data array) share each MFMA k-step.
+template<typename FillA, typename FillB>
+__device__ inline void dmma_tile_8x8x8(HoLaplacianDmmaWarpData& w, FillA fill_A, FillB fill_B)
+{
+    HoLaplacianDmmaWarpData* pair = &w - ((threadIdx.x / laneGroup) & 1);
+    double acc[2] = {0.0, 0.0};
+    #pragma unroll
+    for (int kt = 0; kt < 2; ++kt)
+    {
+        fill_A(kt);
+        fill_B(kt);
+        syncWarp();
+        mfmaPairStep(acc, pair[0].smem_A, pair[0].smem_B, pair[1].smem_A, pair[1].smem_B);
+        syncWarp();                                   // tiles reused next kt
+    }
+    mfmaPairStore(acc, pair[0].smem_C, pair[1].smem_C);
+    syncWarp();
+}
+#else
 // Run one batched 8x8x8 contraction tile: C[8x8] = A[8x8] . B[8x8] via two
 // m8n8k4 MMAs (K = two tiles of 4). `fill_A(kt)` / `fill_B(kt)` are warp-wide
 // lambdas that stage k-tile kt of the A and B operands into w.smem_A / w.smem_B
@@ -91,19 +132,20 @@ __device__ inline void dmma_tile_8x8x8(HoLaplacianDmmaWarpData& w,
     {
         fill_A(kt);
         fill_B(kt);
-        __syncwarp();
+        syncWarp();
 
         wmma::fragment<wmma::matrix_a, 8, 8, 4, double, wmma::col_major> a_frag;
         wmma::fragment<wmma::matrix_b, 8, 8, 4, double, wmma::col_major> b_frag;
         wmma::load_matrix_sync(a_frag, w.smem_A, 8);  // A[8x4] col-major, ldm=8
         wmma::load_matrix_sync(b_frag, w.smem_B, 4);  // B[4x8] col-major, ldm=4
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
-        __syncwarp();                                 // tile reused next kt
+        syncWarp();                                 // tile reused next kt
     }
 
     wmma::store_matrix_sync(w.smem_C, c_frag, 8, wmma::mem_col_major);
-    __syncwarp();
+    syncWarp();
 }
+#endif
 
 // Scalar (CUDA-core) twin of dmma_tile_8x8x8: IDENTICAL staging (fill_A/fill_B
 // into smem_A[8x4] / smem_B[4x8] per k-tile) and IDENTICAL smem_C col-major
@@ -114,14 +156,14 @@ template<typename FillA, typename FillB>
 __device__ inline void scalar_tile_8x8x8(HoLaplacianDmmaWarpData& w,
                                          FillA fill_A, FillB fill_B)
 {
-    const int lane = threadIdx.x % 32;
+    const int lane = threadIdx.x % laneGroup;
     double acc[2] = {0.0, 0.0};   // this lane owns outputs o=lane and o=lane+32
     #pragma unroll
     for (int kt = 0; kt < 2; ++kt)
     {
         fill_A(kt);
         fill_B(kt);
-        __syncwarp();
+        syncWarp();
         #pragma unroll
         for (int t = 0; t < 2; ++t)
         {
@@ -133,11 +175,11 @@ __device__ inline void scalar_tile_8x8x8(HoLaplacianDmmaWarpData& w,
                 s += w.smem_A[k * 8 + i] * w.smem_B[j * 4 + k];
             acc[t] += s;
         }
-        __syncwarp();
+        syncWarp();
     }
     w.smem_C[lane]      = acc[0];
     w.smem_C[lane + 32] = acc[1];
-    __syncwarp();
+    syncWarp();
 }
 
 // Dispatch the 8x8x8 contraction: TileMode 0 = WMMA tensor core, 1 = scalar.
@@ -148,7 +190,7 @@ __device__ inline void tile_8x8x8(HoLaplacianDmmaWarpData& w, FillA fill_A, Fill
     else                         scalar_tile_8x8x8(w, fill_A, fill_B);
 }
 
-#endif // __CUDA_ARCH__ >= 800
+#endif // MARS_HO_DMMA_DEVICE
 
 // CG matrix-free Laplacian apply on FP64 tensor cores (DMMA). One WARP/element.
 //   d_u_dof  : global input field
@@ -166,7 +208,7 @@ __device__ inline void tile_8x8x8(HoLaplacianDmmaWarpData& w, FillA fill_A, Fill
 //                reads 6 doubles/element instead of 6*N3 -- ~512x less metric
 //                traffic at P=7, which is the dominant apply bandwidth. d_w is
 //                unused (pass nullptr) when GMode==0.
-template<typename RealType, int P, int BlockSize = 128, int GMode = 0, int TileMode = 0>
+template<typename RealType, int P, int BlockSize = hoDmmaBlockSize, int GMode = 0, int TileMode = 0>
 __global__ void __launch_bounds__(BlockSize)
 ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
                            RealType* __restrict__ d_y_dof,
@@ -181,35 +223,46 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
     static_assert(P == 7,
         "DMMA Laplacian phase 1 targets P=7 (n=8): the native m8n8k4 tile size");
     static_assert(BlockSize % 32 == 0, "BlockSize must be a multiple of 32");
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(BlockSize % 64 == 0, "AMD: both elements of a wavefront run the matrix instructions together");
+#endif
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-    using namespace nvcuda;
-
+#if defined(MARS_HO_DMMA_DEVICE)
     constexpr int n   = P + 1;   // 8
     constexpr int nn  = n * n;   // 64
     constexpr int N3  = nn * n;  // 512
-    constexpr int WarpsPerBlock = BlockSize / 32;
+    constexpr int WarpsPerBlock = BlockSize / laneGroup;
 
-    const int    warpId  = threadIdx.x / 32;
-    const int    laneId  = threadIdx.x % 32;
+    const int    warpId  = threadIdx.x / laneGroup;
+    const int    laneId  = threadIdx.x % laneGroup;
     // e depends only on blockIdx/warpId (warp-uniform), so the early return
     // retires whole warps -- a partial warp never reaches a wmma collective op.
     const size_t e       = (size_t)blockIdx.x * WarpsPerBlock + warpId;
+#if defined(MARS_HAVE_FP64_MFMA)
+    // The two elements of a wavefront issue the matrix instructions together, so they return together;
+    // an element past the end recomputes the last one and skips the scatter.
+    if ((size_t)blockIdx.x * WarpsPerBlock + (warpId & ~1) >= numElements) return;
+    const bool   active  = e < numElements;
+    const size_t eData   = active ? e : numElements - 1;
+#else
     if (e >= numElements) return;
+    constexpr bool active = true;
+    const size_t   eData  = e;
+#endif
 
     extern __shared__ HoLaplacianDmmaWarpData dmma_warp[];
     HoLaplacianDmmaWarpData& w = dmma_warp[warpId];
 
-    const int*      edof  = d_elemDof + e * N3;
-    const RealType* Gbase = d_G + e * (size_t)(GMode == 0 ? N3 * 6 : 6);
+    const int*      edof  = d_elemDof + eData * N3;
+    const RealType* Gbase = d_G + eData * (size_t)(GMode == 0 ? N3 * 6 : 6);
 
     // --- Stage D and gather u (all 32 lanes share the work). D^T is not stored;
     // the integrate-back reads D transposed on the fly. ---
-    for (int i = laneId; i < nn; i += 32)
+    for (int i = laneId; i < nn; i += laneGroup)
         w.D[i] = d_D[i];                     // D[a*8+s], a=i/8, s=i%8
-    for (int l = laneId; l < N3; l += 32)
+    for (int l = laneId; l < N3; l += laneGroup)
         w.b_u[l] = d_u_dof[edof[l]];
-    __syncwarp();
+    syncWarp();
 
     // =========================================================================
     // Forward contractions: b0 = D.u (dir0), b1 = D.u (dir1), b2 = D.u (dir2).
@@ -238,12 +291,12 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[col * 4 + k] = w.b_u[(kt * 4 + k) * nn + bctile * n + col];
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int a = idx / n, col = idx % n;
             w.b0[a * nn + bctile * n + col] = w.smem_C[col * n + a];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // dir1 (contract middle index j): per slab a, C_a[8x8] = D[8x8] . Xa[8x8],
@@ -262,12 +315,12 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[c * 4 + k] = w.b_u[a * nn + (kt * 4 + k) * n + c];
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int b = idx / n, c = idx % n;
             w.b1[a * nn + b * n + c] = w.smem_C[c * n + b];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // dir2 (contract fastest index k): C[64x8] = X[64x8] . Dt[8x8],
@@ -289,13 +342,13 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[c * 4 + k] = w.D[c * n + (kt * 4 + k)];
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int i = idx / n, j = idx % n;
             const int ab = abtile * n + i;
             w.b2[ab * n + j] = w.smem_C[j * n + i];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // =========================================================================
@@ -303,7 +356,7 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
     // 16 points/lane. (gr,gs,gt) = G * (ur,us,ut), done in place: each point's
     // outputs depend only on that point's three inputs, so read-then-write is safe.
     // =========================================================================
-    for (int p = laneId; p < N3; p += 32)
+    for (int p = laneId; p < N3; p += laneGroup)
     {
         double Gxx, Gxy, Gxz, Gyy, Gyz, Gzz, wgt;
         if constexpr (GMode == 0)
@@ -326,11 +379,11 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
         w.b1[p] = wgt * (Gxy * ar + Gyy * as + Gyz * at);  // gs
         w.b2[p] = wgt * (Gxz * ar + Gyz * as + Gzz * at);  // gt
     }
-    __syncwarp();
+    syncWarp();
 
     // Zero the accumulator before the three additive integrate-back contributions.
-    for (int l = laneId; l < N3; l += 32) w.b_y[l] = 0.0;
-    __syncwarp();
+    for (int l = laneId; l < N3; l += laneGroup) w.b_y[l] = 0.0;
+    syncWarp();
 
     // =========================================================================
     // Integrate back: y = D^T.gr (dir0) + D^T.gs (dir1) + D^T.gt (dir2).
@@ -351,12 +404,12 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[col * 4 + k] = w.b0[(kt * 4 + k) * nn + bctile * n + col];
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int a = idx / n, col = idx % n;
             w.b_y[a * nn + bctile * n + col] += w.smem_C[col * n + a];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // dir1 with D^T: per slab a, C_a[8x8] = D^T[8x8] . gs_a[8x8].
@@ -371,12 +424,12 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[c * 4 + k] = w.b1[a * nn + (kt * 4 + k) * n + c];
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int b = idx / n, c = idx % n;
             w.b_y[a * nn + b * n + c] += w.smem_C[c * n + b];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // dir2 with D^T: C[64x8] = gt[64x8] . Dt[8x8], Dt[s][c] = DT[c*8 + s].
@@ -391,20 +444,21 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
             w.smem_B[c * 4 + k] = w.D[(kt * 4 + k) * n + c];   // D^T on the fly
         };
         tile_8x8x8<TileMode>(w, fillA, fillB);
-        for (int idx = laneId; idx < nn; idx += 32)
+        for (int idx = laneId; idx < nn; idx += laneGroup)
         {
             const int i = idx / n, j = idx % n;
             const int ab = abtile * n + i;
             w.b_y[ab * n + j] += w.smem_C[j * n + i];
         }
-        __syncwarp();
+        syncWarp();
     }
 
     // --- Scatter (direct stiffness summation, additive into global DOFs) ---
-    for (int l = laneId; l < N3; l += 32)
-        atomicAdd(&d_y_dof[edof[l]], w.b_y[l]);
+    if (active)
+        for (int l = laneId; l < N3; l += laneGroup)
+            atomicAdd(&d_y_dof[edof[l]], w.b_y[l]);
 
-#else  // __CUDA_ARCH__ < 800
+#else  // no FP64 matrix instructions on this target
     // FP64 WMMA m8n8k4 requires SM80+ (A100 / H100 / GH200). Build with
     // -DCMAKE_CUDA_ARCHITECTURES=80 (or higher) to enable this kernel.
     (void)d_u_dof; (void)d_y_dof; (void)d_elemDof;
@@ -428,11 +482,14 @@ inline cudaError_t ho_laplacian_dmma_launch_impl(const RealType* d_u_dof,
                                                  size_t numElements,
                                                  cudaStream_t stream)
 {
-    constexpr int  WarpsPerBlock = BlockSize / 32;
+    constexpr int  WarpsPerBlock = BlockSize / laneGroup;
     constexpr int  smemBytes     = WarpsPerBlock * (int)sizeof(HoLaplacianDmmaWarpData);
     auto kernel = ho_laplacian_apply_cg_dmma<RealType, P, BlockSize, GMode, TileMode>;
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(smemBytes <= 65536, "AMD LDS holds at most 64 KB per workgroup: use a smaller BlockSize");
+#endif
 
-    // The 88 KB/block we need is above the 48 KB static cap, so opt in once.
+    // 4 elements need 70 KB, above the 48 KB static cap, so opt in once.
     // Idempotent and cheap; safe to call before every launch.
     cudaError_t attrErr = cudaFuncSetAttribute(
         kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smemBytes);
@@ -445,7 +502,7 @@ inline cudaError_t ho_laplacian_dmma_launch_impl(const RealType* d_u_dof,
 }
 
 // Per-quad-point metric (general/curved). d_G is [numElements * N3 * 6].
-template<typename RealType, int P, int BlockSize = 128>
+template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
                                             RealType* d_y_dof,
                                             const int* d_elemDof,
@@ -454,14 +511,21 @@ inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
                                             size_t numElements,
                                             cudaStream_t stream = 0)
 {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
+    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
+    return ho_laplacian_mfma_direct_launch<0>(
+        d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+#else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+#endif
 }
 
 // Affine metric (straight-sided hexes). d_Ghat is [numElements * 6] (constant
 // geometric metric per element), d_w is the n GLL quadrature weights. ~512x less
 // metric traffic than the per-point path; numerically identical for affine hexes.
-template<typename RealType, int P, int BlockSize = 128>
+template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
                                                    RealType* d_y_dof,
                                                    const int* d_elemDof,
@@ -471,17 +535,22 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
                                                    size_t numElements,
                                                    cudaStream_t stream = 0)
 {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
+    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
+    return ho_laplacian_mfma_direct_launch<1>(
+        d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+#else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+#endif
 }
 
 // Matched-structure SCALAR baseline: identical warp-per-element + smem kernel as
 // the affine DMMA path, but the 8x8x8 contraction runs on CUDA cores instead of
-// tensor cores (TileMode=1). Differs from ho_laplacian_dmma_launch_affine in
-// exactly one thing -- the tile op -- so (affine DMMA time)/(this time) isolates
-// the tensor-core speedup, free of the memory-structure advantage that the
-// thread-per-element ho_laplacian_apply_cg reference also carries.
-template<typename RealType, int P, int BlockSize = 128>
+// tensor cores (TileMode=1). This matches the staged kernel, not the direct
+// AMD kernel. Use the staged TileMode=0 launcher to isolate tile arithmetic.
+template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_smem_scalar_launch_affine(const RealType* d_u_dof,
                                                           RealType* d_y_dof,
                                                           const int* d_elemDof,

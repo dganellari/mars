@@ -610,10 +610,55 @@ void fill_profile_system(const dmatrix_gate::Problem& problem,Matrix& matrix,uns
     check(all_weak==(problem.options.diffusion?0:problem.nodes),"fixture strength-filter expectation changed");
 }
 
+void explicit_momentum_profile() {
+    namespace settings=mars::fem::pressure_settings;
+    dmatrix_gate::Options options; options.nx=4; options.ny=3; options.nz=2;
+    dmatrix_gate::Problem problem(3,1,options);
+    const int n=3*problem.nodes;
+    for (bool flex:{false,true}) {
+        Solver solver(0,300,1e-12); solver.setPointBlock(3); solver.setVerbose(false);
+        const auto profile=pressure_profile_fixture(flex,false);
+        settings::configure_gpu_profile(solver,profile);
+        solver.enable_fixed_graph_updates();
+        std::vector<HYPRE_BigInt> map(n); for (int i=0;i<n;++i) map[i]=i;
+        Matrix matrix; matrix.column_count=n;
+        for (unsigned seed:{1u,2u}) {
+            matrix.offsets={0}; matrix.columns.clear(); matrix.values.clear();
+            std::vector<double> b(n),truth(n),x(n,0);
+            for (int node=0;node<problem.nodes;++node) for (int c=0;c<3;++c) {
+                const int g=problem.solver_to_global[node];
+                for (int u:problem.neighbors[g]) for (int j=0;j<3;++j) {
+                    matrix.columns.push_back(3*problem.solver_node[u]+j);
+                    matrix.values.push_back(problem.value(g,u,c,j,seed));
+                }
+                matrix.offsets.push_back(matrix.columns.size());
+                b[3*node+c]=problem.product(g,c,seed,10+seed);
+                truth[3*node+c]=problem.solution(g,c,10+seed);
+            }
+            check(solver.solve(matrix,b,x,0,n,0,n,map),"explicit momentum profile solve failed");
+            verify(matrix,map,b,x,truth);
+            solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
+                std::ostringstream detail;
+                check(pressure_profile_controls_match(profile,settings::snapshot(krylov,amg,flexible),detail),
+                      "momentum profile changed after block setup");
+            });
+            check(solver.get_graph_build_count()==1 && solver.get_numeric_update_count()==int(seed),
+                  "momentum profile prevented numeric refresh");
+        }
+    }
+    std::cout<<"PASS: coupled momentum profiles, original targets and cached refresh\n";
+}
+
 void explicit_pressure_profile() {
     namespace settings=mars::fem::pressure_settings;
     // Also retain the old all-weak fixture: maxlevels alone cannot force coarsening.
-    for (bool diffusion:{false,true}) for (bool flex:{false,true}) for (bool one_level:{false,true}) {
+    for (bool reference_amg:{false,true}) for (bool diffusion:{false,true})
+    for (bool flex:{false,true}) for (bool one_level:{false,true}) {
+#if HYPRE_RELEASE_NUMBER < 23300
+        if (reference_amg) continue;
+#endif
+        // The compatibility gate requires an active multilevel direct coarse solve.
+        if (reference_amg && (!diffusion || one_level)) continue;
         dmatrix_gate::Options options; options.diffusion=diffusion;
         dmatrix_gate::Problem problem(1,1,options);
         const int n=problem.nodes;
@@ -626,23 +671,42 @@ void explicit_pressure_profile() {
         setenv("MARS_HYPRE_MINITER","3",1);
         Solver pressure(0,300,1e-12),momentum(0,300,1e-12);
         pressure.setVerbose(false); momentum.setVerbose(false);
-        const auto profile=pressure_profile_fixture(flex,one_level);
-        auto bad=profile; bad["coarserelax"]=9;
-        expect_failure([&] { settings::configure_gpu_profile(pressure,bad); });
+        const auto profile=pressure_profile_fixture(flex,one_level,reference_amg?n:0);
+        auto bad=profile; bad["coarserelax"]=reference_amg?18:9;
+        expect_failure([&] { settings::configure_gpu_profile(pressure,bad,reference_amg); });
         bad=profile; bad["miniter"]=201;
-        expect_failure([&] { settings::configure_gpu_profile(pressure,bad); });
-        settings::configure_gpu_profile(pressure,profile);
+        expect_failure([&] { settings::configure_gpu_profile(pressure,bad,reference_amg); });
+        settings::configure_gpu_profile(pressure,profile,reference_amg);
         pressure.enable_fixed_graph_updates();
+        std::vector<std::string> progress;
+        if (reference_amg) pressure.set_progress([&](const char* stage) { progress.emplace_back(stage); });
         for (unsigned seed:{1u,2u}) {
             std::vector<double> b,truth,x(n,0),other(n,0);
             fill_profile_system(problem,matrix,seed,b,truth);
+            progress.clear();
             check(pressure.solve(matrix,b,x,0,n,0,n,map),"profile solve rejected");
             verify(matrix,map,b,x,truth);
+            if (reference_amg) {
+                std::vector<std::string> expected={"hypre_initialize","hypre_matrix","hypre_vectors"};
+                if (seed==1) expected.push_back("hypre_amg_configure");
+                for (const char* stage:{"hypre_setup","hypre_solve","hypre_solution","hypre_residual","hypre_complete"})
+                    expected.emplace_back(stage);
+                check(progress==expected,"Hypre progress does not follow the actual setup and solve calls");
+            }
             pressure.inspect_prepared([&](auto solver,auto amg,bool flexible) {
                 const auto actual=settings::snapshot(solver,amg,flexible);
                 std::ostringstream detail;
-                check(flexible==flex && pressure_profile_controls_match(profile,actual,detail),"pressure profile not applied after setup");
-                check(pressure_profile_levels_match(actual,one_level || !diffusion),"pressure profile hierarchy depth incorrect");
+                const bool matches=pressure_profile_controls_match(profile,actual,detail);
+                if (!matches) std::cerr<<detail.str()<<'\n';
+                check(flexible==flex && matches,"pressure profile not applied after setup");
+                check(pressure_profile_levels_match(actual,one_level || !diffusion,reference_amg),"pressure profile hierarchy depth incorrect");
+                if (reference_amg && diffusion && !one_level) {
+                    auto* data=reinterpret_cast<hypre_ParAMGData*>(amg);
+                    const auto coarse_rows=hypre_ParCSRMatrixGlobalNumRows(hypre_ParAMGDataAArray(data)[1]);
+                    check(coarse_rows>0 && coarse_rows<n,"reference fixture did not reduce the fine grid");
+                    check(hypre_ParAMGDataGEMemoryLocation(data)==HYPRE_MEMORY_HOST
+                          && hypre_ParAMGDataAMat(data),"reference coarse solve was not prepared on host");
+                }
                 std::cout<<"profile diffusion="<<diffusion<<" flexible="<<flex<<" maxlevels="<<profile.at("maxlevels")
                          <<" round="<<seed<<" actual_levels="<<actual.at("effective_levels")<<'\n';
                 if (diffusion && !flex && !one_level && seed==1) {
@@ -673,10 +737,47 @@ void explicit_pressure_profile() {
             });
         }
         check(pressure.get_graph_build_count()==1 && pressure.get_numeric_update_count()==2,"profile cache was rebuilt");
-        expect_failure([&] { settings::configure_gpu_profile(pressure,profile); });
+        expect_failure([&] { settings::configure_gpu_profile(pressure,profile,reference_amg); });
     }
     unsetenv("MARS_HYPRE_FLEXGMRES"); setenv("MARS_HYPRE_MINITER","0",1);
     std::cout<<"PASS: pressure profiles, one/multiple levels, GMRES/FlexGMRES and cached updates\n";
+}
+
+void reference_amg_fallback() {
+#if HYPRE_RELEASE_NUMBER >= 23300
+    namespace settings=mars::fem::pressure_settings;
+    dmatrix_gate::Problem problem(1,1,{});
+    const int n=problem.nodes;
+    Matrix matrix;
+    std::vector<HYPRE_BigInt> map(n+1);
+    for (int i=0;i<n;++i) map[i]=n-1-i;
+    map.back()=-1;
+    for (bool flex:{false,true}) {
+        Solver solver(0,300,1e-12); solver.setVerbose(false);
+        const auto profile=pressure_profile_fixture(flex,false,n);
+        settings::configure_gpu_profile(solver,profile,true);
+        solver.enable_fixed_graph_updates();
+        for (unsigned seed:{1u,2u}) {
+            std::vector<double> rhs,truth,x(n,0);
+            fill_profile_system(problem,matrix,seed,rhs,truth);
+            check(solver.solve(matrix,rhs,x,0,n,0,n,map),"fallback fixture solve failed");
+            verify(matrix,map,rhs,x,truth);
+            solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
+                const auto actual=settings::snapshot(krylov,amg,flexible);
+                std::ostringstream detail;
+                check(actual.at("coarserelax")==9 && actual.at("effective_relax_3")==6
+                    && actual.at("effective_levels")==1,"all-weak fixture did not reach the documented fallback");
+                check(!pressure_profile_controls_match(profile,actual,detail)
+                    && detail.str().find("effective_relax_3")!=std::string::npos,
+                    "accurate fallback was mistaken for the requested direct solve");
+                check(!pressure_profile_levels_match(actual,false,true),"uncoarsened fixture passed the two-level check");
+                check(!hypre_ParAMGDataAMat(reinterpret_cast<hypre_ParAMGData*>(amg)),
+                    "fallback unexpectedly prepared a direct coarse matrix");
+            });
+        }
+    }
+    std::cout<<"PASS: accurate GMRES/FlexGMRES fallback to coarse smoother 6 still fails the reference profile check\n";
+#endif
 }
 
 void retained_pressure_checks() {
@@ -722,6 +823,8 @@ int main() {
     try {
         retained_pressure_checks();
         explicit_pressure_profile();
+        reference_amg_fallback();
+        explicit_momentum_profile();
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);
             setenv("MARS_HYPRE_MINITER","3",1);

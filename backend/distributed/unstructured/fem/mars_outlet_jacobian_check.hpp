@@ -1,4 +1,5 @@
 #pragma once
+#include "../utils/mars_gpu_reduce.hpp"
 
 // Opt-in public fixture gate. Snapshots stay on device; only scalar errors are reported.
 template<typename KeyType, typename RealType, typename ElementTag>
@@ -22,8 +23,7 @@ void check_outlet_jacobian(OutletKrylovOps<KeyType, RealType, ElementTag>& ops)
         {
             const auto* a = fields[j]->data();
             const auto* b = saved[j].data();
-            const double error = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(saved[j].size()),
+            const double error = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(saved[j].size()),
                 [=] __device__(size_t i) -> double {
                     return isfinite(a[i]) && isfinite(b[i]) ? fabs(double(a[i])-double(b[i])) : INFINITY;
                 }, 0.0, thrust::maximum<double>());

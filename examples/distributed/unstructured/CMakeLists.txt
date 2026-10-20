@@ -2,9 +2,16 @@ if(NOT MARS_ENABLE_FEM_EXAMPLES)
     return()
 endif()
 
-if(NOT MARS_ENABLE_UNSTRUCTURED OR NOT MARS_ENABLE_CUDA)
-    message(STATUS "Skipping FEM examples (requires UNSTRUCTURED + CUDA)")
+if(NOT MARS_ENABLE_UNSTRUCTURED OR NOT (MARS_ENABLE_CUDA OR MARS_ENABLE_HIP))
+    message(STATUS "Skipping FEM examples (requires UNSTRUCTURED + CUDA or HIP)")
     return()
+endif()
+
+# CUDA and HIP build the same drivers. Source-file properties are directory-scoped, so the top-level
+# LANGUAGE HIP setting does not reach the sources here.
+if(MARS_ENABLE_HIP)
+    file(GLOB _mars_example_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cu)
+    set_source_files_properties(${_mars_example_sources} PROPERTIES LANGUAGE HIP)
 endif()
 
 # Poisson example - simple user-facing template
@@ -15,6 +22,13 @@ target_link_libraries(mars_ex1_poisson PRIVATE mars)
 
 # Install
 install(TARGETS mars_ex1_poisson RUNTIME DESTINATION bin/examples)
+
+# Step-by-step tutorial: one idea per program, walked through in docs/step-*.md
+foreach(_step mars_step01_mesh mars_step02_volume mars_step03_poisson mars_step04_cvfem mars_step05_galerkin mars_step06_heat)
+    add_executable(${_step} ${_step}.cu)
+    target_link_libraries(${_step} PRIVATE mars)
+    install(TARGETS ${_step} RUNTIME DESTINATION bin/examples)
+endforeach()
 
 # Beam-tet mesh example - MFEM validation test
 add_executable(mars_ex_beam_tet mars_ex_beam_tet.cu)
@@ -33,12 +47,12 @@ install(TARGETS mars_cvfem_full RUNTIME DESTINATION bin/examples)
 
 # CVFEM matrix-free vs matrix-based (assembled CSR + cuSPARSE SpMV) comparison
 add_executable(mars_cvfem_matfree_compare mars_cvfem_matfree_compare.cu)
-target_link_libraries(mars_cvfem_matfree_compare PRIVATE mars CUDA::cusparse)
+target_link_libraries(mars_cvfem_matfree_compare PRIVATE mars)
 install(TARGETS mars_cvfem_matfree_compare RUNTIME DESTINATION bin/examples)
 
 # HO matrix-free CVFEM (Knaus Alg 2) vs assembled CSR + cuSPARSE SpMV (p=1 order comparison)
 add_executable(mars_cvfem_ho_compare mars_cvfem_ho_compare.cu)
-target_link_libraries(mars_cvfem_ho_compare PRIVATE mars CUDA::cusparse)
+target_link_libraries(mars_cvfem_ho_compare PRIVATE mars)
 install(TARGETS mars_cvfem_ho_compare RUNTIME DESTINATION bin/examples)
 
 # CVFEM weak-scaling with procedural per-rank cube generation (no mesh file) -> trillions
@@ -60,6 +74,18 @@ else()
     target_compile_definitions(mars_cvfem_graph PRIVATE MARS_DISABLE_NVTX)
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
+
+if(MARS_ENABLE_TESTS AND MARS_ENABLE_HIP)
+    add_executable(mars_cvfem_tensor_early_check mars_cvfem_tensor_early_check.cu)
+    target_link_libraries(mars_cvfem_tensor_early_check PRIVATE mars)
+endif()
+
+option(MARS_ENABLE_TENSOR_BASELINE_CHECK "Build the previous HIP tensor kernel for comparisons" OFF)
+if(MARS_ENABLE_TENSOR_BASELINE_CHECK AND MARS_ENABLE_HIP)
+    add_executable(mars_cvfem_graph_tensor_baseline mars_cvfem_graph.cu)
+    target_link_libraries(mars_cvfem_graph_tensor_baseline PRIVATE mars)
+    target_compile_definitions(mars_cvfem_graph_tensor_baseline PRIVATE MARS_DISABLE_NVTX MARS_CVFEM_TENSOR_BASELINE_CHECK)
+endif()
 
 # Matrix-free high-order Laplacian, Stage 0 element-local parity test
 add_executable(mars_ho_laplacian_test mars_ho_laplacian_test.cu)
@@ -83,7 +109,7 @@ install(TARGETS mars_cvfem_ho_tet_test RUNTIME DESTINATION bin/examples)
 
 # High-order TET single-GPU perf sweep (throughput + B/DOF, hex-talk counterpart numbers)
 add_executable(mars_ho_tet_perf mars_ho_tet_perf.cu)
-target_link_libraries(mars_ho_tet_perf PRIVATE mars CUDA::cublas)
+target_link_libraries(mars_ho_tet_perf PRIVATE mars)
 install(TARGETS mars_ho_tet_perf RUNTIME DESTINATION bin/examples)
 
 # Optimized HO-CVFEM matrix-free diffusion apply: GPU bit-exact + patch + perf gate
@@ -400,6 +426,11 @@ if(MARS_ENABLE_SEGREGATED)
     if(MARS_ENABLE_HYPRE)
         add_executable(mars_segregated_simple mars_segregated_simple.cu)
         target_link_libraries(mars_segregated_simple PRIVATE mars)
+        if(MARS_ENABLE_PETSC)
+            include(${CMAKE_SOURCE_DIR}/cmake/MarsPetsc.cmake)
+            target_link_libraries(mars_segregated_simple PRIVATE mars_petsc)
+            target_compile_definitions(mars_segregated_simple PRIVATE MARS_SIMPLE_PETSC)
+        endif()
         target_compile_definitions(mars_segregated_simple PRIVATE MARS_REPLAY_CUDA)
         target_include_directories(mars_segregated_simple PRIVATE
             ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
@@ -471,9 +502,10 @@ if(MARS_ENABLE_MARSIR)
     install(TARGETS mars_marsir_cellwise_solve RUNTIME DESTINATION bin/examples)
 
     # The unstructured element-local DSS (solvers/mars_cellwise_topology.hpp) on a cube
-    # with randomly rotated element frames, against an oracle and the structured DSS.
+    # with randomly rotated element frames, against an oracle and the structured DSS;
+    # with --dss-ptx, also the MARSIR-generated DSS against it.
     add_executable(mars_cellwise_unstructured_dss mars_cellwise_unstructured_dss.cu)
-    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars)
+    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars CUDA::cuda_driver)
     install(TARGETS mars_cellwise_unstructured_dss RUNTIME DESTINATION bin/examples)
 endif()
 

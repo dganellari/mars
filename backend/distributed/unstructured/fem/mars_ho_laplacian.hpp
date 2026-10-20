@@ -21,7 +21,7 @@
 //     For an affine (straight-sided) element it is constant; we still store
 //     per-point to keep the path general for curved elements later.
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <cstddef>
 
 namespace mars {

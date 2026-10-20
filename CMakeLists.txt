@@ -10,7 +10,7 @@ endif()
 
 project(
   mars
-  VERSION 0.1.0
+  VERSION 0.1.1
   LANGUAGES "CXX" "C"
   HOMEPAGE_URL "https://github.com/dganellari/mars"
   DESCRIPTION
@@ -32,7 +32,7 @@ if(MARS_ENABLE_CUDA)
             set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "Target NVIDIA GPU architectures (Volta/Ampere/Hopper)")
         endif()
         # 1. Add global-scope settings to ensure CUDA includes are visible everywhere
-        include_directories(SYSTEM BEFORE ${CUDAToolkit_INCLUDE_DIRS})
+        include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
         # 2. Add via compiler flags to ensure they're used in command-line compilation
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
         add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
@@ -57,8 +57,11 @@ if(MARS_ENABLE_HIP)
         include(cmake/rocmlibs_target.cmake)
         set(CMAKE_HIP_STANDARD 20)
         add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
+        if(MARS_HIP_ROCPRIM_REDUCTIONS)
+            add_compile_definitions(MARS_HIP_ROCPRIM_REDUCTIONS)
+        endif()
 
-        include_directories(SYSTEM BEFORE ${HIP_INCLUDE_DIRS})
+        include_directories(SYSTEM ${HIP_INCLUDE_DIRS})
         add_compile_options($<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>>>:-isystem${HIP_INCLUDE_DIRS}>)
         add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-isystem${HIP_INCLUDE_DIRS}>)
 
@@ -462,15 +465,29 @@ if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
     endif()
 endif()
 
+# PUBLIC: programs that include the MARS headers need the same GPU definitions and, with nvcc, the
+# device-lambda flags, also when they build against an installed MARS.
 if(CMAKE_CUDA_COMPILER AND TARGET mars)
-    # Add CUDA flags to the mars target
-    target_compile_options(mars PRIVATE
+    target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_CUDA)
+    target_compile_options(mars PUBLIC
         $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+elseif(CMAKE_HIP_COMPILER AND TARGET mars)
+    target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_HIP)
 endif()
 
+# The headers are installed in the layout of the source tree (below), so an installed MARS gets the
+# same include directories as the build tree and every header resolves to its one installed copy.
+# Only existing directories: an imported target may not name a missing one (a module list can hold
+# stale names), and each one is created in the install even if it holds no headers.
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
+  get_filename_component(_abs "${include}" ABSOLUTE)
+  if(IS_DIRECTORY "${_abs}")
+    file(RELATIVE_PATH _rel "${CMAKE_CURRENT_SOURCE_DIR}" "${_abs}")
+    target_include_directories(mars BEFORE PUBLIC $<INSTALL_INTERFACE:include/${_rel}>)
+    install(DIRECTORY DESTINATION include/${_rel})
+  endif()
 endforeach()
 
 # Add CUDA include paths directly to mars target for C++ compilation of CUDA headers
@@ -565,8 +582,19 @@ install(TARGETS mars
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
-install(FILES ${MARS_HEADERS} DESTINATION include)
+foreach(_header ${MARS_HEADERS})
+  file(RELATIVE_PATH _rel "${CMAKE_CURRENT_SOURCE_DIR}" "${_header}")
+  get_filename_component(_dir "${_rel}" DIRECTORY)
+  install(FILES "${_header}" DESTINATION include/${_dir})
+endforeach()
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
+# The unstructured backend whole (fem, solvers, amr, ...), which its programs include by path from the
+# repository root: #include "backend/distributed/unstructured/domain.hpp".
+if(MARS_ENABLE_UNSTRUCTURED)
+  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/backend/distributed/unstructured/
+          DESTINATION include/backend/distributed/unstructured
+          FILES_MATCHING PATTERN "*.hpp" PATTERN "*.cuh" PATTERN "*.h" PATTERN "*.inl")
+endif()
 
 # Export the unstructured backend (mars links it PUBLICLY, so consumers need it).
 if(TARGET mars_unstructured)
@@ -592,6 +620,15 @@ install(
     NAMESPACE Mars::
     DESTINATION lib/cmake/Mars)
 
+# find_package(Mars) users build their GPU code for the same language and architectures
+if(MARS_ENABLE_CUDA)
+    set(MARS_GPU_LANGUAGE CUDA)
+    set(MARS_GPU_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+elseif(MARS_ENABLE_HIP)
+    set(MARS_GPU_LANGUAGE HIP)
+    set(MARS_GPU_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
+endif()
+
 # generate the config file that is includes the exports
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
@@ -608,6 +645,9 @@ write_basic_package_version_file(
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
         DESTINATION lib/cmake/Mars)
+if(MARS_ENABLE_HIP)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rocmlibs_target.cmake DESTINATION lib/cmake/Mars)
+endif()
 
 include(cmake/PostInstall.cmake)
 

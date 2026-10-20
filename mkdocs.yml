@@ -48,10 +48,19 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Quickstart: Quickstart.md
-  - Tutorials:
-      - Poiseuille channel flow: poiseuille_tutorial.md
-      - Taylor–Green vortex (periodic): periodic_tgv_tutorial.md
-      - High-order matrix-free operator: Matrix-Free-Tutorial.md
+  - Step by step:
+      - "Step 1: the mesh": step-01-mesh.md
+      - "Step 2: a first GPU loop": step-02-volume.md
+      - "Step 3: Poisson's equation": step-03-poisson.md
+      - "Step 4: control volumes": step-04-cvfem.md
+      - "Step 5: your own operator": step-05-galerkin.md
+      - "Step 6: the heat equation": step-06-heat.md
+      - "Step 7: the lid-driven cavity": step-07-cavity.md
+      - "Step 8: Poiseuille channel flow": poiseuille_tutorial.md
+      - "Step 9: Taylor–Green vortex (periodic)": periodic_tgv_tutorial.md
+      - "Step 10a: high-order matrix-free operator": Matrix-Free-Tutorial.md
+      - "Step 10b: adaptive mesh refinement": AMR-Module.md
+      - "Appendix: your own CMake project": step-appendix-cmake.md
   - Reference:
       - FEM assembly: FEM-Assembly.md
       - CVFEM assembly kernels: CVFEM-Kernels.md

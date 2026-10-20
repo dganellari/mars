@@ -2,7 +2,7 @@
 
 #include "mars_cvfem_kernel.hpp"     // Tet4CVFEM reference data
 #include "mars_cvfem_hex_kernel.hpp" // mars::fem::CSRMatrix lives here
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

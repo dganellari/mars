@@ -19,6 +19,7 @@
 // bulk of the shared traffic) move onto shuffles.
 
 #include "mars_cvfem_ho_matfree.hpp"
+#include "../utils/mars_gpu_warp.cuh"
 #include <cstdlib>
 
 namespace mars {
@@ -28,9 +29,10 @@ constexpr int ho_next_pow2(int x) { int p = 1; while (p < x) p <<= 1; return p; 
 
 // One warp-aligned lane group per element; lane == the (s,r) face slot for lane < NN. The step-1
 // outputs interp(bi)/deriv(di) stay in registers; the tangential-D and both W contractions read
-// other lanes' values via __shfl_sync(width=tpe) instead of a shared face buffer. Inactive lanes
-// (lane >= NN) compute clamped garbage that is never scattered, but MUST take every __shfl_sync
-// (group-collective) -- so the shuffles are unconditional and only the my_y scatter is guarded.
+// other lanes' values by shuffles within the element's lane group (width tpe), not a shared face
+// buffer. Inactive lanes (lane >= NN) compute clamped garbage that is never scattered, but MUST take
+// every shuffle (group-collective) -- so the shuffles are unconditional and only the my_y scatter is
+// guarded.
 template<typename RealType, int P, int BlockSize, int ElemsPerBlock, typename GStore = double, bool Recompute = false>
 __global__ void __launch_bounds__(BlockSize)
 ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
@@ -44,7 +46,7 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
 {
     constexpr int N = P + 1, NN = N * N, N3 = NN * N, E = ElemsPerBlock;
     constexpr int tpe = BlockSize / E;
-    static_assert(tpe <= 32 && (tpe & (tpe - 1)) == 0, "shfl apply: tpe must be a power of 2 <= 32");
+    static_assert(tpe <= laneGroup && (tpe & (tpe - 1)) == 0, "shfl apply: tpe must be a power of 2 <= laneGroup");
     static_assert(NN <= tpe, "shfl apply: face must fit the element's lane group");
     static_assert(std::is_same<RealType, double>::value, "shfl apply: double only");
 
@@ -73,7 +75,7 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
     }
     if constexpr (Recompute)        // 8 corners/element into smem, shared by the element's lanes
         for (int c = lane; c < 24; c += tpe) my_cn[c] = valid ? d_corners[e * 24 + c] : RealType(0);
-    __syncwarp();
+    syncWarp();
 
     // store-d_G base ptr -- under !Recompute compiles to the original (d_G + offset), no extra check;
     // stays null + unused under Recompute (the d_G arithmetic lives only in the !Recompute branch).
@@ -83,7 +85,6 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
     // garbage but never scattered) and lets them join every shuffle.
     const int s = (lane < NN) ? lane / N : 0;
     const int r = (lane < NN) ? lane % N : 0;
-    const unsigned mask = 0xFFFFFFFFu;        // whole warp converged; width=tpe subdivides per element
 
     for (int dir = 0; dir < 3; ++dir) {
         for (int l = 0; l < P; ++l) {
@@ -98,9 +99,9 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
             // step 2: tangential D of interp via shuffles of bi (within the element group); flux -> reg
             RealType dt2 = 0, dt1 = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * __shfl_sync(mask, bi, s * N + q, tpe);
+            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * shflGroup(bi, s * N + q, tpe);
             #pragma unroll
-            for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * __shfl_sync(mask, bi, q * N + r, tpe);
+            for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * shflGroup(bi, q * N + r, tpe);
             RealType fb;
             if constexpr (Recompute) {              // regenerate the metric inline from the element corners
                 double gg[3];
@@ -113,16 +114,16 @@ ho_cvfem_apply_kernel_shfl(const RealType* __restrict__ d_u,
             // step 3: W along r via shuffle of flux -> register
             RealType v = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * __shfl_sync(mask, fb, s * N + q, tpe);
+            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * shflGroup(fb, s * N + q, tpe);
             // step 4: W along s via shuffle of v -> scatter to the two SCS-bounding nodes
             RealType intf = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) intf += c_W[s * N + q] * __shfl_sync(mask, v, q * N + r, tpe);
+            for (int q = 0; q < N; ++q) intf += c_W[s * N + q] * shflGroup(v, q * N + r, tpe);
             if (lane < NN) {
                 my_y[ho_idx<N, NN>(dir, l,     s, r)] -= intf;
                 my_y[ho_idx<N, NN>(dir, l + 1, s, r)] += intf;
             }
-            __syncwarp();   // serialize the my_y accumulation across dir (column ownership is per-dir)
+            syncWarp();   // serialize the my_y accumulation across dir (column ownership is per-dir)
         }
     }
 
@@ -151,7 +152,7 @@ ho_cvfem_apply_kernel_shfl_nek(const RealType* __restrict__ d_u,
 {
     constexpr int N = P + 1, NN = N * N, N3 = NN * N, E = ElemsPerBlock;
     constexpr int tpe = BlockSize / E;
-    static_assert(tpe <= 32 && (tpe & (tpe - 1)) == 0, "nek apply: tpe must be a power of 2 <= 32");
+    static_assert(tpe <= laneGroup && (tpe & (tpe - 1)) == 0, "nek apply: tpe must be a power of 2 <= laneGroup");
     static_assert(NN <= tpe, "nek apply: face must fit the element's lane group");
     static_assert(std::is_same<RealType, double>::value, "nek apply: double only");
 
@@ -175,12 +176,11 @@ ho_cvfem_apply_kernel_shfl_nek(const RealType* __restrict__ d_u,
         my_u[l] = (valid && edof[l] >= 0) ? d_u[edof[l]] : RealType(0);
         my_y[l] = RealType(0);
     }
-    __syncwarp();
+    syncWarp();
 
     const GStore* Gbase = d_G + (valid ? e : 0) * (size_t)(3 * P * NN * 3);
     const int s = (lane < NN) ? lane / N : 0;
     const int r = (lane < NN) ? lane % N : 0;
-    const unsigned mask = 0xFFFFFFFFu;
 
     for (int dir = 0; dir < 3; ++dir) {
         // HOIST: the normal column is l-independent -> read it once per dir into registers.
@@ -196,22 +196,22 @@ ho_cvfem_apply_kernel_shfl_nek(const RealType* __restrict__ d_u,
             }
             RealType dt2 = 0, dt1 = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * __shfl_sync(mask, bi, s * N + q, tpe);
+            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * shflGroup(bi, s * N + q, tpe);
             #pragma unroll
-            for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * __shfl_sync(mask, bi, q * N + r, tpe);
+            for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * shflGroup(bi, q * N + r, tpe);
             const GStore* g = Gbase + (size_t)(((dir * P + l) * N + s) * N + r) * 3;
             const RealType fb = RealType(g[2]) * di + RealType(g[0]) * dt2 + RealType(g[1]) * dt1;
             RealType v = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * __shfl_sync(mask, fb, s * N + q, tpe);
+            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * shflGroup(fb, s * N + q, tpe);
             RealType intf = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) intf += c_W[s * N + q] * __shfl_sync(mask, v, q * N + r, tpe);
+            for (int q = 0; q < N; ++q) intf += c_W[s * N + q] * shflGroup(v, q * N + r, tpe);
             if (lane < NN) {
                 my_y[ho_idx<N, NN>(dir, l,     s, r)] -= intf;
                 my_y[ho_idx<N, NN>(dir, l + 1, s, r)] += intf;
             }
-            __syncwarp();
+            syncWarp();
         }
     }
 
@@ -242,11 +242,11 @@ ho_cvfem_apply_kernel_shfl_mw(const RealType* __restrict__ d_u,
                               const RealType* __restrict__ d_corners = nullptr)
 {
     constexpr int N = P + 1, NN = N * N, N3 = NN * N, E = ElemsPerBlock;
-    constexpr int rowWidth = ho_next_pow2(N);          // padded row width: power of 2, divides 32
+    constexpr int rowWidth = ho_next_pow2(N);          // padded row width: power of 2, divides laneGroup
     constexpr int tpe = BlockSize / E;
-    constexpr int rpw = 32 / rowWidth;                 // rows per warp
-    static_assert(tpe == ((N * rowWidth + 31) / 32) * 32, "mw: tpe = N padded rows rounded to whole warps");
-    static_assert(32 % rowWidth == 0, "mw: padded row width divides 32");
+    constexpr int rpw = laneGroup / rowWidth;          // rows per lane group
+    static_assert(tpe == ((N * rowWidth + laneGroup - 1) / laneGroup) * laneGroup, "mw: tpe = N padded rows rounded to whole lane groups");
+    static_assert(laneGroup % rowWidth == 0, "mw: padded row width divides laneGroup");
     static_assert(std::is_same<RealType, double>::value, "mw: double only");
 
     extern __shared__ char ho_smem_raw[];
@@ -285,7 +285,6 @@ ho_cvfem_apply_kernel_shfl_mw(const RealType* __restrict__ d_u,
     const bool active = (sp < N && rp < N);
     const int s = active ? sp : 0, r = active ? rp : 0;
     const int rowLane = (sp % rpw) * rowWidth;         // base within-warp lane of this lane's row
-    const unsigned mask = 0xFFFFFFFFu;
 
     for (int dir = 0; dir < 3; ++dir) {
         // Hoist (MARS_HO_NEK): the normal column is l-independent -> read it once per dir into regs.
@@ -308,7 +307,7 @@ ho_cvfem_apply_kernel_shfl_mw(const RealType* __restrict__ d_u,
             __syncthreads();                  // bi visible for the cross-warp column read
             RealType dt2 = 0, dt1 = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * __shfl_sync(mask, bi, rowLane + q); // row
+            for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * shflGroup(bi, rowLane + q, laneGroup); // row
             #pragma unroll
             for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * faceA[q * rowWidth + r];                   // col
             RealType fb;
@@ -322,7 +321,7 @@ ho_cvfem_apply_kernel_shfl_mw(const RealType* __restrict__ d_u,
             }
             RealType v = 0;
             #pragma unroll
-            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * __shfl_sync(mask, fb, rowLane + q);    // row
+            for (int q = 0; q < N; ++q) v += c_W[r * N + q] * shflGroup(fb, rowLane + q, laneGroup);    // row
             __syncthreads();                  // finish all dt1 reads of bi before overwriting faceA
             faceA[lane] = v;
             __syncthreads();                  // v visible for the column read
@@ -374,7 +373,7 @@ inline cudaError_t ho_cvfem_apply_launch_shfl(const RealType* d_u, RealType* d_y
                          std::is_same<RealType, double>::value && std::is_same<GStore, double>::value) {
         constexpr int rowWidth  = ho_next_pow2(N);
         constexpr int elemLanes = N * rowWidth;
-        constexpr int tpe       = ((elemLanes + 31) / 32) * 32;        // whole warps: p=5/6/7 -> 64, p=8 -> 160
+        constexpr int tpe       = ((elemLanes + laneGroup - 1) / laneGroup) * laneGroup; // p=5/6/7 -> 64, p=8 -> 160
         constexpr int Elems     = (256 / tpe > 0) ? (256 / tpe) : 1;   // p=5/6/7 -> 4, p=8 -> 1
         constexpr int Block     = Elems * tpe;
         const size_t smemBytes = (size_t)(Elems * (2 * N3 + tpe) + (Recompute ? Elems * 24 : 0)) * sizeof(RealType);
@@ -426,7 +425,7 @@ inline cudaError_t ho_cvfem_apply_launch_nek(const RealType* d_u, RealType* d_y,
         // multi-warp register-line: the padded mw kernel with Hoist=true (the full-sweep nek path).
         constexpr int rowWidth  = ho_next_pow2(N);
         constexpr int elemLanes = N * rowWidth;
-        constexpr int tpe       = ((elemLanes + 31) / 32) * 32;
+        constexpr int tpe       = ((elemLanes + laneGroup - 1) / laneGroup) * laneGroup;
         constexpr int Elems     = (256 / tpe > 0) ? (256 / tpe) : 1;
         constexpr int Block     = Elems * tpe;
         const size_t smemBytes = (size_t)(Elems * (2 * N3 + tpe)) * sizeof(RealType);

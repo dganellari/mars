@@ -72,9 +72,42 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
       auto gfunc = gb.create<gpu::GPUFuncOp>(f.getLoc(), f.getName(),
                                              f.getFunctionType());
       gfunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(), gb.getUnitAttr());
+      // The lowering drops function attributes; a {mir.noalias} promise survives
+      // on the gpu.module, for --mir-noalias-descriptors.
+      if (f->hasAttr("mir.noalias")) {
+        SmallVector<Attribute> names;
+        if (auto old = gmod->getAttrOfType<ArrayAttr>(mir::kMirNoaliasKernelsAttr))
+          names.append(old.begin(), old.end());
+        names.push_back(gb.getStringAttr(f.getName()));
+        gmod->setAttr(mir::kMirNoaliasKernelsAttr, gb.getArrayAttr(names));
+      }
+      // A launch shape other than one warp per element (--mir-warp-per-element):
+      // published as <kernel>__launch = {threads per block, elements per block}, a
+      // global the launcher reads from the module.
+      if (auto threads = f->getAttrOfType<IntegerAttr>("mir.block_threads")) {
+        auto perBlock = f->getAttrOfType<IntegerAttr>("mir.elements_per_block");
+        auto type = MemRefType::get({2}, gb.getI64Type());
+        auto values = DenseElementsAttr::get(RankedTensorType::get({2}, gb.getI64Type()),
+                                             ArrayRef<int64_t>{threads.getInt(), perBlock ? perBlock.getInt() : 1});
+        gb.create<memref::GlobalOp>(f.getLoc(), gb.getStringAttr((f.getName() + "__launch").str()),
+                                    /*sym_visibility=*/StringAttr(), TypeAttr::get(type), values, gb.getUnitAttr(),
+                                    IntegerAttr());
+      }
+      // Argument attributes carry over to the kernel.
+      for (unsigned i = 0; i < f.getNumArguments(); ++i)
+        if (DictionaryAttr attrs = f.getArgAttrDict(i))
+          gfunc.setArgAttrs(i, attrs);
       // takeBody replaces the entry block the builder just made, so the argument
       // values the body already refers to come across unchanged.
       gfunc.getBody().takeBody(f.getBody());
+      // Constant tables the body reads (memref.get_global) resolve in the nearest
+      // symbol table, which is now the gpu.module: they move along.
+      gfunc.walk([&](memref::GetGlobalOp get) {
+        if (gmod.lookupSymbol(get.getName()))
+          return;
+        if (auto global = mod.lookupSymbol<memref::GlobalOp>(get.getName()))
+          gb.clone(*global.getOperation());
+      });
       // A kernel ends in gpu.return, and only a void one can: a result would
       // have to come back through an out-parameter.
       gfunc.walk([&](func::ReturnOp r) {

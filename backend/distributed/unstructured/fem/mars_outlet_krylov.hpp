@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_outlet_fgmres.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 // Included after the stepper's gradient, continuity, and collective failure helpers.
 template<typename RealType>
@@ -105,7 +106,7 @@ struct OutletKrylovOps
 
     double norm(const RealType* vector)
     {
-        double local = thrust::transform_reduce(thrust::device, thrust::counting_iterator<int>(0),
+        double local = mars::transformReduce(thrust::counting_iterator<int>(0),
             thrust::counting_iterator<int>(n),
             [=] __device__(int i) -> double { return double(vector[i])*double(vector[i]); },
             0.0, thrust::plus<double>());

@@ -44,6 +44,7 @@
 #include <mpi.h>
 #include <unordered_map>
 #include <vector>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -1003,8 +1004,7 @@ void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map
     cudaDeviceSynchronize();
 
     // Count slaves for reporting.
-    auto count_slaves = thrust::count_if(thrust::device,
-                                         map.d_periodicPartner.begin(),
+    auto count_slaves = mars::countIf(map.d_periodicPartner.begin(),
                                          map.d_periodicPartner.end(),
                                          [] __device__ (int v) { return v >= 0; });
     map.numSlaves = int(count_slaves);
@@ -1850,8 +1850,7 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
     size_t numNodes = d_p.size();
 
     // sum p over canonical owned nodes (each DOF once)
-    RealType local_sum = thrust::transform_reduce(
-        thrust::device,
+    RealType local_sum = mars::transformReduce(
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
         [d_p_ptr = d_p.data(), own_ptr = d_ownership.data(), d_partner]
@@ -1862,8 +1861,7 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
         },
         RealType(0), thrust::plus<RealType>());
 
-    long long local_n = thrust::transform_reduce(
-        thrust::device,
+    long long local_n = mars::transformReduce(
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
         [own_ptr = d_ownership.data(), d_partner]

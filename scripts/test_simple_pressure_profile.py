@@ -1,11 +1,14 @@
 """Synthetic first-step fields and saved runtime records; no private data."""
 import copy
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import yaml
 import simple_pressure_profile as profile
@@ -27,6 +30,8 @@ def measured_defaults():
 
 class ProfileTests(unittest.TestCase):
     def setUp(self):
+        self.both_linear_solvers = False
+        self.reference_amg = False
         self.capture = fixtures.FirstStepTests()
         self.capture.setUp()
         self.addCleanup(self.capture.doCleanups)
@@ -75,22 +80,155 @@ class ProfileTests(unittest.TestCase):
         (self.probe / name).write_text(json.dumps(value))
 
     def prepare(self):
+        with patch.object(startup, 'runtime_libraries', return_value=getattr(self, 'rebuilt_libs', self.libs)):
+            profile.prepare(self.baseline, self.probe, self.exe, self.pair,
+                            both_linear_solvers=self.both_linear_solvers, reference_amg=self.reference_amg)
+
+    def prepare_cli(self, output):
+        arguments = ['prepare', '--baseline-pair', str(self.baseline), '--defaults-probe', str(self.probe),
+                     '--executable', str(self.exe), '--output-dir', str(self.pair), '--output', str(output)]
+        if self.both_linear_solvers:
+            arguments.append('--both-linear-solvers')
+        if self.reference_amg:
+            arguments.append('--reference-amg')
+        return profile.main(arguments)
+
+    def test_preparation_report_passes_without_launching_or_changing_baseline(self):
+        self.enable_petsc_momentum()
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['comparison_status'], 'preparation_complete')
+        self.assertEqual(result['failed_check'], 'none')
+        self.assertFalse(result['solver_launched'])
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        profile.check_inputs(self.pair)
+
+    def test_preparation_reports_real_library_preflight_failure_without_paths(self):
+        output = self.root / 'preparation-public.json'
+        loader = SimpleNamespace(returncode=0, stdout=b'libSECRET.so => not found\n')
+        with patch.object(startup.subprocess, 'run', return_value=loader), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['failed_check'], 'runtime_libraries_unresolved')
+        self.assertEqual(result['preparation_exception_kind'], 'evidence_check')
+        self.assertIn('simple_startup_probe.py', [v['source'] for v in result['preparation_source_locations']])
+        self.assertFalse(result['solver_launched'])
+        self.assertFalse(self.pair.exists())
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertNotIn(str(self.root), output.read_text())
+
+    def test_preparation_reports_missing_saved_file_before_runtime_check(self):
+        (self.baseline / 'mars/launch.json').unlink()
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries') as libraries, patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        libraries.assert_not_called(); launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['comparison_status'], 'invalid_evidence')
+        self.assertEqual(result['preparation_exception_kind'], 'file_missing')
+        self.assertFalse(self.pair.exists())
+        self.assertNotIn(str(self.root), output.read_text())
+
+    def test_preparation_reports_malformed_defaults_without_key_contents(self):
+        self.write('private-provenance.json', {'SECRET_PRIVATE_KEY': 'SECRET_PRIVATE_VALUE'})
+        output = self.root / 'preparation-public.json'
+        self.assertEqual(self.prepare_cli(output), 1)
+        result = startup.read_json(output)
+        self.assertEqual(result['preparation_exception_kind'], 'key_error')
+        self.assertTrue(result['preparation_source_locations'])
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertFalse(self.pair.exists())
+
+    def test_preparation_report_never_overwrites_existing_evidence(self):
+        output = self.root / 'preparation-public.json'
+        output.write_text('EXISTING REPORT')
+        with patch.object(profile, 'prepare') as prepare, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.prepare_cli(output), 1)
+        prepare.assert_not_called()
+        self.assertEqual(output.read_text(), 'EXISTING REPORT')
+
+    def test_preparation_reports_existing_pair_and_keeps_it(self):
+        self.prepare()
+        before = {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
         with patch.object(startup, 'runtime_libraries', return_value=self.libs):
-            profile.prepare(self.baseline, self.probe, self.exe, self.pair)
+            self.assertEqual(self.prepare_cli(output), 1)
+        self.assertEqual(startup.read_json(output)['preparation_exception_kind'], 'output_exists')
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.pair.rglob('*') if p.is_file()})
+
+    def test_preparation_trace_omits_unknown_source_and_exception_text(self):
+        def private_failure(*args):
+            exec(compile('raise RuntimeError("SECRET_PRIVATE_MESSAGE")', '/SECRET_PRIVATE_PATH/hook.py', 'exec'))
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', side_effect=private_failure):
+            self.assertEqual(self.prepare_cli(output), 1)
+        result = startup.read_json(output)
+        self.assertEqual(result['preparation_exception_kind'], 'other')
+        self.assertTrue(result['preparation_source_locations'])
+        self.assertTrue(all(v['source'] == 'simple_pressure_profile.py' for v in result['preparation_source_locations']))
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertNotIn(str(self.root), output.read_text())
 
     def finish(self):
         self.prepare()
         shutil.copytree(self.baseline / 'mars', self.pair / 'mars')
         for name in ('launch.json', 'launch-start.json'): (self.pair / 'mars' / name).unlink()
         log = self.pair / 'mars/run.log'
-        log.write_text(log.read_text()+'\npressure_solver_profile=explicit_gpu\n')
+        mode = 'reference_amg_host_staging' if self.reference_amg else 'explicit_gpu'
+        log.write_text(log.read_text()+'\npressure_solver_profile=' + mode + '\n')
         _, _, values, _ = profile.check_inputs(self.pair)
-        actual = dict(values, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+        actual = dict(values, hypre_release=23300, effective_levels=3, effective_relax_3=values['coarserelax'])
         actual['effective_relax_1'] = actual.pop('relax_down')
         actual['effective_relax_2'] = actual.pop('relax_up')
         for rank in (0, 1):
             (self.pair / 'mars' / ('flow-pressure-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
+        if self.both_linear_solvers:
+            momentum, _, _ = profile.momentum_data(self.baseline, self.pair / 'defaults', startup.verified_launch(self.baseline, 'openaccel'))
+            petsc = profile.is_petsc_profile(momentum)
+            if petsc:
+                actual = dict(momentum, petsc_release=32400, restart=30, divergence_tolerance=1e4,
+                    local_blocks=1, sub_preonly=1, sub_ilu_levels=0, right_preconditioning=1,
+                    unpreconditioned_norm=1, device=1)
+            else:
+                actual = dict(momentum, hypre_release=23300, effective_levels=3, effective_relax_3=18)
+                actual['effective_relax_1'] = actual.pop('relax_down')
+                actual['effective_relax_2'] = actual.pop('relax_up')
+            for rank in (0, 1):
+                (self.pair / 'mars' / ('flow-momentum-rank-{}.settings'.format(rank))).write_text(profile.text_profile(actual))
+            log.write_text(log.read_text() + 'momentum_solver_profile=' + ('petsc_fgmres_bjacobi' if petsc else 'explicit_gpu') + '\n'
+                + 'momentum_linear_rtol={} momentum_linear_atol={}\n'.format(momentum['rtol'], momentum['atol']))
         self.record()
+
+    def enable_momentum(self, family='Hypre', solver_options=None):
+        self.both_linear_solvers = True
+        path = self.baseline / 'reference/input.i'
+        deck = startup.load_deck(path.read_bytes())
+        config = copy.deepcopy(self.config)
+        config.update(family=family, rtol=2e-5, atol=3e-12, max_iterations=123)
+        config['options']['solver'] = dict(type='flexgmres', kdim=17)
+        if solver_options is not None:
+            config['options'] = solver_options
+        deck['simulation']['solver']['solver_control']['advanced_options']['linear_solver_settings']['coupled_navier_stokes'] = config
+        path.write_text(yaml.safe_dump(deck))
+        case = startup.read_json(self.baseline / 'case.json')
+        case['deck_sha256'] = startup.digest(path)
+        (self.baseline / 'case.json').write_text(json.dumps(case))
+        record = startup.read_json(self.baseline / 'pair.json')
+        record.update(deck_sha256=case['deck_sha256'], case_sha256=startup.digest(self.baseline / 'case.json'))
+        (self.baseline / 'pair.json').write_text(json.dumps(record))
+        self.capture.refresh()
+        for directory in ('mars', 'reference'):
+            for name in ('launch-start.json', 'launch.json'):
+                path = self.baseline / directory / name
+                record = startup.read_json(path); record['libraries'] = self.libs
+                path.write_text(json.dumps(record))
 
     def record(self):
         old = self.capture.pair
@@ -100,9 +238,311 @@ class ProfileTests(unittest.TestCase):
         for name in ('launch-start.json', 'launch.json'):
             path = self.pair / 'mars' / name
             record = startup.read_json(path)
-            record.update(executable=str(self.exe), executable_sha256=startup.digest(self.exe), libraries=self.libs,
+            record.update(executable=str(self.exe), executable_sha256=startup.digest(self.exe), libraries=getattr(self, 'rebuilt_libs', self.libs),
                           command=['launcher', str(self.exe)]+startup.solver_arguments(self.pair, 'mars'))
             path.write_text(json.dumps(record))
+
+    def test_both_profiles_map_distinct_controls_and_keep_reference_unchanged(self):
+        self.enable_momentum()
+        before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        self.finish()
+        _, _, pressure, identity = profile.check_inputs(self.pair)
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, startup.verified_launch(self.baseline, 'openaccel'))
+        self.assertEqual((momentum['method'],momentum['kdim'],momentum['maxiter']), (1,17,123))
+        self.assertEqual((pressure['method'],pressure['kdim'],pressure['maxiter']), (0,5,20))
+        self.assertEqual(before, {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        details=self.root/'both-details'; details.mkdir()
+        public={}; profile.compare(self.pair,public,details)
+        self.assertTrue(public['recorded_gpu_momentum_settings_verified'])
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertNotIn(str(self.root),json.dumps(public))
+
+    def test_other_momentum_backend_is_not_silently_substituted(self):
+        self.enable_momentum('PETSc')
+        with self.assertRaisesRegex(startup.EvidenceError,'unsupported_momentum_profile'):
+            self.prepare()
+        self.assertFalse(self.pair.exists())
+
+    def enable_petsc_momentum(self):
+        self.enable_momentum('PETSc', dict(ksp_type='fgmres', pc_type='bjacobi'))
+        self.rebuilt_libs = dict(self.libs, **{'/SYNTHETIC/lib/libpetsc.so.3.24': 'c'*64})
+
+    def test_petsc_profile_preserves_targets_and_compares_fresh_capture(self):
+        self.enable_petsc_momentum()
+        self.finish()
+        _, _, pressure, identity = profile.check_inputs(self.pair)
+        self.assertNotIn('petsc_fgmres_bjacobi', pressure)
+        case = startup.read_json(self.pair / 'case.json')
+        self.assertEqual(case['momentum_backend'], 'petsc')
+        self.assertEqual(profile.options(case['arguments'])['--momentum-backend'], 'petsc')
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, {})
+        self.assertEqual(momentum, dict(petsc_fgmres_bjacobi=1, rtol=2e-5, atol=3e-12, maxiter=123))
+        public = {}
+        details = self.root / 'details-petsc'; details.mkdir()
+        profile.compare(self.pair, public, details)
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertTrue(public['recorded_gpu_momentum_settings_verified'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertTrue(public['comparison']['mapped_controls_verified'])
+        self.assertEqual(identity['libraries'], self.rebuilt_libs)
+
+    def test_petsc_profile_requires_library_without_replacing_captured_mpi(self):
+        self.enable_petsc_momentum()
+        for libraries in (self.libs, dict(self.rebuilt_libs, **{'/SYNTHETIC/lib/libmpi.so': 'd'*64}),
+                          dict(self.rebuilt_libs, **{'/OTHER/lib/libmpi.so': 'b'*64})):
+            with self.subTest(libraries=libraries):
+                self.rebuilt_libs = libraries
+                with self.assertRaisesRegex(startup.EvidenceError, 'libraries_changed'):
+                    self.prepare()
+                self.assertFalse(self.pair.exists())
+
+    def test_petsc_preparation_accepts_identical_library_path_aliases(self):
+        self.enable_petsc_momentum()
+        self.rebuilt_libs = {path.replace('/SYNTHETIC/lib/', '/SYNTHETIC/view/lib/'): value
+                             for path, value in self.rebuilt_libs.items()}
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+        launch.assert_not_called()
+        checks = startup.read_json(output)['library_checks']
+        self.assertTrue(checks['matched'])
+        self.assertTrue(checks['captured_dependencies_preserved'])
+        self.assertEqual(checks['relocated_identical_libraries'], ['libHYPRE.so', 'libmpi.so'])
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        profile.check_inputs(self.pair)
+
+    def test_library_failure_reports_public_dependency_names_and_keeps_baseline(self):
+        self.enable_petsc_momentum()
+        self.rebuilt_libs['/SYNTHETIC/lib/libmpi.so'] = 'd'*64
+        del self.rebuilt_libs['/SYNTHETIC/lib/libHYPRE.so']
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'preparation-public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), \
+                patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 1)
+        launch.assert_not_called()
+        result = startup.read_json(output)
+        self.assertEqual(result['failed_check'], 'libraries_changed')
+        checks = result['library_checks']
+        self.assertFalse(checks['matched'])
+        self.assertEqual(checks['changed_captured_libraries'], ['libmpi.so'])
+        self.assertEqual(checks['missing_captured_libraries'], ['libHYPRE.so'])
+        self.assertTrue(checks['petsc_library_unique'])
+        self.assertFalse(self.pair.exists())
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        self.assertNotIn('SYNTHETIC', output.read_text())
+        self.assertNotIn('d'*64, output.read_text())
+
+    def test_supported_petsc_inspection_still_does_not_claim_runtime_settings(self):
+        self.enable_petsc_momentum()
+        public = {}; profile.inspect_profiles(self.baseline, self.probe, public)
+        self.assertTrue(public['both_profiles_supported'])
+        self.assertEqual(public['profiles']['momentum']['required_build'], 'cuda_petsc')
+        self.assertFalse(public['profiles']['momentum']['runtime_settings_verified'])
+        self.assertFalse(public['solver_launched'])
+
+    def test_petsc_runtime_profile_rejects_changed_inner_solver_or_target(self):
+        self.enable_petsc_momentum(); self.finish()
+        momentum, _, _ = profile.momentum_data(self.baseline, self.probe, {})
+        path = self.pair / 'mars/flow-momentum-rank-1.settings'
+        original = path.read_text()
+        for key, value in (('sub_preonly', 0), ('sub_ilu_levels', 1), ('local_blocks', 2),
+                           ('unpreconditioned_norm', 0), ('right_preconditioning', 0), ('device', 0),
+                           ('rtol', 1e-3), ('maxiter', 124), ('petsc_release', 32300)):
+            actual = dict(line.split() for line in original.splitlines())
+            actual[key] = value
+            path.write_text(''.join('{} {}\n'.format(k, v) for k, v in actual.items()))
+            with self.subTest(key=key), self.assertRaisesRegex(startup.EvidenceError, 'runtime_profile_mismatch'):
+                profile.check_runtime(self.pair, 2, momentum, stage='momentum')
+        path.write_text(original)
+
+    def test_petsc_profile_rejects_extra_options_scaling_and_invalid_cap(self):
+        base = dict(family='PETSc', options=dict(ksp_type='fgmres', pc_type='bjacobi'))
+        for change in (dict(options=dict(ksp_type='gmres', pc_type='bjacobi')),
+                       dict(options=dict(ksp_type='fgmres', pc_type='bjacobi', sub_pc_type='ilu')),
+                       dict(diagonal_scaling=True), dict(normalize_matrix=True), dict(max_iterations=0),
+                       dict(max_iterations=True), dict(max_iterations=1.5), dict(max_iterations=float('nan'))):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                profile.petsc_momentum_values(dict(base, **change))
+
+    def test_inspection_reports_backend_without_touching_or_launching_case(self):
+        self.enable_momentum('PETSc', dict(ksp_type='fgmres', pc_type='bjacobi', sub_pc_type='ilu'))
+        before = {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        output = self.root / 'inspection.json'
+        with patch.object(startup, 'launch') as launch, patch.object(startup, 'runtime_libraries') as libraries:
+            code = profile.main(['inspect-profiles', '--baseline-pair', str(self.baseline),
+                                 '--defaults-probe', str(self.probe), '--output', str(output)])
+        self.assertEqual(code, 0)
+        launch.assert_not_called(); libraries.assert_not_called()
+        result = json.loads(output.read_text())
+        self.assertFalse(result['both_profiles_supported'])
+        self.assertEqual(result['profiles']['momentum']['family'], 'petsc')
+        self.assertEqual(result['profiles']['momentum']['failed_component'], 'petsc_profile')
+        self.assertEqual(result['profiles']['momentum']['solver'], 'fgmres')
+        self.assertEqual(result['profiles']['momentum']['preconditioner'], 'bjacobi')
+        self.assertEqual(result['profiles']['momentum']['declared_petsc_options']['sub_pc_type'], 'ilu')
+        self.assertTrue(result['profiles']['pressure']['mapping_supported'])
+        self.assertFalse(result['solver_launched'])
+        self.assertNotIn(str(self.root), output.read_text())
+        self.assertEqual(before, {str(p):startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        self.assertFalse(self.pair.exists())
+
+    def test_petsc_inspection_uses_flat_options_and_context_tolerance_order(self):
+        config = dict(family='PETSc', rtol=1e-6, atol=1e-16, max_iterations=20,
+            options=dict(ksp_type='FGMRES', pc_type='BJACOBI', sub_pc_type='ILU',
+                ksp_pc_side='right', ksp_norm_type='unpreconditioned',
+                ksp_gmres_restart=17, ksp_rtol='1e-10', ksp_atol='1e-20', ksp_max_it=999))
+        report = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertEqual(report['solver'], 'fgmres')
+        self.assertEqual(report['preconditioner'], 'bjacobi')
+        self.assertEqual(report['declared_petsc_options']['sub_pc_type'], 'ilu')
+        self.assertEqual(report['declared_petsc_options']['ksp_pc_side'], 'right')
+        self.assertEqual(report['declared_petsc_options']['ksp_norm_type'], 'unpreconditioned')
+        self.assertEqual(report['tolerance_source'], 'context_after_KSPSetFromOptions')
+        self.assertFalse(report['mapping_supported'])
+        self.assertFalse(report['runtime_settings_verified'])
+        self.assertFalse(report['unrecognized_option_keys_present'])
+        self.assertEqual(report['declared_control_names'], ['ksp_atol', 'ksp_gmres_restart', 'ksp_max_it', 'ksp_rtol'])
+        for number in ('999', '1e-10', '1e-20'):
+            self.assertNotIn(number, json.dumps(report))
+
+    def test_petsc_omissions_are_not_replaced_by_hypre_defaults(self):
+        for raw in ({}, dict(solver=dict(type='gmres'), precond=dict(type='boomeramg'))):
+            report = profile.inspect_petsc_options(dict(options=raw))
+            self.assertEqual(report['solver'], 'unspecified')
+            self.assertEqual(report['preconditioner'], 'unspecified')
+            self.assertEqual(report['declared_petsc_options'], {})
+        report = profile.inspect_configuration(dict(family='Trilinos'), measured_defaults(), 'momentum')
+        self.assertEqual(report['solver'], 'unresolved')
+        self.assertEqual(report['preconditioner'], 'unresolved')
+
+    def test_petsc_option_names_and_values_follow_reference_case_conversion(self):
+        report = profile.inspect_petsc_options(dict(options={'KSP_TYPE': 'GMRES', 'PC_TYPE': 'HYPRE',
+            'PC_HYPRE_TYPE': 'BOOMERAMG', 'MAT_TYPE': 'MPIAIJCUSPARSE', 'VEC_TYPE': 'CUDA'}))
+        self.assertEqual(report['declared_petsc_options'], dict(ksp_type='gmres', pc_type='hypre',
+            pc_hypre_type='boomeramg', mat_type='mpiaijcusparse', vec_type='cuda'))
+        self.assertTrue(report['options_structure_valid'])
+
+    def test_petsc_inspection_withholds_private_keys_values_and_viewer_paths(self):
+        report = profile.inspect_petsc_options(dict(options=dict(ksp_type='SECRET_METHOD',
+            pc_type='SECRET_PC', SECRET_KEY='SECRET_VALUE', ksp_view='/SECRET/FILE',
+            sub_pc_factor_mat_solver_type='SECRET_BACKEND', ksp_gmres_restart=987654)))
+        self.assertTrue(report['unrecognized_option_keys_present'])
+        self.assertIn('ksp_view', report['declared_control_names'])
+        self.assertEqual(report['solver'], 'other_or_invalid')
+        self.assertEqual(report['preconditioner'], 'other_or_invalid')
+        self.assertNotIn('SECRET', json.dumps(report))
+        self.assertNotIn('987654', json.dumps(report))
+
+    def test_petsc_malformed_or_case_colliding_options_are_not_certified(self):
+        for raw in ([], {'ksp_type': 'gmres', 'KSP_TYPE': 'fgmres'}, {7: 'SECRET'},
+                    {'pc_type': {'SECRET': 'SECRET'}}, {'ksp_type': None}):
+            report = profile.inspect_petsc_options(dict(options=raw))
+            self.assertFalse(report['options_structure_valid'])
+            self.assertFalse(report['runtime_settings_verified'])
+            self.assertNotIn('SECRET', json.dumps(report))
+
+    def test_inspection_agrees_with_supported_profile_preparation(self):
+        self.enable_momentum()
+        public = {}; profile.inspect_profiles(self.baseline, self.probe, public)
+        self.assertTrue(public['both_profiles_supported'])
+        for stage in ('momentum', 'pressure'):
+            self.assertEqual(public['profiles'][stage]['failed_component'], 'none')
+        self.prepare()
+
+    def test_inspection_identifies_every_unsupported_gpu_control(self):
+        config = copy.deepcopy(self.config)
+        config['options']['precond'].update(NumFunctions=3, Nodal=1, CoarsenType=7)
+        result = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertEqual(result['unsupported_gpu_controls'], ['coarsentype', 'nodal', 'numfunctions'])
+        self.assertEqual(result['failed_component'], 'gpu_controls')
+        with self.assertRaises(ValueError): profile.resolve(config, (1e-10, 1e-4), measured_defaults())
+
+    def test_inspection_distinguishes_scaling_method_preconditioner_and_options(self):
+        cases = [({'normalize_matrix': True}, 'normalize_matrix'),
+                 ({'diagonal_scaling': True}, 'diagonal_scaling'),
+                 ({'options': []}, 'options_structure'),
+                 ({'options': {'solver': []}}, 'options_structure'),
+                 ({'options': {'solver': {'type': 'mgr'}, 'precond': {'type': 'boomeramg'}}}, 'solver'),
+                 ({'options': {'solver': {'type': 'gmres'}}}, 'preconditioner'),
+                 ({'options': {'solver': {'type': 'gmres'}, 'precond': {'type': 'mgr'}}}, 'preconditioner'),
+                 ({'options': {'solver': {'type': 'gmres', 'PRIVATE_KEY': 'SECRET_VALUE'},
+                              'precond': {'type': 'boomeramg'}}}, 'option_keys'),
+                 ({'rtol': -1}, 'residual_target_or_solver_definition')]
+        for change, component in cases:
+            with self.subTest(component=component):
+                result = profile.inspect_configuration(dict(self.config, **change), measured_defaults(), 'momentum')
+                self.assertEqual(result['failed_component'], component)
+                self.assertFalse(result['mapping_supported'])
+                self.assertNotIn('PRIVATE_KEY', json.dumps(result))
+                self.assertNotIn('SECRET_VALUE', json.dumps(result))
+
+    def test_inspection_withholds_arbitrary_names_values_and_exceptions(self):
+        config = copy.deepcopy(self.config)
+        config.update(family='SECRET_FAMILY', rtol='SECRET_TARGET')
+        config['options']['solver']['type'] = 'SECRET_METHOD'
+        config['options']['precond']['type'] = 'SECRET_PRECONDITIONER'
+        result = profile.inspect_configuration(config, measured_defaults(), 'momentum')
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertEqual(result['family'], 'other_or_invalid')
+        self.enable_momentum()
+        output = self.root / 'inspection.json'
+        with patch.object(profile, 'read_defaults', side_effect=RuntimeError('SECRET_EXCEPTION')):
+            code = profile.main(['inspect-profiles', '--baseline-pair', str(self.baseline),
+                                 '--defaults-probe', str(self.probe), '--output', str(output)])
+        self.assertEqual(code, 1)
+        self.assertNotIn('SECRET', output.read_text())
+        self.assertEqual(json.loads(output.read_text())['comparison_status'], 'invalid_evidence')
+
+    def test_inspection_rejects_changed_baseline_or_defaults_evidence(self):
+        self.enable_momentum()
+        path = self.baseline / 'reference/input.i'; original = path.read_bytes()
+        path.write_bytes(original + b'\n')
+        with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+        path.write_bytes(original)
+        path = self.probe / 'public.json'
+        data = json.loads(path.read_text()); data['version'] = '0.0.0'; path.write_text(json.dumps(data))
+        with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+
+    def test_inspection_rejects_inputs_changed_during_read(self):
+        self.enable_momentum()
+        real = profile.inspect_configuration
+        def modified(*args):
+            result = real(*args)
+            path = self.baseline / 'reference/input.i'
+            path.write_bytes(path.read_bytes() + b'\n')
+            return result
+        with patch.object(profile, 'inspect_configuration', side_effect=modified):
+            with self.assertRaises(ValueError): profile.inspect_profiles(self.baseline, self.probe, {})
+
+    def test_momentum_runtime_profile_and_log_are_required(self):
+        self.enable_momentum(); self.finish()
+        path=self.pair/'mars/flow-momentum-rank-1.settings'
+        path.write_text(path.read_text().replace('kdim 17\n','kdim 100\n'))
+        self.record(); details=self.root/'both-details'; details.mkdir()
+        with self.assertRaisesRegex(startup.EvidenceError,'runtime_profile_mismatch'):
+            profile.compare(self.pair,{},details)
+        path.unlink(); self.record()
+        with self.assertRaisesRegex(startup.EvidenceError,'runtime_profile_mismatch'):
+            profile.compare(self.pair,{},details)
+
+    def test_missing_or_changed_momentum_target_log_fails(self):
+        self.enable_momentum(); self.finish()
+        path=self.pair/'mars/run.log'; original=path.read_text()
+        for index, replacement in enumerate(('', 'momentum_linear_rtol=0.5 momentum_linear_atol=0')):
+            lines=[replacement if line.startswith('momentum_linear_rtol=') else line for line in original.splitlines()]
+            path.write_text('\n'.join(lines)+'\n'); self.record()
+            details=self.root/('log-details-'+str(index)); details.mkdir()
+            with self.assertRaises(ValueError): profile.compare(self.pair,{},details)
+
+    def test_changed_momentum_target_or_profile_rejected(self):
+        self.enable_momentum(); self.prepare()
+        path=self.pair/'momentum.profile'
+        path.write_text(path.read_text().replace('kdim 17\n','kdim 100\n'))
+        with self.assertRaises(ValueError): profile.check_inputs(self.pair)
 
     def test_defaults_and_two_gpu_adaptations(self):
         v, changes = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())
@@ -120,6 +560,95 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual((v['method'], v['kdim'], v['miniter'], v['maxiter']), (1, 31, 0, 123))
         self.assertEqual((v['relax_down'], v['relax_up'], v['sweeps_1'], v['sweeps_3']), (6, 6, 2, 1))
         self.assertEqual(changes, ['coarse_direct_to_device_l1_jacobi'])
+
+    def test_reference_amg_changes_only_the_two_deliberate_substitutions(self):
+        device, _ = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())
+        reference, changes = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults(), True)
+        self.assertEqual(changes, [])
+        self.assertEqual({k for k in device if reference[k] != device[k]}, {'coarsentype', 'coarserelax'})
+        self.assertEqual((reference['coarsentype'], reference['coarserelax']), (10, 9))
+        with self.assertRaises(startup.EvidenceError): profile.validate(reference)
+        with self.assertRaises(startup.EvidenceError): profile.validate(device, True)
+        for key, value in [('coarsentype', 6), ('coarserelax', 99), ('rtol', 0), ('kdim', 0)]:
+            with self.subTest(key=key), self.assertRaises(startup.EvidenceError):
+                profile.validate(dict(reference, **{key: value}), True)
+
+    def test_reference_amg_preparation_requires_first_step_and_both_profiles(self):
+        with patch.object(startup, 'runtime_libraries') as libraries, patch.object(startup, 'launch') as launch:
+            for history, both in ((True, True), (False, False)):
+                with self.assertRaises(startup.EvidenceError):
+                    profile.prepare(self.baseline, self.probe, self.exe, self.pair,
+                                    history=history, both_linear_solvers=both, reference_amg=True)
+            libraries.assert_not_called()
+            launch.assert_not_called()
+        self.assertFalse(self.pair.exists())
+
+    def test_reference_amg_petsc_capture_preserves_equations_targets_and_baseline(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        before = {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()}
+        self.finish()
+        _, launches, values, identity = profile.check_inputs(self.pair)
+        self.assertEqual((values['coarsentype'], values['coarserelax'], values['rtol'], values['atol']), (10, 9, 1e-4, 1e-10))
+        self.assertEqual(identity['adaptations'], [])
+        self.assertEqual(identity['pressure_amg_mode'], 'reference')
+        self.assertEqual(before, {str(p): startup.digest(p) for p in self.baseline.rglob('*') if p.is_file()})
+        detail = self.root / 'comparison'; detail.mkdir()
+        public = {}
+        profile.compare(self.pair, public, detail)
+        self.assertTrue(public['hypre_host_staging_permitted'])
+        self.assertTrue(public['recorded_pressure_settings_verified'])
+        self.assertFalse(public['recorded_gpu_pressure_settings_verified'])
+        self.assertTrue(public['original_pressure_targets_preserved'])
+        self.assertTrue(public['original_momentum_targets_preserved'])
+        self.assertTrue(all(public['comparison']['first_step_stage_matches'].values()))
+        self.assertFalse(public['reference_solver_launched'])
+        self.assertFalse(public['identical_linear_solvers_verified'])
+        self.assertNotIn(str(self.root), json.dumps(public))
+
+    def test_reference_amg_preparation_reports_host_staging_before_launch(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        output = self.root / 'public.json'
+        with patch.object(startup, 'runtime_libraries', return_value=self.rebuilt_libs), patch.object(startup, 'launch') as launch:
+            self.assertEqual(self.prepare_cli(output), 0)
+            launch.assert_not_called()
+        public = startup.read_json(output)
+        self.assertEqual(public['pressure_amg_mode'], 'reference')
+        self.assertTrue(public['hypre_host_staging_permitted'])
+        self.assertFalse(public['solver_launched'])
+
+    def test_reference_amg_ignoring_the_coarse_choice_or_mode_fails_comparison(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        self.finish()
+        detail = self.root / 'comparison'; detail.mkdir()
+        path = self.pair / 'mars/flow-pressure-rank-1.settings'
+        original = path.read_text()
+        path.write_text(original.replace('effective_relax_3 9\n', 'effective_relax_3 18\n'))
+        self.record()
+        with self.assertRaisesRegex(startup.EvidenceError, 'runtime_profile_mismatch'):
+            profile.compare(self.pair, {}, detail)
+        path.write_text(original)
+        log = self.pair / 'mars/run.log'
+        log.write_text(log.read_text().replace('reference_amg_host_staging', 'explicit_gpu'))
+        self.record()
+        with self.assertRaises(ValueError): profile.compare(self.pair, {}, detail)
+
+    def test_reference_amg_mode_cannot_change_in_saved_arguments(self):
+        self.reference_amg = True
+        self.enable_petsc_momentum()
+        self.prepare()
+        path = self.pair / 'case.json'
+        case = startup.read_json(path)
+        args = case['arguments']
+        args[args.index('--pressure-amg-mode')+1] = 'device'
+        path.write_text(json.dumps(case))
+        pair_record = self.pair / 'pair.json'
+        record = startup.read_json(pair_record)
+        record['case_sha256'] = startup.digest(path)
+        pair_record.write_text(json.dumps(record))
+        with self.assertRaises(ValueError): profile.check_inputs(self.pair)
 
     def test_unsupported_or_malformed_controls_fail(self):
         good, _ = profile.resolve(self.config, (1e-10, 1e-4), measured_defaults())
@@ -211,6 +740,79 @@ class ProfileTests(unittest.TestCase):
              patch.object(startup,'runtime_libraries',return_value=self.libs), patch.object(startup,'launch') as launch:
             with self.assertRaisesRegex(startup.EvidenceError,'solver_environment_changed'): profile.run(self.pair,{})
             launch.assert_not_called()
+
+
+class LibraryIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.original = {'/original/libHYPRE.so': 'a'*64, '/original/libmpi.so': 'b'*64,
+                         '/original/libstdc++.so.6': 'c'*64}
+        self.current = dict(self.original, **{'/added/libpetsc.so.3.24': 'd'*64})
+
+    def test_only_petsc_addition_policy_allows_path_aliases(self):
+        moved = {p.replace('/original/', '/alias/'): value for p, value in self.current.items()}
+        self.assertTrue(profile.profile_libraries_match(moved, self.original, True))
+        self.assertFalse(profile.profile_libraries_match(moved, self.original, False))
+        self.assertFalse(profile.profile_libraries_match(moved, self.current, False))
+
+    def test_changed_bytes_are_rejected_even_if_original_bytes_are_also_loaded(self):
+        for path in self.original:
+            with self.subTest(path=path):
+                current = dict(self.current)
+                current[path] = 'e'*64
+                current[path.replace('/original/', '/copy/')] = self.original[path]
+                report = profile.profile_library_checks(current, self.original, True)
+                self.assertFalse(report['matched'])
+                self.assertEqual(report['changed_captured_libraries'], [Path(path).name])
+
+    def test_added_solver_library_or_missing_duplicate_petsc_rejected(self):
+        for changed in (
+                dict(self.current, **{'/extra/libmpi.so': 'b'*64}),
+                dict(self.current, **{'/extra/libHYPRE.so': 'a'*64}),
+                self.original,
+                dict(self.current, **{'/extra/libpetsc.so.3.24': 'd'*64})):
+            with self.subTest(changed=changed):
+                self.assertFalse(profile.profile_libraries_match(changed, self.original, True))
+
+    def test_replacement_at_another_path_reports_changed_bytes(self):
+        current = dict(self.current)
+        del current['/original/libstdc++.so.6']
+        current['/replacement/libstdc++.so.6'] = 'e'*64
+        report = profile.profile_library_checks(current, self.original, True)
+        self.assertFalse(report['matched'])
+        self.assertEqual(report['changed_captured_libraries'], ['libstdc++.so.6'])
+        self.assertEqual(report['missing_captured_libraries'], [])
+
+    def test_missing_or_ambiguous_alias_never_passes(self):
+        for path in self.original:
+            for copies in (0, 2):
+                with self.subTest(path=path, copies=copies):
+                    current = dict(self.current)
+                    del current[path]
+                    for copy_number in range(copies):
+                        current['/copy{}/{}'.format(copy_number, Path(path).name)] = self.original[path]
+                    self.assertFalse(profile.profile_libraries_match(current, self.original, True))
+
+    def test_public_report_never_exports_unknown_names_paths_or_hashes(self):
+        original = dict(self.original, **{'/PRIVATE/libPRIVATE.so': 'e'*64})
+        current = dict(self.current, **{'/PRIVATE/libPRIVATE.so': 'f'*64,
+                                       '/PRIVATE/libmpi_PRIVATE.so': '1'*64})
+        report = profile.profile_library_checks(current, original, True)
+        text = json.dumps(report)
+        self.assertFalse(report['matched'])
+        self.assertEqual(report['changed_captured_libraries'], ['other_runtime_library'])
+        self.assertEqual(report['additional_solver_libraries'], ['mpi'])
+        self.assertNotIn('PRIVATE', text)
+        self.assertNotIn('f'*64, text)
+        for name in ('libmpi_gnu_123.so.12', 'libnvtx3interop.so.1', 'libHYPRE-2.33.0.so'):
+            self.assertEqual(profile.public_library_name('/PRIVATE/' + name), name)
+
+    def test_malformed_library_records_are_not_accepted_or_exported(self):
+        for record in (None, [], {}, {'PRIVATE': 'PRIVATE'}, {123: 'a'*64}):
+            with self.subTest(record=record):
+                report = profile.profile_library_checks(record, self.original, True)
+                self.assertFalse(report['record_valid'])
+                self.assertFalse(report['matched'])
+                self.assertNotIn('PRIVATE', json.dumps(report))
 
 
 if __name__ == '__main__': unittest.main()

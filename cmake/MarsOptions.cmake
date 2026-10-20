@@ -7,6 +7,7 @@ option(MARS_ENABLE_CUDAUVM "Use as default memory space CUDAUVM. This has only a
 option(MARS_ENABLE_RDMA "Build mars with RDMA support" ON)
 
 option(MARS_ENABLE_HIP "Build mars with cuda support" OFF)
+option(MARS_HIP_ROCPRIM_REDUCTIONS "On AMD, reductions through rocPRIM (Thrust) instead of MARS kernels; much longer compile" OFF)
 
 option(MARS_ENABLE_ADIOS2 "Uses ADIOS2 IO" OFF)
 
@@ -18,6 +19,7 @@ option(MARS_ENABLE_TESTS "Enable tests" ON)
 option(MARS_ENABLE_MOONOLITH "Use -DMARS_ENABLE_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 option(MARS_ENABLE_VTK "Uses VTK IO" OFF)
 option(MARS_ENABLE_HYPRE "Use -DMARS_ENABLE_HYPRE=ON for enabling Hypre AMG preconditioner" OFF)
+option(MARS_ENABLE_PETSC "Enable the optional PETSc momentum backend for segregated SIMPLE" OFF)
 
 # FIXME  and turn on!
 option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabling the serial backend" OFF)

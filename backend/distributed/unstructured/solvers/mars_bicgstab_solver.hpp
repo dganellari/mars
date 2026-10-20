@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../fem/mars_sparse_matrix.hpp"
-#include <cusparse.h>
-#include <cublas_v2.h>
+#include "../utils/mars_gpu_sparse_blas.hpp"
+#include "mars_spmv_plan.hpp"
 #include <iostream>
 #include <cmath>
 
@@ -90,11 +90,12 @@ public:
         }
 
         // BiCGSTAB iterations
+        SpmvPlan<RealType, Matrix, Vector> spmvPlan(cusparseHandle_, A, p, v);
         bool first = true;
         for (int iter = 0; iter < maxIter_; ++iter)
         {
             // v = A * p
-            spmv(A, p, v);
+            spmvPlan.apply(p, v);
 
             // alpha = rho / (r0^T * v)
             RealType r0v = dot(r0, v);
@@ -128,7 +129,7 @@ public:
             }
 
             // t = A * s
-            spmv(A, s, t);
+            spmvPlan.apply(s, t);
 
             // omega = (t^T * s) / (t^T * t)
             RealType ts = dot(t, s);
@@ -217,63 +218,6 @@ private:
     bool verbose_;
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;
-
-    // Sparse matrix-vector product: y = A * x
-    void spmv(const Matrix& A, const Vector& x, Vector& y)
-    {
-        const RealType alpha = 1.0;
-        const RealType beta  = 0.0;
-
-        cusparseSpMatDescr_t matA;
-        cusparseDnVecDescr_t vecX, vecY;
-
-        if constexpr (std::is_same_v<RealType, double>)
-        {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_64F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_64F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-        else
-        {
-            cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
-                              (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                              CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-
-            cusparseCreateDnVec(&vecX, x.size(), (void*)thrust::raw_pointer_cast(x.data()), CUDA_R_32F);
-            cusparseCreateDnVec(&vecY, y.size(), (void*)thrust::raw_pointer_cast(y.data()), CUDA_R_32F);
-
-            size_t bufferSize = 0;
-            cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-                                    CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
-
-            cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-
-            cudaFree(buffer);
-        }
-
-        cusparseDestroySpMat(matA);
-        cusparseDestroyDnVec(vecX);
-        cusparseDestroyDnVec(vecY);
-    }
 
     // Dot product
     RealType dot(const Vector& x, const Vector& y)

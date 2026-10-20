@@ -174,13 +174,195 @@ def Mir_FluxOp : Mir_Op<"flux",
   }];
 }
 
-def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, HasParent<"FluxOp">]> {
-  let summary = "terminator yielding the per-point result of a mir.qfunction";
+def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp", "CellwiseOp"]>]> {
+  let summary = "terminator of mir.flux (per-point result), mir.dss and mir.cellwise (per-copy results)";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
   // Zero-operand builder (defined in MirOps.cpp) so SingleBlockImplicitTerminator
   // can insert the implicit terminator.
   let builders = [OpBuilder<(ins)>];
+}
+
+//===----------------------------------------------------------------------===//
+// mir.dss : direct stiffness summation on element-local (cell-wise) vectors.
+//===----------------------------------------------------------------------===//
+
+def Mir_DssOp : Mir_Op<"dss", [AttrSizedOperandSegments]> {
+  let summary = "direct stiffness summation on element-local hex vectors";
+  let description = [{
+    Every element-local copy of a node gets the sum over all copies of that
+    node: the assembly G G^T of a cell-wise solver, without forming the global
+    vector. Edge and vertex copies are summed in the order of their star (the
+    canonical order of the tables), and a face adds its two copies, so every
+    copy of a node gets the same bits. Only the copies of the elements listed
+    in `elements` are written; nodes are numbered (a, b, c) -> (a n + b) n + c
+    with n = degree + 1.
+
+    Copy i reads values[i] when i < size(values), else ghost[i - size(values)]:
+    the copies of ghost elements, received from other ranks. With `minus`, a
+    local copy reads values[i] - minus[i] (the DSS of a residual b - y; the
+    ghost copies then hold the exchanged difference).
+
+    The topology is that of MARS's UnstructuredTopology
+    (backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp):
+      face_nbr[e*6+f]     the other copy of face f (element*6 + face), or -1
+      face_code[e*6+f]    own frame | other frame << 3 (bit 6: Dirichlet)
+      edge_of[e*12+k]     global edge of local edge k; bit 31: reversed
+      edge_off, edge_ent  edge stars (CSR); entries element*12 + edge, bit 31:
+                          reversed
+      vert_of[e*8+c], vert_off, vert_ent
+                          corner stars; entries element*8 + corner
+
+    Without an epilogue, outs is one array that receives the sums.
+
+    With an epilogue (what the hand kernels pass to for_each_copy_sum as
+    `visit`), the region runs for every written copy t with
+      (sum, dirichlet: i1, counted: i1, copies[0][t], copies[1][t], ...)
+    and yields one value per `outs` array (stored at t) followed by
+    `reductions` terms. Each term is summed over the copies of an element, and
+    the sums go to partials[w * reductions + j] for the w-th listed element:
+    reductions without atomics, in a fixed order. `dirichlet` and `counted`
+    need flags(counting, edge_dirichlet, vert_dirichlet): counting[e] has bit b
+    set when element e holds the counting copy of its entity with bit b (faces
+    0-5, edges 8-19, corners 20-27, interior 31), so a sum over counted copies
+    takes every node once.
+
+    Example (the Jacobi preconditioner with <a, z> and <z, z>):
+      mir.dss ins(%q, %ghost) elements(%ids) faces(%fn, %fc)
+              edges(%eo, %eoff, %eent) vertices(%vo, %voff, %vent)
+              flags(%cnt, %edir, %vdir) copies(%diag, %a) outs(%z)
+              partials(%part) {degree = 7 : i64, reductions = 2 : i64}
+              : memref<?xf64>, ... epilogue {
+      ^bb0(%s: f64, %d: i1, %c: i1, %dg: f64, %a: f64):
+        ... mir.yield %z, %az, %zz : f64, f64, f64
+      }
+  }];
+
+  let arguments = (ins
+      Arg<MemRefRankOf<[F32, F64], [1]>, "local copies", [MemRead]>:$values,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "ghost copies", [MemRead]>:$ghost,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "subtracted from the local copies", [MemRead]>:$minus,
+      Arg<MemRefRankOf<[I32], [1]>, "elements to write", [MemRead]>:$elements,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$face_nbr,
+      Arg<MemRefRankOf<[I8], [1]>, "", [MemRead]>:$face_code,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_of,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_ent,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_of,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_ent,
+      Arg<Variadic<AnyMemRef>, "counting, edge_dirichlet, vert_dirichlet", [MemRead]>:$flags,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy epilogue inputs", [MemRead]>:$copies,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      I64Attr:$degree,
+      DefaultValuedAttr<I64Attr, "0">:$reductions);
+  let regions = (region AnyRegion:$epilogue);
+
+  let assemblyFormat = [{
+    `ins` `(` $values `,` $ghost `)` (`minus` `(` $minus^ `)`)? `elements` `(` $elements `)`
+    `faces` `(` $face_nbr `,` $face_code `)`
+    `edges` `(` $edge_of `,` $edge_off `,` $edge_ent `)`
+    `vertices` `(` $vert_of `,` $vert_off `,` $vert_ent `)`
+    (`flags` `(` $flags^ `)`)? (`copies` `(` $copies^ `)`)?
+    `outs` `(` $outs `)` (`partials` `(` $partials^ `)`)?
+    attr-dict `:` type(operands) (`epilogue` $epilogue^)?
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// mir.cellwise : a pointwise map over element-local copies, with reductions.
+//===----------------------------------------------------------------------===//
+
+def Mir_CellwiseOp : Mir_Op<"cellwise", [AttrSizedOperandSegments]> {
+  let summary = "per-copy map over the element-local vectors of listed elements";
+  let description = [{
+    The vector operations of a cell-wise Krylov solver: for every copy t of the
+    elements in `elements` (nodes numbered as for mir.dss), the region runs on
+      (counted: i1, inputs[0][t], inputs[1][t], ...)
+    and yields one value per `outs` array (stored at t) followed by `reductions`
+    terms, summed over the element's copies into partials[w * reductions + j]
+    for the w-th listed element. `counted` is bit b of counting[e] for the
+    copy's entity bit b (see mir.dss), so a sum over counted copies takes every
+    node once; without `counting` it is true. With
+    dirichlet(face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet) (the
+    tables of mir.dss) the region takes a second flag, (counted, dirichlet, ...):
+    whether the copy's node is a Dirichlet node.
+
+    An array may be both an input and an output (x = x + ...): each copy is
+    read and written by the same iteration. Values from above the op (e.g.
+    Krylov scalars loaded once) may be used in the region.
+
+    Example (s = r - alpha v):
+      mir.cellwise elements(%ids) inputs(%r, %v) outs(%s) {degree = 7 : i64}
+                   : memref<?xi32>, ... body {
+      ^bb0(%c: i1, %ri: f64, %vi: f64):
+        %av = arith.mulf %alpha, %vi : f64
+        %si = arith.subf %ri, %av : f64
+        mir.yield %si : f64
+      }
+  }];
+
+  let arguments = (ins
+      Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
+      Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
+      Arg<Variadic<AnyMemRef>, "face_code, edge_of, vert_of, edge_dirichlet, vert_dirichlet", [MemRead]>:$dirichlet,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy inputs", [MemRead]>:$inputs,
+      Arg<Variadic<MemRefRankOf<[F32, F64], [1]>>, "per-copy results", [MemWrite]>:$outs,
+      Arg<Optional<MemRefRankOf<[F32, F64], [1]>>, "per-element reduction partials", [MemWrite]>:$partials,
+      I64Attr:$degree,
+      DefaultValuedAttr<I64Attr, "0">:$reductions);
+  let regions = (region SizedRegion<1>:$body);
+
+  let assemblyFormat = [{
+    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)? (`dirichlet` `(` $dirichlet^ `)`)?
+    (`inputs` `(` $inputs^ `)`)? (`outs` `(` $outs^ `)`)? (`partials` `(` $partials^ `)`)?
+    attr-dict `:` type(operands) `body` $body
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// mir.interpolate : M (x) M (x) M on element-local vectors (p-multigrid transfers).
+//===----------------------------------------------------------------------===//
+
+def Mir_InterpolateOp : Mir_Op<"interpolate"> {
+  let summary = "per-element tensor-product map between two nodal degrees";
+  let description = [{
+    For every listed element e:
+      out[e][a][b][c] (+)= sum_{j,k,m} M[a][j] M[b][k] M[c][m] in[e][j][k][m]
+    with M the row-major `rows` x `cols` matrix (rows = nodes per axis of the
+    output, cols = of the input). Prolongation passes the GLL interpolation
+    matrix I (fine x coarse), restriction its transpose. `accumulate` adds to
+    out instead of overwriting it.
+
+    With `counting` (the bits of mir.cellwise), out is written only on the
+    element's counting copies (one copy per node) and is zero on the others: a
+    plain mir.dss of it then gives every copy of a node the same value. Without
+    it, the copies of a shared node agree only up to rounding, because each
+    element sums in its own frame's order; in single precision such a jump
+    becomes an error that the assembled residual of a Krylov solver cannot see.
+
+    Example (prolong p = 3 -> 7, x += I u):
+      mir.interpolate elements(%ids) matrix(%I) ins(%u) outs(%x)
+                      {rows = 8 : i64, cols = 4 : i64, accumulate}
+                      : memref<?xi32>, memref<?xf64>, memref<?xf64>, memref<?xf64>
+  }];
+  let arguments = (ins
+      Arg<MemRefRankOf<[I32], [1]>, "elements to visit", [MemRead]>:$elements,
+      Arg<Optional<MemRefRankOf<[I32], [1]>>, "counting bits per element", [MemRead]>:$counting,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "rows x cols, row-major", [MemRead]>:$matrix,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead]>:$input,
+      Arg<MemRefRankOf<[F32, F64], [1]>, "", [MemRead, MemWrite]>:$output,
+      I64Attr:$rows,
+      I64Attr:$cols,
+      UnitAttr:$accumulate);
+  let assemblyFormat = [{
+    `elements` `(` $elements `)` (`counting` `(` $counting^ `)`)? `matrix` `(` $matrix `)` `ins` `(` $input `)`
+    `outs` `(` $output `)` attr-dict `:` type(operands)
+  }];
+  let hasVerifier = 1;
 }
 
 #endif // MIR_OPS

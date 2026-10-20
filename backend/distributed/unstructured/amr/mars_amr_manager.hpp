@@ -13,6 +13,7 @@
 #include "mars_amr_octree_refine.hpp"
 #include "mars_amr_solution_transfer.hpp"
 #include "mars_amr_error_indicator.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -165,12 +166,12 @@ cstone::Box<RealType> computeBoundingBoxGpu(cstone::DeviceVector<RealType>& d_x,
                                              cstone::DeviceVector<RealType>& d_z,
                                              RealType padding = 0.05)
 {
-    RealType lxmin = thrust::reduce(d_x.begin(), d_x.end(), RealType(1e30), thrust::minimum<RealType>());
-    RealType lxmax = thrust::reduce(d_x.begin(), d_x.end(), RealType(-1e30), thrust::maximum<RealType>());
-    RealType lymin = thrust::reduce(d_y.begin(), d_y.end(), RealType(1e30), thrust::minimum<RealType>());
-    RealType lymax = thrust::reduce(d_y.begin(), d_y.end(), RealType(-1e30), thrust::maximum<RealType>());
-    RealType lzmin = thrust::reduce(d_z.begin(), d_z.end(), RealType(1e30), thrust::minimum<RealType>());
-    RealType lzmax = thrust::reduce(d_z.begin(), d_z.end(), RealType(-1e30), thrust::maximum<RealType>());
+    RealType lxmin = mars::reduce(d_x.begin(), d_x.end(), RealType(1e30), thrust::minimum<RealType>());
+    RealType lxmax = mars::reduce(d_x.begin(), d_x.end(), RealType(-1e30), thrust::maximum<RealType>());
+    RealType lymin = mars::reduce(d_y.begin(), d_y.end(), RealType(1e30), thrust::minimum<RealType>());
+    RealType lymax = mars::reduce(d_y.begin(), d_y.end(), RealType(-1e30), thrust::maximum<RealType>());
+    RealType lzmin = mars::reduce(d_z.begin(), d_z.end(), RealType(1e30), thrust::minimum<RealType>());
+    RealType lzmax = mars::reduce(d_z.begin(), d_z.end(), RealType(-1e30), thrust::maximum<RealType>());
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     RealType gxmin, gxmax, gymin, gymax, gzmin, gzmax;
@@ -427,7 +428,7 @@ public:
         auto marks_b = thrust::device_pointer_cast(d_marks.data());
         auto marks_e = thrust::device_pointer_cast(d_marks.data() + d_marks.size());
         size_t localRefined =
-            thrust::count_if(thrust::device, marks_b, marks_e, [] __device__(uint8_t m) { return m > 0; });
+            mars::countIf(marks_b, marks_e, [] __device__(uint8_t m) { return m > 0; });
         MPI_Allreduce(&localRefined, &stats.elementsRefined, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
 
         // Copy error to a DevVector so globalErrorNorm can iterate it

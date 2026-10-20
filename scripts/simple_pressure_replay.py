@@ -112,6 +112,8 @@ def checked_replay_record(path, name, capture_dir, capture, check, archive=None)
             and (not record.get('recovery_rounds') or record['profile'] == 'gpu-reference'))
     require(type(record.get('retain_update_expansion', False)) is bool
             and (not record.get('retain_update_expansion') or record.get('recovery_rounds')))
+    require(record.get('initial_restart_cycles', 0) in (0, 1)
+            and (not record.get('initial_restart_cycles') or record.get('retain_update_expansion')))
     if record['profile'] == 'gpu-reference':
         check['failed_check'] = 'gpu_profile_binding'
         checked_gpu_configuration(path, record, capture_dir)
@@ -200,8 +202,8 @@ def stopping_checks(reports, residual):
         require(math.isfinite(report['rtol']) and 0 < report['rtol'] < 1
                 and math.isfinite(report['atol']) and report['atol'] >= 0)
         require(not math.isfinite(report['result_reported']) or report['result_reported'] >= 0)
-    relations = {('below' if r['result_iterations'] < r['maxiter'] else
-                  'at' if r['result_iterations'] == r['maxiter'] else 'above') for r in reports}
+    relations = {('below' if r['result_iterations'] < r.get('initial_maxiter', r['maxiter']) else
+                  'at' if r['result_iterations'] == r.get('initial_maxiter', r['maxiter']) else 'above') for r in reports}
     relation = next(iter(relations)) if len(relations) == 1 else 'mixed'
     # Compare exit metadata, not rank-dependent AMG hierarchy sizes.
     keys = integer_keys + ('rtol', 'atol')
@@ -401,6 +403,11 @@ def checked_gpu_configuration(path, record, capture_dir):
     if record.get('retain_update_expansion'):
         require(requested and record.get('expansion_version') == 1)
         expected = dict(expected, retain_update_expansion=1)
+    cycles = record.get('initial_restart_cycles', 0)
+    require(type(cycles) is int and cycles in (0, 1))
+    if cycles:
+        require(record.get('retain_update_expansion') and values['miniter'] <= values['kdim'] < values['maxiter'])
+        expected = dict(expected, initial_restart_cycles=cycles)
     require(numeric_file(configuration) == expected)
     profile.validate(values)
     return values
@@ -544,7 +551,8 @@ def replay(args, output, public):
     require((profile in ('captured', 'gpu-reference') if args.backend == 'mars' else profile in ('captured', 'reference'))
             and (args.gpu_profile_pair is not None) == (profile == 'gpu-reference')
             and (not args.recovery_rounds or profile == 'gpu-reference')
-            and (not args.retain_update_expansion or args.recovery_rounds))
+            and (not args.retain_update_expansion or args.recovery_rounds)
+            and (not args.initial_restart_cycles or args.retain_update_expansion))
     profile_inputs = {}
     if profile == 'gpu-reference':
         import simple_pressure_profile as gpu_profile
@@ -554,6 +562,9 @@ def replay(args, output, public):
         configured = dict(values)
         if args.recovery_rounds: configured['recovery_rounds'] = args.recovery_rounds
         if args.retain_update_expansion: configured['retain_update_expansion'] = 1
+        if args.initial_restart_cycles:
+            require(values['miniter'] <= values['kdim'] < values['maxiter'])
+            configured['initial_restart_cycles'] = args.initial_restart_cycles
         configuration.write_text(gpu_profile.text_profile(configured))
         profile_inputs.update(hashes([configuration]))
     else:
@@ -591,6 +602,8 @@ def replay(args, output, public):
             launch['recovery_rounds'] = args.recovery_rounds
         if args.retain_update_expansion:
             launch.update(retain_update_expansion=True, expansion_version=1)
+        if args.initial_restart_cycles:
+            launch['initial_restart_cycles'] = args.initial_restart_cycles
         checked_gpu_configuration(output, launch, capture_dir)
     startup.write_json(output / 'launch-start.json', launch)
     public['failed_check'] = 'replay_launch'
@@ -609,6 +622,7 @@ def replay(args, output, public):
         require(all(controls_match(report, numeric_file(configuration)) for report in reports))
         if args.recovery_rounds:
             recovery_checks(reports, args.recovery_rounds)
+            initial_budget_checks(reports, args.initial_restart_cycles)
             require(marker(output / 'result/initial', 'mars-pressure-replay-v1') == record['ranks'])
             if any('recovery_audit_version' in report for report in reports):
                 public['failed_check'] = 'recovery_correction_audit'
@@ -644,6 +658,27 @@ def recovery_checks(reports, requested):
     return dict(stop_reason=reason, correction_used=first['recovery_rounds'] > 0,
                 separate_correction_budget_verified=True, original_controls_restored=True,
                 acceptance_scope='independent_final_residual_check')
+
+
+def initial_budget_checks(reports, cycles=0, timed=False):
+    require(cycles in (0, 1) and reports)
+    if not cycles and not timed and all('initial_maxiter' not in r for r in reports):
+        return  # Older uncapped replays did not record this check.
+    for report in reports:
+        for key in ('kdim', 'miniter', 'maxiter', 'initial_maxiter', 'result_iterations'):
+            require(math.isfinite(report[key]) and 0 <= report[key] <= 2**31-1 and report[key] == int(report[key]))
+        limit = report['kdim'] if cycles else report['maxiter']
+        require(report['initial_restart_cycles'] == cycles and report['initial_maxiter'] == limit
+                and report['initial_controls_restored'] == 1
+                and report['miniter'] <= limit <= report['maxiter']
+                and (not cycles or limit < report['maxiter'])
+                and 0 <= report['result_iterations'] <= limit)
+        if timed:
+            require(report['solve_timing_version'] == 1 and math.isfinite(report['solve_seconds'])
+                    and report['solve_seconds'] > 0)
+    keys = ('initial_restart_cycles', 'initial_maxiter', 'initial_controls_restored', 'result_iterations', 'maxiter')
+    if timed: keys += ('solve_seconds',)
+    require(all(tuple(r[k] for k in keys) == tuple(reports[0][k] for k in keys) for r in reports))
 
 
 def recovery_progress(directory, reports):
@@ -893,6 +928,7 @@ def compare(args, public):
                 checks[name]['captured_pressure_target_preserved'] = True
             public['failed_check'] = name + '_replay_stopping_report'
             if record.get('recovery_rounds'):
+                initial_budget_checks(reports, record.get('initial_restart_cycles', 0))
                 require(marker(path / 'result/initial', 'mars-pressure-replay-v1') == capture['ranks'])
                 initial = check_candidate(checker, directory, path / 'result/initial', name + '_initial', public)
                 public.setdefault('initial_residual_checks', {})[name] = initial
@@ -930,6 +966,76 @@ def compare(args, public):
                   original_amg_hierarchy_reused=False, nonlinear_convergence_verified=False)
 
 
+def compare_budget(args, public):
+    public['failed_check'] = 'capture_identity'
+    directory = args.capture_run.resolve(); capture = captured_record(directory)
+    public['failed_check'] = 'checker_executable'
+    checker = args.checker.resolve(strict=True)
+    require(checker.is_file() and os.access(str(checker), os.X_OK))
+    checker_hash = digest(checker)
+    public.update(nonlinear_convergence_verified=False, openaccel_field_parity_verified=False,
+                  performance_scope='single_replay_pair_not_scaling_or_full_flow',
+                  timing_scope='rank_max_initial_solve_plus_recovery_including_audit_excluding_setup_and_file_io')
+    arms = {}
+    for name, path, cycles in (('baseline', args.baseline_run.resolve(), 0), ('early', args.early_run.resolve(), 1)):
+        public['failed_check'] = name + '_evidence'
+        record = checked_replay_record(path, 'mars', directory, capture, {}, None)
+        require(record['profile'] == 'gpu-reference' and record.get('retain_update_expansion')
+                and record.get('initial_restart_cycles', 0) == cycles)
+        require(record['command'][-3] == str(directory / 'system'))
+        start = path / 'launch-start.json'
+        require(str(start) in record['files'])
+        saved = startup.read_json(start)
+        require(all(saved.get(key) == record.get(key) for key in
+                    ('command', 'inputs', 'environment', 'capture_sha256', 'initial_restart_cycles',
+                     'recovery_rounds', 'retain_update_expansion')))
+        loaded_libraries_match(path / 'result', capture['ranks'], capture['libraries'], Path(record['command'][-4]), {})
+        config = numeric_file(path / 'gpu-reference.settings')
+        reports = [numeric_file(rank_file(path / 'result', rank, '.report')) for rank in range(capture['ranks'])]
+        public['failed_check'] = name + '_budget_metadata'
+        require(all(controls_match(report, config) for report in reports))
+        initial_budget_checks(reports, cycles, timed=True)
+        recovery = recovery_checks(reports, record['recovery_rounds'])
+        checked_correction_audit(path, record, reports)
+        expanded = checked_expansion(path, record, reports)
+        require(expanded is not None)
+        public['failed_check'] = name + '_residual'
+        paired = expanded['candidate_available']
+        verdict = check_candidate(checker, directory, path / ('result/expansion' if paired else 'result'), name, public, expansion=paired)
+        # The convergence flag belongs to the initial solve, which may deliberately hit its cap.
+        fatal = any(r['result_fatal_error'] != 0 for r in reports) or recovery['stop_reason'] == 'fatal_backend_error'
+        accepted = verdict['residual_passed'] and not fatal
+        public.setdefault('candidates', {})[name] = dict(residual=verdict, accepted=accepted,
+                retained_candidate_checked=paired, initial_budget_verified=True, original_controls_restored=True)
+        first = reports[0]
+        arms[name] = dict(record=record, config=config, path=path, accepted=accepted,
+                          work=first['result_iterations'] + first['recovery_iterations'], seconds=first['solve_seconds'])
+    public['failed_check'] = 'controlled_pair'
+    baseline, early = arms['baseline'], arms['early']
+    require(baseline['config'] == {k: v for k, v in early['config'].items() if k != 'initial_restart_cycles'})
+    require(baseline['record']['command'][:-3] == early['record']['command'][:-3]
+            and baseline['record']['environment'] == early['record']['environment'])
+    def common_inputs(arm):
+        config_path = str(arm['path'] / 'gpu-reference.settings')
+        return {k: v for k, v in arm['record']['inputs'].items() if k != config_path}
+    require(common_inputs(baseline) == common_inputs(early))
+    for arm in arms.values():
+        verify(arm['record']['inputs']); verify(arm['record']['files'])
+    require(digest(checker) == checker_hash)
+    verify(capture['files'])
+    both = baseline['accepted'] and early['accepted']
+    work = 'lower' if early['work'] < baseline['work'] else 'equal' if early['work'] == baseline['work'] else 'higher'
+    ratio = early['seconds'] / baseline['seconds']
+    time_band = ('under_half' if ratio < .5 else 'half_to_90_percent' if ratio < .9 else
+                 'within_10_percent' if ratio <= 1.1 else 'over_110_percent')
+    public.update(comparison_status='completed', failed_check='none', same_frozen_system_verified=True,
+                  only_initial_budget_changed=True, original_pressure_target_preserved=True,
+                  total_krylov_work_relation=work, early_to_baseline_solve_time_band=time_band,
+                  both_candidates_accepted=both,
+                  outcome=('candidate_rejected' if not both else 'less_work_and_shorter_measured_solve'
+                           if work == 'lower' and ratio < .9 else 'no_clear_work_and_time_benefit'))
+
+
 def main(argv=None):
     parser = SafeParser(description=__doc__)
     sub = parser.add_subparsers(dest='action')
@@ -941,12 +1047,16 @@ def main(argv=None):
     r.add_argument('--gpu-profile-pair', type=Path)
     r.add_argument('--recovery-rounds', type=int, choices=(0, 3, 4), default=0)
     r.add_argument('--retain-update-expansion', action='store_true')
+    r.add_argument('--initial-restart-cycles', type=int, choices=(0, 1), default=0)
     r.add_argument('--executable', type=Path); r.add_argument('--build-cache', type=Path); r.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('compare'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--mars-run', type=Path, required=True); c.add_argument('--reference-run', type=Path, required=True)
     c.add_argument('--mars-input-archive', type=Path); c.add_argument('--reference-input-archive', type=Path)
     c.add_argument('--checker', type=Path, required=True); c.add_argument('--output', type=Path, required=True)
     c.add_argument('--recovery-progress', action='store_true')
+    c = sub.add_parser('compare-budget'); c.add_argument('--capture-run', type=Path, required=True)
+    c.add_argument('--baseline-run', type=Path, required=True); c.add_argument('--early-run', type=Path, required=True)
+    c.add_argument('--checker', type=Path, required=True); c.add_argument('--output', type=Path, required=True)
     c = sub.add_parser('archive-inputs'); c.add_argument('--capture-run', type=Path, required=True)
     c.add_argument('--replay-run', type=Path, required=True); c.add_argument('--output-dir', type=Path, required=True)
     c = sub.add_parser('inspect'); c.add_argument('--replay-run', type=Path, required=True)
@@ -955,10 +1065,12 @@ def main(argv=None):
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='preflight')
     destination = None
     try:
-        if args.action in ('compare', 'inspect'):
+        if args.action in ('compare', 'compare-budget', 'inspect'):
             destination = args.output
             if args.action == 'compare':
                 compare(args, public)
+            elif args.action == 'compare-budget':
+                compare_budget(args, public)
             else:
                 inspect_replay(args.replay_run.resolve(), public)
         else:
@@ -971,7 +1083,7 @@ def main(argv=None):
             else:
                 archive_inputs(args, directory, public)
     except Exception:
-        if args.action in ('compare', 'inspect'):
+        if args.action in ('compare', 'compare-budget', 'inspect'):
             destination = args.output
         elif destination is None:
             print('ERROR: new private output directory required.', file=sys.stderr); return 1

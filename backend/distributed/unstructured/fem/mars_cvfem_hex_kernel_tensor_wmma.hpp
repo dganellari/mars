@@ -2,7 +2,10 @@
 
 #include "mars_cvfem_hex_kernel.hpp"
 #include "mars_cvfem_hex_kernel_common.hpp"
+#include "../utils/mars_gpu_mma.cuh"
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
 #include <mma.h>
+#endif
 #include <type_traits>
 
 namespace mars {
@@ -113,19 +116,27 @@ cvfem_hex_assembly_kernel_tensor_wmma(
     static_assert(std::is_same<RealType, double>::value,
         "WMMA FP64 kernel requires RealType=double");
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-    // FP64 8x8x4 WMMA available on SM80+ (A100, H100, GH200) via standard <mma.h>.
-    // On SM90a (GH200) WGMMA m64n8k4 would give higher throughput — see notes.
+#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800) || defined(MARS_HAVE_FP64_MFMA)
+    // FP64 8x8x4 WMMA on SM80+ (A100, H100, GH200) via standard <mma.h>; FP64 MFMA on AMD
+    // (mars_gpu_mma.cuh). On SM90a (GH200) WGMMA m64n8k4 would give higher throughput — see notes.
 
-    using namespace nvcuda;
+    constexpr int WarpsPerBlock = BlockSize / laneGroup;
 
-    constexpr int WarpsPerBlock = BlockSize / 32;
-
-    const int    warpId  = threadIdx.x / 32;
-    const int    laneId  = threadIdx.x % 32;
-    const size_t elemIdx = (size_t)blockIdx.x * WarpsPerBlock + warpId;
-
-    if (elemIdx >= numElements) return;
+    const int    warpId   = threadIdx.x / laneGroup;
+    const int    laneId   = threadIdx.x % laneGroup;
+    const size_t elemSlot = (size_t)blockIdx.x * WarpsPerBlock + warpId;
+#if defined(MARS_HAVE_FP64_MFMA)
+    // The two elements of a wavefront issue the matrix instructions together, so they return together;
+    // an element past the end recomputes the last one and skips the scatter.
+    static_assert(BlockSize % 64 == 0, "AMD: both elements of a wavefront run the matrix instructions together");
+    if ((size_t)blockIdx.x * WarpsPerBlock + (warpId & ~1) >= numElements) return;
+    const bool   active  = elemSlot < numElements;
+    const size_t elemIdx = active ? elemSlot : numElements - 1;
+#else
+    if (elemSlot >= numElements) return;
+    constexpr bool active  = true;
+    const size_t   elemIdx = elemSlot;
+#endif
 
     extern __shared__ CvfemWmmaWarpData warp_data[];
     CvfemWmmaWarpData& w = warp_data[warpId];
@@ -146,18 +157,15 @@ cvfem_hex_assembly_kernel_tensor_wmma(
     // =========================================================================
     // Phase 2 — Distribute loads + zero-init all accumulators
     //
-    // smem_A[96] + smem_B[96] = 192 doubles → 6 doubles/lane (exact).
+    // smem_A[96] and smem_B[96]: 3 doubles of each per lane.
     // rhs[8] + lhs[64] = 72 doubles; lanes 0-7 zero rhs + lhs (9 doubles each).
     // smem_C is written by WMMA before it is read, so no init needed.
     // =========================================================================
 
-    // Zero smem_A and smem_B: 192 doubles / 32 lanes = 6 doubles per lane
     {
-        const int base = laneId * 6;
-        w.smem_A[base]     = 0.0;  w.smem_A[base + 1] = 0.0;  w.smem_A[base + 2] = 0.0;
-        w.smem_A[base + 3] = 0.0;  w.smem_A[base + 4] = 0.0;  w.smem_A[base + 5] = 0.0;
-        w.smem_B[base]     = 0.0;  w.smem_B[base + 1] = 0.0;  w.smem_B[base + 2] = 0.0;
-        w.smem_B[base + 3] = 0.0;  w.smem_B[base + 4] = 0.0;  w.smem_B[base + 5] = 0.0;
+        const int base = laneId * 3;
+        w.smem_A[base] = 0.0;  w.smem_A[base + 1] = 0.0;  w.smem_A[base + 2] = 0.0;
+        w.smem_B[base] = 0.0;  w.smem_B[base + 1] = 0.0;  w.smem_B[base + 2] = 0.0;
     }
 
     // Lanes 0-7: load node data + zero rhs and lhs row
@@ -191,7 +199,7 @@ cvfem_hex_assembly_kernel_tensor_wmma(
         w.areaVec[ip][2]  = d_areaVec_z[elemIdx * 12 + ip];
     }
 
-    __syncwarp();
+    syncWarp();
 
     // =========================================================================
     // Phase 3 — Parallel SCS compute: diffusion tiles + advection + RHS
@@ -292,13 +300,26 @@ cvfem_hex_assembly_kernel_tensor_wmma(
         atomicAdd(&w.lhs[nodeR][nodeR], -lhsfac_R);
     }
 
-    __syncwarp();
+    syncWarp();
 
     // =========================================================================
     // Phase 4 — WMMA: C[8x8] = sum_{t=0}^{2} A_t[8x4] * B_t[4x8]
     //   = S^T[8x12] * D[12x8] = lhs_diff[8x8]
     // All 32 lanes participate — WMMA requires the full warp.
     // =========================================================================
+#if defined(MARS_HAVE_FP64_MFMA)
+    {
+        // the wavefront's two elements are adjacent in warp_data
+        CvfemWmmaWarpData* pair = &w - (warpId & 1);
+        double acc[2] = {0.0, 0.0};
+        #pragma unroll
+        for (int t = 0; t < 3; ++t)
+            mfmaPairStep(acc, pair[0].smem_A + t * 32, pair[0].smem_B + t * 32,
+                              pair[1].smem_A + t * 32, pair[1].smem_B + t * 32);
+        mfmaPairStore(acc, pair[0].smem_C, pair[1].smem_C);
+    }
+#else
+    using namespace nvcuda;
     wmma::fragment<wmma::accumulator, 8, 8, 4, double> c_frag;
     wmma::fill_fragment(c_frag, 0.0);
 
@@ -312,8 +333,9 @@ cvfem_hex_assembly_kernel_tensor_wmma(
     }
     // Store col-major: smem_C[j*8+i] = C[i][j] = lhs_diff[i][j]
     wmma::store_matrix_sync(w.smem_C, c_frag, 8, wmma::mem_col_major);
+#endif
 
-    __syncwarp();
+    syncWarp();
 
     // =========================================================================
     // Phase 5 — Merge diffusion lhs (from smem_C) into w.lhs
@@ -326,12 +348,12 @@ cvfem_hex_assembly_kernel_tensor_wmma(
             w.lhs[i][j] += w.smem_C[j * 8 + i];
     }
 
-    __syncwarp();
+    syncWarp();
 
     // =========================================================================
     // Phase 6 — Parallel CSR scatter (lanes 0-7, one node row each)
     // =========================================================================
-    if (laneId < 8) {
+    if (active && laneId < 8) {
         const int     i       = laneId;
         const int     row_dof = w.dofs[i];
         const uint8_t own_i   = w.own[i];
@@ -484,13 +506,13 @@ cvfem_hex_assembly_kernel_wgmma(
     static_assert(BlockSize == 128, "WGMMA kernel requires BlockSize=128 (1 warpgroup per block)");
     static_assert(std::is_same<RealType, double>::value, "WGMMA FP64 kernel requires RealType=double");
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800) || defined(MARS_HAVE_FP64_MFMA)
     // Phases 1-3 are common to both WGMMA (SM90a) and WMMA (SM80+) fallback paths.
     // Phase 4 onward splits on __CUDA_ARCH_FEAT_SM90_ALL.
 
     // ---- thread / element indices ----
-    const int    warpId     = threadIdx.x / 32;
-    const int    laneId     = threadIdx.x % 32;
+    const int    warpId     = threadIdx.x / laneGroup;
+    const int    laneId     = threadIdx.x % laneGroup;
     const int    elemLocalA = warpId * 2;          // primary element (lanes 0-11 handle its SCS)
     const int    elemLocalB = warpId * 2 + 1;      // secondary element (lanes 16-27)
     const size_t elemGlobalA = (size_t)blockIdx.x * 8 + elemLocalA;
@@ -682,7 +704,6 @@ cvfem_hex_assembly_kernel_wgmma(
     // =========================================================================
 
     // Phase 4 — Fill WMMA tiles cooperatively
-    using namespace nvcuda;
 
     // A tiles (S^T[8×4], element-independent, col-major ldm=8):
     // g.s[t][k*8+i] = S^T[i][k]
@@ -711,6 +732,23 @@ cvfem_hex_assembly_kernel_wgmma(
 
     __syncthreads();
 
+#if defined(MARS_HAVE_FP64_MFMA)
+    // Phase 5 — MFMA: the two warps of a wavefront run their A elements together, then their B elements.
+    // An element past the end computes scratch values into its own g.c slot; the scatter skips it.
+    {
+        const int warp0 = warpId & ~1;
+        #pragma unroll
+        for (int step = 0; step < 2; ++step) {
+            const int e0 = warp0 * 2 + step, e1 = (warp0 + 1) * 2 + step;
+            double acc[2] = {0.0, 0.0};
+            #pragma unroll
+            for (int t = 0; t < 3; ++t)
+                mfmaPairStep(acc, &g.s[t][0], &g.a[t][e0 * 32], &g.s[t][0], &g.a[t][e1 * 32]);
+            mfmaPairStore(acc, &g.c[e0 * 64], &g.c[e1 * 64]);
+        }
+    }
+#else
+    using namespace nvcuda;
     // Phase 5 — WMMA per warp: elemA then elemB (both uniform across warp → no divergence)
     if (validA) {
         wmma::fragment<wmma::accumulator, 8, 8, 4, double> c_frag;
@@ -739,6 +777,7 @@ cvfem_hex_assembly_kernel_wgmma(
         }
         wmma::store_matrix_sync(&g.c[elemLocalB * 64], c_frag, 8, wmma::mem_col_major);
     }
+#endif
 
     __syncthreads();
 
@@ -796,7 +835,7 @@ cvfem_hex_assembly_kernel_wgmma(
     (void)d_grad_phi_x; (void)d_grad_phi_y; (void)d_grad_phi_z;
     (void)d_mdot; (void)d_areaVec_x; (void)d_areaVec_y; (void)d_areaVec_z;
     (void)d_node_to_dof; (void)d_ownership; (void)matrix; (void)d_rhs;
-#endif // __CUDA_ARCH__ >= 800
+#endif // FP64 matrix instructions
 }
 
 } // namespace fem

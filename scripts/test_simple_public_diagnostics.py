@@ -22,6 +22,30 @@ def summarize(text, exit_text='255'):
 
 
 class PublicDiagnosticsTests(unittest.TestCase):
+    def test_timeout_retains_per_rank_progress_without_acceptance(self):
+        text = ('[simple-progress] rank=0 stage=hypre_setup\n'
+                '[simple-progress] rank=1 stage=hypre_solve\n'
+                'slurmstepd: error: DUE TO TIME LIMIT\n')
+        result = summarize(text, '143')
+        self.assertEqual(result['simple_progress_last_stage_by_rank'], {'0': 'hypre_setup', '1': 'hypre_solve'})
+        self.assertEqual(result['run_status'], 'failed')
+        self.assertTrue(result['scheduler_time_limit_seen'])
+        self.assertIsNone(result['solver_accepted'])
+
+    def test_progress_rejects_private_or_malformed_text(self):
+        cases = ('rank=0 stage=SECRET', 'rank=4 stage=hypre_setup', 'rank=00 stage=hypre_setup',
+                 'rank=0 stage=hypre_setup SECRET', 'rank=SECRET stage=hypre_setup')
+        for text in cases:
+            with self.subTest(text=text):
+                result = summarize('[simple-progress] ' + text, '')
+                self.assertEqual(result['simple_progress_last_stage_by_rank'], {})
+                self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_output_progress_alone_is_not_convergence(self):
+        result = summarize('[simple-progress] rank=0 stage=flow_output_complete', '')
+        self.assertEqual(result['run_status'], 'incomplete')
+        self.assertIsNone(result['solver_accepted'])
+
     def test_pressure_failure(self):
         result = summarize(HYPRE + '\n' + SIMPLE)
         self.assertEqual(result['linear_stage'], 'pressure')
@@ -372,7 +396,8 @@ class PublicDiagnosticsTests(unittest.TestCase):
     def test_output_vocabulary_never_contains_input_text_or_numbers(self):
         allowed = {'mars-simple-public-diagnostics-v1', 'incomplete', 'failed',
                    'converged', 'iteration_limit', 'unknown', 'pressure', 'momentum',
-                   'GMRES', 'FlexGMRES', 'native', 'vendor'}
+                   'GMRES', 'FlexGMRES', 'native', 'vendor',
+                   'last_entered_host_stage_not_gpu_completion_or_convergence'}
         private = 'SECRET-path-boundary-value'
         text = (private + '\n' + HYPRE + ' ' + private + '=123456789\n' + SIMPLE
                 + '\n[hypre-spmv] vendor_requested=' + private
@@ -388,6 +413,9 @@ class PublicDiagnosticsTests(unittest.TestCase):
                     self.assertTrue(all(v in diagnostic.SCHEDULER_MESSAGES.values() for v in value))
                 elif key == 'process_exit_code':
                     self.assertTrue(value is None or type(value) is int and 0 <= value <= 255)
+                elif key == 'simple_progress_last_stage_by_rank':
+                    self.assertTrue(all(rank in ('0', '1', '2', '3') and stage in diagnostic.PROGRESS_STAGES
+                                        for rank, stage in value.items()))
                 else:
                     self.assertTrue(value is None or type(value) is bool
                                     or value in allowed or value in diagnostic.SOFTWARE_ERRORS)

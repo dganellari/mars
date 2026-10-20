@@ -13,10 +13,11 @@
 #include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifndef MARS_DISABLE_NVTX
 #include <nvToolsExt.h>
 #define MARS_NVTX_PUSH(name) nvtxRangePush(name)
@@ -231,10 +232,10 @@ int main(int argc, char** argv) {
     };
 
     auto resetSystem = [&]() {
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_values.data()),
                      thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_rhs.data()),
                      thrust::device_pointer_cast(d_rhs.data() + numDofs), 0.0);
     };
@@ -285,11 +286,11 @@ int main(int argc, char** argv) {
     MPI_Iallreduce(sendBuf, recvSum, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD, &req[2]);
 
     auto sq = [] __host__ __device__ (RealType x) { return x * x; };
-    RealType norm2 = thrust::transform_reduce(
+    RealType norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_values.data()),
         thrust::device_pointer_cast(d_values.data() + nnz),
         sq, RealType(0.0), thrust::plus<RealType>());
-    RealType rhs_norm2 = thrust::transform_reduce(
+    RealType rhs_norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_rhs.data()),
         thrust::device_pointer_cast(d_rhs.data() + numDofs),
         sq, RealType(0.0), thrust::plus<RealType>());

@@ -5,6 +5,9 @@
 #include "mars_cvfem_hex_kernel_optimized.hpp"
 #include "mars_cvfem_hex_kernel_shmem.hpp"
 #include "mars_cvfem_hex_kernel_tensor.hpp"
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+#include "mars_cvfem_hex_kernel_tensor_early.hpp"
+#endif
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
@@ -12,7 +15,7 @@
 #include "mars_cvfem_hex_kernel_smem_cache.hpp"
 #include "mars_cvfem_node_data.hpp"
 #include "mars_cvfem_coloring.hpp"
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {
@@ -44,6 +47,9 @@ public:
         cudaStream_t stream = 0;
         const CvfemColoringData* coloring  = nullptr; // required for TensorColored
         const NodeData*          nodeData  = nullptr; // required for TensorAoS
+        // SmemCache node cache per block: 512, or 64, which sends most nodes of a block down the path for
+        // nodes that do not fit (read from global memory); the kernel check uses it to test that path
+        int smemCacheNodes = 512;
     };
 
     // Assemble CVFEM system with graph-based sparsity and diagonal lumping
@@ -131,9 +137,10 @@ public:
                 break;
 
             case CvfemKernelVariant::Team: {
-                // Team kernel uses 32 threads per element (one warp per element)
-                int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
-                cvfem_hex_assembly_kernel_team<KeyType, RealType, 256><<<teamBlocks, blockSize, 0, config.stream>>>(
+                // 32 lanes per element; its shared arrays are sized for 256 threads, whatever --block-size says
+                constexpr int teamBlock = 256;
+                const auto teamBlocks = unsigned((numElements * size_t(laneGroup) + teamBlock - 1) / teamBlock);
+                cvfem_hex_assembly_kernel_team<KeyType, RealType, teamBlock><<<teamBlocks, teamBlock, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -148,8 +155,13 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // Scalar full 8x8 local matrix — current best on GH200
+                // Release finished rows early on HIP to reduce register spills.
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+#endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -221,7 +233,9 @@ public:
             case CvfemKernelVariant::TensorPeripLb2:
                 // Same as TensorPerip + __launch_bounds__(256,2).
                 // Forces 2 blocks/SM with ~7 regs of forced spilling (vs ~44 for tensor+lb2).
-                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                // The launch bounds allow at most 256 threads, whatever config.blockSize says.
+                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -238,23 +252,29 @@ public:
                 // Smem node cache: deduplicate + cooperatively load ~400 unique nodes/block.
                 // Uses dynamic smem (>48 KB limit): unlock via MaxDynamicSharedMemorySize.
                 // Node reads: ~30 cycle L2 → ~5 cycle smem. rowPtr/diagPtr also smem-cached.
-                constexpr int    SC_HT   = 1024;
-                constexpr int    SC_MN   = 512;
-                constexpr size_t smemSz  = smemCacheBytes<SC_HT, SC_MN>();
-                auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, 256, SC_HT, SC_MN>;
-                cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
-                cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
-                scPtr<<<numBlocks, blockSize, smemSz, config.stream>>>(
-                    d_conn0, d_conn1, d_conn2, d_conn3,
-                    d_conn4, d_conn5, d_conn6, d_conn7,
-                    numElements,
-                    d_x, d_y, d_z,
-                    d_gamma, d_phi, d_beta,
-                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
-                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
-                    d_node_to_dof, d_ownership,
-                    d_matrix, d_rhs
-                );
+                // The kernel indexes elements with its BlockSize, so it is launched with exactly that many
+                // threads, whatever config.blockSize says.
+                auto launch = [&]<int SC_MN>() {
+                    constexpr int    SC_HT  = 2048;
+                    constexpr int    SC_BS  = 256;
+                    constexpr size_t smemSz = smemCacheBytes<SC_HT, SC_MN>();
+                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
+                    cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
+                    cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
+                    scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
+                        d_conn0, d_conn1, d_conn2, d_conn3,
+                        d_conn4, d_conn5, d_conn6, d_conn7,
+                        numElements,
+                        d_x, d_y, d_z,
+                        d_gamma, d_phi, d_beta,
+                        d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                        d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                        d_node_to_dof, d_ownership,
+                        d_matrix, d_rhs
+                    );
+                };
+                if (config.smemCacheNodes == 64) launch.template operator()<64>();
+                else launch.template operator()<512>();
                 break;
             }
 
@@ -386,7 +406,12 @@ public:
                 break;
 
             case CvfemKernelVariant::Tensor:
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -464,8 +489,9 @@ public:
             }
 
             case CvfemKernelVariant::Team: {
-                int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
-                cvfem_hex_assembly_kernel_team<KeyType, RealType><<<teamBlocks, blockSize, 0, config.stream>>>(
+                constexpr int teamBlock = 256;
+                const auto teamBlocks = unsigned((numElements * size_t(laneGroup) + teamBlock - 1) / teamBlock);
+                cvfem_hex_assembly_kernel_team<KeyType, RealType, teamBlock><<<teamBlocks, teamBlock, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,

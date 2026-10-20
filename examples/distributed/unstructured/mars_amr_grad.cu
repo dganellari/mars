@@ -32,7 +32,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/execution_policy.h>
 
 #include <memory>
 #include <mpi.h>
@@ -42,6 +42,7 @@
 #include <limits>
 #include <vector>
 #include <algorithm>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -400,8 +401,7 @@ void probeGradAt(const cstone::DeviceVector<RealType>& d_x,
                              d_gx.data(), d_gy.data(), d_gz.data(),
                              d_nodeToDof.data(), d_ownership.data()};
     R init{RealType(1e30), RealType(0), RealType(0), RealType(0)};
-    R best = thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numNodes),
+    R best = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numNodes),
         op, init, MinByDist<RealType>());
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -759,7 +759,7 @@ int main(int argc, char** argv)
     auto sumLocal = [&](const cstone::DeviceVector<RealType>& v)
     {
         auto p = thrust::device_pointer_cast(v.data());
-        return thrust::reduce(thrust::device, p, p + s.numOwnedDofs, RealType(0));
+        return mars::reduce(p, p + s.numOwnedDofs, RealType(0));
     };
     RealType locErrInt = sumLocal(d_errSqInt);
     RealType locAnaInt = sumLocal(d_anaSqInt);
@@ -790,7 +790,7 @@ int main(int argc, char** argv)
         auto countBegin = thrust::counting_iterator<size_t>(0);
         auto countEnd   = thrust::counting_iterator<size_t>(s.nodeCount);
 
-        locMaxInt = thrust::transform_reduce(thrust::device, countBegin, countEnd,
+        locMaxInt = mars::transformReduce(countBegin, countEnd,
             [ownPtr, dofPtr, gxPtr, gyPtr, gzPtr, bndPtr] __device__ (size_t i) -> RealType {
                 if (ownPtr[i] != 1) return RealType(0);
                 int dof = dofPtr[i];
@@ -798,7 +798,7 @@ int main(int argc, char** argv)
                 RealType gx = gxPtr[i], gy = gyPtr[i], gz = gzPtr[i];
                 return sqrt(gx * gx + gy * gy + gz * gz);
             }, RealType(0), thrust::maximum<RealType>());
-        locMaxBnd = thrust::transform_reduce(thrust::device, countBegin, countEnd,
+        locMaxBnd = mars::transformReduce(countBegin, countEnd,
             [ownPtr, dofPtr, gxPtr, gyPtr, gzPtr, bndPtr] __device__ (size_t i) -> RealType {
                 if (ownPtr[i] != 1) return RealType(0);
                 int dof = dofPtr[i];
@@ -806,7 +806,7 @@ int main(int argc, char** argv)
                 RealType gx = gxPtr[i], gy = gyPtr[i], gz = gzPtr[i];
                 return sqrt(gx * gx + gy * gy + gz * gz);
             }, RealType(0), thrust::maximum<RealType>());
-        locMaxErrInt = thrust::transform_reduce(thrust::device, countBegin, countEnd,
+        locMaxErrInt = mars::transformReduce(countBegin, countEnd,
             [ownPtr, dofPtr, gxPtr, gyPtr, gzPtr, xPtr, yPtr, zPtr, bndPtr, fk, ka, kb, kc] __device__ (size_t i) -> RealType {
                 if (ownPtr[i] != 1) return RealType(0);
                 int dof = dofPtr[i];

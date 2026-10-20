@@ -12,7 +12,7 @@
 #include <mpi.h>
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
-#include <cuda_runtime.h>
+#include "mars_gpu_runtime.hpp"
 #include <tuple>
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_element_traits.hpp"

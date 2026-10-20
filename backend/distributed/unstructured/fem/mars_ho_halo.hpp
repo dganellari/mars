@@ -28,8 +28,9 @@
 #include <cstdio>
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_hex_face_orientations.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include <cstdint>
 #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
@@ -213,8 +214,7 @@ inline void resolveHoDofOwnershipLocal(const std::vector<std::array<int,8>>& ele
     }
 }
 
-#ifdef __CUDACC__
-
+#if defined(__CUDACC__) || defined(__HIPCC__)
 // ALL-GPU resolveHoDofOwnership: device-resident, point-to-point, CUDA-aware MPI.
 // Bit-identical result to the host resolveHoDofOwnership above (MIN-RANK-AMONG-HOLDERS)
 // but with NO host round-trip on the per-DOF arrays. The inputs are the device columns
@@ -1221,7 +1221,7 @@ public:
     mutable std::vector<MPI_Request> fwdReq_;
     mutable std::vector<MPI_Request> revReq_;
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
     void uploadDevice()
     {
         // buildDevice already leaves the lists device-resident -> nothing to upload.
@@ -1353,7 +1353,7 @@ public:
         if (nBoundary > 0) {
             // compact (peer, localDof) for ghosts (peer >= 0). packLocal is the boundary
             // local id in slot order; ghostPeer is the peer index (or -1).
-            nGhost = (int)thrust::count_if(ghostPeer.begin(), ghostPeer.end(),
+            nGhost = (int)mars::countIf(ghostPeer.begin(), ghostPeer.end(),
                                            [] __device__ (int pe) { return pe >= 0; });
             thrust::device_vector<int> gPeer(nGhost > 0 ? nGhost : 1), gLocal(nGhost > 0 ? nGhost : 1);
             if (nGhost > 0) {

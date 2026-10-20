@@ -6,7 +6,7 @@ Halo management in MARS handles ghost-element / ghost-DOF data exchange for dist
 |---|---|---|
 | `HaloData` | node ownership flags | classifies each local node as owned (`1`) or ghost (`0`) |
 | `cstone::Domain` | element halos | element-keyed exchange for connectivity, gradients, per-element scalars |
-| `NodeHaloTopology` | per-peer node send/recv lists | per-CG-iteration node-DOF exchange via direct CUDA-aware MPI |
+| `NodeHaloTopology` | per-peer node send/recv lists | per-CG-iteration node-DOF exchange via direct GPU-aware MPI |
 
 Each layer is built lazily: `HaloData` and `NodeHaloTopology` are constructed on the first call to `getNodeOwnershipMap()` (which triggers `ensureHalo()`). The cstone element halo is built during `ElementDomain::sync()`.
 
@@ -71,7 +71,7 @@ This element-halo path is **not** used for per-CG-iteration ghost-DOF exchange i
 
 ## Per-node halo: `exchangeNodeHalo`
 
-The hot path for distributed solvers. Direct CUDA-aware MPI on packed device buffers:
+The hot path for distributed solvers. Direct GPU-aware MPI on packed device buffers:
 
 ```cpp
 template<class VectorType>
@@ -99,7 +99,7 @@ solver.solve(A, b, x);
 Each call:
 
 1. Pack via `thrust::for_each` over `sendNodeIds_`.
-2. CUDA-aware `MPI_Isend`/`MPI_Irecv` on device pointers (no host round-trip).
+2. GPU-aware `MPI_Isend`/`MPI_Irecv` on device pointers (no host round-trip).
 3. `MPI_Waitall`.
 4. Scatter via `thrust::for_each` over `recvNodeIds_`.
 

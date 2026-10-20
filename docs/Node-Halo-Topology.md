@@ -1,6 +1,6 @@
 # Node Halo Topology
 
-`NodeHaloTopology` is a per-rank table of "which local nodes do I send to which peer, and which local nodes do I receive from which peer." It enables direct CUDA-aware MPI exchange of node-keyed DOF arrays without going through the cstone element halo.
+`NodeHaloTopology` is a per-rank table of "which local nodes do I send to which peer, and which local nodes do I receive from which peer." It enables direct GPU-aware MPI exchange of node-keyed DOF arrays without going through the cstone element halo.
 
 For the semantics of node ownership and the broader halo layering, see [Halo Management](Halo-Management.md).
 
@@ -113,7 +113,7 @@ Five steps:
 
 1. **Zero ghost slots.** Nodes never reached by the receive list (rare, but possible on weird partitions) keep `0` instead of stale memory.
 2. **Pack.** `thrust::for_each` over `sendNodeIds_` gathers `nodeArray[nodeToDof[localId]]` into `sendBuf_`.
-3. **Post receives + sends.** Per-peer non-blocking `MPI_Irecv` and `MPI_Isend` on **device pointers** (CUDA-aware MPI; no host round-trip).
+3. **Post receives + sends.** Per-peer non-blocking `MPI_Irecv` and `MPI_Isend` on **device pointers** (GPU-aware MPI; no host round-trip).
 4. **`MPI_Waitall`.**
 5. **Scatter.** `thrust::for_each` over `recvNodeIds_` writes received values back into `nodeArray[nodeToDof[localId]]`.
 

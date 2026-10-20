@@ -8,7 +8,10 @@
 //
 //   gpu.thread_id x       -> call @mir_emu_lane()        (y, z -> 0: 32x1x1 block)
 //   gpu.block_id x        -> call @mir_emu_block()       (y, z -> 0)
-//   gpu.shuffle idx f64   -> call @mir_emu_shfl(v, src)
+//   gpu.grid_dim x        -> call @mir_emu_grid()        (y, z -> 1)
+//   gpu.block_dim x       -> 32                          (y, z -> 1)
+//   gpu.shuffle f64/i32   -> call @mir_emu_shfl(v, src) / @mir_emu_shfl_i32(v, src),
+//                            src = offset (idx) or lane ^ offset (xor)
 //   gpu.barrier           -> call @mir_emu_barrier()
 //   nvgpu.mma.sync m8n8k4 -> call @mir_emu_mma(a, b, c0, c1), @mir_emu_mma_hi()
 //   {mir.workgroup} arg   -> memref.get_global of one process-wide buffer. The
@@ -16,6 +19,7 @@
 //                            the block's. It is filled with NaN at entry: GPU
 //                            shared memory starts undefined, and a read before
 //                            any write must not pass by reading a lucky zero.
+//                            (Integer buffers get all bits set.)
 
 #include "mir/MirPasses.h"
 
@@ -70,8 +74,10 @@ struct EmulateWarpPass
     };
     declare("mir_emu_lane", {}, {idx});
     declare("mir_emu_block", {}, {idx});
+    declare("mir_emu_grid", {}, {idx});
     declare("mir_emu_barrier", {}, {});
     declare("mir_emu_shfl", {f64, i32}, {f64});
+    declare("mir_emu_shfl_i32", {i32, i32}, {i32});
     declare("mir_emu_mma", {f64, f64, f64, f64}, {f64});
     declare("mir_emu_mma_hi", {}, {f64});
 
@@ -83,7 +89,7 @@ struct EmulateWarpPass
     for (func::FuncOp fn : kernels) {
       SmallVector<Operation *> ops;
       fn.walk([&](Operation *op) {
-        if (isa<gpu::ThreadIdOp, gpu::BlockIdOp, gpu::ShuffleOp, gpu::BarrierOp,
+        if (isa<gpu::ThreadIdOp, gpu::BlockIdOp, gpu::GridDimOp, gpu::BlockDimOp, gpu::ShuffleOp, gpu::BarrierOp,
                 nvgpu::MmaSyncOp>(op))
           ops.push_back(op);
       });
@@ -103,14 +109,29 @@ struct EmulateWarpPass
                         ? call("mir_emu_block", {idx}, {}).getResult(0)
                         : b.create<arith::ConstantIndexOp>(loc, 0).getResult();
           t.replaceAllUsesWith(v);
+        } else if (auto t = dyn_cast<gpu::GridDimOp>(op)) {
+          Value v = t.getDimension() == gpu::Dimension::x
+                        ? call("mir_emu_grid", {idx}, {}).getResult(0)
+                        : b.create<arith::ConstantIndexOp>(loc, 1).getResult();
+          t.replaceAllUsesWith(v);
+        } else if (auto t = dyn_cast<gpu::BlockDimOp>(op)) {
+          t.replaceAllUsesWith(b.create<arith::ConstantIndexOp>(
+                                    loc, t.getDimension() == gpu::Dimension::x ? 32 : 1)
+                                   .getResult());
         } else if (auto s = dyn_cast<gpu::ShuffleOp>(op)) {
-          if (s.getMode() != gpu::ShuffleMode::IDX ||
-              !s.getValue().getType().isF64()) {
-            s.emitOpError("mir-emulate-warp: only f64 idx shuffles are emulated");
+          const bool isF64 = s.getValue().getType().isF64();
+          if ((s.getMode() != gpu::ShuffleMode::IDX && s.getMode() != gpu::ShuffleMode::XOR) ||
+              (!isF64 && !s.getValue().getType().isInteger(32))) {
+            s.emitOpError("mir-emulate-warp: only idx/xor shuffles of f64/i32 are emulated");
             return signalPassFailure();
           }
-          Value r = call("mir_emu_shfl", {f64}, {s.getValue(), s.getOffset()})
-                        .getResult(0);
+          Value src = s.getOffset();
+          if (s.getMode() == gpu::ShuffleMode::XOR) {
+            Value lane = b.create<arith::IndexCastOp>(loc, i32, call("mir_emu_lane", {idx}, {}).getResult(0));
+            src = b.create<arith::XOrIOp>(loc, lane, src);
+          }
+          Value r = isF64 ? call("mir_emu_shfl", {f64}, {s.getValue(), src}).getResult(0)
+                          : call("mir_emu_shfl_i32", {i32}, {s.getValue(), src}).getResult(0);
           s.getShuffleResult().replaceAllUsesWith(r);
           s.getValid().replaceAllUsesWith(
               b.create<arith::ConstantIntOp>(loc, 1, 1).getResult());
@@ -179,7 +200,14 @@ struct EmulateWarpPass
           eb.setInsertionPoint(ifOp);
           Value g = eb.create<memref::GetGlobalOp>(loc, ty, name);
           fn.getArgument(i).replaceAllUsesWith(g);
-          tb.create<linalg::FillOp>(loc, ValueRange{nan}, ValueRange{g});
+          Type et = ty.getElementType();
+          Value poison = nan;
+          if (isa<IntegerType>(et))
+            poison = tb.create<arith::ConstantIntOp>(loc, -1, et.getIntOrFloatBitWidth());
+          else if (!et.isF64())
+            poison = tb.create<arith::ConstantOp>(
+                loc, tb.getFloatAttr(et, std::numeric_limits<double>::quiet_NaN()));
+          tb.create<linalg::FillOp>(loc, ValueRange{poison}, ValueRange{g});
         }
         b.setInsertionPointAfter(ifOp);
         b.create<func::CallOp>(loc, "mir_emu_barrier", TypeRange{}, ValueRange{});
@@ -187,6 +215,15 @@ struct EmulateWarpPass
           fn.eraseArgument(i);
       }
       fn->setAttr("llvm.emit_c_interface", UnitAttr::get(ctx));
+      // <kernel>__threads(): the block size the harness launches.
+      auto threadsAttr = fn->getAttrOfType<IntegerAttr>("mir.block_threads");
+      OpBuilder tb(ctx);
+      tb.setInsertionPointAfter(fn);
+      auto q = tb.create<func::FuncOp>(fn.getLoc(), (fn.getName() + "__threads").str(),
+                                       tb.getFunctionType({}, {tb.getI64Type()}));
+      OpBuilder qb = OpBuilder::atBlockBegin(q.addEntryBlock());
+      qb.create<func::ReturnOp>(
+          fn.getLoc(), ValueRange{qb.create<arith::ConstantIntOp>(fn.getLoc(), threadsAttr ? threadsAttr.getInt() : 32, 64)});
     }
   }
 };

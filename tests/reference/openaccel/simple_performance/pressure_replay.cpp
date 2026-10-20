@@ -8,12 +8,19 @@
 #include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_capture.hpp"
 #include <iostream>
 #include <utility>
+#include <chrono>
 #include <dlfcn.h>
 
 namespace frozen=mars::segregated::frozen;
 namespace settings=mars::fem::pressure_settings;
 using settings::checked;
 #include "pressure_replay_recovery.hpp"
+
+void finish_device_work() {
+#ifdef __CUDACC__
+    checked(hypre_ForceSyncComputeStream());
+#endif
+}
 
 template<class T> struct Input {
     T* p=nullptr;
@@ -32,7 +39,7 @@ template<class T> struct Input {
     }
     void output(std::vector<T>& h) {
 #ifdef __CUDACC__
-        checked(hypre_ForceSyncComputeStream());
+        finish_device_work();
         frozen::require(cudaMemcpy(h.data(),p,h.size()*sizeof(T),cudaMemcpyDeviceToHost)==cudaSuccess);
 #endif
     }
@@ -76,6 +83,11 @@ int main(int argc,char** argv) {
         controls.erase("retain_update_expansion");
         frozen::require(retain_requested==0 || (retain_requested==1 && recovery_rounds));
         const bool retain_expansion=retain_requested==1;
+        const double initial_cycles=controls.count("initial_restart_cycles")?controls.at("initial_restart_cycles"):0;
+        controls.erase("initial_restart_cycles");
+        frozen::require(initial_cycles==0 || (initial_cycles==1 && retain_expansion));
+        const int maximum_cycles=recovery::maximum(int(initial_cycles),hypre_MPI_COMM_WORLD);
+        frozen::require(recovery::maximum(maximum_cycles!=int(initial_cycles),hypre_MPI_COMM_WORLD)==0);
         const int maximum_expansion=recovery::maximum(int(retain_expansion),hypre_MPI_COMM_WORLD);
         frozen::require(recovery::maximum(maximum_expansion!=int(retain_expansion),hypre_MPI_COMM_WORLD)==0);
         const int maximum_recovery=recovery::maximum(recovery_rounds,hypre_MPI_COMM_WORLD);
@@ -87,6 +99,8 @@ int main(int argc,char** argv) {
         frozen::require(part.maximum && controls.at("rtol")==part.relative && controls.at("atol")==part.absolute);
         const bool gpu_profile=controls.count("relax_down") || controls.count("relax_up");
         if (gpu_profile) settings::validate_gpu_profile(controls);
+        frozen::require(!initial_cycles || (gpu_profile && controls.at("kdim")<controls.at("maxiter")
+            && controls.at("miniter")<=controls.at("kdim")));
         frozen::require(!recovery_rounds || (gpu_profile && controls.at("maxiter")<=INT32_MAX/(recovery_rounds+1)));
         if(recovery_rounds) {
             // IJ must preserve the captured coefficients without duplicate-column sums.
@@ -157,18 +171,34 @@ int main(int argc,char** argv) {
         checked((flex?HYPRE_ParCSRFlexGMRESSetPrecond:HYPRE_ParCSRGMRESSetPrecond)(solver,HYPRE_BoomerAMGSolve,HYPRE_BoomerAMGSetup,amg));
         checked((flex?HYPRE_ParCSRFlexGMRESSetup:HYPRE_ParCSRGMRESSetup)(solver,a,pb,px));
         std::ostringstream effective; settings::write(effective,settings::snapshot(solver,amg,flex));
+        // Only the first solve gets the shorter budget; correction solves retain the saved cap.
+        if(initial_cycles) checked((flex?HYPRE_ParCSRFlexGMRESSetMaxIter:HYPRE_ParCSRGMRESSetMaxIter)(solver,int(controls.at("kdim"))));
+        const auto initial_limit=settings::snapshot(solver,amg,flex).at("maxiter");
+        finish_device_work();
+        checked(hypre_MPI_Barrier(hypre_MPI_COMM_WORLD));
+        const auto initial_start=std::chrono::steady_clock::now();
         const auto initial=recovery::solve(solver,flex,a,pb,px);
+        finish_device_work();
+        const double initial_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-initial_start).count();
+        double recovery_seconds=0;
+        checked((flex?HYPRE_ParCSRFlexGMRESSetMaxIter:HYPRE_ParCSRGMRESSetMaxIter)(solver,int(controls.at("maxiter"))));
+        frozen::require(settings::snapshot(solver,amg,flex).at("maxiter")==controls.at("maxiter"));
         std::unique_ptr<recovery::Expansion> expansion;
         if(retain_expansion) expansion=std::make_unique<recovery::Expansion>(reinterpret_cast<hypre_ParVector*>(px),memory);
         effective<<std::setprecision(17)<<"result_solve_error "<<initial.error<<"\nresult_global_error "<<initial.global
             <<"\nresult_fatal_error "<<bool((initial.error|initial.global)&~HYPRE_ERROR_CONV)
             <<"\nresult_iterations "<<initial.iterations<<"\nresult_converged "<<initial.converged<<"\nresult_reported "<<initial.relative<<'\n';
+        effective<<"initial_restart_cycles "<<int(initial_cycles)<<"\ninitial_maxiter "<<initial_limit
+            <<"\ninitial_controls_restored 1\n";
         if(recovery_rounds) {
             checked(HYPRE_IJVectorGetValues(solution,HYPRE_Int(rows),d_ids.p,d_x.p)); d_x.output(x);
             frozen::Writer before(output/"initial"/frozen::part_name(rank,".solution")); before.array(x); before.finish();
             std::ostringstream trace,audit_trace;
+            const auto recovery_start=std::chrono::steady_clock::now();
             const auto recovered=recovery::run(reinterpret_cast<hypre_ParCSRMatrix*>(a),reinterpret_cast<hypre_ParVector*>(pb),
                 reinterpret_cast<hypre_ParVector*>(px),solver,flex,controls,memory,recovery_rounds,initial,trace,&audit_trace,expansion.get());
+            finish_device_work();
+            recovery_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-recovery_start).count();
             const auto restored=settings::snapshot(solver,amg,flex);
             frozen::require(restored.at("rtol")==controls.at("rtol") && restored.at("atol")==controls.at("atol")
                 && restored.at("miniter")==controls.at("miniter") && restored.at("maxiter")==controls.at("maxiter"));
@@ -203,6 +233,10 @@ int main(int argc,char** argv) {
                 }
             }
         }
+        double local_seconds=initial_seconds+recovery_seconds;
+        double solve_seconds=0;
+        checked(hypre_MPI_Allreduce(&local_seconds,&solve_seconds,1,HYPRE_MPI_REAL,hypre_MPI_MAX,hypre_MPI_COMM_WORLD));
+        effective<<"solve_timing_version 1\nsolve_seconds "<<solve_seconds<<'\n';
         checked(HYPRE_IJVectorGetValues(solution,HYPRE_Int(rows),d_ids.p,d_x.p)); d_x.output(x);
         frozen::Writer result(output/frozen::part_name(rank,".solution")); result.array(x); result.finish();
         frozen::Writer info(output/frozen::part_name(rank,".report")); const auto text=effective.str(); info.bytes(text.data(),text.size()); info.finish();

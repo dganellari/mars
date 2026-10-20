@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_cvfem_hex_kernel.hpp"
+#include "../utils/mars_gpu_warp.cuh"
 
 namespace mars {
 namespace fem {
@@ -294,16 +295,16 @@ __global__ void cvfem_hex_assembly_kernel_team(
     CSRMatrix<RealType>* matrix,
     RealType* __restrict__ d_rhs)
 {
-    // Each warp (32 threads) processes one element
-    // Within a warp: threads 0-11 handle one SCS each, others idle during SCS loop
+    // Each 32-lane group processes one element
+    // Within the group: threads 0-11 handle one SCS each, others idle during SCS loop
     // Then all threads help with assembly
 
-    constexpr int THREADS_PER_ELEM = 32;  // One warp per element
-    int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / THREADS_PER_ELEM;
+    constexpr int THREADS_PER_ELEM = laneGroup;  // one lane group per element
+    // 64-bit: the thread count passes 2^32 above 134M elements
+    const size_t elemIdx = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) / THREADS_PER_ELEM;
     int laneId = threadIdx.x % THREADS_PER_ELEM;
 
-    if (warpId >= numElements) return;
-    int elemIdx = warpId;
+    if (elemIdx >= numElements) return;
 
     // Shared memory for team scratch
     __shared__ double s_coords[BLOCK_SIZE / THREADS_PER_ELEM][8][3];
@@ -352,7 +353,7 @@ __global__ void cvfem_hex_assembly_kernel_team(
         }
         s_rhs[teamId][laneId] = 0.0;
     }
-    __syncwarp();
+    syncWarp();
 
     // Each of first 12 lanes processes one SCS
     if (laneId < 12) {
@@ -425,7 +426,7 @@ __global__ void cvfem_hex_assembly_kernel_team(
             atomicAdd(&s_rhs[teamId][nodeR], diff_coeff * s_phi[teamId][node]);
         }
     }
-    __syncwarp();
+    syncWarp();
 
     // Assembly: first 8 lanes assemble one row each
     if (laneId < 8) {

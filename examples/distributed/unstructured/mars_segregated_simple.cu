@@ -5,6 +5,9 @@
 #include "mars_segregated_pressure_capture.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_pressure_profile.hpp"
+#ifdef MARS_SIMPLE_PETSC
+#include "mars_segregated_petsc_momentum.hpp"
+#endif
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -13,39 +16,37 @@
 using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
-using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
-
-fem::pressure_settings::Values read_pressure_profile(MPI_Comm comm,const SimpleOptions& o) {
+fem::pressure_settings::Values read_solver_profile(MPI_Comm comm,const std::string& path,double relative,double absolute,bool hypre=true,bool reference_amg=false) {
     int rank=0; MPI_Comm_rank(comm,&rank);
     std::string text;
     bool valid=true;
-    if (!rank && !o.pressure_solver_profile.empty()) try {
-        std::ifstream file(o.pressure_solver_profile,std::ios::binary);
-        ensure(bool(file),"cannot read private pressure profile");
+    if (!rank && !path.empty()) try {
+        std::ifstream file(path,std::ios::binary);
+        ensure(bool(file),"cannot read private linear profile");
         char buffer[16385];
         file.read(buffer,sizeof(buffer));
         text.assign(buffer,std::size_t(file.gcount()));
         valid=!file.bad() && !text.empty() && text.size()<=16384;
     } catch (...) { valid=false; }
-    simple_collective(comm,valid,"cannot read private pressure profile");
+    simple_collective(comm,valid,"cannot read private linear profile");
     int size=int(text.size());
-    ensure(MPI_Bcast(&size,1,MPI_INT,0,comm)==MPI_SUCCESS,"pressure profile broadcast failed");
-    simple_collective(comm,(size!=0)==!o.pressure_solver_profile.empty(),"pressure profile selection differs between ranks");
+    ensure(MPI_Bcast(&size,1,MPI_INT,0,comm)==MPI_SUCCESS,"linear profile broadcast failed");
+    simple_collective(comm,(size!=0)==!path.empty(),"linear profile selection differs between ranks");
     text.resize(size);
-    ensure(MPI_Bcast(text.data(),size,MPI_CHAR,0,comm)==MPI_SUCCESS,"pressure profile broadcast failed");
+    ensure(MPI_Bcast(text.data(),size,MPI_CHAR,0,comm)==MPI_SUCCESS,"linear profile broadcast failed");
     fem::pressure_settings::Values profile;
     if (!size) return profile;
     try {
         std::istringstream input(text);
         profile=fem::pressure_settings::read(input);
-        fem::pressure_settings::validate_gpu_profile(profile);
-        valid=profile.at("rtol")==o.pressure_rtol && profile.at("atol")==o.pressure_atol;
+        if (hypre) fem::pressure_settings::validate_gpu_profile(profile,reference_amg);
+        valid=profile.at("rtol")==relative && profile.at("atol")==absolute;
     } catch (...) { valid=false; }
-    simple_collective(comm,valid,"invalid GPU pressure profile or changed pressure targets");
+    simple_collective(comm,valid,"invalid linear profile or changed linear targets");
     return profile;
 }
 
-void prepare_pressure_capture(Runner& run,const std::string& directory) {
+template<class Runner> void prepare_pressure_capture(Runner& run,const std::string& directory) {
     int rank=0; MPI_Comm_rank(run.comm,&rank);
     int size=rank==0?int(directory.size()):0;
     ensure(MPI_Bcast(&size,1,MPI_INT,0,run.comm)==MPI_SUCCESS,"capture option reduction failed");
@@ -87,9 +88,13 @@ void prepare_pressure_capture(Runner& run,const std::string& directory) {
     };
 }
 
-int execute(const SimpleOptions& o) {
+template<template<int> class MomentumSolve=HypreSimpleSolve> int execute(const SimpleOptions& o) {
+    using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve,MomentumSolve>;
+    constexpr bool hypre_momentum=std::is_same_v<MomentumSolve<3>,HypreSimpleSolve<3>>;
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
-    const auto pressure_profile=read_pressure_profile(MPI_COMM_WORLD,o);
+    const bool reference_amg=o.pressure_amg_mode=="reference";
+    const auto pressure_profile=read_solver_profile(MPI_COMM_WORLD,o.pressure_solver_profile,o.pressure_rtol,o.pressure_atol,true,reference_amg);
+    const auto momentum_profile=read_solver_profile(MPI_COMM_WORLD,o.momentum_solver_profile,o.momentum_rtol,o.momentum_atol,hypre_momentum);
     simple_output_preflight(MPI_COMM_WORLD,o.output,o.field_output);
     const double setup_start=MPI_Wtime();
     int nodes=0;
@@ -104,7 +109,12 @@ int execute(const SimpleOptions& o) {
     auto runner=make_runner(); // Release root file arrays and setup scratch before iterating.
     auto& run=*runner;
     run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
-    if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile);
+    run.set_momentum_tolerances(o.momentum_tolerances,o.momentum_rtol,o.momentum_atol);
+    if (!momentum_profile.empty()) {
+        if constexpr (hypre_momentum) fem::pressure_settings::configure_gpu_profile(run.momentum_solve.solver,momentum_profile);
+        else run.momentum_solve.solver.configure(momentum_profile);
+    }
+    if (!pressure_profile.empty()) fem::pressure_settings::configure_gpu_profile(run.poisson_solve.solver,pressure_profile,reference_amg);
     run.set_pressure_refinement(o.pressure_refinement);
     prepare_pressure_capture(run,o.pressure_failure_capture);
     run.profile.configure(o.profile,o.profile_warmup);
@@ -136,8 +146,13 @@ int execute(const SimpleOptions& o) {
                  <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
         if (o.pressure_tolerances)
             std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol
-                     <<" pressure_acceptance=max(atol,rtol*rhs_norm); momentum targets unchanged\n";
-        if (!pressure_profile.empty()) std::cout<<"pressure_solver_profile=explicit_gpu\n";
+                     <<" pressure_acceptance=max(atol,rtol*rhs_norm)\n";
+        if (!pressure_profile.empty()) std::cout<<"pressure_solver_profile="
+            <<(reference_amg?"reference_amg_host_staging":"explicit_gpu")<<'\n';
+        if (o.momentum_tolerances)
+            std::cout<<"momentum_linear_rtol="<<o.momentum_rtol<<" momentum_linear_atol="<<o.momentum_atol
+                     <<" momentum_acceptance=max(atol,rtol*rhs_norm)\n";
+        if (!momentum_profile.empty()) std::cout<<"momentum_solver_profile="<<(hypre_momentum?"explicit_gpu":"petsc_fgmres_bjacobi")<<'\n';
     }
     if (o.profile) {
         char host[MPI_MAX_PROCESSOR_NAME]; int length=0,device=0;
@@ -155,6 +170,12 @@ int execute(const SimpleOptions& o) {
         auto graph=run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data());
         audit=std::make_unique<SimpleFirstStepAudit>(MPI_COMM_WORLD,o.output,run.n,run.owned_nodes,run.graph.blocks(),
                                                    raw(source_node),run.owned.data(),graph.offsets,graph.columns);
+        // Fixed stage labels locate a timeout without exposing fields or mesh data.
+        run.progress=[rank](const char* stage) {
+            std::ostringstream line; line<<"[simple-progress] rank="<<rank<<" stage="<<stage<<'\n';
+            std::cerr<<line.str()<<std::flush;
+        };
+        run.poisson_solve.solver.set_progress(run.progress);
     }
     double snapshot_seconds=0;
     const double iteration_start=MPI_Wtime();
@@ -188,39 +209,50 @@ int execute(const SimpleOptions& o) {
             snapshot_seconds+=MPI_Wtime()-start;
         }
         if (converged || run.completed==o.iterations) break;
-        if (audit) {
+        if (audit || ((!pressure_profile.empty() || !momentum_profile.empty()) && o.snapshot_iterations)) {
             double io_seconds=0;
             run.advance([&](const char* stage,Array<double>&) {
                 const double io_start=MPI_Wtime();
-                if (std::string(stage)=="momentum")
+                const std::string name(stage);
+                if (audit && name=="momentum")
                     audit->momentum(run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data()),
                                     run.du.data(),run.velocity.data(),run.d.data());
-                else if (std::string(stage)=="raw_pressure_increment") {
+                if (audit && name=="raw_pressure_increment")
                     audit->pressure(run.graph.template view<1>(run.poisson_blocks.data(),run.poisson_rhs.data()),run.phi.data());
-                    if (!pressure_profile.empty()) {
-                        bool saved=true;
-                        try {
-                            std::ostringstream text;
-                            run.poisson_solve.solver.inspect_prepared([&](auto solver,auto amg,bool flex) {
+                if ((name=="momentum" && !momentum_profile.empty()) ||
+                    (name=="raw_pressure_increment" && !pressure_profile.empty())) {
+                    bool saved=true;
+                    try {
+                        std::ostringstream text;
+                        auto hypre_settings=[&](auto& linear) {
+                            linear.inspect_prepared([&](auto solver,auto amg,bool flex) {
                                 fem::pressure_settings::write(text,fem::pressure_settings::snapshot(solver,amg,flex));
                             });
-                            frozen::Writer file(o.output+"-pressure-rank-"+std::to_string(rank)+".settings");
-                            const auto values=text.str(); file.bytes(values.data(),values.size()); file.finish();
-                        } catch (...) { saved=false; }
-                        simple_collective(run.comm,saved,"private pressure settings output failed");
-                    }
+                        };
+                        if (name=="momentum") {
+                            if constexpr (hypre_momentum) hypre_settings(run.momentum_solve.solver);
+                            else run.momentum_solve.solver.write_settings(text);
+                        } else hypre_settings(run.poisson_solve.solver);
+                        const auto step=audit?std::string{}:"step-"+std::to_string(run.completed+1)+"-";
+                        const auto equation=name=="momentum"?"momentum":"pressure";
+                        frozen::Writer file(o.output+"-"+equation+"-"+step+"rank-"+std::to_string(rank)+".settings");
+                        const auto values=text.str(); file.bytes(values.data(),values.size()); file.finish();
+                    } catch (...) { saved=false; }
+                    simple_collective(run.comm,saved,"private linear settings output failed");
                 }
-                else if (std::string(stage)=="velocity") audit->finish(run.gp.data());
+                if (audit && name=="velocity") audit->finish(run.gp.data());
                 io_seconds+=MPI_Wtime()-io_start;
             });
             snapshot_seconds+=io_seconds;
         } else run.advance();
+        if (audit) run.progress_stage("first_step_complete");
         run.profile.record_linear(3,run.momentum_solve.solver,run.completed);
         run.profile.record_linear(1,run.poisson_solve.solver,run.completed);
     }
     if (!rank) { csv.close(); ensure(bool(csv),"metric output failed"); }
     const double iteration_seconds=MPI_Wtime()-iteration_start-snapshot_seconds;
     const double output_start=MPI_Wtime();
+    if (audit) run.progress_stage("final_output");
     if (o.field_output!="none") {
         Buffer<FieldRow> rows(run.owned_nodes);
         launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
@@ -253,6 +285,7 @@ int execute(const SimpleOptions& o) {
                                         <<" numeric_updates="<<max_builds[3*c+1]<<" setups="<<max_builds[3*c+2]<<'\n';
         }
     }
+    if (audit) run.progress_stage("flow_output_complete");
     return converged?0:2;
 }
 int main(int argc,char** argv) {
@@ -275,7 +308,23 @@ int main(int argc,char** argv) {
         }
     }
     int result=1;
-    try { result=execute(parsed); }
+    try {
+        if (parsed.momentum_backend=="petsc") {
+#ifdef MARS_SIMPLE_PETSC
+            // Do not pass MARS command-line options to PETSc or read a user's petscrc.
+            int petsc_argc=2;
+            char name[]="mars_segregated_simple",skip[]="-skip_petscrc";
+            char* petsc_args[]={name,skip,nullptr}; char** petsc_argv=petsc_args;
+            if (PetscInitialize(&petsc_argc,&petsc_argv,nullptr,nullptr)
+                || PetscOptionsClear(nullptr)
+                || PetscPushErrorHandler(PetscReturnErrorHandler,nullptr)) throw std::runtime_error("PETSc initialization failed");
+            result=execute<PetscSimpleSolve>(parsed);
+            if (PetscFinalize()) throw std::runtime_error("PETSc finalization failed");
+#else
+            throw std::runtime_error("PETSc momentum was not built; enable MARS_ENABLE_PETSC with a CUDA PETSc installation");
+#endif
+        } else result=execute(parsed);
+    }
     catch (const std::exception& e) { std::cerr<<"ERROR: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }
     MPI_Bcast(&result,1,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Finalize();

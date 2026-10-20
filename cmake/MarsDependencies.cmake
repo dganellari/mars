@@ -311,7 +311,8 @@ if(MARS_ENABLE_HYPRE)
 
     find_library(HYPRE_LIBRARY
       NAMES HYPRE hypre
-      PATHS $ENV{HYPRE_DIR}/lib ${HYPRE_DIR}/lib
+      PATHS $ENV{HYPRE_DIR} ${HYPRE_DIR}
+      PATH_SUFFIXES lib lib64
     )
 
     if(HYPRE_INCLUDE_DIR AND HYPRE_LIBRARY)

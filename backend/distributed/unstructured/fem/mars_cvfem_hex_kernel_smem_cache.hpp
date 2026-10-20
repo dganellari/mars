@@ -76,13 +76,14 @@ struct SmemPtrs {
         slot_counter = hash_slots   + HTSIZE;
         // align to 8 bytes for double
         char* p8     = reinterpret_cast<char*>(slot_counter + 1);
-        p8           = reinterpret_cast<char*>((reinterpret_cast<uintptr_t>(p8) + 7) & ~7u);
+        // the masks are uintptr_t: a 32-bit ~7u would clear the high bits of the shared-memory address
+        p8           = reinterpret_cast<char*>((reinterpret_cast<uintptr_t>(p8) + 7) & ~uintptr_t(7));
         node_data    = reinterpret_cast<double*>(p8);
         dof          = reinterpret_cast<int*>(node_data + MAX_NODES * 9);
         own          = reinterpret_cast<uint8_t*>(dof + MAX_NODES);
         // align to 4 bytes for int
         char* p4     = reinterpret_cast<char*>(own + MAX_NODES);
-        p4           = reinterpret_cast<char*>((reinterpret_cast<uintptr_t>(p4) + 3) & ~3u);
+        p4           = reinterpret_cast<char*>((reinterpret_cast<uintptr_t>(p4) + 3) & ~uintptr_t(3));
         row_start    = reinterpret_cast<int*>(p4);
         row_end      = row_start + MAX_NODES;
         diag_pos     = row_end   + MAX_NODES;
@@ -91,9 +92,9 @@ struct SmemPtrs {
 
 template<typename KeyType, typename RealType,
          int BlockSize = 256,
-         int HTSIZE    = 1024,   // power of 2, > 2× expected unique nodes per block
+         int HTSIZE    = 2048,   // power of 2, >= 8 * BlockSize: the table never fills
          int MAX_NODES = 512>
-__launch_bounds__(256, 2)
+__launch_bounds__(BlockSize, 2)
 __global__ void cvfem_hex_assembly_kernel_smem_cache(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -124,10 +125,12 @@ __global__ void cvfem_hex_assembly_kernel_smem_cache(
 {
     // Dynamic smem — size set at launch via cudaFuncSetAttribute
     extern __shared__ char s_smem[];
+    // Every corner of the block may be a distinct node; a full table would make the insert spin forever.
+    static_assert(HTSIZE >= 8 * BlockSize, "the hash table must hold every corner of the block");
     SmemPtrs<HTSIZE, MAX_NODES> s(s_smem);
 
     const int tid     = threadIdx.x;
-    const int elemIdx = blockIdx.x * BlockSize + tid;
+    const int elemIdx = blockIdx.x * BlockSize + tid; // launched with exactly BlockSize threads
     const bool valid  = (elemIdx < (int)numElements);
     const int HT_MASK = HTSIZE - 1;
 
@@ -181,7 +184,7 @@ __global__ void cvfem_hex_assembly_kernel_smem_cache(
         int nid = s.hash_keys[i];
         if (nid < 0) continue;
         int sl = s.hash_slots[i];
-        if (sl >= MAX_NODES) continue;  // safety: very poor spatial locality
+        if (sl >= MAX_NODES) continue;  // not cached: the element phase reads this node from global memory
 
         double* base = s.node_data + sl * 9;
         base[0] = d_x[nid];           base[1] = d_y[nid];           base[2] = d_z[nid];
@@ -227,15 +230,27 @@ __global__ void cvfem_hex_assembly_kernel_smem_cache(
 
     #pragma unroll
     for (int n = 0; n < 8; ++n) {
-        int sl             = slot_map[n];
-        const double* base = s.node_data + sl * 9;
-        coords[n][0]   = base[0]; coords[n][1] = base[1]; coords[n][2] = base[2];
-        phi[n]         = base[3];
-        gamma[n]       = base[4];
-        beta[n]        = base[5];
-        grad_phi[n][0] = base[6]; grad_phi[n][1] = base[7]; grad_phi[n][2] = base[8];
-        dofs[n]        = s.dof[sl];
-        own[n]         = s.own[sl];
+        int sl = slot_map[n];
+        if (sl < MAX_NODES) {
+            const double* base = s.node_data + sl * 9;
+            coords[n][0]   = base[0]; coords[n][1] = base[1]; coords[n][2] = base[2];
+            phi[n]         = base[3];
+            gamma[n]       = base[4];
+            beta[n]        = base[5];
+            grad_phi[n][0] = base[6]; grad_phi[n][1] = base[7]; grad_phi[n][2] = base[8];
+            dofs[n]        = s.dof[sl];
+            own[n]         = s.own[sl];
+        } else {
+            // blocks with more than MAX_NODES unique nodes (poor SFC locality, large meshes)
+            const KeyType nid = my_nodes[n];
+            coords[n][0]   = d_x[nid]; coords[n][1] = d_y[nid]; coords[n][2] = d_z[nid];
+            phi[n]         = d_phi[nid];
+            gamma[n]       = d_gamma[nid];
+            beta[n]        = d_beta[nid];
+            grad_phi[n][0] = d_grad_phi_x[nid]; grad_phi[n][1] = d_grad_phi_y[nid]; grad_phi[n][2] = d_grad_phi_z[nid];
+            dofs[n]        = d_node_to_dof[nid];
+            own[n]         = d_ownership[nid];
+        }
     }
 
     // =========================================================================
@@ -250,10 +265,11 @@ __global__ void cvfem_hex_assembly_kernel_smem_cache(
             for (int j = 0; j < 8; ++j) pos[i * 8 + j] = -1;
             continue;
         }
-        int sl_i      = slot_map[i];
-        int row_start = s.row_start[sl_i];  // smem
-        int row_end   = s.row_end[sl_i];    // smem
-        int diag_pos  = s.diag_pos[sl_i];   // smem
+        const int sl_i     = slot_map[i];
+        const bool cached  = sl_i < MAX_NODES;
+        int row_start = cached ? s.row_start[sl_i] : matrix->rowPtr[dofs[i]];
+        int row_end   = cached ? s.row_end[sl_i]   : matrix->rowPtr[dofs[i] + 1];
+        int diag_pos  = cached ? s.diag_pos[sl_i]  : matrix->diagPtr[dofs[i]];
 
         #pragma unroll
         for (int j = 0; j < 8; ++j) {

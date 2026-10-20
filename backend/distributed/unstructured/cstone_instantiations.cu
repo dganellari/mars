@@ -1,4 +1,4 @@
-#ifdef MARS_ENABLE_CUDA
+#if defined(MARS_ENABLE_CUDA) || defined(MARS_ENABLE_HIP)
 // Cornerstone instantiates these for other key/real combinations only; MARS also uses unsigned keys with double
 #include <cstone/traversal/collisions_gpu.cu>
 

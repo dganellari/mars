@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>

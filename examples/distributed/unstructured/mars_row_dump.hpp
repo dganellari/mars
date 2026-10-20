@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 
 namespace mars
 {

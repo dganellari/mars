@@ -56,6 +56,7 @@ using std::get;
 #include "mars.hpp"
 #include "mars_globals.hpp"
 #include "mars_domain_utils.hpp"
+#include "utils/mars_gpu_reduce.hpp"
 // #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
@@ -305,14 +306,20 @@ void shortestEdgeLengths(ConnPtrs<KeyType, ElementTag::NodesPerElement> conn,
                                                            {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
                              shortest = edge(0, 1);
                              for (int k = 1; k < 12; ++k)
-                                 shortest = min(shortest, edge(edges[k][0], edges[k][1]));
+                             {
+                                 RealType len = edge(edges[k][0], edges[k][1]);
+                                 if (len < shortest) shortest = len;
+                             }
                          }
                          else
                          {
                              constexpr int edges[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
                              shortest = edge(0, 1);
                              for (int k = 1; k < 6; ++k)
-                                 shortest = min(shortest, edge(edges[k][0], edges[k][1]));
+                             {
+                                 RealType len = edge(edges[k][0], edges[k][1]);
+                                 if (len < shortest) shortest = len;
+                             }
                          }
                          length[e] = shortest;
                      });
@@ -823,7 +830,13 @@ public:
     }
 
     // Get element/node counts
-    std::size_t getNodeCount() const { return nodeCount_; }
+    // The local node numbering is built on first use; before that nodeCount_ is still the count read from
+    // the file, which on several ranks is not the number of nodes the rank holds after the sync.
+    std::size_t getNodeCount() const
+    {
+        ensureSfcMap();
+        return nodeCount_;
+    }
     std::size_t getElementCount() const { return elementCount_; }
 
     // Access to cornerstone domain
@@ -936,12 +949,6 @@ public:
     template<int I>
     DeviceVector<KeyType> getConnectivity() const;
     DeviceConnectivityTuple getConnectivity() const;
-
-    // Single connectivity access
-    template<int I>
-    MARS_HOST_DEVICE KeyType getConnectivity(size_t elementIndex) const;
-
-    std::tuple<KeyType, KeyType, KeyType, KeyType> getConnectivity(size_t elementIndex) const;
 
     // getter for ownership map (lazy)
     const DeviceVector<uint8_t>& getNodeOwnershipMap() const
@@ -1075,7 +1082,7 @@ public:
                                   // same way on unpack so the value is discarded.
                                   sbuf[i] = (idx >= 0) ? arr[idx] : arr[0];
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
 
         // Post recvs and sends. CUDA-aware MPI: pass device pointers directly.
@@ -1129,7 +1136,7 @@ public:
                                   int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
                                   if (idx >= 0) arr[idx] = rbuf[i];
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
         return;
     }
@@ -1164,7 +1171,7 @@ public:
                                  int n = snds[i];
                                  for (int c = 0; c < ncomp; ++c) sbuf[i * ncomp + c] = arr[(size_t)n * ncomp + c];
                              });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
         T*   rbuf    = thrust::raw_pointer_cast(blockRecvBuf_.data());
         auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -1206,7 +1213,7 @@ public:
                                  int n = rnds[i];
                                  for (int c = 0; c < ncomp; ++c) arr[(size_t)n * ncomp + c] = rbuf[i * ncomp + c];
                              });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
     }
 
@@ -1262,7 +1269,7 @@ public:
                                   int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
                                   gbuf[i] = (idx >= 0) ? arr[idx] : T(0);
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
 
         auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -1313,7 +1320,7 @@ public:
                                   int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
                                   if (idx >= 0) atomicAdd(&arr[idx], obuf[i]);
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
     }
 
@@ -1362,7 +1369,7 @@ public:
                                   int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
                                   gbuf[i] = (idx >= 0) ? arr[idx] : ident;
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
 
         auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -1435,7 +1442,7 @@ public:
                                       } while (assumed != old);
                                   }
                               });
-            cudaDeviceSynchronize();
+            cudaCheckCall(cudaDeviceSynchronize());
         }
     }
 
@@ -1841,8 +1848,8 @@ private:
         for (int r = 0; r <= numRanks_; ++r)
             h_bounds[r] = assignment[r];
         d_rankBounds_.resize(numRanks_ + 1);
-        cudaMemcpy(thrust::raw_pointer_cast(d_rankBounds_.data()), h_bounds.data(), h_bounds.size() * sizeof(KeyType),
-                   cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(thrust::raw_pointer_cast(d_rankBounds_.data()), h_bounds.data(),
+                                 h_bounds.size() * sizeof(KeyType), cudaMemcpyHostToDevice));
         sfcBox_ = domain_->box();
     }
 
@@ -1868,8 +1875,8 @@ public:
         const RealType longest = std::max({box.xmax() - box.xmin(), box.ymax() - box.ymin(), box.zmax() - box.zmin()});
         const RealType apart   = RealType(1e-9) * longest;
         long collisions        = nodeCount_ < 2 ? 0
-                                 : thrust::transform_reduce(
-                                       thrust::device, thrust::counting_iterator<size_t>(1),
+                                 : mars::transformReduce(
+                                       thrust::counting_iterator<size_t>(1),
                                        thrust::counting_iterator<size_t>(nodeCount_),
                                        [k = sorted.data(), o = order.data(), px = x.data(), py = y.data(), pz = z.data(),
                                         apart] __device__(size_t i) -> long
@@ -2364,13 +2371,13 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Transfer data to GPU before sync
     auto t3 = clk::now();
     transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
-    cudaDeviceSynchronize();
+    cudaCheckCall(cudaDeviceSynchronize());
     auto t4 = clk::now();
     h2dTimeMs = std::chrono::duration<float, std::milli>(t4 - t3).count();
 
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
-    cudaDeviceSynchronize();
+    cudaCheckCall(cudaDeviceSynchronize());
     auto t5 = clk::now();
     charSizeTimeMs = std::chrono::duration<float, std::milli>(t5 - t4).count();
 
@@ -2379,7 +2386,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 
     logGpuMemAroundSync(rank_, "pre-sync");
     sync(d_conn_, d_coords_);
-    cudaDeviceSynchronize();
+    cudaCheckCall(cudaDeviceSynchronize());
     logGpuMemAroundSync(rank_, "post-sync");
     auto t6 = clk::now();
     syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
@@ -2534,12 +2541,12 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
         auto xb = thrust::device_pointer_cast(d_x.data());
         auto yb = thrust::device_pointer_cast(d_y.data());
         auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
@@ -3201,8 +3208,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
 
         // Copy boundary data from host to device
         std::get<0>(d_boundary_).resize(std::get<0>(h_boundary_).size());
-        cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(),
-                   std::get<0>(h_boundary_).size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
+        cudaCheckCall(cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(),
+                                 std::get<0>(h_boundary_).size() * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
         // Initialize properties (h values)
         d_props_ = std::tuple<DeviceVector<RealType>>(DeviceVector<RealType>(nodeCount_));
@@ -3264,19 +3271,6 @@ MARS_HOST_DEVICE unsigned
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateZ(KeyType sfcKey) const
 {
     return std::get<2>(decodeSfcToIntegers(sfcKey, getBoundingBox()));
-}
-
-// host function to get connectivity for a specific element index
-template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-template<int I>
-KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity(size_t elementIndex) const
-{
-    static_assert(I >= 0 && I < NodesPerElement, "Index out of range for element connectivity");
-
-    if (elementIndex >= elementCount_) return KeyType(0);
-
-    // Direct access to SFC key - no host transfer
-    return std::get<I>(d_conn_keys_)[elementIndex];
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -3850,12 +3844,12 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
         auto xb = thrust::device_pointer_cast(d_x.data());
         auto yb = thrust::device_pointer_cast(d_y.data());
         auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
 
     auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;

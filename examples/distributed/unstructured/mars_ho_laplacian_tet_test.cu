@@ -3,7 +3,7 @@
 // host reference applyHoLaplacianTetElement (the Mac-validated oracle) plus A.1=0. Tet twin of
 // mars_ho_laplacian_test.cu. Single rank, no MPI -- pure element-local kernel parity.
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_tet.hpp"
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <cstdio>
 #include <vector>
 #include <cmath>

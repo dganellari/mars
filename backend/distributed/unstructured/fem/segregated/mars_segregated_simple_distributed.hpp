@@ -208,7 +208,7 @@ template<int C> struct HypreSimpleSolve {
 };
 #endif
 
-template<class Matrix,class GlobalId,template<int> class Solve>
+template<class Matrix,class GlobalId,template<int> class Solve,template<int> class MomentumSolve=Solve>
 struct DistributedSimpleRunner {
     MPI_Comm comm;
     int n,e,b,completed=0,limiter_iteration=-1,owned_nodes,owned_elements,owned_faces;
@@ -230,7 +230,7 @@ struct DistributedSimpleRunner {
     Array<double> momentum_blocks,momentum_rhs,poisson_blocks,poisson_rhs,du,phi;
     distributed::OwnedRowSystem<3,Matrix,GlobalId> momentum;
     distributed::OwnedRowSystem<1,Matrix,GlobalId> poisson;
-    Solve<3> momentum_solve; Solve<1> poisson_solve;
+    MomentumSolve<3> momentum_solve; Solve<1> poisson_solve;
     distributed::FieldExchange exchange;
     SimpleProfile profile;
 #ifdef MARS_REPLAY_CUDA
@@ -240,7 +240,10 @@ struct DistributedSimpleRunner {
     bool assembled=false;
     distributed::Tolerance tolerance{1e-13,1e-10};
     std::optional<distributed::Tolerance> pressure_tolerance;
+    std::optional<distributed::Tolerance> momentum_tolerance;
     std::function<void(int,bool,bool)> pressure_failure_capture;
+    std::function<void(const char*)> progress;
+    void progress_stage(const char* stage) const { if (progress) progress(stage); }
 
 private:
     bool pressure_refinement_=false;
@@ -255,21 +258,32 @@ public:
 
     // All ranks enter, including those without the override, before either solve.
     void set_pressure_tolerances(bool enabled,double relative,double absolute) {
-        simple_collective(comm,(!controls.pressure_expansion || enabled) && completed==0 && std::isfinite(relative) && std::isfinite(absolute)
-            && relative>0 && relative<1 && absolute>=0,"invalid or late pressure tolerances");
+        simple_collective(comm,!controls.pressure_expansion || enabled,"pressure expansion requires explicit targets");
+        set_linear_tolerances<1>(enabled,relative,absolute,poisson_solve,pressure_tolerance);
+    }
+    void set_momentum_tolerances(bool enabled,double relative,double absolute) {
+        set_linear_tolerances<3>(enabled,relative,absolute,momentum_solve,momentum_tolerance);
+    }
+
+private:
+    template<int C,class LinearSolve> void set_linear_tolerances(bool enabled,double relative,double absolute,LinearSolve& solver,
+                                             std::optional<distributed::Tolerance>& target) {
+        simple_collective(comm,completed==0 && std::isfinite(relative) && std::isfinite(absolute)
+            && relative>0 && relative<1 && absolute>=0,"invalid or late linear tolerances");
         const double local[6]={double(enabled),-double(enabled),relative,-relative,absolute,-absolute};
         double global[6];
         if (MPI_Allreduce(local,global,6,MPI_DOUBLE,MPI_MAX,comm)!=MPI_SUCCESS) {
-            MPI_Abort(comm,1); throw std::runtime_error("pressure tolerance reduction failed");
+            MPI_Abort(comm,1); throw std::runtime_error("linear tolerance reduction failed");
         }
         simple_collective(comm,global[0]==-global[1] && global[2]==-global[3] && global[4]==-global[5],
-            "pressure tolerances differ between ranks");
+            "linear tolerances differ between ranks");
         if (enabled) {
-            poisson_solve.set_tolerances(relative,absolute);
-            pressure_tolerance=distributed::Tolerance{absolute,relative,true};
+            solver.set_tolerances(relative,absolute);
+            target=distributed::Tolerance{absolute,relative,true};
         }
     }
 
+public:
     // Id may be wider than GlobalId (e.g. int64 ids for a 32-bit HYPRE_BigInt build); ids
     // that do not fit are rejected collectively instead of narrowed.
     template<class Input,class Id,template<class> class Storage> DistributedSimpleRunner(MPI_Comm c,const Input& f,const SimpleOwnership<Id,Storage>& o,SimpleControls ctl={},
@@ -446,9 +460,12 @@ public:
     template<int C,class System,class Solver> void solve(System& system,Solver& solver,BlockCsrView<C> view,Array<double>& increment,
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
         auto timing=profile.scope(C==3?SimpleProfile::momentum:SimpleProfile::pressure);
+        if constexpr (C==1) progress_stage("pressure_pack");
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
         // Keep a candidate on nonconvergence so both matrix representations can be checked.
+        if constexpr (C==1) progress_stage("pressure_backend");
         const bool solved=solver(system);
+        if constexpr (C==1) progress_stage("pressure_exchange");
         const auto context=[&](const char* reason) {
             return std::string(C==3?"momentum":"pressure correction")+" at SIMPLE iteration "+std::to_string(completed+1)+": "+reason;
         };
@@ -461,7 +478,9 @@ public:
         system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
-        const auto acceptance=C==1 && pressure_tolerance?*pressure_tolerance:tolerance;
+        if constexpr (C==1) progress_stage("pressure_residual");
+        const auto& override_tolerance=C==1?pressure_tolerance:momentum_tolerance;
+        const auto acceptance=override_tolerance.value_or(tolerance);
         auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
         if constexpr (C==1) {
             if (controls.pressure_expansion) {
@@ -551,6 +570,8 @@ public:
         solve<3>(momentum,momentum_solve,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),du,false,{{d.data(),3}});
         launch(3*n,SimpleAddIncrement{state.velocity,du.data(),1});
         observe("momentum",velocity); observe("influence",d);
+        progress_stage("momentum_complete");
+        progress_stage("outlet_update");
         {
             auto timing=profile.scope(SimpleProfile::outlet);
             if(controls.pressure_expansion) {
@@ -582,6 +603,7 @@ public:
             exchange.begin({{outlet_pressure.data(),1}});
             }
         }
+        progress_stage("pressure_assembly");
         auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
         {
             auto timing=profile.scope(SimpleProfile::pressure_assembly);
@@ -592,7 +614,9 @@ public:
             launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
         }
         solve<1>(poisson,poisson_solve,ap,phi,error.host()[0]!=0,{});
+        progress_stage("pressure_audit");
         observe("raw_pressure_increment",phi);
+        progress_stage("pressure_correction");
         {
             auto timing=profile.scope(SimpleProfile::correction);
             if(controls.pressure_expansion) {

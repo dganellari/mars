@@ -49,7 +49,7 @@
 // __constant__ definitions + ho_cvfem_upload_operators into one .cu and expose
 // only declarations.
 
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>

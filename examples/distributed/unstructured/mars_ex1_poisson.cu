@@ -25,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -199,9 +200,9 @@ int main(int argc, char* argv[]) {
         const float* coords[3] = {d_x.data(), d_y.data(), d_z.data()};
         float lo[3], hi[3];
         for (int d = 0; d < 3; ++d) {
-            lo[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+            lo[d] = mars::reduce(coords[d], coords[d] + nodeCount,
                                    std::numeric_limits<float>::max(), thrust::minimum<float>());
-            hi[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+            hi[d] = mars::reduce(coords[d], coords[d] + nodeCount,
                                    std::numeric_limits<float>::lowest(), thrust::maximum<float>());
         }
         MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
@@ -241,7 +242,7 @@ int main(int argc, char* argv[]) {
                                  rhs[i] = 0.0f;
                              });
         }
-        long numBoundary = thrust::reduce(thrust::device, d_isBoundaryDof.data(),
+        long numBoundary = mars::reduce(d_isBoundaryDof.data(),
                                           d_isBoundaryDof.data() + numOwnedDofs, 0L);
         MPI_Allreduce(MPI_IN_PLACE, &numBoundary, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
@@ -287,12 +288,12 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "8. Computing solution statistics...\n";
 
         const float* uOwned = u.data();
-        float uMin = thrust::reduce(thrust::device, uOwned, uOwned + numOwnedDofs,
+        float uMin = mars::reduce(uOwned, uOwned + numOwnedDofs,
                                     std::numeric_limits<float>::max(), thrust::minimum<float>());
-        float uMax = thrust::reduce(thrust::device, uOwned, uOwned + numOwnedDofs,
+        float uMax = mars::reduce(uOwned, uOwned + numOwnedDofs,
                                     std::numeric_limits<float>::lowest(), thrust::maximum<float>());
-        double sums[2] = {thrust::reduce(thrust::device, uOwned, uOwned + numOwnedDofs, 0.0),
-                          thrust::transform_reduce(thrust::device, uOwned, uOwned + numOwnedDofs,
+        double sums[2] = {mars::reduce(uOwned, uOwned + numOwnedDofs, 0.0),
+                          mars::transformReduce(uOwned, uOwned + numOwnedDofs,
                                                    [] __device__(float v) -> double { return double(v) * v; }, 0.0,
                                                    thrust::plus<double>())};
         MPI_Allreduce(MPI_IN_PLACE, &uMin, 1, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);

@@ -1,5 +1,7 @@
 # Poiseuille Channel Flow
 
+*Step 8 of the step-by-step tutorial (see the [index](index.md)). Previous: [step 7](step-07-cavity.md); next: [step 9](periodic_tgv_tutorial.md).*
+
 This tutorial runs the `mars_poiseuille_flow` example: incompressible flow through a plane
 channel, checked against the exact solution. It explains the case, the numerical method of the
 MARS Navier–Stokes solver, how to run the example, and how to read every line it prints. No

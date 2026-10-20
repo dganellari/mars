@@ -30,7 +30,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 
-#include <cuda_runtime.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>

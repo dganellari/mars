@@ -1,6 +1,7 @@
 // CUDA/Hypre gate: run_gates() on device buffers, then the real HypreGMRESSolver device-map
 // solve through the owned-row adapter with a CUDA-aware ghost exchange before every true
 // residual. Options: --probe-empty-rank (Hypre solve with a zero-row rank, policy allow),
+// --reference-amg (HMIS and host direct coarse solve, with independent residual checks),
 // --bench N (timed update/exchange/residual on a larger fixture, N repetitions).
 #ifndef MARS_REPLAY_CUDA
 #define MARS_REPLAY_CUDA
@@ -11,6 +12,7 @@
 #include "gate_common.hpp"
 #include "mars_segregated_simple_distributed.hpp"
 #include "../simple_performance/pressure_profile_fixture.hpp"
+#include "../simple/wall_distance_check.hpp"
 #include <cuda_runtime.h>
 #include <iomanip>
 #include <string>
@@ -36,8 +38,9 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         solver.enable_true_residual_check(acceptance.absolute,acceptance.relative,true);
         solver.enable_fixed_graph_updates();
     }
-    const auto profile=pressure_profile_fixture(profile_mode==3,profile_mode==1);
-    if (profile_mode) mars::fem::pressure_settings::configure_gpu_profile(solver,profile);
+    const bool reference_amg=profile_mode>=4;
+    const auto profile=pressure_profile_fixture(profile_mode==3 || profile_mode==5,profile_mode==1,reference_amg?C*p.nodes:0);
+    if (profile_mode) mars::fem::pressure_settings::configure_gpu_profile(solver,profile,reference_amg);
     GhostExchange exchange(p,l,rank);
     for (unsigned round:{1u,2u}) {   // round 2: new values, RHS and solution; same structure
         if (round==2) { fill(p,l,rank,2,[&](int g,int c) { return p.product(g,c,2,12); }); overwrite(d.blocks,l.blocks); overwrite(d.rhs,l.rhs); }
@@ -45,20 +48,32 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         if (s.rows()) cudaMemset(x.data(),0,std::size_t(s.rows())*sizeof(double));
         const bool solved=solve_owned(solver,s,b,x);
         if (profile_mode) {
-            bool controls_match=false,levels_match=false;
+            bool controls_match=false,levels_match=false,host_coarse=false;
             std::ostringstream control_detail,level_detail;
             solver.inspect_prepared([&](auto krylov,auto amg,bool flexible) {
                 const auto actual=mars::fem::pressure_settings::snapshot(krylov,amg,flexible);
                 controls_match=pressure_profile_controls_match(profile,actual,control_detail);
-                levels_match=pressure_profile_levels_match(actual,profile_mode==1);
-                level_detail<<"round="<<round<<" expected="<<(profile_mode==1?"1":">1")
+                levels_match=pressure_profile_levels_match(actual,profile_mode==1,reference_amg);
+                level_detail<<"round="<<round<<" expected="<<(profile_mode==1?"1":reference_amg?"2":">1")
                             <<" actual="<<actual.at("effective_levels");
+                if (reference_amg) {
+                    auto* data=reinterpret_cast<hypre_ParAMGData*>(amg);
+                    const int levels=hypre_ParAMGDataNumLevels(data);
+                    auto* matrices=hypre_ParAMGDataAArray(data);
+                    auto* coarse=levels>0 && matrices?matrices[levels-1]:nullptr;
+                    const auto coarse_rows=coarse?hypre_ParCSRMatrixGlobalNumRows(coarse):0;
+                    levels_match=levels_match && coarse_rows>0 && coarse_rows<C*p.nodes;
+                    level_detail<<" coarse_rows="<<coarse_rows<<" cutoff="<<profile.at("maxcoarsesize");
+                    host_coarse=coarse && (hypre_ParCSRMatrixNumRows(coarse)==0
+                        || (hypre_ParAMGDataGEMemoryLocation(data)==HYPRE_MEMORY_HOST && hypre_ParAMGDataAMat(data)));
+                }
             });
             // Synthetic settings are public; print the failing rank's values as well.
             if (!controls_match) std::cerr<<"rank "<<rank<<" "<<tag<<control_detail.str()<<'\n';
             if (!levels_match) std::cerr<<"rank "<<rank<<" "<<tag<<level_detail.str()<<'\n';
             report.result(tag+"actual pressure controls",all_true(controls_match,comm));
             report.result(tag+"hierarchy depth",all_true(levels_match,comm),level_detail.str());
+            if (reference_amg) report.result(tag+"direct coarse solve prepared on host",all_true(host_coarse,comm));
         }
         Buffer<double> local(C*std::size_t(l.nodes()),std::numeric_limits<double>::quiet_NaN());
         s.unpack(x.data(),x.size(),raw(local),local.size());
@@ -202,14 +217,18 @@ int main(int argc,char** argv) {
     MPI_Comm node; MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,report.rank,MPI_INFO_NULL,&node);
     int node_rank=0, devices=0; MPI_Comm_rank(node,&node_rank); cudaGetDeviceCount(&devices);
     if (devices>0) cudaSetDevice(node_rank%devices);
-    bool probe=false; int repetitions=0;
+    bool probe=false,reference_amg=false; int repetitions=0;
     for (int i=1;i<argc;++i) {
         const std::string a=argv[i];
         if (a=="--probe-empty-rank") probe=true;
+        else if (a=="--reference-amg") reference_amg=true;
         else if (a=="--bench" && i+1<argc) repetitions=std::stoi(argv[++i]);
     }
     try {
-        if (probe) {
+        if (reference_amg) {
+            hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"reference HMIS/direct pressure",9,true,4);
+            hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"reference HMIS/direct FlexGMRES",9,true,5);
+        } else if (probe) {
             int ranks=1; MPI_Comm_size(MPI_COMM_WORLD,&ranks);
             if (ranks<2) report.skip("zero-row Hypre probe","needs >= 2 ranks");
             else {
@@ -231,6 +250,11 @@ int main(int argc,char** argv) {
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile one level",18,true,1);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile multilevel",18,true,2);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU pressure profile FlexGMRES",18,true,3);
+            hypre_gates<3>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU momentum profile multilevel",18,true,2);
+            hypre_gates<3>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"GPU momentum profile FlexGMRES",18,true,3);
+            Buffer<int> wall_check(1,0);
+            mars::segregated::runtime::launch(1,WallDistanceCheck{raw(wall_check)});
+            report.result("wall distance floor and first-step initialization",all_true(download(raw(wall_check),1)[0]==1,MPI_COMM_WORLD));
             pressure_refinement_gate(MPI_COMM_WORLD,report);
             if (repetitions>0) { bench<1>(MPI_COMM_WORLD,report,repetitions); bench<3>(MPI_COMM_WORLD,report,repetitions); }
         }

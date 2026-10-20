@@ -34,6 +34,7 @@
 // on USE_CUDA hands __global__ and <<<>>> to the host compiler -- that broke the build once.
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #define MARS_GR_CUDA 1
+#include "../utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #endif
 

@@ -3,7 +3,7 @@
 #include "mars_cvfem_tet_kernel_graph.hpp"
 #include "mars_cvfem_tet_kernel_full.hpp"
 #include "mars_cvfem_tet_kernel_full_perip.hpp"
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 
 namespace mars {
 namespace fem {

@@ -18,7 +18,7 @@
 #include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
-#include <thrust/system/cuda/execution_policy.h>   // thrust::cuda::par.on(stream) for stream-ordered fills
+#include "../utils/mars_gpu_thrust.hpp"
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
@@ -31,7 +31,7 @@
 #include <thrust/binary_search.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <cusolverSp.h>
-#include <cusparse.h>
+#include "../utils/mars_gpu_sparse_blas.hpp"
 #include <vector>
 #include <set>
 #include <unordered_map>
@@ -41,6 +41,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars {
 
@@ -394,7 +395,7 @@ inline void acmColorBlockGraphGpu(int nN, const thrust::device_vector<int>& brow
     acmHashKernel<<<g, blk>>>(acmRaw(rho), nN);
     for (int round = 0; round < 128; ++round) {                            // capped; JP converges in ~O(log nN) rounds
         acmJPColorKernel<<<g, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(color), acmRaw(rho), nN);
-        if (thrust::count(color.begin(), color.end(), -1) == 0) break;     // 1 int D2H/round (control)
+        if (mars::count(color.begin(), color.end(), -1) == 0) break;     // 1 int D2H/round (control)
     }
     numColors = static_cast<int>(*thrust::max_element(color.begin(), color.end())) + 1;
     nodesByColor.resize(nN);
@@ -1025,7 +1026,7 @@ inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bo
     // a rank-deficient coarse saddle block (near-null pressure mode) makes the QR least-squares solve
     // unreliable -> don't inject garbage into the cycle; reset and fall back to smoothing.
     if (singularity >= 0) {
-        thrust::fill(thrust::cuda::par.on(s), L.xvec.begin(), L.xvec.end(), RealType(0));
+        thrust::fill(mars::gpuPar.on(s), L.xvec.begin(), L.xvec.end(), RealType(0));
         acmSmoothGpu(L, coarse, omega, useBlock, s);
     }
 }

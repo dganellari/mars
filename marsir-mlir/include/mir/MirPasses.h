@@ -7,6 +7,9 @@ namespace mir {
 // select. --mir-warp-barriers relies on it to skip barriers between accesses
 // that provably touch the same entries in the same lanes.
 inline constexpr const char *kLaneOwnedAttr = "mir.lane_owned";
+// Kernels whose memref arguments never overlap ({mir.noalias} on the func.func),
+// recorded on the gpu.module by --mir-gpu-wrap for --mir-noalias-descriptors.
+inline constexpr const char *kMirNoaliasKernelsAttr = "mir.noalias_kernels";
 
 // Registers the mir lowering passes (convert-mir-to-linalg) with the pass
 // registry so mir-opt can run them by name.
@@ -37,6 +40,12 @@ void registerWarpBarriersPass();
 void registerHoistInvariantReadsPass();
 void registerUnrollLoopsPass();
 void registerForwardOwnedPass();
+void registerLowerCellwisePass();
+void registerWarpPerElementPass();
+void registerNoaliasDescriptorsPass();
+void registerCellwiseSchedulePass();
+void registerFusePhasesPass();
+void registerTraceSharedPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

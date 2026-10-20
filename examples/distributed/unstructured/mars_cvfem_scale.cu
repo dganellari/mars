@@ -19,7 +19,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/utils/mars_generate_cube.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 #include <cstdio>
 #include <string>

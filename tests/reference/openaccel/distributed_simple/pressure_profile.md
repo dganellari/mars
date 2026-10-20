@@ -1,8 +1,12 @@
 # Original-pressure first-step comparison
 
+For the follow-on bounded run at these original targets, use the
+[twenty-step original-control comparison](pressure_original_history.md).
+It runs both solvers afresh with recovery disabled and checks every snapshot.
+
 This experiment returns to the original OpenAccel pressure targets and saved
 first step. It runs only MARS. It does not use the tightened-pressure experiment
-as the reference, change momentum controls, enable correction-equation recovery,
+as the reference, change momentum controls by default, enable correction-equation recovery,
 or accept a failed pressure residual.
 
 The first-step assembly audit found momentum and pressure equations matching
@@ -28,6 +32,10 @@ Two explicit substitutions keep matrix/vector work on the GPU:
 | HMIS coarsening (10) | PMIS (8) |
 | Coarse Gaussian elimination (9) | l1-Jacobi (18) |
 
+The opt-in [reference AMG first-step comparison](reference_amg.md) removes these
+two substitutions and permits Hypre's host staging. It keeps both original linear
+targets and requires the selected coarse solver to remain active after setup.
+
 The source basis is OpenAccel `src/solver/HYPRE/ContextHYPRE.h` at public revision
 `0d69041ba1afda63e9e4328d9e0d9834bba37756`, and Hypre 2.33.0/3.1.0:
 `parcsr_ls/par_coarsen.c` stages HMIS data on host;
@@ -42,11 +50,12 @@ The reference restart, method, iteration cap, default minimum iterations and
 original rtol/atol are applied to the pressure instance. OpenAccel does not
 forward its generic `min_iterations` to Hypre; the captured Hypre default is
 used. AMG remains one V-cycle with tolerance zero. The production default path
-and momentum instance retain their existing controls. Native GPU SpMV and both
+and, unless explicitly selected below, momentum instance retain their existing controls. Native GPU SpMV and both
 independent acceptance checks remain in effect.
 
 `--pressure-solver-profile` requires explicit pressure tolerances and either the
-one-step audit mode or opt-in [retained pressure expansion](pressure_expansion.md).
+one-step audit mode, full distributed snapshots, or opt-in
+[retained pressure expansion](pressure_expansion.md).
 The recipe below uses the audit. Rank zero reads the small settings file and broadcasts it;
 there are no added host matrix/vector computations. The audit already enables
 private field/matrix output and its device-to-host copies. Each rank also writes
@@ -60,6 +69,121 @@ numerical environment must match the baseline. Known scalar environment controls
 are restored only in the child process. Unknown or device-binding changes stop
 before launch. Both baseline and new output hashes are checked again during
 comparison. OpenAccel runtime mounts need not be present in the MARS terminal.
+
+## Momentum and pressure controls
+
+Use `prepare --both-linear-solvers` to resolve both `coupled_navier_stokes`
+and `pressure_correction` from the original deck. Each uses the reference's
+lookup precedence: equation, `segregated_flow`, then `default`. The saved
+reference deck and fields stay unchanged. Separate files configure the two
+MARS instances; separate settings records verify every selected rank and step.
+The public result reports `original_momentum_targets_preserved` and
+`recorded_gpu_momentum_settings_verified` only after those checks pass.
+
+Pressure supports unscaled Hypre GMRES or FlexGMRES with the restricted
+BoomerAMG options above. Momentum also supports the exact flat PETSc profile
+`ksp_type: fgmres`, `pc_type: bjacobi` through an optional CUDA PETSc backend;
+use the [PETSc build and comparison recipe](petsc_momentum.md) for that case.
+Other PETSc options, Trilinos, MGR, matrix scaling or unsupported combinations
+stop preparation with `unsupported_momentum_profile`; they are not silently
+translated into Hypre. The previously measured reference Hypre defaults are
+reused only after their executable/library identities are checked. Identical
+CPU/GPU solvers are still not claimed: Hypre versions, row order, coarsening and
+coarse relaxation can differ.
+
+If preparation reports `unsupported_momentum_profile`, inspect the saved
+configuration before rebuilding or allocating GPUs:
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-linear-support-XXXXXX")
+run_status=0
+python3 "$repo/scripts/simple_pressure_profile.py" inspect-profiles \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --output "$run/public.json" || run_status=$?
+cat "$run/public.json"
+printf 'Share only: %s\n' "$run/public.json"
+exit "$run_status"
+)
+```
+
+The report covers both equations. It exports known backend/method names, scaling
+flags and the first rejected component; GPU restrictions list every failing
+control in the checked profile. Unknown names, numeric values, lookup names and
+exception messages are withheld. The same GPU validator is used by preparation
+and inspection. Saved case, launch and defaults evidence is checked before and
+after inspection; neither solver nor the runtime library loader is launched.
+`inspection_complete` means the check finished. `both_profiles_supported` states
+whether these settings can be mapped; neither field establishes solver convergence
+or field agreement. This command works in the MARS terminal without mounting the
+OpenAccel environment.
+
+For `family: PETSc`, the inspector reads the flat `ksp_*`, `pc_*`, `sub_*`,
+`mat_type` and `vec_type` options. It does not read Hypre's nested
+`options.solver`/`options.precond` mappings as PETSc settings. Omitted PETSc method
+and preconditioner types are reported as `unspecified`, not as GMRES/none.
+Known declared option names and categorical values are exported; numeric values,
+viewer paths and unrecognized names remain private. `runtime_settings_verified`
+stays false: this is a source-based inspection, not a query of a live PETSc object.
+The earlier generic inspector's GMRES/none labels for non-Hypre families were
+not valid evidence and must not be used to choose a momentum algorithm.
+
+In the inspected OpenAccel revision, `ContextPETSc.h::setOptions_` lowercases
+the flat options before passing them to PETSc. `createKSP_` calls
+`KSPSetFromOptions`, then overrides rtol, atol and the iteration cap with the
+equation context's values; its generic minimum-iteration setting is not forwarded.
+PETSc's stopping norm may be preconditioned, depending on KSP configuration;
+see [KSPSetTolerances](https://petsc.org/release/manualpages/KSP/KSPSetTolerances/).
+Matching tolerance numbers alone would therefore not establish the same stopping
+test as MARS's unpreconditioned check. The supported FGMRES/BJacobi path uses
+PETSc's default right preconditioning and unpreconditioned norm, verifies these
+after setup, and preserves the reference rtol/atol/cap. The formerly missing
+PETSc backend explained preparation's family rejection; this did not establish
+the cause of the observed field difference. GPU execution and field agreement
+still require the public gate and private comparison in the PETSc recipe.
+
+For momentum `A du = b`, `du` is a velocity increment; matrix coefficients have
+units kg/s and the RHS has units N. Both its Krylov target and the two independent
+original-system checks use `max(atol, rtol ||b||)`. Pressure retains its own target
+with RHS units kg/s. Neither target is tightened or relaxed by this mapping.
+SIMPLE equations, relaxation, update order and the zero initial fields are unchanged.
+Recovery remains disabled. MARS continues to reject failed linear solves even
+though the inspected reference wrapper discards Hypre's return code.
+
+This is an iteration-state comparison. Nonlinear MARS norms and stopping criteria
+are unchanged; the reference's diagonally normalized component RMS is a different
+quantity. Neither completion nor a profile match establishes nonlinear convergence.
+The wall coefficient now uses the reference minimum normal distance:
+`4 mu A_sample / max(h, epsilon)`, with `h = V_tet / A_sample`. The original
+arithmetic is retained for `h >= epsilon`, and the first outer step still has zero
+wall coefficient. This extreme-scale regularization difference has not been linked
+to the observed pump discrepancy.
+
+After building and passing the public gates in the block below, select
+`--both-linear-solvers` on its preparation command. Start with the saved original
+one-step reference, rather than repeating the interrupted strict-target long run:
+
+```bash
+python3 "$repo/scripts/simple_pressure_profile.py" prepare \
+  --baseline-pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --defaults-probe "$scratch/simple-hypre-defaults-PrkNXY/probe" \
+  --executable "$exe" --output-dir "$run/pair" --both-linear-solvers
+```
+
+`--history --both-linear-solvers` additionally requires fresh OpenAccel and MARS
+captures as in [the original history recipe](pressure_original_history.md).
+Do not reuse an old settings file or launch record to represent the new mapping.
+Local validation includes the real CPU Hypre 2.33.0 and 3.1.0 regressions,
+independent algebra and wall-distance checks, and collective acceptance tests
+on 1/2/4 host ranks. These do not validate CUDA execution. The public GPU gate
+now includes coupled three-component momentum profiles and the wall-distance
+threshold check; execution of those new cases is pending.
 
 ## One block, in the MARS terminal
 

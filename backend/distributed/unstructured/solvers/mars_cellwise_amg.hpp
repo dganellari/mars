@@ -1,6 +1,6 @@
 #pragma once
-// The p = 1 coarse solve of the cell-wise p-multigrid (mars_cellwise_pmg.hpp): one
-// BoomerAMG V-cycle on the assembled p = 1 operator. Needs a Hypre build.
+// The p = 1 coarse solve of the cell-wise p-multigrid (mars_cellwise_pmg.hpp): BoomerAMG
+// V-cycles on the assembled p = 1 operator. Needs a Hypre build.
 //
 // Each vertex belongs to the rank that holds its counting copy (the canonically first).
 // That rank numbers its vertices densely after the lower ranks' (one MPI_Exscan) and
@@ -12,6 +12,8 @@
 // V-cycle the right-hand side is the DSS of the raw residual read at the counting copies,
 // and the solution returns to every copy through the counting copies and a second DSS.
 
+// domain.hpp first: the Hypre headers use its VectorSelector without including it.
+#include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/mars_sfc_ownership.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_operator.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
@@ -145,10 +147,11 @@ __global__ void scatter_kernel(const double* __restrict__ u, const int* __restri
 
 class P1Amg {
 public:
-    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank).
+    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank);
+    // cycles: V-cycles per coarse solve.
     P1Amg(const UnstructuredTopology& T, const double* G1, const CvfemMatrices<1>& M1, UnstructuredHalo* halo1,
-          MPI_Comm comm, cudaStream_t stream)
-        : T_(T), halo_(halo1), comm_(comm), stream_(stream), y_(T.local * 8), v_(T.local * 8)
+          MPI_Comm comm, cudaStream_t stream, int cycles = 1)
+        : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
         int rank = 0;
@@ -231,7 +234,7 @@ public:
                                                                    first_, raw(lrow), raw(lcol), raw(lval));
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
-        A_ = hypreFromEntries(comm, first_, (HYPRE_Int)rows_, total, lrow, lcol, lval);
+        A_ = fem::hypreFromEntries(comm, first_, (HYPRE_Int)rows_, total, lrow, lcol, lval);
 #if defined(HYPRE_USING_GPU)
         hypre_CSRMatrixMoveDiagFirstDevice(hypre_ParCSRMatrixDiag(A_.get()));   // relaxation reads it first
 #endif
@@ -240,7 +243,7 @@ public:
         HYPRE_ParVectorCreate(comm, (HYPRE_BigInt)total, part, &u_);
         HYPRE_ParVectorInitialize(f_);
         HYPRE_ParVectorInitialize(u_);
-        // The settings of HypreAmgPcgSolver (PMIS, extended+i, l1-Jacobi), as one V-cycle.
+        // The settings of HypreAmgPcgSolver (PMIS, extended+i, l1-Jacobi), as `cycles` V-cycles.
         HYPRE_BoomerAMGCreate(&amg_);
         HYPRE_BoomerAMGSetCoarsenType(amg_, 8);
         HYPRE_BoomerAMGSetInterpType(amg_, 6);
@@ -253,10 +256,10 @@ public:
         HYPRE_BoomerAMGSetCycleNumSweeps(amg_, 4, 3);
         HYPRE_BoomerAMGSetMaxLevels(amg_, 25);
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
-        HYPRE_BoomerAMGSetMaxIter(amg_, 1);
+        HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
         HYPRE_BoomerAMGSetPrintLevel(amg_, 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
-        hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
+        fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
         rows_global_ = total;
     }
     ~P1Amg()
@@ -302,12 +305,11 @@ private:
 
     const UnstructuredTopology& T_;
     UnstructuredHalo* halo_;
-    MPI_Comm comm_;
     cudaStream_t stream_;
     mutable thrust::device_vector<double> y_, v_;   // scratch of the p = 1 size
     thrust::device_vector<int> copy_;                // the counting copy of every numbered vertex
     long long rows_ = 0, first_ = 0, rows_global_ = 0;
-    HypreMatrix A_;
+    fem::HypreMatrix A_;
     HYPRE_ParVector f_ = nullptr, u_ = nullptr;
     HYPRE_Solver amg_ = nullptr;
 };

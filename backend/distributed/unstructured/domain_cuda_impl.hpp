@@ -3,14 +3,7 @@
 #include <cstddef> // For size_t definition
 #include <functional>
 
-// Handle both CUDA and HIP includes
-#ifdef MARS_ENABLE_CUDA
-#include <cuda_runtime.h>
-#endif
-
-#ifdef MARS_ENABLE_HIP
-#include <hip/hip_runtime.h>
-#endif
+#include "utils/mars_gpu_runtime.hpp"
 
 #include "cstone/execution.hpp"
 

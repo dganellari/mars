@@ -1,7 +1,7 @@
 #pragma once
 
 #include "backend/distributed/unstructured/domain.hpp"  // HexTag, TetTag
-#include <cuda_runtime.h>
+#include "../utils/mars_gpu_runtime.hpp"
 #include <type_traits>
 
 namespace mars {

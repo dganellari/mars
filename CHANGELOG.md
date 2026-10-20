@@ -7,6 +7,81 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-20
+
+### Added
+- HIP build for AMD GPUs, tested on MI300A: every example program builds, and all release checks
+  (Navier–Stokes examples included, with Hypre and netCDF built for HIP) and tests pass on 1 and 4
+  ranks. The CUDA runtime, cuSPARSE/cuBLAS, Thrust and CUB calls map to HIP through one header layer
+  on top of cornerstone's; warp-level kernels keep 32-lane groups inside AMD's 64-lane wavefronts.
+  The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor`, the high-order DMMA operator) run on
+  AMD's matrix cores (MFMA). The README shows how to build Hypre 2.33 and netCDF for HIP.
+- A step-by-step tutorial for newcomers, ten steps and an appendix: the mesh, a first GPU loop,
+  Poisson's equation with linear tetrahedra, the same with CVFEM on hexahedra, your own
+  finite-element operator, the heat equation, the lid-driven cavity, Poiseuille flow, the
+  Taylor–Green vortex, the high-order operator and adaptive refinement, and your own CMake project.
+  The new programs (steps 1 to 6) have release checks on 1 and N ranks.
+- `assembleElements` and `ElementValues` (`fem/mars_element_assembly.hpp`): assemble the element
+  matrix and vector of any operator written as a small GPU functor, on linear tetrahedra and
+  trilinear hexahedra. `assembleCvfemDiffusion` and `cvfemControlVolumes`
+  (`fem/mars_cvfem_diffusion.hpp`): the CVFEM diffusion operator and control volumes in one call.
+
+### Changed
+- HIP P7 FP64 Laplacian launchers use direct MFMA contractions, removing intermediate tiles.
+  On the tested MI300A P7/E32 case, per-point and affine applies are 2.37 and 2.64 times faster
+  than the staged path. These are operator timings, not full-solver speedups.
+- HIP `tensor` assembly scatters each row after its last face contribution. On public hex192,
+  one MI300A rank, assembly time falls from 30.05 to 25.77 ms (14.2% less time), excluding
+  output zeroing. Scratch storage falls from 1912 to 1084 bytes/lane; spills remain.
+  Both optimizations retain the CUDA kernel paths. See `tests/performance/AMD-*.md` for scope.
+- On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
+  each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
+  instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
+  use Thrust as before.
+- The `tensor` CVFEM assembly kernel takes the sub-control-surface nodes as compile-time values, so
+  it indexes its per-node arrays with constants: its local memory per thread on H100 halves (1088 to
+  512 bytes) and it runs 2.3 times faster; on MI300A it runs 6% faster but still spills registers.
+  Same matrix on both.
+- The Krylov solvers (CG, preconditioned CG, BiCGStab, GMRES) set up the sparse matrix-vector
+  product once per solve instead of once per product. CG on 7.2 million unknowns takes 1.0 s
+  instead of 19.9 s on MI300A, and 0.85 to 0.87 s instead of 0.97 s on H100.
+- The matrix-free weak-scaling driver overlaps the halo exchange by default (`--no-overlap` to wait).
+- GPU runtime calls in the domain setup (copies, allocations, synchronizations) are checked; a
+  failure stops every rank with its location instead of continuing.
+
+### Fixed
+- AMR refinement levels (used by `mars_tgv` and the AMR drivers) read cornerstone's device copy of
+  the tree leaves. They read the host copy, which only worked where the GPU can read CPU memory.
+- The `team` assembly kernel indexes elements in 64 bits (its thread index wrapped above about
+  134 million elements) and always launches the 256-thread block its shared memory is sized for
+  (`--block-size` above 256 overflowed it).
+- `HYPRE_DIR` is also searched in `lib64`.
+- `smem_cache` assembly kernel: blocks with more distinct nodes than its cache holds read the rest
+  from global memory, and its hash table holds every corner of a block (before, invalid reads or a
+  hang). Its shared-memory alignment masks are 64-bit (they cleared the high address bits, which
+  crashed on AMD), and it always launches the 256 threads it indexes with; so does
+  `tensor_perip_lb2`, whose launch bounds allow no more.
+- `wmma_tensor` zeroed twice the size of its scratch tiles, overwriting other per-element data.
+- `ElementDomain::getNodeCount()` builds the local node numbering first: on several ranks it
+  returned the count read from the file.
+- `find_package(Mars)` on a HIP install recreates the ROCm library target and cornerstone's GPU
+  library, which the installed targets link.
+- The AMR bounding box reduced the device coordinates on the host.
+- An installed MARS can build GPU programs against the unstructured backend: the headers are
+  installed in the layout of the source tree, and `Mars::mars` carries the GPU definitions and nvcc
+  flags; `find_package(Mars)` sets `MARS_GPU_LANGUAGE` and `MARS_GPU_ARCHITECTURES`. With CUDA,
+  `libmars_unstructured` is device-linked when it is built. Tested on NVIDIA and AMD with the GPU
+  program of the tutorial's appendix, built outside MARS and run on 4 ranks.
+
+### Experimental
+- MARSIR (CUDA only, off by default with `MARS_ENABLE_MARSIR`): in the element-local (cell-wise)
+  solve every kernel now comes from the generator, including the DSS gather, the Jacobi
+  preconditioner, the BiCGStab vector updates and the p-multigrid V-cycle. The V-cycle's p = 3 and
+  p = 1 operators come from the same operator spec. At 64^3 on one GH200 the generated V-cycle
+  is faster than the hand-written one (53 against 77 ms). Also new: a BoomerAMG coarse level,
+  right-preconditioned BiCGStab with an FP32 V-cycle (one rank), and shared-memory layouts chosen
+  against bank conflicts. Design notes and results: `docs/design/cellwise_unstructured_dss.md`.
+
 ## [0.1.0] — 2026-10-11
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
@@ -52,8 +127,8 @@ re-tested for this release, also handle simplices up to dimension 4.
   Alps GH200, 8M nodes per GPU: 72% of the one-node (4-GPU) step speed on 256 GPUs, Hypre-bound,
   with 20 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
 - Weak scaling of MARS alone, the distributed p = 1 matrix-free operator apply at 16M elements per
-  GPU with the halo exchange overlapped: 70% of the one-node rate on 1024 GPUs and 66% on 2048 GPUs
-  (32.8 billion DOFs); without overlap 65% and 45 to 62% (Matrix-Free tutorial).
+  GPU, with the halo exchange overlapped (the default): 73% of the one-node rate on 1024 GPUs and
+  69% on 2048 GPUs (32.8 billion DOFs); 65% and 45 to 62% without overlap (Matrix-Free tutorial).
 - Validation: the Poiseuille 1500-step check (profile RMS error 4.551e-4 m/s, about 24 s on
   one GPU; `tests/reference/poiseuille/planar_validation.md`) passes on 1, 2, 4, 16 and 64 GPUs,
   and the Taylor–Green vortex kinetic energy follows the Stokes decay, identical on 1, 2, 4 and
@@ -114,4 +189,5 @@ re-tested for this release, also handle simplices up to dimension 4.
 See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the full stable / experimental /
 unsupported breakdown.
 
+[0.1.1]: https://github.com/dganellari/mars/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dganellari/mars/releases/tag/v0.1.0

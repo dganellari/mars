@@ -6,10 +6,16 @@
 
 **[Read the Full Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
 
-MARS is an open-source, GPU-native mesh management and finite-element assembly library. Its GPU
-backend handles 3D tetrahedral and hexahedral meshes; the older serial and Kokkos backends (off by
-default, not re-tested for v0.1) also handle simplices up to dimension 4. It is written in C++20;
-the element type, the floating-point precision and the SFC key type are template parameters.
+MARS is an open-source, GPU-native mesh and assembly library for finite-element codes on 3D tetrahedral
+and hexahedral meshes, running on NVIDIA and AMD GPUs. It provides the distributed mesh and the
+building blocks to assemble and solve any finite-element discretization: DOF numbering, sparsity,
+owned and ghost rows, halo exchange, and Krylov solvers. The space-filling-curve partitioning and the
+element halo come from the cornerstone-octree library. MARS ships ready-made operators for Galerkin
+finite elements (linear tetrahedra; high-order matrix-free, experimental) and for the control-volume
+finite element method (CVFEM), which its Navier–Stokes solver uses.
+The older serial and Kokkos backends also handle simplices up to dimension 4; they are
+outside the GPU release checks. MARS uses C++20, with element type, floating-point
+precision and SFC key type as template parameters.
 
 The main features of MARS are:
 
@@ -20,14 +26,15 @@ The main features of MARS are:
 2. Space-filling-curve (SFC) domain decomposition — elements are identified by their
    lowest SFC corner key and distributed across ranks by cornerstone.
 
-3. GPU-native finite-element and CVFEM assembly — element → DOF map → CSR sparsity →
-   assembled matrix, all on the device, with several assembly kernel variants.
+3. GPU-native assembly — element → DOF map → CSR sparsity → assembled matrix, all on the device:
+   write your own element kernels, or use the shipped Galerkin and CVFEM operators (several CVFEM
+   kernel variants).
 
 4. An incompressible Navier–Stokes solver for hexahedral meshes (CVFEM, projection
    method, Hypre BoomerAMG), validated on Poiseuille flow and the Taylor–Green vortex.
 
 5. Distributed multi-rank execution via MPI, including a per-node halo for solver
-   communication (CUDA-aware MPI) on top of the cornerstone element halo.
+   communication (GPU-aware MPI) on top of the cornerstone element halo.
 
 6. Experimental: high-order matrix-free CVFEM operators, and GPU-native adaptive mesh
    refinement (mark → refine → rebuild → solution transfer).
@@ -35,15 +42,15 @@ The main features of MARS are:
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
-The GPU backend runs on NVIDIA GPUs with CUDA. HIP support for AMD GPUs exists (`-DMARS_ENABLE_HIP=ON`)
-but was not built or tested for v0.1, and the examples are CUDA-only. The older Kokkos backend
+The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A),
+including the Navier–Stokes examples. The older Kokkos backend
 covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
 
 ## Releases & status ##
 
-Current release: **v0.1.0** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
+Release candidate: **v0.1.1** (not tagged yet) — see [CHANGELOG.md](CHANGELOG.md). For the stable /
 experimental / unsupported breakdown (what to rely on and what is still under
 development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
 `0`, so the public API may change between minor releases.
@@ -58,8 +65,7 @@ A plain clone is all you need:
 
 A network connection is required at configure time for the dependency fetch.
 
-GPU build (the main use case; HIP support for AMD GPUs, `-DMARS_ENABLE_HIP=ON`, was not built or
-tested for v0.1 and does not build the examples, see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)). The unstructured backend is on
+GPU build (the main use case; for AMD GPUs see the HIP build below). The unstructured backend is on
 by default in a GPU build. This builds the library, the example
 programs of the tutorials and the release checks; leave out `-DMARS_ENABLE_HYPRE=ON` if Hypre is
 not installed (the Navier–Stokes examples and their checks then are not built):
@@ -69,6 +75,61 @@ cd mars
 cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
       -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_HYPRE=ON
 cmake --build build -j
+```
+
+HIP build for AMD GPUs (MI300A is `gfx942`). It builds the same example programs and release checks
+as the CUDA build; add `-DMARS_ENABLE_HYPRE=ON` for the Navier–Stokes ones, which need Hypre built for
+HIP (see below). Use a C++20 host compiler (GCC 13 on Beverin), passed explicitly if the system `g++`
+is older:
+
+```bash
+cd mars
+cmake -B build -DMARS_ENABLE_HIP=ON -DHIP_GPU_ARCHITECTURES=gfx942 -DMARS_ENABLE_FEM_EXAMPLES=ON \
+      -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+cmake --build build -j
+```
+
+On AMD, MARS runs its reductions (sums, norms, counts) with its own kernels: through rocPRIM, which
+Thrust uses on AMD, each one compiles into about 130 kernels, and the Navier–Stokes drivers took over
+an hour to build. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` uses rocPRIM instead. NVIDIA builds always use
+Thrust.
+
+With Cray MPICH, multi-rank runs need GPU-aware MPI, and on MI300A also its on-node GPU IPC turned
+off; without either, the ranks crash in the first domain sync. The release checks set these
+themselves:
+
+```bash
+export MPICH_GPU_SUPPORT_ENABLED=1 MPICH_GPU_IPC_ENABLED=0
+```
+
+If no Hypre built for HIP is installed, Hypre 2.33 builds for MI300A with ROCm 7.2 given two extra
+settings: HIP code at C++17 (rocPRIM needs it), and HIP's own warp-sync functions off (Hypre defines
+its own `__syncwarp`). Keep rocRAND on: built without it, Hypre 2.33 still calls its rocRAND wrapper,
+and programs that link the library fail with `undefined reference to hypre_CurandUniform`. Then
+point MARS at it with `HYPRE_DIR`:
+
+```bash
+git clone --depth 1 -b v2.33.0 https://github.com/hypre-space/hypre.git
+cmake -S hypre/src -B hypre-build -DCMAKE_INSTALL_PREFIX=$PWD/hypre-install -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DBUILD_SHARED_LIBS=ON \
+      -DHYPRE_ENABLE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx942 -DHYPRE_ENABLE_GPU_AWARE_MPI=ON \
+      -DCMAKE_HIP_STANDARD=17 -DCMAKE_HIP_FLAGS=-DHIP_DISABLE_WARP_SYNC_BUILTINS \
+      -DHYPRE_ENABLE_ROCRAND=ON -DHYPRE_ENABLE_ROCSOLVER=OFF
+cmake --build hypre-build -j && cmake --install hypre-build
+export HYPRE_DIR=$PWD/hypre-install
+```
+
+The Poiseuille example reads an Exodus mesh, which needs netCDF. If none is installed, netCDF-C
+builds on an installed HDF5 (here the one of the environment, under `$HDF5_ROOT`):
+
+```bash
+git clone --depth 1 -b v4.9.3 https://github.com/Unidata/netcdf-c.git
+cmake -S netcdf-c -B netcdf-build -DCMAKE_INSTALL_PREFIX=$PWD/netcdf-install -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=mpicc -DHDF5_ROOT=$HDF5_ROOT -DNETCDF_ENABLE_DAP=OFF -DNETCDF_ENABLE_BYTERANGE=OFF \
+      -DNETCDF_ENABLE_NCZARR=OFF -DNETCDF_ENABLE_PLUGINS=OFF -DNETCDF_ENABLE_LIBXML2=OFF \
+      -DNETCDF_ENABLE_EXAMPLES=OFF -DNETCDF_ENABLE_TESTS=OFF -DNETCDF_ENABLE_UNIT_TESTS=OFF
+cmake --build netcdf-build -j && cmake --install netcdf-build
+export NETCDF_DIR=$PWD/netcdf-install
 ```
 
 CPU-only build. This builds the core library; the unstructured backend needs CUDA or HIP:
@@ -82,8 +143,8 @@ cmake --build build -j
 ### Checking your build
 
 Run the release checks after every build, before you use MARS for your own work. They take
-about five minutes and catch a broken build, MPI setup or GPU setup. A CUDA build with the FEM examples
-(the GPU build above; tests are on by default) registers them; they run the documented drivers
+about five minutes and catch a broken build, MPI setup or GPU setup. A CUDA or HIP build with the FEM examples
+(the GPU builds above; tests are on by default) registers them; they run the documented drivers
 end to end on meshes generated at test time, plus the shipped Poiseuille mesh:
 
 ```bash
@@ -91,7 +152,8 @@ cd build
 ctest -L release
 ```
 
-Every test must pass: 22 tests with Hypre and netCDF, 15 without Hypre.
+Every test must pass, on NVIDIA and AMD GPUs: 44 tests with Hypre and netCDF, 42 with Hypre but
+without netCDF (the Poiseuille checks read an Exodus mesh), 37 without Hypre.
 
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson
@@ -142,7 +204,8 @@ target_link_libraries(my_app PRIVATE Mars::mars)
 ## MARS Kokkos requirements ##
 
 The Kokkos backend (structured meshes, off by default) depends on the Kokkos and Kokkos
-Kernels libraries. The unstructured GPU backend does not need Kokkos.
+Kernels libraries. The unstructured GPU backend does not need Kokkos. The serial and Kokkos backends,
+not re-tested for v0.1, also handle simplices up to dimension 4.
 
 MARS finds Kokkos if it is installed on your system, standalone or as part of Trilinos. It
 looks for KOKKOS_DIR or TRILINOS_DIR in the environment: with Trilinos it takes Kokkos from

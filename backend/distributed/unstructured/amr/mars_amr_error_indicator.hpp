@@ -8,6 +8,7 @@
 #include <mpi.h>
 
 #include "cstone/cuda/cuda_utils.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -265,7 +266,7 @@ public:
         auto eb = thrust::device_pointer_cast(d_error.data());
         auto ee = thrust::device_pointer_cast(d_error.data() + d_error.size());
         RealType localSum =
-            thrust::transform_reduce(thrust::device, eb, ee,
+            mars::transformReduce(eb, ee,
                                      [] __device__(RealType e) -> RealType { return e * e; },
                                      RealType(0), thrust::plus<RealType>());
 
@@ -288,7 +289,7 @@ public:
         auto eb = thrust::device_pointer_cast(d_error.data() + startIdx);
         auto ee = thrust::device_pointer_cast(d_error.data() + endIdx);
         RealType localSum =
-            thrust::transform_reduce(thrust::device, eb, ee,
+            mars::transformReduce(eb, ee,
                                      [] __device__(RealType e) -> RealType { return e * e; },
                                      RealType(0), thrust::plus<RealType>());
 

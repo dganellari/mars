@@ -8,6 +8,22 @@ import re
 import sys
 
 
+PROGRESS_STAGES = frozenset((
+    'momentum_complete', 'outlet_update', 'pressure_assembly', 'pressure_pack',
+    'pressure_backend', 'hypre_initialize', 'hypre_matrix', 'hypre_vectors',
+    'hypre_amg_configure', 'hypre_setup', 'hypre_solve', 'hypre_solution',
+    'hypre_residual', 'hypre_complete', 'pressure_exchange', 'pressure_residual',
+    'pressure_audit', 'pressure_correction', 'first_step_complete', 'final_output',
+    'flow_output_complete'))
+
+
+def progress_marker(line):
+    match = re.fullmatch(r'\[simple-progress\] rank=([0-3]) stage=([a-z_]+)', line)
+    if match and match[2] in PROGRESS_STAGES:
+        return int(match[1]), match[2]
+    return None
+
+
 TAGS = ('[simple-linear]', '[HypreGMRES] rejected:', '[hypre-spmv]', '[simple-pressure-audit]')
 AUDIT_FLAGS = ('finite', 'zero_row', 'nonpositive_diagonal', 'positive_offdiagonal',
                'constant_mode_detected', 'residual_within_roundoff_bound', 'roundoff_bound_exceeds_limit',
@@ -265,6 +281,7 @@ class DiagnosticState:
         self.scheduler_messages = []
         self.solver_started = False
         self.iteration_report_seen = False
+        self.progress = {}
         self.headers = 0
         self.pending_hypre_rejection = False
         self.pressure_refinement_seen = False
@@ -276,6 +293,9 @@ class DiagnosticState:
 
     def feed(self, line):
         line = line.strip()
+        marker = progress_marker(line)
+        if marker is not None:
+            self.progress[str(marker[0])] = marker[1]
         self.failures.update(failure_markers(line))
         error = SOFTWARE_ERROR_LOOKUP.get(application_error(line))
         if error is not None and error not in self.software_errors:
@@ -397,6 +417,8 @@ def summarize_state(state, exit_text, reference_deck):
         'false_convergence_message_seen': state.false_convergence,
         'solver_started': state.solver_started,
         'iteration_report_seen': state.iteration_report_seen,
+        'simple_progress_last_stage_by_rank': dict(state.progress),
+        'simple_progress_scope': 'last_entered_host_stage_not_gpu_completion_or_convergence',
         'software_errors': list(state.software_errors),
         'first_software_error': state.software_errors[0] if state.software_errors else 'unknown',
         'scheduler_messages': list(state.scheduler_messages),

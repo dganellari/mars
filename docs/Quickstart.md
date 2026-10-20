@@ -9,9 +9,8 @@ pipeline.
 
 ## 1. Prerequisites
 
-- An NVIDIA GPU with the CUDA toolkit. The example drivers need CUDA. (A HIP build for AMD GPUs
-  is possible, `-DMARS_ENABLE_HIP=ON -DHIP_GPU_ARCHITECTURES=gfx942`, but it was not re-verified
-  for v0.1 and it does not build the examples.)
+- An NVIDIA GPU with the CUDA toolkit. AMD GPUs work with HIP instead: see the HIP build and
+  the MPI settings it needs in the [README](https://github.com/dganellari/mars#downloading-mars-and-its-dependencies).
 - CMake 3.22 or newer and a C++20 compiler.
 - MPI. The build needs it by default; a single-rank run can start without `mpirun`.
 - Python 3 with NumPy, to generate the mesh.
@@ -101,7 +100,7 @@ Options:
 | `--mesh=DIR` | the mesh directory (required) |
 | `--kernel=VARIANT` | assembly kernel, see the table below (default `original`) |
 | `--iterations=N` | repeat the assembly N times, for timing (default 10) |
-| `--block-size=N` | CUDA block size (default 256) |
+| `--block-size=N` | GPU block size (default 256; `team` always uses 256) |
 | `--bucket-size=N` | cornerstone octree bucket size (default 64; MARS lowers it for small meshes so every rank gets elements) |
 | `--bucket-size-focus=N` | focus-tree bucket size (default 8; lower = finer halo, more memory) |
 | `--quiet` | do not print the timing breakdown |
@@ -114,14 +113,14 @@ compare them on your GPU with `--iterations=N`):
 | `original` | default; reference per-element kernel |
 | `optimized` | optimized element kernel |
 | `shmem` | low-register, direct-scatter kernel |
-| `team` | warp per element |
+| `team` | 32 lanes per element |
 | `tensor` | full local matrix per thread |
 | `tensor_colored` | `tensor` with graph coloring, no atomics |
 | `tensor_aos` | `tensor` with packed node data |
 | `tensor_perip` | `tensor` with pre-resolved CSR positions |
 | `tensor_perip_lb2` | `tensor_perip` with two blocks per SM |
 | `smem_cache` | shared-memory node cache |
-| `wmma_tensor` | FP64 tensor cores, WMMA (experimental) |
+| `wmma_tensor` | FP64 tensor cores: WMMA on NVIDIA, MFMA on AMD (experimental) |
 | `wgmma_tensor` | same path as `wmma_tensor`: FP64 has no WGMMA instruction (experimental) |
 
 ---

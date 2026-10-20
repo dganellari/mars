@@ -44,7 +44,13 @@ add_test(NAME marsReleaseMeshHexScaled
 add_test(NAME marsReleaseMeshHexCycled
          COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_hex_cube.py
                  --nx 16 --ny 16 --nz 16 --cycle-axes --output ${_rel_hexc})
-set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet marsReleaseMeshHexScaled marsReleaseMeshHexCycled PROPERTIES
+add_test(NAME marsReleaseMeshHex32
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_hex_cube.py
+                 --nx 32 --ny 32 --nz 32 --output ${_rel_dir}/hex32)
+add_test(NAME marsReleaseMeshTet16
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_tet_cube.py
+                 --nx 16 --ny 16 --nz 16 --output ${_rel_dir}/tet16)
+set_tests_properties(marsReleaseMeshHex marsReleaseMeshHex32 marsReleaseMeshTet marsReleaseMeshTet16 marsReleaseMeshHexScaled marsReleaseMeshHexCycled PROPERTIES
     FIXTURES_SETUP marsReleaseMeshes LABELS "release" TIMEOUT 120)
 
 # --- assembly: same norms AND the same owned rows (by node SFC key) on 1 rank and on N ranks ---
@@ -149,6 +155,78 @@ if(MARS_ENABLE_HYPRE)
     set_tests_properties(${_rel_ns} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
 endif()
 
+# --- step-by-step tutorial (docs/step-*.md): each step on 1 and N ranks -----------------------------
+set(_rel_check ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py)
+if(TARGET mars_step01_mesh)
+    foreach(_np 1 ${_rel_np})
+        # the 16^3 cube: every element and node counted exactly once over the ranks
+        add_test(NAME marsReleaseStep01_np${_np}
+                 COMMAND ${_rel_check} "--regex=mesh: ([0-9]+) elements, 4913 nodes" --lo 4096 --hi 4096 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step01_mesh> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex})
+        # the unit cube: volume 1 and integral of x 1/2, exact up to rounding
+        add_test(NAME marsReleaseStep02Volume_np${_np}
+                 COMMAND ${_rel_check} "--regex=volume = ([-+0-9.eE]+)" --lo 0.999999999999 --hi 1.000000000001 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step02_volume> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex})
+        add_test(NAME marsReleaseStep02Moment_np${_np}
+                 COMMAND ${_rel_check} "--regex=integral of x = ([-+0-9.eE]+)" --lo 0.499999999999 --hi 0.500000000001 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step02_volume> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex})
+        # Poisson with a known solution: the error at h = 1/8 and at h = 1/16, measured 2.520e-2 and
+        # 6.394e-3 (a ratio of 3.94: second order), each within 5%
+        add_test(NAME marsReleaseStep03Poisson8_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 2.39e-2 --hi 2.65e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step03_poisson> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_tet})
+        add_test(NAME marsReleaseStep03Poisson16_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 6.07e-3 --hi 6.72e-3 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step03_poisson> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_dir}/tet16)
+        # the same problem with CVFEM on hexahedra: measured 3.219e-3 at h = 1/16 and 8.036e-4 at h = 1/32
+        # (ratio 4.01), each within 5%
+        add_test(NAME marsReleaseStep04Cvfem16_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 3.06e-3 --hi 3.38e-3 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step04_cvfem> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex})
+        add_test(NAME marsReleaseStep04Cvfem32_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 7.63e-4 --hi 8.44e-4 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step04_cvfem> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_dir}/hex32)
+        # your own Galerkin operator through assembleElements: Q1 hexahedra, measured 6.447e-3 at h = 1/16
+        # and 1.608e-3 at h = 1/32, each within 5%; P1 tetrahedra must give step 3's error
+        add_test(NAME marsReleaseStep05Hex16_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 6.12e-3 --hi 6.77e-3 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step05_galerkin> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex})
+        add_test(NAME marsReleaseStep05Hex32_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 1.53e-3 --hi 1.69e-3 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step05_galerkin> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_dir}/hex32)
+        add_test(NAME marsReleaseStep05Tet8_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 2.39e-2 --hi 2.65e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step05_galerkin> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_tet} --elements=tet)
+        # the heat equation with implicit Euler to t = 0.1 on h = 1/16: measured 2.244e-2 at dt = 0.01 and
+        # 1.092e-2 at dt = 0.005 (first order in time), each within 5%
+        add_test(NAME marsReleaseStep06Heat10_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 2.13e-2 --hi 2.36e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step06_heat> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex} --dt=0.01)
+        add_test(NAME marsReleaseStep06Heat20_np${_np}
+                 COMMAND ${_rel_check} "--regex=max error = ([-+0-9.eE]+)" --lo 1.04e-2 --hi 1.15e-2 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_step06_heat> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex} --dt=0.005)
+        set_tests_properties(marsReleaseStep01_np${_np} marsReleaseStep02Volume_np${_np} marsReleaseStep02Moment_np${_np}
+                             marsReleaseStep03Poisson8_np${_np} marsReleaseStep03Poisson16_np${_np}
+                             marsReleaseStep04Cvfem16_np${_np} marsReleaseStep04Cvfem32_np${_np}
+                             marsReleaseStep05Hex16_np${_np} marsReleaseStep05Hex32_np${_np} marsReleaseStep05Tet8_np${_np}
+                             marsReleaseStep06Heat10_np${_np} marsReleaseStep06Heat20_np${_np}
+                             PROPERTIES
+                             FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 300)
+    endforeach()
+endif()
+
 # --- high-order matrix-free operator (experimental); both drivers generate their own cube -------
 # One GPU, p = 1..7: GPU metric and element apply against the host reference, A*1 = 0,
 # A*linear = 0 at interior DOFs, and a sheared-element gate. Exits 1 if any gate fails.
@@ -174,3 +252,12 @@ get_property(_rel_tests DIRECTORY PROPERTY TESTS)
 list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Cavity|Channel|Tgv)")
 set_tests_properties(${_rel_tests} PROPERTIES
     FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 600)
+
+# AMD: cornerstone passes GPU buffers to MPI, so Cray MPICH needs GPU support on, and its on-node
+# GPU IPC path crashes in GTL on MI300A (Beverin, cray-gtl 9.1.0), so that is turned off.
+if(MARS_ENABLE_HIP)
+    get_property(_rel_all DIRECTORY PROPERTY TESTS)
+    list(FILTER _rel_all INCLUDE REGEX "^marsRelease")
+    set_tests_properties(${_rel_all} PROPERTIES
+        ENVIRONMENT "MPICH_GPU_SUPPORT_ENABLED=1;MPICH_GPU_IPC_ENABLED=0")
+endif()

@@ -14,7 +14,7 @@
 #include <mpi.h>
 #include "mars.hpp"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
@@ -54,7 +54,7 @@ auto createNVectors(size_t size)
 template<typename KeyType>
 inline std::vector<KeyType> dedupNodesGpu(std::vector<KeyType>& allNodes)
 {
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
     constexpr size_t cpuThreshold = 1ull << 20;  // ~1M keys: H2D round-trip not worth it
     if (allNodes.size() >= cpuThreshold)
     {

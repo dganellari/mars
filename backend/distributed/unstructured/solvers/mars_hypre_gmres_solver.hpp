@@ -5,6 +5,7 @@
 // HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
+#include "../utils/mars_gpu_reduce.hpp"
 #if !defined(HYPRE_RELEASE_NUMBER) || HYPRE_RELEASE_NUMBER < 30000
 // Older releases export ParVectorAxpy but declare it only in this header.
 #include <_hypre_parcsr_mv.h>
@@ -54,6 +55,8 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+    void set_progress(std::function<void(const char*)> progress) { progress_=std::move(progress); }
+    void report_progress(const char* stage) const { if (progress_) progress_(stage); }
     static void initialize_hypre() { static HypreInitGuard guard; }
     void enable_gpu_aware_mpi() {
         initialize_hypre();
@@ -182,6 +185,7 @@ public:
         last_timing_ = {};
         prepare_start_ = wall_stamp();
         if (profile_) profile_start_ = profile_->stamp();
+        report_progress("hypre_initialize");
         initialize_hypre();
         configure_spmv();
 
@@ -207,11 +211,14 @@ public:
             MPI_Allreduce(&rebuild, &any_rebuild, 1, MPI_INT, MPI_MAX, comm_);
             if (!any_rebuild) {
                 if (fixed_graph_updates_) {
+                    report_progress("hypre_matrix");
                     update_matrix_values(A);
+                    report_progress("hypre_vectors");
                     if (!update_vectors(b, x)) return false;
                     if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
                     finish_prepare();
                     const double start = wall_stamp();
+                    report_progress("hypre_setup");
                     const HYPRE_Int error = useFlexGmres_
                         ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
                         : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
@@ -261,6 +268,7 @@ public:
             require_reuse(false, "fixed graph updates require the device-map overload");
         if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
+        report_progress("hypre_initialize");
         initialize_hypre();
         configure_spmv();
 
@@ -508,12 +516,13 @@ public:
     // been done.
     bool solveImpl(const Matrix& A, const Vector& b, Vector& x,
                    IndexType globalColStart, IndexType globalColEnd) {
+        report_progress("hypre_matrix");
         int rank;
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
 
         if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
-            const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+            const bool bad = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
                 thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
             require_reuse(!bad && globalDofEnd_ - globalDofStart_ == m
                           && (!fixed_graph_updates_ || (m > 0 && !precondMatrix_)),
@@ -525,6 +534,7 @@ public:
             require_reuse(parcsr_A_ != nullptr && HYPRE_GetError() == 0, "matrix preparation failed");
 
         // RHS + initial guess: pure device path.
+        report_progress("hypre_vectors");
         HYPRE_BigInt ilower = static_cast<HYPRE_BigInt>(globalDofStart_);
         HYPRE_BigInt iupper = static_cast<HYPRE_BigInt>(globalDofEnd_ - 1);
 
@@ -550,6 +560,7 @@ public:
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
         finish_prepare();
         const double setup_start = wall_stamp();
+        report_progress("hypre_amg_configure");
 
         if (verbose_ && rank == 0) std::cout << "Creating preconditioner..." << std::endl;
 
@@ -780,6 +791,7 @@ public:
         }
 
         if (verbose_ && rank == 0) std::cout << "Setting up " << krylovName << " solver..." << std::endl;
+        report_progress("hypre_setup");
         if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int setup_err = useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
@@ -812,17 +824,17 @@ public:
         const auto previous_b = par_b_, previous_x = par_x_;
         if (reuse_enabled_) {
             require_reuse(b.size() >= size_t(m) && x.size() >= size_t(m), "undersized RHS or solution");
-            const bool bad_b = m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+            const bool bad_b = m > 0 && mars::anyOf(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
-            const bool bad_x = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad_x = m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
             HYPRE_ClearAllErrors();
         } else if (fixed_graph_updates_ || check_inputs) {
             const bool sized = b.size() >= size_t(m) && x.size() >= size_t(m);
-            const bool bad_b = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+            const bool bad_b = sized && m > 0 && mars::anyOf(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
-            const bool bad_x = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad_x = sized && m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(sized && !bad_b && !bad_x, "undersized or nonfinite RHS/initial guess");
             HYPRE_ClearAllErrors();
@@ -898,6 +910,7 @@ public:
         auto& d_x_cast = d_x_cast_;
         if (profile_) profile_start_ = profile_->stamp();
         const double solve_start = wall_stamp();
+        report_progress("hypre_solve");
         if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int solve_err = amg_cycle_
             ? HYPRE_BoomerAMGSolve(precond_, parcsr_A_, par_b_, par_x_)
@@ -922,6 +935,7 @@ public:
         if (verbose_ && rank == 0) std::cout << "GMRES solve complete." << std::endl;
 
         // Read solution directly into device storage.
+        report_progress("hypre_solution");
         if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
             HYPRE_IJVectorGetValues(x_hypre_, m,
                                     thrust::raw_pointer_cast(d_rowGlobal.data()),
@@ -936,18 +950,18 @@ public:
         }
 
         if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
-            const bool bad = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+            const bool bad = m > 0 && mars::anyOf(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad && HYPRE_GetError() == 0 && cudaGetLastError() == cudaSuccess,
                           "nonfinite result, extraction error, or CUDA failure");
         }
         if (amg_cycle_) {
             const double local[2] = {
-                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(x.data()),
+                m > 0 ? mars::transformReduce(thrust::device_pointer_cast(x.data()),
                     thrust::device_pointer_cast(x.data() + m),
                     [] __device__(RealType v) -> double { return fabs(double(v)); },
                     0.0, thrust::maximum<double>()) : 0.0,
-                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(b.data()),
+                m > 0 ? mars::transformReduce(thrust::device_pointer_cast(b.data()),
                     thrust::device_pointer_cast(b.data() + m),
                     [] __device__(RealType v) -> double { return fabs(double(v)); },
                     0.0, thrust::maximum<double>()) : 0.0};
@@ -965,6 +979,7 @@ public:
 
         int    num_iterations = 0;
         double final_res_norm = 0.0;
+        report_progress("hypre_residual");
         (useFlexGmres_ ? HYPRE_FlexGMRESGetNumIterations : HYPRE_GMRESGetNumIterations)(solver_, &num_iterations);
         (useFlexGmres_ ? HYPRE_FlexGMRESGetFinalRelativeResidualNorm : HYPRE_GMRESGetFinalRelativeResidualNorm)(solver_, &final_res_norm);
         const double reported_res_norm = final_res_norm;
@@ -979,14 +994,14 @@ public:
         // units, and changing the matrix scale changes x/b without harming a solve.
         {
             double localXmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(x.data()),
                       thrust::device_pointer_cast(x.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
                       0.0, thrust::maximum<double>())
                 : 0.0;
             double localBmax = (m > 0)
-                ? thrust::transform_reduce(
+                ? mars::transformReduce(
                       thrust::device_pointer_cast(b.data()),
                       thrust::device_pointer_cast(b.data() + m),
                       [] __device__ (RealType v) -> double { return fabs((double)v); },
@@ -1088,6 +1103,7 @@ public:
         // Legacy callers also retain their magnitude safeguards.
         if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
         if (timing_enabled_) last_timing_.finish_seconds = wall_stamp() - finish_start;
+        report_progress("hypre_complete");
         return converged;
     }
 
@@ -1172,7 +1188,7 @@ public:
             thrust::raw_pointer_cast(d_row_global_.data()), values);
         require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0 && HYPRE_GetError() == 0,
                       "residual audit vector extraction failed");
-        const double local = thrust::transform_reduce(thrust::make_counting_iterator(HYPRE_Int(0)),
+        const double local = mars::transformReduce(thrust::make_counting_iterator(HYPRE_Int(0)),
             thrust::make_counting_iterator(m), [=] __device__ (HYPRE_Int row) -> double {
                 const double difference = values[row] - (expected ? expected[row] : 0.0);
                 return difference * difference;
@@ -1251,11 +1267,11 @@ public:
                 thrust::raw_pointer_cast(d_row_global_.data()), lower, m);
         }
         thrust::exclusive_scan(d_packed_counts_.begin(), d_packed_counts_.end(), d_packed_offsets_.begin());
-        require_reuse(thrust::count(d_packed_counts_.begin(), d_packed_counts_.end(), 0) == 0
-                      && thrust::count(d_graph_diagonal_.begin(), d_graph_diagonal_.end(), 0) == 0,
+        require_reuse(mars::count(d_packed_counts_.begin(), d_packed_counts_.end(), 0) == 0
+                      && mars::count(d_graph_diagonal_.begin(), d_graph_diagonal_.end(), 0) == 0,
                       "fixed graph contains an empty row or a missing diagonal");
         // Hypre's insertion API needs a host count for allocating the packed arrays.
-        const int count = thrust::reduce(d_packed_counts_.begin(), d_packed_counts_.end(), 0);
+        const int count = mars::reduce(d_packed_counts_.begin(), d_packed_counts_.end(), 0);
         d_packed_columns_.resize(count);
         d_source_slots_.resize(count);
         d_packed_values_.resize(count);
@@ -1277,7 +1293,7 @@ public:
 
     void update_matrix_values(const Matrix& A) {
         const double start = wall_stamp();
-        const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        const bool bad = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
             thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
         HYPRE_ClearAllErrors();
         thrust::gather(d_source_slots_.begin(), d_source_slots_.end(),
@@ -1325,7 +1341,7 @@ public:
         HYPRE_IJMatrixInitialize(ij_out);
 
         // Quick NaN/Inf scan on raw values (single allreduce-style reduction).
-        bool hasNaN = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        bool hasNaN = A.nnz() > 0 && mars::anyOf(thrust::device_pointer_cast(A.valuesPtr()),
                                      thrust::device_pointer_cast(A.valuesPtr() + A.nnz()),
                                      IsNonFinite<RealType>());
         if (hasNaN) {
@@ -1399,8 +1415,8 @@ public:
 
         // Validation summaries (small reductions, single int copy each).
         int emptyRows = static_cast<int>(
-            thrust::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
-        int rowsMissingDiagonal = thrust::transform_reduce(
+            mars::count(d_perRowCount.begin(), d_perRowCount.end(), 0));
+        int rowsMissingDiagonal = mars::transformReduce(
             thrust::make_counting_iterator(0),
             thrust::make_counting_iterator(static_cast<int>(m)),
             [d_perRowCount_ptr = thrust::raw_pointer_cast(d_perRowCount.data()),
@@ -1462,12 +1478,12 @@ public:
     // Single thrust reduction: NaN/Inf check + min/max/sum, printed once.
     void validateVector(const RealType* d_ptr, HYPRE_Int n, int rank, const char* label) {
         if (n <= 0) return;
-        bool hasNaN = thrust::any_of(thrust::device_pointer_cast(d_ptr),
+        bool hasNaN = mars::anyOf(thrust::device_pointer_cast(d_ptr),
                                      thrust::device_pointer_cast(d_ptr + n),
                                      IsNonFinite<RealType>());
         if (verbose_ || hasNaN) {
             // For min/max/sum we restrict to finite values by masking. Cheap pass.
-            double sumVal = thrust::transform_reduce(
+            double sumVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -1475,7 +1491,7 @@ public:
                 },
                 0.0,
                 thrust::plus<double>());
-            double minVal = thrust::transform_reduce(
+            double minVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -1483,7 +1499,7 @@ public:
                 },
                 1e100,
                 thrust::minimum<double>());
-            double maxVal = thrust::transform_reduce(
+            double maxVal = mars::transformReduce(
                 thrust::device_pointer_cast(d_ptr),
                 thrust::device_pointer_cast(d_ptr + n),
                 [] __device__ (RealType v) -> double {
@@ -1578,6 +1594,7 @@ private:
     thrust::device_vector<HYPRE_BigInt> d_row_global_;
     thrust::device_vector<HYPRE_Real> d_b_cast_, d_x_cast_;
     SolverProfile* profile_ = nullptr;
+    std::function<void(const char*)> progress_;
     double profile_start_ = 0;
     MPI_Comm comm_;
     int maxIter_;

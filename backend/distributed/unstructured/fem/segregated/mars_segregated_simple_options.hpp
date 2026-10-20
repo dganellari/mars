@@ -40,12 +40,17 @@ struct SimpleOptions {
     std::string mesh,output,field_output="gathered";
     std::string pressure_failure_capture;
     std::string pressure_solver_profile;
+    std::string pressure_amg_mode="device";
+    std::string momentum_solver_profile;
+    std::string momentum_backend="hypre";
     SimpleControls controls;
     SimpleBoundaryNames boundaries;
     int iterations=2000,report=10,profile_warmup=10,snapshot_iterations=0;
     double residual=1e-6,mass=1e-6,change=1e-6;
     double pressure_rtol=1e-12,pressure_atol=0;
+    double momentum_rtol=1e-12,momentum_atol=0;
     bool pressure_tolerances=false,pressure_refinement=false;
+    bool momentum_tolerances=false;
     bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true,first_step_audit=false;
 };
 inline SimpleOptions simple_options(int argc,char** argv) {
@@ -65,6 +70,9 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         else if (key=="--output-prefix") o.output=value;
         else if (key=="--pressure-failure-capture") o.pressure_failure_capture=value;
         else if (key=="--pressure-solver-profile") o.pressure_solver_profile=value;
+        else if (key=="--pressure-amg-mode") o.pressure_amg_mode=value;
+        else if (key=="--momentum-solver-profile") o.momentum_solver_profile=value;
+        else if (key=="--momentum-backend") o.momentum_backend=value;
         else if (key=="--field-output") {
             if (value!="gathered" && value!="distributed" && value!="none")
                 throw std::runtime_error("--field-output expects gathered, distributed or none");
@@ -126,6 +134,8 @@ inline SimpleOptions simple_options(int argc,char** argv) {
             else if (key=="--change-tol") o.change=number;
             else if (key=="--pressure-linear-rtol") o.pressure_rtol=number;
             else if (key=="--pressure-linear-atol") o.pressure_atol=number;
+            else if (key=="--momentum-linear-rtol") o.momentum_rtol=number;
+            else if (key=="--momentum-linear-atol") o.momentum_atol=number;
             else if (key=="--rho") o.controls.density=number;
             else if (key=="--mu") o.controls.viscosity=number;
             else if (key=="--inlet-velocity") o.controls.inlet_speed=number;
@@ -140,6 +150,14 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         }
     }
     o.pressure_tolerances=seen.count("--pressure-linear-rtol")!=0;
+    o.momentum_tolerances=seen.count("--momentum-linear-rtol")!=0;
+    if (o.momentum_backend!="hypre" && o.momentum_backend!="petsc")
+        throw std::runtime_error("momentum backend must be hypre or petsc");
+    if (o.momentum_backend=="petsc" && o.momentum_solver_profile.empty())
+        throw std::runtime_error("PETSc momentum requires an explicit solver profile");
+    if (o.momentum_tolerances!=(seen.count("--momentum-linear-atol")!=0)
+        || !(o.momentum_rtol>0 && o.momentum_rtol<1 && o.momentum_atol>=0))
+        throw std::runtime_error("momentum linear tolerances require both 0<rtol<1 and atol>=0");
     if (o.pressure_tolerances!=(seen.count("--pressure-linear-atol")!=0)
         || !(o.pressure_rtol>0 && o.pressure_rtol<1 && o.pressure_atol>=0))
         throw std::runtime_error("pressure linear tolerances require both 0<rtol<1 and atol>=0");
@@ -150,13 +168,22 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         throw std::runtime_error("snapshots require field output, iterations covering the requested range, and no setup-only or profiling");
     if (o.first_step_audit && (o.iterations!=1 || o.snapshot_iterations!=1 || o.field_output!="distributed" || o.setup_only || o.profile))
         throw std::runtime_error("first-step audit requires one iteration, one snapshot interval and distributed field output without profiling");
+    if ((o.pressure_amg_mode!="device" && o.pressure_amg_mode!="reference")
+        || (o.pressure_amg_mode=="reference" && (!o.first_step_audit || o.pressure_solver_profile.empty())))
+        throw std::runtime_error("reference AMG requires a first-step audit and an explicit pressure profile");
     if (o.controls.pressure_expansion && (!o.pressure_tolerances || o.pressure_refinement || o.first_step_audit
         || o.snapshot_iterations || !o.pressure_failure_capture.empty() || o.setup_only))
         throw std::runtime_error("pressure expansion requires explicit targets, no snapshots, audit, capture or legacy refinement");
     if (!o.pressure_failure_capture.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || o.first_step_audit))
         throw std::runtime_error("pressure failure capture requires explicit pressure targets and iterations without refinement or first-step audit");
-    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only || (!o.first_step_audit && !o.controls.pressure_expansion)))
-        throw std::runtime_error("pressure profile requires first-step audit or expansion, and explicit unchanged targets without refinement");
+    const bool profile_history=o.snapshot_iterations==o.iterations && o.snapshot_iterations>0
+                               && o.field_output=="distributed";
+    if (!o.momentum_solver_profile.empty() && (!o.momentum_tolerances || o.setup_only
+        || (!o.first_step_audit && !profile_history)))
+        throw std::runtime_error("momentum profile requires audit or full distributed snapshots and explicit targets");
+    if (!o.pressure_solver_profile.empty() && (!o.pressure_tolerances || o.pressure_refinement || o.setup_only
+        || !o.pressure_failure_capture.empty() || (!o.first_step_audit && !o.controls.pressure_expansion && !profile_history)))
+        throw std::runtime_error("pressure profile requires audit, full distributed snapshots or expansion, and explicit targets without refinement or failure capture");
     return o;
 }
 inline const char* simple_help() {
@@ -176,10 +203,15 @@ inline const char* simple_help() {
            "  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6\n"
            "  --pressure-linear-rtol R --pressure-linear-atol A   optional pair; max(A,R*||b||)\n"
            "    Sets pressure Krylov and both true residual targets; momentum stays unchanged.\n"
+           "  --momentum-linear-rtol R --momentum-linear-atol A   optional pair; max(A,R*||b||)\n"
+           "    Sets momentum Krylov and both true residual targets independently of pressure.\n"
+           "  --momentum-solver-profile FILE      opt-in GPU controls; requires audit or full distributed snapshots and explicit targets\n"
+           "  --momentum-backend hypre|petsc      default hypre; PETSc requires a CUDA-enabled PETSc build and its explicit profile\n"
            "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --pressure-failure-capture DIR      opt-in PRIVATE matrix/candidate output on rejection; new directory required\n"
            "  --pressure-expansion 0             opt-in retained pressure pair and four correction budgets; explicit targets required\n"
-           "  --pressure-solver-profile FILE      opt-in pressure controls; requires first-step audit or expansion, and explicit tolerances\n"
+           "  --pressure-solver-profile FILE      opt-in pressure controls; requires audit, full distributed snapshots or expansion, and explicit tolerances\n"
+           "  --pressure-amg-mode device|reference  default device; reference permits Hypre CPU work in a first-step audit\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

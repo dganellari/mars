@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 using namespace mars;
 using namespace mars::fem;
@@ -1360,8 +1361,7 @@ int main(int argc, char** argv)
                 const int* element = s.d_pressure_tri_element.data();
                 const int* opposite = s.d_pressure_tri_opposite.data();
                 const int* nodes = s.d_pressure_tri_node.data();
-                int invalid = thrust::count_if(thrust::device,
-                    thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(pressure_facets),
+                int invalid = mars::countIf(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(pressure_facets),
                     [element, opposite, nodes] __device__(size_t f) {
                         return element[f] < 0 || opposite[f] < 0 || nodes[3 * f] < 0
                             || nodes[3 * f + 1] < 0 || nodes[3 * f + 2] < 0;
@@ -1673,8 +1673,7 @@ int main(int argc, char** argv)
     // div=flux/V are tiny/huge and unreadable. Report SCALE-INDEPENDENT
     // diagnostics: RMS velocity = sqrt(integral u^2 dV / V_total) ~ O(U), and a
     // non-dimensional divergence div_max * L / U.
-    double Vlocal = thrust::reduce(
-        thrust::device,
+    double Vlocal = mars::reduce(
         thrust::device_pointer_cast(s.d_mass.data()),
         thrust::device_pointer_cast(s.d_mass.data() + s.numOwnedDofs),
         double(0), thrust::plus<double>());

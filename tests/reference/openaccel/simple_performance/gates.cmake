@@ -26,7 +26,9 @@ if(Python3_Interpreter_FOUND)
         "${_simple_perf}/test_compensated_dot.py")
     add_test(NAME marsSimplePressureReplay COMMAND ${Python3_EXECUTABLE}
         "${_simple_perf_root}/scripts/test_simple_pressure_replay.py")
-    set_tests_properties(marsSimplePressureReplay PROPERTIES
+    add_test(NAME marsSimplePressureBudget COMMAND ${Python3_EXECUTABLE}
+        "${_simple_perf_root}/scripts/test_simple_pressure_budget.py")
+    set_tests_properties(marsSimplePressureReplay marsSimplePressureBudget PROPERTIES
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MARS_TEST_PRESSURE_CHECKER=$<TARGET_FILE:mars_simple_pressure_residual_host_check>" TIMEOUT 120)
 endif()
 foreach(_np 1 2 4)

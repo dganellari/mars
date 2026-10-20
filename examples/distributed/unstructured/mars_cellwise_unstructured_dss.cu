@@ -18,14 +18,25 @@
 // local copy must hold the same bits as a one-domain DSS of the whole cube, which each
 // rank also computes. Then times the DSS with the exchange.
 //
-// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20]
+// --dss-ptx <dss_p7_sm90.ptx>: also run the DSS kernel MARSIR generates from mir.dss
+// (marsir-mlir/test/dss_gpu_pipeline.py) in every check above, which must give the
+// same bits as the hand-written kernel on every copy, and time the two.
+//
+// --precond-ptx <precond_p7_sm90.ptx>: the generated Jacobi preconditioner with
+// <a, z> and <z, z> against unstructured_precondition_kernel<true, true> on the rotated
+// cube: z must have the same bits; the dot products agree to rounding (the two kernels
+// reduce in different orders). Times the two.
+//
+// Run: mars_cellwise_unstructured_dss [--ne 8] [--reps 20] [--dss-ptx file] [--precond-ptx file]
 // (several ranks need GPU-aware MPI: on Cray MPICH, MPICH_GPU_SUPPORT_ENABLED=1)
 
+#include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include <memory>
 #include <thrust/device_vector.h>
 #include <thrust/extrema.h>
 #include <thrust/fill.h>
@@ -160,6 +171,12 @@ __global__ void rotated_vs_plain_kernel(const double* rot, const double* plain, 
     if (rot[t] != plain[(t / kN3) * kN3 + plain_local[t]]) atomicAdd(bitdiff, 1);
 }
 
+__global__ void bits_differ_kernel(const double* a, const double* b, long long n, int* count)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < n && __double_as_longlong(a[t]) != __double_as_longlong(b[t])) atomicAdd(count, 1);
+}
+
 __global__ void abs_diff_kernel(const double* a, const double* b, long long n, double* d)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -223,7 +240,33 @@ float time_ms(int reps, F&& f)
     return ms / reps;
 }
 
-bool one_rank(int ne, int reps)
+// Inputs of the preconditioner check: diag in [1, 2], a in [-1, 1].
+__global__ void precond_inputs_kernel(double* diag, double* a, long long n)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= n) return;
+    diag[t] = 1.5 + 0.5 * sin(0.37 * (double)t);
+    a[t] = cos(0.11 * (double)t);
+}
+
+double host_sum(const thrust::device_vector<double>& v, long long count, int stride, int j)
+{
+    std::vector<double> h(count * stride);
+    thrust::copy(v.begin(), v.begin() + count * stride, h.begin());
+    double s = 0.0;
+    for (long long i = 0; i < count; ++i) s += h[i * stride + j];
+    return s;
+}
+
+int bits_differ(const double* a, const double* b, long long n)
+{
+    thrust::device_vector<int> count(1, 0);
+    bits_differ_kernel<<<grid_of(n), kThreads>>>(a, b, n, raw(count));
+    MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    return count[0];
+}
+
+bool one_rank(int ne, int reps, marsir::DssPtx* gen, marsir::PrecondPtx* pre)
 {
     const long long E = (long long)ne * ne * ne, n = E * kN3, NG = (long long)ne * kP + 1;
     Mesh plain, rotated;
@@ -281,10 +324,56 @@ bool one_rank(int ne, int reps)
     row("structured gather", ms_struct);
     row("unstructured, plain", ms_plain);
     row("unstructured, rotated", ms_rot);
+
+    if (pre) {
+        thrust::device_vector<double> diag(n), a(n), z_hand(n), z_gen(n), part_gen(2 * E);
+        thrust::device_vector<double> part_hand(2 * std::max<long long>(E, 1 << 14));
+        precond_inputs_kernel<<<grid_of(n), kThreads>>>(raw(diag), raw(a), n);
+        input_kernel<<<grid_of(n), kThreads>>>(nullptr, raw(rotated.gid), n, raw(in));
+        const UnstructuredJacobi jacobi{view(rotated.topo), raw(diag), nullptr};
+        auto hand = [&] { return jacobi.operator()<true, true>(raw(in), raw(z_hand), raw(a), raw(part_hand), 0); };
+        auto generated = [&] {
+            pre->run<true, true>(raw(in), nullptr, raw(z_gen), raw(diag), raw(a), raw(part_gen), rotated.topo,
+                                 ElementList{nullptr, E});
+        };
+        const int blocks = hand();
+        generated();
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        const int bd = bits_differ(raw(z_gen), raw(z_hand), n);
+        double rel = 0.0;
+        for (int j = 0; j < 2; ++j) {
+            const double h = host_sum(part_hand, blocks, 2, j), g = host_sum(part_gen, E, 2, j);
+            rel = std::max(rel, fabs(g - h) / fabs(h));
+            printf("  preconditioner dot %d: hand %.17g, MARSIR %.17g\n", j, h, g);
+        }
+        printf("  MARSIR preconditioner vs hand kernel: %d copies of z differ in any bit, dots differ by %.1e\n", bd,
+               rel);
+        ok &= bd == 0 && rel < 1e-12;
+        row("preconditioner+dots, hand", time_ms(reps, [&] { hand(); }));
+        row("preconditioner+dots, MARSIR", time_ms(reps, generated));
+    }
+    if (!gen) return ok;
+
+    thrust::device_vector<double> out_gen(n);
+    for (int pass = 0; pass < 2; ++pass) {
+        Mesh& m = pass ? rotated : plain;
+        thrust::device_vector<double>& out = pass ? out_rot : out_plain;
+        input_kernel<<<grid_of(n), kThreads>>>(nullptr, raw(m.gid), n, raw(in));
+        dss(raw(in), raw(out), m.topo);
+        thrust::fill(out_gen.begin(), out_gen.end(), 0.0);
+        gen->run(raw(in), nullptr, raw(out_gen), m.topo, ElementList{nullptr, E});
+        const int bd = bits_differ(raw(out_gen), raw(out), n);
+        printf("  MARSIR DSS vs hand kernel, %s: %d copies differ in any bit\n", pass ? "rotated" : "plain", bd);
+        ok &= bd == 0;
+    }
+    const float ms_gen_plain = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), plain.topo, ElementList{nullptr, E}); });
+    const float ms_gen_rot = time_ms(reps, [&] { gen->run(raw(in), nullptr, raw(out_gen), rotated.topo, ElementList{nullptr, E}); });
+    row("MARSIR, plain", ms_gen_plain);
+    row("MARSIR, rotated", ms_gen_rot);
     return ok;
 }
 
-bool several_ranks(int ne, int reps, MPI_Comm comm)
+bool several_ranks(int ne, int reps, MPI_Comm comm, marsir::DssPtx* gen)
 {
     const Decomposition dec(comm, ne, ne, ne);
     thrust::device_vector<unsigned long long> elem;
@@ -310,8 +399,26 @@ bool several_ranks(int ne, int reps, MPI_Comm comm)
     int bd = bitdiff[0];
     MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &bd, 1, MPI_INT, MPI_SUM, comm));
 
+    // The generated kernel through the same overlapped pass: interior elements while the
+    // exchange runs, then the elements that read ghost copies.
+    thrust::device_vector<double> out_gen(n);
+    auto dss_gen = [&] {
+        run_unstructured_pass(&halo, m.topo.local, raw(in), nullptr, 0, [&](const ElementList& set, const double* ghost, int) {
+            gen->run(raw(in), ghost, raw(out_gen), m.topo, set);
+            return 0;
+        });
+    };
+    int gd = 0;
+    if (gen) {
+        dss_gen();
+        gd = bits_differ(raw(out_gen), raw(out), n);
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &gd, 1, MPI_INT, MPI_SUM, comm));
+    }
+
     MARS_CELLWISE_MPI(MPI_Barrier(comm));
     const float ms = time_ms(reps, [&] { dss(raw(in), raw(out), m.topo, &halo); });
+    MARS_CELLWISE_MPI(MPI_Barrier(comm));
+    const float ms_gen = gen ? time_ms(reps, dss_gen) : 0.0f;
     if (dec.rank == 0) {
         printf("unstructured cell-wise DSS on %d ranks (%d x %d x %d), %d^3 elements, rotated frames\n", dec.size,
                dec.P[0], dec.P[1], dec.P[2], ne);
@@ -319,8 +426,12 @@ bool several_ranks(int ne, int reps, MPI_Comm comm)
                E - L, halo.boundary().count, halo.values_sent(), halo.peers());
         printf("  several ranks vs one domain: %d copies differ in any bit\n", bd);
         printf("  DSS with the exchange  %8.3f ms (rank 0)\n", ms);
+        if (gen) {
+            printf("  MARSIR DSS vs hand kernel: %d copies differ in any bit\n", gd);
+            printf("  MARSIR DSS with the exchange  %8.3f ms (rank 0)\n", ms_gen);
+        }
     }
-    return bd == 0;
+    return bd == 0 && gd == 0;
 }
 
 }  // namespace
@@ -342,9 +453,13 @@ int main(int argc, char** argv)
         MARS_CELLWISE_CK(cudaSetDevice(local % devices));
     }
     int ne = 8, reps = 20;
+    const char* dss_ptx = nullptr;
+    const char* precond_ptx = nullptr;
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) reps = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--dss-ptx")) dss_ptx = argv[i + 1];
+        else if (!strcmp(argv[i], "--precond-ptx")) precond_ptx = argv[i + 1];
         else { if (rank == 0) fprintf(stderr, "unknown option %s\n", argv[i]); MPI_Finalize(); return 1; }
     }
     if (size > 1) {   // device pointers go to MPI: MPICH needs GPU support switched on
@@ -372,7 +487,12 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaMemcpyToSymbol(c_rot, rot.data(), rot.size() * sizeof(int)));
     MARS_CELLWISE_CK(cudaDeviceSynchronize());
 
-    const bool ok = size == 1 ? one_rank(ne, reps) : several_ranks(ne, reps, MPI_COMM_WORLD);
+    std::unique_ptr<marsir::DssPtx> gen(dss_ptx ? new marsir::DssPtx(dss_ptx, kP) : nullptr);
+    std::unique_ptr<marsir::PrecondPtx> pre(precond_ptx ? new marsir::PrecondPtx(precond_ptx, kP) : nullptr);
+    if (gen && rank == 0) printf("MARSIR DSS %s\n", dss_ptx);
+    if (pre && rank == 0) printf("MARSIR preconditioner %s\n", precond_ptx);
+    const bool ok = size == 1 ? one_rank(ne, reps, gen.get(), pre.get())
+                              : several_ranks(ne, reps, MPI_COMM_WORLD, gen.get());
     if (rank == 0) printf("UNSTRUCTURED DSS: %s\n", ok ? "PASS" : "FAIL");
     MPI_Finalize();
     return ok ? 0 : 1;

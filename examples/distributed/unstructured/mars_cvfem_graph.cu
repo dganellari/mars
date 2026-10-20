@@ -10,10 +10,11 @@
 #include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
-#include <thrust/system/cuda/execution_policy.h>
+#include "../../../backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifndef MARS_DISABLE_NVTX
 #include <nvToolsExt.h>
 #define MARS_NVTX_PUSH(name) nvtxRangePush(name)
@@ -43,6 +44,7 @@ int main(int argc, char** argv) {
     std::string meshFile;
     int numIterations = 10;
     int blockSize = 256;
+    int smemCacheNodes = 512;
     int bucketSize = 64;  // Cornerstone octree bucket size (smaller = finer partitioning)
     int bucketSizeFocus = 8;  // Focus tree bucket size (per-rank refined view; smaller = finer halo)
     bool quiet = false;
@@ -56,6 +58,13 @@ int main(int argc, char** argv) {
             numIterations = std::stoi(arg.substr(13));
         } else if (arg.find("--block-size=") == 0) {
             blockSize = std::stoi(arg.substr(13));
+        } else if (arg.find("--smem-cache-nodes=") == 0) {
+            smemCacheNodes = std::stoi(arg.substr(19));
+            if (smemCacheNodes != 512 && smemCacheNodes != 64) {
+                if (rank == 0) std::cerr << "Error: --smem-cache-nodes must be 512 or 64" << std::endl;
+                MPI_Finalize();
+                return 1;
+            }
         } else if (arg.find("--bucket-size=") == 0) {
             bucketSize = std::stoi(arg.substr(14));
         } else if (arg.find("--bucket-size-focus=") == 0) {
@@ -96,6 +105,7 @@ int main(int argc, char** argv) {
             std::cout << "  --mesh=FILE         Mesh file (.mesh or .exo format) [REQUIRED]\n";
             std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, team, original (default: original)\n";
             std::cout << "  --block-size=N      CUDA block size (default: 256)\n";
+            std::cout << "  --smem-cache-nodes=N  smem_cache node cache: 512 (default) or 64, to test nodes that do not fit\n";
             std::cout << "  --bucket-size=N     Cornerstone octree bucket size (default: 64, try 32 or 16 for 16+ ranks)\n";
             std::cout << "  --bucket-size-focus=N  Focus tree bucket size (default: 8, lower = finer halo at cost of memory)\n";
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
@@ -332,6 +342,7 @@ int main(int argc, char** argv) {
     // Configure assembler
     Assembler::Config config;
     config.blockSize = blockSize;
+    config.smemCacheNodes = smemCacheNodes;
     config.variant = kernelVariant;
     config.stream = assemblyStream;  // Use dedicated stream
     if (kernelVariant == CvfemKernelVariant::TensorColored)
@@ -358,10 +369,10 @@ int main(int argc, char** argv) {
 
     auto resetSystem = [&]() {
         // Use resetStream to potentially overlap with other operations
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_values.data()),
                      thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
-        thrust::fill(thrust::cuda::par.on(resetStream),
+        thrust::fill(mars::gpuPar.on(resetStream),
                      thrust::device_pointer_cast(d_rhs.data()),
                      thrust::device_pointer_cast(d_rhs.data() + numDofs), 0.0);
     };
@@ -420,12 +431,12 @@ int main(int argc, char** argv) {
     // Compute matrix norm (overlapped with load balance computation)
     MARS_NVTX_PUSH("Norm Computation");
     auto sq = [] __host__ __device__ (RealType x) { return x * x; };
-    RealType norm2 = thrust::transform_reduce(
+    RealType norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_values.data()),
         thrust::device_pointer_cast(d_values.data() + nnz),
         sq, RealType(0.0), thrust::plus<RealType>()
     );
-    RealType rhs_norm2 = thrust::transform_reduce(
+    RealType rhs_norm2 = mars::transformReduce(
         thrust::device_pointer_cast(d_rhs.data()),
         thrust::device_pointer_cast(d_rhs.data() + numDofs),
         sq, RealType(0.0), thrust::plus<RealType>()

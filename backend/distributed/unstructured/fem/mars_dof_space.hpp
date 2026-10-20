@@ -44,6 +44,7 @@
 #include <type_traits>
 #include <vector>
 #include <mpi.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
@@ -298,8 +299,8 @@ public:
         thrust::device_vector<long long> stayOffset(numStay), sendOffset(numSend);
         thrust::exclusive_scan(thrust::device, stayLength.begin(), stayLength.end(), stayOffset.begin(), 0LL);
         thrust::exclusive_scan(thrust::device, sendLength.begin(), sendLength.end(), sendOffset.begin(), 0LL);
-        const long long stayTotal = thrust::reduce(thrust::device, stayLength.begin(), stayLength.end(), 0LL);
-        const long long sendTotal = thrust::reduce(thrust::device, sendLength.begin(), sendLength.end(), 0LL);
+        const long long stayTotal = mars::reduce(stayLength.begin(), stayLength.end(), 0LL);
+        const long long sendTotal = mars::reduce(sendLength.begin(), sendLength.end(), 0LL);
 
         // Row lengths to the owners, so each side knows the entry counts per peer.
         cudaDeviceSynchronize();
@@ -325,7 +326,7 @@ public:
         requests.clear();
         thrust::device_vector<long long> recvOffset(numRecv);
         thrust::exclusive_scan(thrust::device, recvLength.begin(), recvLength.end(), recvOffset.begin(), 0LL);
-        const long long recvTotal = thrust::reduce(thrust::device, recvLength.begin(), recvLength.end(), 0LL);
+        const long long recvTotal = mars::reduce(recvLength.begin(), recvLength.end(), 0LL);
 
         // Entries per peer, on the host: the row lengths summed over each peer's rows.
         std::vector<int> hostSend(numSend), hostRecv(numRecv);
@@ -545,11 +546,11 @@ private:
                 domain.getElementToNodeConnectivity());
         if (n_ > 0) dofDropUnusedKernel<<<grid(), blockSize_>>>(usedPtr, isDof_.data(), n_, ownerPtr, synced_.data());
         cudaCheckError();
-        long long dofs = thrust::count(thrust::device, isDof_.data(), isDof_.data() + n_, uint8_t(1));
+        long long dofs = mars::count(isDof_.data(), isDof_.data() + n_, uint8_t(1));
         MPI_Allreduce(&dofs, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
         // The copies grouped by the rank of their DOF; within a rank, slot ids ascend.
-        size_t numCopies = thrust::count_if(thrust::device, owner.begin(), owner.end(), DofIsCopy{});
+        size_t numCopies = mars::countIf(owner.begin(), owner.end(), DofIsCopy{});
         thrust::device_vector<int> copySlot(numCopies), copyOwner(numCopies);
         thrust::device_vector<KeyType> copyKey(numCopies);
         thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(n_)),
@@ -627,8 +628,8 @@ private:
 
         // A key this rank does not hold as a DOF means the ranks disagree on ownership, or a
         // periodic slave has no matching master (box bounds, faceEps).
-        long long missing = thrust::count(thrust::device, localDof_.data(), localDof_.data() + localCount, -1) +
-                            thrust::count(thrust::device, requestedDof.begin(), requestedDof.end(), -1);
+        long long missing = mars::count(localDof_.data(), localDof_.data() + localCount, -1) +
+                            mars::count(requestedDof.begin(), requestedDof.end(), -1);
         MPI_Allreduce(MPI_IN_PLACE, &missing, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (missing > 0)
         {
