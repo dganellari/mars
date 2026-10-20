@@ -17,7 +17,7 @@ releases.
 ## Start here
 
 - **[Quickstart](Quickstart.md)**: build MARS, generate a cube mesh and run a GPU assembly.
-- **Step by step**, one idea per short program, for newcomers:
+- **A step-by-step tutorial**, with short examples that introduce one concept at a time:
   [1. the mesh](step-01-mesh.md), [2. a first GPU loop](step-02-volume.md),
   [3. Poisson's equation](step-03-poisson.md), [4. control volumes](step-04-cvfem.md),
   [5. your own operator](step-05-galerkin.md), [6. the heat equation](step-06-heat.md),
