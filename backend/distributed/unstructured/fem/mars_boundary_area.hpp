@@ -118,7 +118,7 @@ __global__ void scatterBoundaryAreaKernel(
 
 // Fill d_sBnd{X,Y,Z} (nNodes, caller need not pre-zero -- we zero here). Single rank: startElem=0.
 template<typename KeyType, typename RealType>
-void computeBoundaryAreaVectorsGpu(
+void computeBoundaryAreaVectors(
     const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
     size_t startElem, size_t numLocal,
     const RealType* d_x, const RealType* d_y, const RealType* d_z, int nNodes,

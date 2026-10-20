@@ -44,7 +44,7 @@ static bool patch(int P, int E)
                       cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
         ijk.push_back({ex,ey,ez});
     }
-    HODofHandler dh; dh.build(ec, long(E+1)*(E+1)*(E+1), P);
+    HODofHandler dh; dh.buildHost(ec, long(E+1)*(E+1)*(E+1), P);
     long nDof = dh.numDof; size_t nEl = ec.size();
 
     // base corner offsets (unit ref-cube order) in element-local units

@@ -5,7 +5,7 @@
 // Each nodal DOF is keyed by its barycentric signature against the GLOBAL vertex ids:
 // sorted [(gid, weight)] pairs with zero weights dropped. Shared vertices/edges/faces then match
 // automatically in any element orientation -- no edge-direction or face-rotation tables needed.
-// Host build; the resulting elemDof feeds the device gather/scatter.
+// Host reference numbering; elemDof feeds the device gather/scatter.
 
 #include "mars_ho_tet_basis.hpp"
 #include <algorithm>
@@ -26,7 +26,7 @@ struct HoTetDofHandler {
 
     // elemCorners: [nElem*4] global vertex ids; coords: [nVerts][3].
     template <typename RealType>
-    void build(const std::vector<int>& elemCorners, const std::vector<std::array<double,3>>& coords,
+    void buildHost(const std::vector<int>& elemCorners, const std::vector<std::array<double,3>>& coords,
                const HoTetNodal<RealType>& nd) {
         P = nd.P; Np = nd.Np;
         const size_t nElem = elemCorners.size() / 4;
@@ -70,7 +70,7 @@ struct HoCvfemTetDofHandler {
     std::vector<int> sortedCorners;                 // [nElem * 4] ascending-gid corner order
     std::vector<std::array<double,3>> dofPos;       // physical position per DOF
 
-    void build(const std::vector<int>& elemCorners, const std::vector<std::array<double,3>>& coords,
+    void buildHost(const std::vector<int>& elemCorners, const std::vector<std::array<double,3>>& coords,
                const std::vector<double>& Z /* n GLL nodes on [0,1] */) {
         n = (int)Z.size(); P = n - 1; NN = n*n*n;
         const size_t nElem = elemCorners.size() / 4;

@@ -56,7 +56,7 @@ public:
     std::vector<int> elemDof;   // [nElem * N3] -> global DOF id
 
     // elemCorners[e] = 8 global corner-node ids in hex order.
-    void build(const std::vector<std::array<int, 8>>& elemCorners, long numCornerNodes, int order)
+    void buildHost(const std::vector<std::array<int, 8>>& elemCorners, long numCornerNodes, int order)
     {
         P  = order;
         n  = P + 1;
@@ -170,25 +170,25 @@ public:
     // that share a DOF compute the SAME key, so the halo matches by it.
     struct DofKey { int kind; long g0, g1, g2, g3; int pos; };
 
-    std::vector<int>    dofOwner;   // [numDof] owning rank (filled by buildDistributed)
+    std::vector<int>    dofOwner;   // [numDof] owning rank (filled by buildDistributedHost)
     std::vector<DofKey> dofKey;     // [numDof] canonical cross-rank key
     std::vector<uint8_t> dofShared; // [numDof] 1 if edge/face DOF on a rank boundary
                                     // (provisional owner = myRank; resolve via
-                                    //  resolveHoDofOwnership before building the halo)
+                                    //  resolveHoDofOwnershipHost before building the halo)
     std::vector<uint8_t> dofBoundary; // [numDof] 1 if ANY shared DOF (corner/edge/face on
                                       // a rank boundary). Superset of dofShared (adds shared
                                       // corners). Only these can be exchanged -> the halo
                                       // keys/maps over dofBoundary, NOT all numDof (else a
                                       // numDof-sized std::map OOMs the host at scale).
 
-    // Multi-rank numbering. Calls build() for the LOCAL dense elemDof, then tags each
+    // Multi-rank numbering. Calls buildHost() for the LOCAL dense elemDof, then tags each
     // DOF with owner + canonical key. Ownership:
     //   corner   -> cornerOwner[lc]  (consistent cstone P1 node ownership; the working
     //               p=1 case -- the owner always contains the node)
     //   interior -> elemOwner[e]     (element-local, never shared)
     //   edge/face-> PROVISIONAL myRank. The lowest-global-corner heuristic is WRONG
     //               here: that corner's owner may have the corner but not the edge/face,
-    //               orphaning the DOF. resolveHoDofOwnership() (a peer key exchange)
+    //               orphaning the DOF. resolveHoDofOwnershipHost() (a peer key exchange)
     //               sets the real owner = min rank among the ranks that actually hold
     //               it. dofShared[d]=1 flags edge/face DOF whose defining corners are
     //               all P1-shared -> candidates for that resolution.
@@ -197,7 +197,7 @@ public:
     //   cornerOwner[lc]: LOCAL corner index -> owning rank    -- P1 node ownership
     //   elemOwner[e]   : owning rank of element e
     //   sharedCorner[lc]: 1 if LOCAL corner lc is on a rank boundary (P1 send U recv)
-    void buildDistributed(const std::vector<std::array<int,8>>& elemCorners,
+    void buildDistributedHost(const std::vector<std::array<int,8>>& elemCorners,
                           long numCornerNodes, int order,
                           const std::vector<long>&    cornerGid,
                           const std::vector<int>&     cornerOwner,
@@ -205,7 +205,7 @@ public:
                           int                          myRank,
                           const std::vector<uint8_t>&  sharedCorner)
     {
-        build(elemCorners, numCornerNodes, order);
+        buildHost(elemCorners, numCornerNodes, order);
         dofOwner.assign(numDof, -1);
         dofKey.assign(numDof, DofKey{-1,-1,-1,-1,-1,-1});
         dofShared.assign(numDof, 0);

@@ -115,7 +115,7 @@ __global__ void assembleElementsKernel(CornerColumns<KeyType, N> conn, size_t nu
     }
 }
 
-// A: one row per owned DOF (d_nodeToDof from buildDofMappingGpu: owned DOFs first), columns over all local
+// A: one row per owned DOF (d_nodeToDof from buildDofMapping: owned DOFs first), columns over all local
 // DOFs; b: one entry per owned DOF. kernel(X, K, F) gets the corner coordinates X[N][3] and adds the element
 // matrix into K[N][N] and the element vector into F[N] (both start at zero). Every element the rank holds
 // contributes, which completes the owned rows.

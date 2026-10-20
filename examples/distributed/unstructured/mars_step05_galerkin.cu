@@ -62,7 +62,7 @@ bool solve(const std::string& meshDir, int rank, int numRanks)
     const size_t nodeCount = domain.getNodeCount();
 
     cstone::DeviceVector<int> nodeToDof(nodeCount);
-    const int numOwned = buildDofMappingGpu<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(), nodeCount);
+    const int numOwned = buildDofMapping<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(), nodeCount);
     long numGlobal = numOwned;
     MPI_Allreduce(MPI_IN_PLACE, &numGlobal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 

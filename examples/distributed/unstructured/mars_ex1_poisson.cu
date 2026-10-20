@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
 
         // Owned nodes first, then ghosts, from the domain's node ownership
         cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-        int numOwnedDofs = buildDofMappingGpu<uint64_t>(d_ownership.data(), d_nodeToDof.data(), nodeCount);
+        int numOwnedDofs = buildDofMapping<uint64_t>(d_ownership.data(), d_nodeToDof.data(), nodeCount);
         long numGlobalDofs = numOwnedDofs;
         MPI_Allreduce(MPI_IN_PLACE, &numGlobalDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 

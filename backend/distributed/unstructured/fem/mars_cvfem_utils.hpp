@@ -36,7 +36,7 @@ __global__ void buildDofMappingKernel(
 // Returns numOwned (number of owned DOFs). All nodes get DOFs:
 //   owned → [0, numOwned), ghost → [numOwned, numNodes)
 template<typename KeyType>
-int buildDofMappingGpu(
+int buildDofMapping(
     const uint8_t* d_ownership,
     int* d_nodeToDof,
     size_t numNodes,
@@ -126,7 +126,7 @@ __global__ void initFieldsKernel(
 
 // Initialize fields on GPU
 template<typename RealType>
-void initFieldsGpu(
+void initFields(
     const RealType* d_x,
     const RealType* d_y,
     const RealType* d_z,
@@ -372,9 +372,9 @@ __global__ void precomputeAreaVectorsKernel(
     }
 }
 
-// Host function to pre-compute area vectors
+// Compute area vectors on the device.
 template<typename KeyType, typename RealType>
-void precomputeAreaVectorsGpu(
+void precomputeAreaVectors(
     const KeyType* d_conn0, const KeyType* d_conn1,
     const KeyType* d_conn2, const KeyType* d_conn3,
     const KeyType* d_conn4, const KeyType* d_conn5,
@@ -528,9 +528,9 @@ __global__ void precomputeShapeDerivativesKernel(
     }
 }
 
-// Host function to pre-compute shape derivatives
+// Compute shape derivatives on the device.
 template<typename KeyType, typename RealType>
-void precomputeShapeDerivativesGpu(
+void precomputeShapeDerivatives(
     const KeyType* d_conn0, const KeyType* d_conn1,
     const KeyType* d_conn2, const KeyType* d_conn3,
     const KeyType* d_conn4, const KeyType* d_conn5,

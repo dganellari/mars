@@ -34,7 +34,7 @@ static bool run_order(int ncells, int rank, int nranks) {
     buildKuhnTetMesh(ncells, coords, elemCorners);
     const size_t nElem = elemCorners.size()/4;
     std::vector<double> Zd(o.Z.begin(), o.Z.end());
-    HoCvfemTetDofHandler dh; buildGpu(dh, elemCorners, coords, Zd);
+    HoCvfemTetDofHandler dh; buildDofsFromHost(dh, elemCorners, coords, Zd);
     const int NN = o.NN; const long nDof = dh.numDof;
 
     const size_t e0 = nElem*rank/nranks, e1 = nElem*(rank+1)/nranks, nOwn = e1-e0;
@@ -111,7 +111,7 @@ static bool run_order(int ncells, int rank, int nranks) {
 }
 
 
-// ---- Opt-in gate: host HoCvfemTetDofHandler::build() vs the GPU buildGpu(). ----
+// ---- Opt-in gate: host HoCvfemTetDofHandler::buildHost() vs the GPU buildDofsFromHost(). ----
 // --dof-self-check (or MARS_HO_TET_DOF_SELF_CHECK=1). Additive: the gate below runs
 // exactly as before with or without it.
 //
@@ -132,9 +132,9 @@ static bool checkTetDofNumbering(int ncells, int p, int rank)
     using Clk = std::chrono::steady_clock;
     HoCvfemTetDofHandler hostDh, gpuDh;
     const auto t0 = Clk::now();
-    hostDh.build(elemCorners, coords, Zd);
+    hostDh.buildHost(elemCorners, coords, Zd);
     const auto t1 = Clk::now();
-    buildGpu(gpuDh, elemCorners, coords, Zd);
+    buildDofsFromHost(gpuDh, elemCorners, coords, Zd);
     cudaDeviceSynchronize();
     const auto t2 = Clk::now();
     const double hs = std::chrono::duration<double>(t1 - t0).count();

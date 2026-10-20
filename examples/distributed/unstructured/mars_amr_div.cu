@@ -11,7 +11,7 @@
 //     (div u)_i = (1/V_i) * sum over SCS faces f incident to i:  v_face_f . A_f
 // where the sum runs over the same 12 SCS faces per hex used in the advection
 // scatter, v_face = 0.5 (v[L] + v[R]) on a face connecting corners (L, R), and
-// the area vector A_f follows precomputeAreaVectorsGpu's convention (pointing
+// the area vector A_f follows precomputeAreaVectors's convention (pointing
 // from L to R). Each face contributes +v.A to L's net outflow and -v.A to R's
 // (this is the *opposite sign* of the advection scatter, which records flux
 // *leaving* L as -flux on L).
@@ -824,7 +824,7 @@ void setupDivStepper(DivStepper<KeyType, RealType>& s,
     pt.lap("lazy domain prep");
 
     s.d_node_to_dof.resize(s.nodeCount);
-    s.numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
+    s.numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
     s.numTotalDofs = static_cast<int>(s.nodeCount);
     pt.lap("DOF mapping");
 
@@ -833,7 +833,7 @@ void setupDivStepper(DivStepper<KeyType, RealType>& s,
     s.d_areaVec_x.resize(s.elementCount * 12);
     s.d_areaVec_y.resize(s.elementCount * 12);
     s.d_areaVec_z.resize(s.elementCount * 12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
         std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), s.elementCount,

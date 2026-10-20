@@ -1,8 +1,8 @@
 #pragma once
 
-// GPU-native build of the SAME high-order distributed DOF numbering as
-// HODofHandler::buildDistributed (mars_ho_dof_handler.hpp). Flag-gated, optional
-// path; the host buildDistributed stays the default and is left untouched.
+// Device high-order DOF numbering. buildDistributedDofs takes device inputs;
+// buildDistributedDofsFromHost uploads host inputs before using the same core.
+// HODofHandler::buildDistributedHost supplies the host reference.
 //
 // WHY: at ~10M elements/rank the host numbering spends minutes in std::map edge/
 // face dedup over ~180M (12 edge + 6 face) entries/rank. The dedup is a sort +
@@ -17,7 +17,7 @@
 //   - the face pos via hex_face_canonical_pos() (orientation-invariant),
 //   - the interior pos = ((i-1)*pm1 + (j-1))*pm1 + (k-1),
 //   - the canonical DofKey {kind, sorted global corner ids, pos},
-//   - dofOwner/dofShared/dofBoundary rules from buildDistributed.
+//   - dofOwner/dofShared/dofBoundary rules from buildDistributedHost.
 //
 // WHAT MAY LEGITIMATELY DIFFER FROM HOST: the LOCAL edge/face ids (host assigns
 // them in std::map insertion order; we assign them in sorted-key order). That
@@ -150,8 +150,8 @@ __host__ __device__ inline HoEntityKey faceKey(int a, int b, int c, int d) {
 
 } // namespace ho_gpu_detail
 
-// Per-DOF device columns kept resident for the ALL-GPU resolveHoDofOwnershipGpu (the
-// resolve's exact inputs/output). Normally buildDistributedGpu frees these at scope exit;
+// Per-DOF device columns kept resident for the ALL-GPU resolveHoDofOwnership (the
+// resolve's exact inputs/output). Normally buildDistributedDofsFromHost frees these at scope exit;
 // when the caller passes a non-null HoOwnershipDeviceData* it MOVES them out instead so the
 // device-resident resolve can run with no host round-trip. d_dofOwner is mutated in place
 // by the resolve; copy it back to dof.dofOwner afterwards.
@@ -169,16 +169,16 @@ struct HoOwnershipDeviceData {
     thrust::device_vector<int>  elemDof;
 };
 
-// GPU build of the distributed HO numbering. Same inputs as buildDistributed;
+// GPU build of the distributed HO numbering. Same inputs as buildDistributedHost;
 // writes the SAME host members (elemDof, dofOwner, dofKey, dofShared, dofBoundary,
 // numDof, nEdge, nFace, ...) by pulling the device results back, so the downstream
-// host resolveHoDofOwnership + HoHalo::build work unchanged.
+// host resolveHoDofOwnershipHost + HoHalo::build work unchanged.
 //
 // Kept as a free function taking the handler by reference (not a member) to avoid
 // touching the host class -- per the constraint "add alongside, don't change".
 //
 // If keepOwn != null, the per-DOF device columns the resolve needs are MOVED into it
-// (kept resident) for the all-GPU resolveHoDofOwnershipGpu; otherwise they free here.
+// (kept resident) for the all-GPU resolveHoDofOwnership; otherwise they free here.
 //
 // CORE: all numbering inputs are ALREADY device-resident here (the SoA int corner
 // buffer d_corners_ptr[c*nElem+e], and per-corner gid/owner/shared/elemOwner pointers).
@@ -186,7 +186,7 @@ struct HoOwnershipDeviceData {
 // for fallback/self-check) or straight from the domain's device columns (device-input
 // path, zero H2D). Keeping ONE numbering body guarantees both paths number bit-for-bit
 // identically -> the A.1 oracle is shared.
-inline void buildDistributedGpuCore(HODofHandler&  dof,
+inline void buildDistributedDofsCore(HODofHandler&  dof,
                                     const int*     d_corners_ptr,   // SoA [c*nElem+e], LOCAL ids
                                     long           nElem,
                                     long           numCornerNodes,
@@ -498,7 +498,7 @@ inline void buildDistributedGpuCore(HODofHandler&  dof,
 // HOST-INPUT wrapper: same signature/behaviour as before. Uploads the host corner/gid/
 // owner/shared/elemOwner vectors, packs the SoA int corner buffer, then runs the core.
 // Kept for MARS_HO_HOST + the self-check and any host-vector caller. UNCHANGED numbering.
-inline void buildDistributedGpu(HODofHandler&                         dof,
+inline void buildDistributedDofsFromHost(HODofHandler&                         dof,
                                 const std::vector<std::array<int,8>>& elemCorners,
                                 long numCornerNodes, int order,
                                 const std::vector<long>&     cornerGid,
@@ -519,7 +519,7 @@ inline void buildDistributedGpu(HODofHandler&                         dof,
     thrust::device_vector<int>     d_cornerOwner(cornerOwner.begin(), cornerOwner.end());
     thrust::device_vector<uint8_t> d_sharedCorner(sharedCorner.begin(), sharedCorner.end());
     thrust::device_vector<int>     d_elemOwner(elemOwner.begin(), elemOwner.end());
-    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+    buildDistributedDofsCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
                             numCornerNodes, order,
                             thrust::raw_pointer_cast(d_cornerGid.data()),
                             thrust::raw_pointer_cast(d_cornerOwner.data()),
@@ -559,7 +559,7 @@ __global__ void ho_pack_corner_soa_kernel(
 // then runs the SAME core -> identical numbering, zero H2D. conn columns are over the
 // FULL element range; the owned slice starts at startElem.
 template<typename KeyType>
-inline void buildDistributedGpuDevice(HODofHandler&  dof,
+inline void buildDistributedDofs(HODofHandler&  dof,
                                       const KeyType* d_conn[8],
                                       long           startElem,
                                       long           nElem,
@@ -580,7 +580,7 @@ inline void buildDistributedGpuDevice(HODofHandler&  dof,
             d_conn[0], d_conn[1], d_conn[2], d_conn[3],
             d_conn[4], d_conn[5], d_conn[6], d_conn[7],
             thrust::raw_pointer_cast(d_corners.data()), startElem, nElem);
-    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+    buildDistributedDofsCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
                             numCornerNodes, order, d_cornerGid, d_cornerOwner,
                             d_sharedCorner, d_elemOwner, myRank, keepOwn);
 }
@@ -588,19 +588,19 @@ inline void buildDistributedGpuDevice(HODofHandler&  dof,
 // ---------------------------------------------------------------------------
 // SINGLE-RANK device numbering. Same core, degenerate ownership.
 //
-// The split between the host build() and the GPU buildDistributedGpu* used to be
+// The split between the host buildHost() and the GPU buildDistributedDofsFromHost* used to be
 // by RANK COUNT, not by device: one rank meant host numbering. That is backwards --
 // a single GPU wants the device path most, since host numbering bounds both the
-// setup time and the reachable problem size. buildGpu closes that gap by feeding
-// buildDistributedGpuCore the degenerate configuration a single rank IS:
+// setup time and the reachable problem size. buildDofsFromHost closes that gap by feeding
+// buildDistributedDofsCore the degenerate configuration a single rank IS:
 //   myRank = 0, every corner owned by 0, every element owned by 0, no shared
 //   corners, global corner id == local corner id.
 // No numbering logic is duplicated: with those inputs the core's owner/shared/
 // boundary tagging collapses to constants and its edge/face keying reduces to the
-// host build() convention (which already keys on LOCAL corner ids).
+// host buildHost() convention (which already keys on LOCAL corner ids).
 //
 // As with the distributed path, the LOCAL edge/face ids -- and therefore the DOF
-// ids -- may be a PERMUTATION of the host build()'s. Everything that matters is
+// ids -- may be a PERMUTATION of the host buildHost()'s. Everything that matters is
 // permutation-invariant (numDof/nEdge/nFace, the DofKey multiset, the elemDof
 // connectivity classes); mars_cvfem_ho_matfree_test --dof-self-check gates that.
 // ---------------------------------------------------------------------------
@@ -630,11 +630,11 @@ struct HoSingleRankColumns {
     }
 };
 
-// HOST-INPUT single-rank build. Mirrors HODofHandler::build(elemCorners, numCornerNodes,
+// HOST-INPUT single-rank build. Mirrors HODofHandler::buildHost(elemCorners, numCornerNodes,
 // order) so a call site switches by adding the handler as the first argument.
 // keepOwn, when given, keeps elemDof (and the per-DOF columns) device-resident and skips
 // the D2H -- the useful mode for a matrix-free apply that only wants d_elemDof.
-inline void buildGpu(HODofHandler&                         dof,
+inline void buildDofsFromHost(HODofHandler&                         dof,
                      const std::vector<std::array<int,8>>& elemCorners,
                      long                                  numCornerNodes,
                      int                                   order,
@@ -650,7 +650,7 @@ inline void buildGpu(HODofHandler&                         dof,
 
     HoSingleRankColumns own;
     own.build(numCornerNodes, nElem);
-    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+    buildDistributedDofsCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
                             numCornerNodes, order,
                             thrust::raw_pointer_cast(own.gid.data()),
                             thrust::raw_pointer_cast(own.cornerOwner.data()),
@@ -661,10 +661,10 @@ inline void buildGpu(HODofHandler&                         dof,
 
 // DEVICE-INPUT single-rank build: connectivity already device-resident (the domain's
 // 8 columns over the full element range; the owned slice starts at startElem), so
-// nothing crosses PCIe. Same relation to buildGpu as buildDistributedGpuDevice has to
-// buildDistributedGpu.
+// nothing crosses PCIe. Same relation to buildDofsFromHost as buildDistributedDofs has to
+// buildDistributedDofsFromHost.
 template<typename KeyType>
-inline void buildGpuDevice(HODofHandler&  dof,
+inline void buildDofs(HODofHandler&  dof,
                            const KeyType* d_conn[8],
                            long           startElem,
                            long           nElem,
@@ -674,7 +674,7 @@ inline void buildGpuDevice(HODofHandler&  dof,
 {
     HoSingleRankColumns own;
     own.build(numCornerNodes, nElem);
-    buildDistributedGpuDevice<KeyType>(dof, d_conn, startElem, nElem, numCornerNodes, order,
+    buildDistributedDofs<KeyType>(dof, d_conn, startElem, nElem, numCornerNodes, order,
                                        thrust::raw_pointer_cast(own.gid.data()),
                                        thrust::raw_pointer_cast(own.cornerOwner.data()),
                                        thrust::raw_pointer_cast(own.sharedCorner.data()),

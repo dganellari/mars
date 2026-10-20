@@ -182,7 +182,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gp
     cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12);
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
 
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
         std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_x.data(), d_y.data(), d_z.data(),

@@ -54,7 +54,7 @@ bool runDmmaParity(int E)
     long nCorner = long(E + 1) * (E + 1) * (E + 1);
 
     HODofHandler dh;
-    dh.build(elemCorners, nCorner, P);
+    dh.buildHost(elemCorners, nCorner, P);
     long nDof = dh.numDof;
 
     std::vector<double> x, w, D;

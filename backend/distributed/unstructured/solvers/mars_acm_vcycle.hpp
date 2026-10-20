@@ -327,7 +327,7 @@ __global__ void acmBlockDiagPtrKernel(const int* brow_id, const int* bcol, int n
 
 // build brow/bcol/bdiagPtr (device) for the nN-node symmetrized block graph from the level's device scalar CSR.
 template<typename RealType>
-inline void acmBuildBlockCsrGpu(int nN, const thrust::device_vector<int>& rowOff,
+inline void acmBuildBlockCsr(int nN, const thrust::device_vector<int>& rowOff,
                                 const thrust::device_vector<int>& colInd,
                                 thrust::device_vector<int>& brow, thrust::device_vector<int>& bcol,
                                 thrust::device_vector<int>& bdiagPtr)
@@ -385,7 +385,7 @@ __global__ void acmJPColorKernel(const int* brow, const int* bcol, int* color, c
 // kernels need only: every node colored + adjacent nodes differ + ascending-color launches -> a valid JP
 // coloring is convergence-preserving (the multicolor DILU just uses a different but valid color order).
 template<typename RealType>
-inline void acmColorBlockGraphGpu(int nN, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
+inline void acmColorBlockGraph(int nN, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
                                   thrust::device_vector<int>& color, thrust::device_vector<int>& nodesByColor,
                                   std::vector<int>& h_colStart, int& numColors)
 {
@@ -523,7 +523,7 @@ __global__ void acmRelabelKernel(int* agg, const int* map, int nN)
 // build the aggregate strength graph (arow/acol/aS) from the pass-1 agg[] + node strengths S -- the coarse
 // graph the 2nd match runs on. Mirrors §1a emit/sort/reduce/split, values = summed inter-aggregate strength.
 template<typename RealType>
-inline void acmBuildAggGraphGpu(int nN, int nC1, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
+inline void acmBuildAggGraph(int nN, int nC1, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
                                 const thrust::device_vector<RealType>& S, const thrust::device_vector<int>& agg,
                                 thrust::device_vector<int>& arow, thrust::device_vector<int>& acol, thrust::device_vector<RealType>& aS)
 {
@@ -547,13 +547,13 @@ inline void acmBuildAggGraphGpu(int nN, int nC1, const thrust::device_vector<int
 }
 
 template<typename RealType>
-inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
+inline void acmAggregate(int nN, const thrust::device_vector<int>& rowOff,
                             const thrust::device_vector<int>& colInd, const thrust::device_vector<RealType>& vals,
                             RealType beta, thrust::device_vector<int>& agg, int& nCoarse,
                             const uint8_t* own = nullptr)      // dist: 1=owned; ghosts excluded (stay -1)
 {
     thrust::device_vector<int> brow, bcol, bdiagPtr;
-    acmBuildBlockCsrGpu<RealType>(nN, rowOff, colInd, brow, bcol, bdiagPtr);              // node block graph (reuse §1a)
+    acmBuildBlockCsr<RealType>(nN, rowOff, colInd, brow, bcol, bdiagPtr);              // node block graph (reuse §1a)
     const int nnzB = static_cast<int>(bcol.size()), blk = 256, gN = (nN + blk - 1) / blk;
     thrust::device_vector<RealType> sq(nnzB), S(nnzB), wmax(nN);
     acmBlockFrobKernel<RealType><<<gN, blk>>>(acmRaw(rowOff), acmRaw(colInd), acmRaw(vals), acmRaw(brow), acmRaw(bcol), acmRaw(sq), nN);
@@ -574,7 +574,7 @@ inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
     // ---- 2nd matching pass: match the pass-1 aggregates pairwise (pairs->quads, ratio ~4, host-like) ----
     const int nC1 = nCoarse, gC = (nC1 + blk - 1) / blk;
     thrust::device_vector<int> arow, acol; thrust::device_vector<RealType> aS;
-    acmBuildAggGraphGpu<RealType>(nN, nC1, brow, bcol, S, agg, arow, acol, aS);
+    acmBuildAggGraph<RealType>(nN, nC1, brow, bcol, S, agg, arow, acol, aS);
     thrust::device_vector<RealType> wmaxA(nC1);
     acmWmaxKernel<RealType><<<gC, blk>>>(acmRaw(arow), acmRaw(acol), acmRaw(aS), acmRaw(wmaxA), nC1);
     thrust::device_vector<int> merge(nC1, -1), candA(nC1);
@@ -830,8 +830,8 @@ template<typename RealType>
 inline void acmBuildLevelDilu(AcmLevel<RealType>& L)
 {
     const int nN = L.nNodes;
-    acmBuildBlockCsrGpu<RealType>(nN, L.rowOff, L.colInd, L.brow, L.bcol, L.bdiagPtr);          // §1a
-    acmColorBlockGraphGpu<RealType>(nN, L.brow, L.bcol, L.color, L.nodesByColor, L.h_colStart, L.numColors);  // §1b
+    acmBuildBlockCsr<RealType>(nN, L.rowOff, L.colInd, L.brow, L.bcol, L.bdiagPtr);          // §1a
+    acmColorBlockGraph<RealType>(nN, L.brow, L.bcol, L.color, L.nodesByColor, L.h_colStart, L.numColors);  // §1b
     std::fprintf(stderr, "[acm-dilu] build nN=%d numColors=%d (GPU-native block-CSR + JP coloring)\n", nN, L.numColors);
     L.ytmp.assign(L.ND, RealType(0)); L.ztmp.assign(L.ND, RealType(0));
     // VALUES on the GPU: extract raw A blocks into bblk, then color-parallel block-diagonal factor. The
@@ -853,7 +853,7 @@ inline void acmBuildLevelDilu(AcmLevel<RealType>& L)
 // one or more block-ILU(0) sweeps: x += omega * (LU)^-1 (b - A x), triangular solves level-scheduled.
 // All launches on stream `s` (default 0) so the cycle can be captured into a CUDA graph (Step 1).
 template<typename RealType>
-inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
+inline void acmIluSmooth(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
     for (int sw = 0; sw < sweeps; ++sw) {
@@ -879,7 +879,7 @@ inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, c
 // Since z_i = D_i y_i = w_i, the back solve (D+U)x=z reads w (ztmp) directly -- exact ONLY because the
 // forward step multiplies by EXACTLY inv(D_i) (a future forward-diagonal damping would break the z:=w shortcut).
 template<typename RealType>
-inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
+inline void acmDiluSmooth(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
     for (int sw = 0; sw < sweeps; ++sw) {
@@ -936,7 +936,7 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         int nCoarse;
         if (acmUseDilu()) {
             // DILU path: fully GPU-native -- aggregate + structure from the DEVICE CSR, no host std::set, no D2H (§1c+§2)
-            acmAggregateGpu<RealType>(levels[idx].nNodes, levels[idx].rowOff, levels[idx].colInd, levels[idx].vals,
+            acmAggregate<RealType>(levels[idx].nNodes, levels[idx].rowOff, levels[idx].colInd, levels[idx].vals,
                                       beta, levels[idx].agg, nCoarse);     // fills levels[idx].agg (device)
             if (nCoarse >= levels[idx].nNodes) break;                       // no coarsening progress -> coarsest
             if (idx < acmDiluLevels())                                      // hybrid: DILU on the finest K levels only;
@@ -966,10 +966,10 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
 // useBlock=true -> coupled per-node 4x4 block-Jacobi (captures the local [u,v,w,p] coupling);
 // false -> segregated point-Jacobi (kept for the Stage-4a host-match gate).
 template<typename RealType>
-inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock, cudaStream_t s = 0)
+inline void acmSmooth(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock, cudaStream_t s = 0)
 {
-    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega, s); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
-    if (acmUseDilu() && L.numColors > 0) { acmDiluSmoothGpu(L, sweeps, omega, s); return; } // multicolor block-DILU (coarsest -> Jacobi)
+    if (acmUseIlu() && L.nLev > 0) { acmIluSmooth(L, sweeps, omega, s); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
+    if (acmUseDilu() && L.numColors > 0) { acmDiluSmooth(L, sweeps, omega, s); return; } // multicolor block-DILU (coarsest -> Jacobi)
     // Ping-pong on raw pointers instead of a host xvec/xtmp swap so this sweep is CUDA-graph CAPTURABLE
     // (the swap is a host op that bakes stale pointers into a capture). Every sweep writes its FULL output
     // buffer, so alternating in/out is exact; an odd sweep count ends in xtmp -> one D2D copy brings the
@@ -1012,7 +1012,7 @@ template<typename RealType>
 inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bool useBlock,
                            cusolverSpHandle_t cs, cusparseMatDescr_t descr, cudaStream_t s = 0)
 {
-    if (!(cs && descr)) { acmSmoothGpu(L, coarse, omega, useBlock, s); return; }
+    if (!(cs && descr)) { acmSmooth(L, coarse, omega, useBlock, s); return; }
     cusolverSpSetStream(cs, s);                            // QR on the cycle stream -> orders with the captured graphs
     int singularity = -1;                                  // <0 = full rank; >=0 = first deficient pivot
     const int nnzc = static_cast<int>(L.vals.size());
@@ -1027,14 +1027,14 @@ inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bo
     // unreliable -> don't inject garbage into the cycle; reset and fall back to smoothing.
     if (singularity >= 0) {
         thrust::fill(mars::gpuPar.on(s), L.xvec.begin(), L.xvec.end(), RealType(0));
-        acmSmoothGpu(L, coarse, omega, useBlock, s);
+        acmSmooth(L, coarse, omega, useBlock, s);
     }
 }
 
 // V-cycle DOWN half: pre-smooth + residual + restrict, level Lidx down to just above the coarsest.
 // Pure capturable kernel sequence (no host sync, DILU smoother has no buffer swap) -> CUDA-graph safe.
 template<typename RealType>
-void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre, RealType omega,
+void acmVcycleDown(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre, RealType omega,
                       bool useBlock, cudaStream_t s)
 {
     const int blk = 256, nL = (int)levels.size();
@@ -1042,7 +1042,7 @@ void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
         const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
-        acmSmoothGpu(L, pre, omega, useBlock, s);
+        acmSmooth(L, pre, omega, useBlock, s);
         if (L.exch) L.exch(L.xvec, 4);   // dist: ghosts <- owners before the residual reads ghost columns
         acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
@@ -1057,7 +1057,7 @@ void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre
 
 // V-cycle UP half: inject + add + post-smooth, just above the coarsest back up to level Lidx. Capturable.
 template<typename RealType>
-void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post, RealType omega,
+void acmVcycleUp(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post, RealType omega,
                     bool useBlock, cudaStream_t s)
 {
     const int blk = 256, nL = (int)levels.size();
@@ -1069,7 +1069,7 @@ void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post,
         // (processed earlier in this up leg), the coarsest from the replicated solve's ring fill.
         acmInjectKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
         acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
-        acmSmoothGpu(L, post, omega, useBlock, s);
+        acmSmooth(L, post, omega, useBlock, s);
         if (L.exch && l > Lidx) L.exch(L.xvec, 4);   // dist: the next-finer inject reads these ghosts; the
                                                      // finest is refreshed by the Krylov caller before use
     }
@@ -1078,14 +1078,14 @@ void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post,
 // one V-cycle: down -> coarse QR -> up (equivalent to the old recursion, same ops/order). The down/up
 // halves are separate so the preconditioner can CUDA-graph-capture each around the non-capturable QR.
 template<typename RealType>
-void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
+void acmVcycle(std::vector<AcmLevel<RealType>>& levels, int Lidx,
                   int pre, int post, int coarse, RealType omega, bool useBlock = false,
                   cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr, cudaStream_t s = 0)
 {
     const int nL = (int)levels.size();
-    acmVcycleDownGpu(levels, Lidx, pre, omega, useBlock, s);
+    acmVcycleDown(levels, Lidx, pre, omega, useBlock, s);
     acmCoarseSolve(levels[nL - 1], coarse, omega, useBlock, cs, descr, s);   // eager (non-capturable)
-    acmVcycleUpGpu(levels, Lidx, post, omega, useBlock, s);
+    acmVcycleUp(levels, Lidx, post, omega, useBlock, s);
 }
 
 // ---- distributed hierarchy build (numRanks > 1) ----
@@ -1178,7 +1178,7 @@ void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
 
         // owned-only aggregation (ghosts stay -1)
         int nCoarseLoc = 0;
-        acmAggregateGpu<RealType>(L.nNodes, L.rowOff, L.colInd, L.vals, beta, L.agg, nCoarseLoc,
+        acmAggregate<RealType>(L.nNodes, L.rowOff, L.colInd, L.vals, beta, L.agg, nCoarseLoc,
                                   thrust::raw_pointer_cast(L.ownMask.data()));
         int progress = (nCoarseLoc < L.nOwned) ? 1 : 0, gProgress = 0;
         MPI_Allreduce(&progress, &gProgress, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);

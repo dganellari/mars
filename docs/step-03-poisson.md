@@ -39,11 +39,11 @@ linear elements. The errors are the same on one rank and on four, and on NVIDIA 
 
 ```cpp
 cstone::DeviceVector<int> nodeToDof(nodeCount);
-const int numOwned = buildDofMappingGpu<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(),
+const int numOwned = buildDofMapping<uint64_t>(domain.getNodeOwnershipMap().data(), nodeToDof.data(),
                                                   nodeCount);
 ```
 
-With linear elements there is one unknown per mesh node. `buildDofMappingGpu` numbers the nodes this
+With linear elements there is one unknown per mesh node. `buildDofMapping` numbers the nodes this
 rank owns from 0 to `numOwned - 1` and its ghost nodes ([step 1](step-01-mesh.md)) after them, so
 every vector below holds the owned values first and the ghost values at the end.
 

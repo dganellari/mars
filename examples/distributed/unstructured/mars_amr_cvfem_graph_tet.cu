@@ -192,7 +192,7 @@ void solvePoissonGraphTet(ElementDomain<TetTag, RealType, KeyType, cstone::execu
     pt.lap("lazy domain prep");
 
     cstone::DeviceVector<int> d_node_to_dof(nodeCount);
-    int numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
+    int numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
     int numTotalDofs = static_cast<int>(nodeCount);
     pt.lap("DOF mapping");
 

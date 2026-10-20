@@ -93,7 +93,7 @@ int main(int argc, char** argv)
     }
 
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-    int numDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
+    int numDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
     int numTotalDofs = (int)nodeCount;
 
     const auto& d_conn = domain.getElementToNodeConnectivity();
@@ -119,7 +119,7 @@ int main(int argc, char** argv)
     cstone::DeviceVector<RealType> d_gx(nodeCount,0.0), d_gy(nodeCount,0.0), d_gz(nodeCount,0.0);
     cstone::DeviceVector<RealType> d_mdot(elementCount*12, 0.0);
     cstone::DeviceVector<RealType> d_avx(elementCount*12), d_avy(elementCount*12), d_avz(elementCount*12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
+    precomputeAreaVectors<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
         d_x.data(), d_y.data(), d_z.data(), d_avx.data(), d_avy.data(), d_avz.data());
     cudaDeviceSynchronize();
 

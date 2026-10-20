@@ -18,7 +18,7 @@ ElementDomain                     GPU-native mesh: connectivity, node coordinate
    │   node → DOF map
    ▼
 node-to-DOF numbering             owned DOFs first [0, numOwned), ghosts after
-   │                              (buildDofMappingGpu, two device scans)
+   │                              (buildDofMapping, two device scans)
    │   sparsity pattern
    ▼
 CSR structure                     rowPtr, colInd, diagPtr
@@ -37,6 +37,10 @@ solver                            CG / BiCGSTAB / GMRES (bundled), Hypre (option
 
 Every stage lives in `backend/distributed/unstructured/fem/` (namespace `mars::fem`). The stages
 pass plain device arrays (raw pointers, CSR arrays), so the boundaries are explicit.
+Device execution is the default in these APIs, so names such as `buildDofMapping`
+and `precomputeAreaVectors` need no `Gpu` suffix. Host reference implementations
+are named explicitly; `FromHost` identifies a wrapper that uploads host inputs
+before running the device implementation.
 
 ---
 
@@ -46,7 +50,7 @@ A continuous linear (P1/Q1) discretization puts **one DOF per mesh node**. Befor
 a matrix you need a numbering: which equation row does each node own, and which nodes are ghosts
 (owned by another rank but needed locally)?
 
-`buildDofMappingGpu` (`mars_cvfem_utils.hpp`) builds the numbering **on the GPU**. Two
+`buildDofMapping` (`mars_cvfem_utils.hpp`) builds the numbering **on the GPU**. Two
 `exclusive_scan`s over the owned and ghost masks give a contiguous local numbering on the device:
 owned nodes → `[0, numOwned)`, ghosts → `[numOwned, numNodes)`. It returns `numOwned`, the number
 of equation rows this rank owns. The CVFEM drivers `mars_cvfem_graph`, `mars_cvfem_graph_tet`,
@@ -180,7 +184,7 @@ size_t nodeCount = domain.getNodeCount();
 
 // 2. node -> DOF (GPU-native local numbering): owned rows first, then ghosts
 cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-int numOwned = buildDofMappingGpu<KeyType>(d_ownership.data(), d_nodeToDof.data(), nodeCount);
+int numOwned = buildDofMapping<KeyType>(d_ownership.data(), d_nodeToDof.data(), nodeCount);
 
 // 3. sparsity, two passes: count nnz, then fill (rows for owned and ghost DOFs)
 const auto& c = domain.getElementToNodeConnectivity();   // 8 device columns for a hex
@@ -203,7 +207,7 @@ Assembler::assembleGraphLump(/* connectivity, coordinates, fields, DOF map, owne
 | Stage | MARS provides | Notes |
 |-------|---------------|-------|
 | Mesh and partition | yes | GPU-native, SFC-partitioned |
-| Node → DOF map | yes | `buildDofMappingGpu`, two device scans |
+| Node → DOF map | yes | `buildDofMapping`, two device scans |
 | Sparsity (CSR structure) | yes | 7-nonzero graph or 27-nonzero full, on the GPU |
 | Assembled CSR matrix + RHS | yes | CVFEM assembly kernels (graph-lumped or full) |
 | Linear solver | optional | your own, the bundled CG/BiCGSTAB/GMRES, or Hypre |

@@ -1516,7 +1516,7 @@ private:
             const KeyType* c[8];
             for (int i = 0; i < 8; ++i)
                 c[i] = hex_.node[i] + hex_.first;
-            precomputeAreaVectorsGpu<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], hex_.count,
+            precomputeAreaVectors<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], hex_.count,
                                                         x(), y(), z(), area_[0].data(), area_[1].data(),
                                                         area_[2].data());
             cudaCheckError();

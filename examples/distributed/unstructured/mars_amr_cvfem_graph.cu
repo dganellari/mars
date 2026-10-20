@@ -192,7 +192,7 @@ __global__ void enforceBCKernel(const uint8_t* isBoundaryDof,
 }
 
 // GPU-native Poisson solve on an AMR-managed domain. Pipeline:
-//   1) GPU DOF mapping (buildDofMappingGpu)
+//   1) GPU DOF mapping (buildDofMapping)
 //   2) GPU sparsity (CvfemSparsityBuilder::buildGraphSparsity, sized for owned DOFs)
 //   3) GPU full 8x8 element assembly (assembleFull)
 //   4) GPU bounding box reduction + MPI_Allreduce for global box
@@ -230,7 +230,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::executio
 
     // 1) GPU DOF mapping: owned nodes -> [0, numOwnedDofs), ghost -> [numOwnedDofs, nodeCount)
     cstone::DeviceVector<int> d_node_to_dof(nodeCount);
-    int numOwnedDofs   = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
+    int numOwnedDofs   = buildDofMapping<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
     int numTotalDofs   = static_cast<int>(nodeCount);
     pt.lap("DOF mapping");
 
@@ -276,7 +276,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::executio
     cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12);
     cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12);
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
         std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_x.data(), d_y.data(), d_z.data(),

@@ -135,7 +135,7 @@ __global__ void assembleMassKernel(const RealType* node_x,
 
 // CUDA kernel for RHS vector assembly
 // Computes b_i = ∫ f φ_i dV where f is source term
-// IndexType indexes elements and nodes, DofIndex the DOFs (int for buildDofMappingGpu)
+// IndexType indexes elements and nodes, DofIndex the DOFs (int for buildDofMapping)
 template<typename ElementTag, typename RealType, typename IndexType, typename SourceFunc, typename DofIndex>
 __global__ void assembleRHSKernel(const RealType* node_x,
                                   const RealType* node_y,
@@ -368,7 +368,7 @@ public:
         assembleRHS(fes.domain(), b, f, d_nodeToDof.data(), numOwnedDofs);
     }
 
-    // Device DOF map (e.g. buildDofMappingGpu). b is zeroed and grown to the owned DOFs if shorter; every
+    // Device DOF map (e.g. buildDofMapping). b is zeroed and grown to the owned DOFs if shorter; every
     // element the rank holds contributes, halos included, so owned entries get their whole star.
     template<typename SourceFunc, typename DofIndex>
     void assembleRHS(const Domain& domain, Vector& b, SourceFunc f, const DofIndex* d_nodeToDof, DofIndex numOwnedDofs)

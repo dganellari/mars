@@ -2,7 +2,7 @@
 // apply (mars_cvfem_ho_matfree.hpp). Single rank, in-memory structured cube --
 // same elemDof/coord convention as the host patch test, so any divergence
 // localizes to the GPU kernel and not the DOF map. The numbering itself is built
-// on the DEVICE (buildGpu) and stays there -- the apply reads elemDof straight
+// on the DEVICE (buildDofsFromHost) and stays there -- the apply reads elemDof straight
 // out of HoOwnershipDeviceData, with no host build and no H2D.
 //
 // Three gates per order p in {1,2,4}:
@@ -18,7 +18,7 @@
 // uploaded once per p via ho_cvfem_upload_operators.
 //
 // --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1) adds a numbering gate in front:
-// host HODofHandler::build() vs the single-rank GPU buildGpu(), compared on the
+// host HODofHandler::buildHost() vs the single-rank GPU buildDofsFromHost(), compared on the
 // permutation-invariant quantities. Off by default; the gates below are unchanged.
 // --dof-self-check=E (or MARS_HO_DOF_SELF_CHECK_E=E) sets the cube size. E=4 is
 // the cheap correctness cube; a large E is what shows the setup-time win, since
@@ -83,7 +83,7 @@ static CubeMesh buildCube(const HoCvfemOperators& op, int P, int E)
     const int n = P + 1, N3 = n * n * n;
     std::vector<std::array<int,8>> ec;
     makeCubeCorners(E, ec, m.ijk);
-    buildGpu(m.dh, ec, long(E+1)*(E+1)*(E+1), P, &m.own);
+    buildDofsFromHost(m.dh, ec, long(E+1)*(E+1)*(E+1), P, &m.own);
     m.nDof = m.dh.numDof; m.nEl = ec.size(); m.n = n; m.N3 = N3;
     // TEST ONLY: the gates below score the device apply against a host reference,
     // which indexes elemDof on the host. Passing keepOwn deliberately skips that
@@ -348,7 +348,7 @@ static bool runShearGate(int E)
     return ok;
 }
 
-// ---- Opt-in gate: single-rank host build() vs the GPU buildGpu(). ----
+// ---- Opt-in gate: single-rank host buildHost() vs the GPU buildDofsFromHost(). ----
 // --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1). Additive: the A/B/C/shear gates
 // below run exactly as before with or without it.
 //
@@ -372,7 +372,7 @@ static bool checkDofNumbering(int P, int E)
     const long nElem = (long)ec.size();
     const int  n = P + 1, N3 = n*n*n;
 
-    // The degenerate single-rank configuration buildGpu feeds the shared numbering
+    // The degenerate single-rank configuration buildDofsFromHost feeds the shared numbering
     // core, spelled out here so the host oracle sees the identical inputs.
     std::vector<long> cornerGid(nCornerNodes);
     for (long i = 0; i < nCornerNodes; ++i) cornerGid[i] = i;   // global id == local id
@@ -381,15 +381,15 @@ static bool checkDofNumbering(int P, int E)
     const std::vector<int>     elemOwner(nElem, 0);
 
     HODofHandler dofPlain, dofHost, dofGpu;
-    dofPlain.build(ec, nCornerNodes, P);
+    dofPlain.buildHost(ec, nCornerNodes, P);
     using Clk = std::chrono::steady_clock;
-    // buildDistributed() calls build() and then tags the DofKeys build() alone does
+    // buildDistributedHost() calls buildHost() and then tags the DofKeys buildHost() alone does
     // not produce. Comparing dofPlain to dofHost verifies that rather than assuming
-    // it, so the oracle really is build().
+    // it, so the oracle really is buildHost().
     const auto t0 = Clk::now();
-    dofHost.buildDistributed(ec, nCornerNodes, P, cornerGid, cornerOwner, elemOwner, 0, sharedCorner);
+    dofHost.buildDistributedHost(ec, nCornerNodes, P, cornerGid, cornerOwner, elemOwner, 0, sharedCorner);
     const auto t1 = Clk::now();
-    buildGpu(dofGpu, ec, nCornerNodes, P);
+    buildDofsFromHost(dofGpu, ec, nCornerNodes, P);
     cudaDeviceSynchronize();
     const auto t2 = Clk::now();
     const double hostS = std::chrono::duration<double>(t1 - t0).count();
@@ -462,7 +462,7 @@ int main(int argc, char** argv)
     int dev=0; cudaGetDeviceCount(&dev); if (dev>0) cudaSetDevice(0);
     bool ok = true;
 
-    // Opt-in only: proves host build() and the single-rank GPU buildGpu() number the
+    // Opt-in only: proves host buildHost() and the single-rank GPU buildDofsFromHost() number the
     // same space before the operator gates run on the host numbering.
     bool dofSelfCheck = std::getenv("MARS_HO_DOF_SELF_CHECK") != nullptr;
     int  selfCheckE = 4;   // cells per side; 4 is the cheap correctness cube
@@ -480,7 +480,7 @@ int main(int argc, char** argv)
         }
     }
     if (dofSelfCheck) {
-        printf("=== HO DOF numbering self-check: host build() vs GPU buildGpu() (E=%d) ===\n",
+        printf("=== HO DOF numbering self-check: host buildHost() vs GPU buildDofsFromHost() (E=%d) ===\n",
                selfCheckE);
         for (int p = 1; p <= 7; ++p) ok &= checkDofNumbering(p, selfCheckE);
         printf("\n");

@@ -320,7 +320,7 @@ __global__ void ghostIdentityKernel(const uint8_t* ownNode, const int* rowOff, c
 // a^uu(nu*K) + FV a^pu/a^up=-(a^pu)^T + RC a^pp d_f-Laplacian (d_f from the momentum diagonal, no tau)
 // + the open-boundary continuity closure rho*S_bnd.u (zero on closed domains, carries inlet/outlet flux).
 template<typename KeyType, typename RealType>
-void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+void assembleRhieChow(const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
                          const RealType* nx, const RealType* ny, const RealType* nz,
                          const int* d_rowOff, const int* d_colInd, RealType* d_vals, RealType nu, RealType supg,
                          const RealType* avxp, const RealType* avyp, const RealType* avzp,
@@ -329,7 +329,7 @@ void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2
 {
     const int eBlocks = (int)((numLocal + blockSize - 1) / blockSize);
     thrust::device_vector<RealType> avX(6 * numLocal), avY(6 * numLocal), avZ(6 * numLocal);
-    precomputeTetAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, numLocal, nx, ny, nz,
+    precomputeTetAreaVectors<KeyType, RealType>(c0, c1, c2, c3, numLocal, nx, ny, nz,
         thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()), thrust::raw_pointer_cast(avZ.data()));
     cudaDeviceSynchronize();
     assembleMomentumKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
@@ -358,7 +358,7 @@ void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2
     // open-boundary continuity closure: S_bnd (geometric, could be hoisted out of the Picard loop) then
     // scatter rho*S_bnd.u into the continuity rows. Closes the open dual cells so inlet/outlet flux balances.
     thrust::device_vector<RealType> sbX(nNodes, RealType(0)), sbY(nNodes, RealType(0)), sbZ(nNodes, RealType(0));
-    mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, startElem, numLocal, nx, ny, nz,
+    mars::fem::computeBoundaryAreaVectors<KeyType, RealType>(c0, c1, c2, c3, startElem, numLocal, nx, ny, nz,
         nNodes, thrust::raw_pointer_cast(sbX.data()), thrust::raw_pointer_cast(sbY.data()),
         thrust::raw_pointer_cast(sbZ.data()));
     cudaDeviceSynchronize();
@@ -504,7 +504,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
         thrust::device_vector<RealType> dsbx(nNodes), dsby(nNodes), dsbz(nNodes);
         // FULL element range: with local-only elements a rank-seam face occurs once and would be flagged
         // boundary -> phantom no-slip walls along every partition seam. Halo elements pair those faces up.
-        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
+        mars::fem::computeBoundaryAreaVectors<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
             nx, ny, nz, (int)nNodes, thrust::raw_pointer_cast(dsbx.data()),
             thrust::raw_pointer_cast(dsby.data()), thrust::raw_pointer_cast(dsbz.data()));
         cudaDeviceSynchronize();
@@ -735,7 +735,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
     for (pit = 0; pit < C.picard; ++pit) {
         thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
         if (C.doRhieChow)
-            assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+            assembleRhieChow<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                 thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                 thrust::raw_pointer_cast(d_vals.data()), nuS, C.doSupg ? RealType(1) : RealType(0),
                 thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
@@ -1161,7 +1161,7 @@ int main(int argc, char** argv)
         thrust::device_vector<RealType> dsbx(nNodes), dsby(nNodes), dsbz(nNodes);
         // FULL element range: with local-only elements a rank-seam face occurs once and would be flagged
         // boundary -> phantom no-slip walls along every partition seam. Halo elements pair those faces up.
-        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
+        mars::fem::computeBoundaryAreaVectors<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
             nx, ny, nz, (int)nNodes, thrust::raw_pointer_cast(dsbx.data()),
             thrust::raw_pointer_cast(dsby.data()), thrust::raw_pointer_cast(dsbz.data()));
         cudaDeviceSynchronize();
@@ -1276,7 +1276,7 @@ int main(int argc, char** argv)
             // full range (0,totalEl) like the Picard calls: the assemble kernels index the per-element area
             // arrays by the ABSOLUTE element id (e = startElem + kk, avX[e*6]) while the arrays are sized and
             // filled [0, count) -- any startElem > 0 (rank > 0) reads past the end. startElem=0 aligns them.
-            assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+            assembleRhieChow<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                 thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                 thrust::raw_pointer_cast(d_vals.data()), nu, doSupg ? RealType(1) : RealType(0), avxp, avyp, avzp,
                 0, totalEl, (int)nNodes, blockSize);
@@ -1490,7 +1490,7 @@ int main(int argc, char** argv)
             // cycle effective regardless.
             thrust::copy(hb.begin(), hb.end(), levels[0].bvec.begin());
             thrust::fill(levels[0].xvec.begin(), levels[0].xvec.end(), RealType(0));
-            acmVcycleGpu<RealType>(levels, 0, /*pre=*/2, /*post=*/1, /*coarse=*/10, RealType(0.7));
+            acmVcycle<RealType>(levels, 0, /*pre=*/2, /*post=*/1, /*coarse=*/10, RealType(0.7));
             cudaDeviceSynchronize();
             std::vector<RealType> gx(ND);
             thrust::copy(levels[0].xvec.begin(), levels[0].xvec.end(), gx.begin());
@@ -1830,7 +1830,7 @@ int main(int argc, char** argv)
                 // operator (no tau); else PSPG. The cavity benchmark (vs Erturk-Dursun) validates RC accuracy.
                 thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
                 if (doRhieChow)
-                    assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+                    assembleRhieChow<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                         thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                         thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
                         thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),

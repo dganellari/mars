@@ -473,7 +473,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
 
     // Precompute area vectors for all elements and SCS integration points
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),

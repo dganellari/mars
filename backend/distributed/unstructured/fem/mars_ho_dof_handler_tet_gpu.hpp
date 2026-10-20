@@ -1,13 +1,13 @@
 #ifndef MARS_HO_DOF_HANDLER_TET_GPU_HPP
 #define MARS_HO_DOF_HANDLER_TET_GPU_HPP
 
-// GPU build of the tet HO DOF numbering -- device twin of HoCvfemTetDofHandler::build
-// and HoTetDofHandler::build in mars_ho_dof_handler_tet.hpp.
+// GPU build of the tet HO DOF numbering -- device twin of HoCvfemTetDofHandler::buildHost
+// and HoTetDofHandler::buildHost in mars_ho_dof_handler_tet.hpp.
 //
 // Both host builders key a node by the sorted list of (global vertex id, weight)
 // pairs with zero weights dropped, and dedup through a std::map. That map is the
 // only host-bound part: it caps single-GPU problem size and setup time, exactly as
-// HODofHandler::build did for hex before buildGpu.
+// HODofHandler::buildHost did for hex before buildDofsFromHost.
 //
 // Device algorithm (validated against the std::map reference before being written):
 //   1. pack the key into FOUR uint64 lanes, one per barycentric slot:
@@ -86,7 +86,7 @@ __host__ __device__ inline void sortSlots(uint64_t* s) {
 }
 
 // The collapsed (Duffy) barycentric weights of tensor node (ia, ib, ic), matching
-// HoCvfemTetDofHandler::build exactly.
+// HoCvfemTetDofHandler::buildHost exactly.
 __host__ __device__ inline void duffyWeights(double a, double b, double c, double* w) {
     const double r = a * (1.0 - b) * (1.0 - c);
     const double s = b * (1.0 - c);
@@ -155,7 +155,7 @@ inline long dedupAndScatter(thrust::device_vector<uint64_t> lane[4],
 
 }  // namespace ho_tet_gpu_detail
 
-// Device-resident results. Pass one to buildGpu and NOTHING is downloaded: the apply
+// Device-resident results. Pass one to buildDofsFromHost and NOTHING is downloaded: the apply
 // reads elemDof straight off the device, exactly as the hex path does with
 // HoOwnershipDeviceData. Without it the host members are filled, which costs a D2H of
 // elemDof and dofPos -- needed only by code that scores against a host reference.
@@ -167,7 +167,7 @@ struct HoTetOwnershipDeviceData {
 };
 
 // ---- CVFEM collapsed GLL tensor grid (the one mars_ho_tet_perf drives) ----
-inline void buildGpu(HoCvfemTetDofHandler& dof,
+inline void buildDofsFromHost(HoCvfemTetDofHandler& dof,
                      const std::vector<int>& elemCorners,
                      const std::vector<std::array<double,3>>& coords,
                      const std::vector<double>& Z,
@@ -282,7 +282,7 @@ inline void buildGpu(HoCvfemTetDofHandler& dof,
 
 // ---- Nodal HO tet (integer barycentric indices) ----
 template <typename RealType>
-inline void buildGpu(HoTetDofHandler& dof,
+inline void buildDofsFromHost(HoTetDofHandler& dof,
                      const std::vector<int>& elemCorners,
                      const std::vector<std::array<double,3>>& coords,
                      const HoTetNodal<RealType>& nd,

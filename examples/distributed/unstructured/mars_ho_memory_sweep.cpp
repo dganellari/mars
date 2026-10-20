@@ -34,7 +34,7 @@ void sweep(int E)
                               cgid(ex, ey, ez + 1), cgid(ex + 1, ey, ez + 1), cgid(ex + 1, ey + 1, ez + 1), cgid(ex, ey + 1, ez + 1)});
 
     HODofHandler dh;
-    dh.build(ec, long(E + 1) * (E + 1) * (E + 1), P);
+    dh.buildHost(ec, long(E + 1) * (E + 1) * (E + 1), P);
     const long   nDof = dh.numDof;
     const size_t nEl  = ec.size();
 

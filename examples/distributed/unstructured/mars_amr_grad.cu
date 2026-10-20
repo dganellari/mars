@@ -450,7 +450,7 @@ void setupGradStepper(GradStepper<KeyType, RealType>& s, TestField field,
     pt.lap("lazy domain prep");
 
     s.d_node_to_dof.resize(s.nodeCount);
-    s.numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(),
+    s.numOwnedDofs = buildDofMapping<KeyType>(d_nodeOwnership.data(),
                                                  s.d_node_to_dof.data(), s.nodeCount);
     pt.lap("DOF mapping");
 
@@ -464,7 +464,7 @@ void setupGradStepper(GradStepper<KeyType, RealType>& s, TestField field,
     s.d_areaVec_x.resize(s.elementCount * 12);
     s.d_areaVec_y.resize(s.elementCount * 12);
     s.d_areaVec_z.resize(s.elementCount * 12);
-    precomputeAreaVectorsGpu<KeyType, RealType>(
+    precomputeAreaVectors<KeyType, RealType>(
         c0, c1, c2, c3, c4, c5, c6, c7, s.elementCount,
         d_x.data(), d_y.data(), d_z.data(),
         s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data());

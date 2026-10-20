@@ -445,7 +445,7 @@ size_t elementCount = domain.getElementCount();
 ### DOF map (L138–144)
 ```cpp
 cstone::DeviceVector<int> d_nodeToDof(nodeCount);
-int numDofs = buildDofMappingGpu<KeyType>(
+int numDofs = buildDofMapping<KeyType>(
     d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);
 int numTotalDofs = static_cast<int>(nodeCount);
 ```
@@ -475,7 +475,7 @@ const auto& d_x = domain.getNodeX();
 ### DOF numbering, BC and solve (from `mars_ex1_poisson.cu`)
 ```cpp
 // owned nodes first, then ghosts, from the domain's node ownership
-int numOwnedDofs = buildDofMappingGpu<KeyType>(domain.getNodeOwnershipMap().data(), d_nodeToDof.data(), nodeCount);
+int numOwnedDofs = buildDofMapping<KeyType>(domain.getNodeOwnershipMap().data(), d_nodeToDof.data(), nodeCount);
 // owned rows, owned + ghost columns; boundary rows (faces of the global bounding box) become identity
 // rows with zero RHS
 SparseMatrix<int, float, cstone::execution::Gpu> A;

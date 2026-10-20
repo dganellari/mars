@@ -52,7 +52,7 @@ auto createNVectors(size_t size)
 // tests) fall back to serial std::sort. The GPU path saves several seconds per
 // rank at 100M+ keys.
 template<typename KeyType>
-inline std::vector<KeyType> dedupNodesGpu(std::vector<KeyType>& allNodes)
+inline std::vector<KeyType> dedupNodes(std::vector<KeyType>& allNodes)
 {
 #if defined(__CUDACC__) || defined(__HIPCC__)
     constexpr size_t cpuThreshold = 1ull << 20;  // ~1M keys: H2D round-trip not worth it
@@ -286,7 +286,7 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     };
     std::apply([&](const auto&... vecs) { (collect_nodes(vecs), ...); }, rawConnectivity);
 
-    std::vector<KeyType> neededNodes = dedupNodesGpu<KeyType>(allNodes);
+    std::vector<KeyType> neededNodes = dedupNodes<KeyType>(allNodes);
     size_t nodeCount = neededNodes.size();
 
     // STEP 3: Read coordinates per rank from contiguous file slabs.

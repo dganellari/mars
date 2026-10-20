@@ -58,7 +58,7 @@ static void run_order(int ncells, int reps) {
         buildKuhnTetMesh(2, coords, ec);
         const size_t nE = ec.size()/4;
         std::vector<double> Zd(o.Z.begin(), o.Z.end());
-        HoCvfemTetDofHandler dh; buildGpu(dh, ec, coords, Zd);
+        HoCvfemTetDofHandler dh; buildDofsFromHost(dh, ec, coords, Zd);
         const long nDof = dh.numDof;
         std::vector<double> geom(nE*10);
         for (size_t e=0;e<nE;++e){ double c4[4][3];
@@ -102,7 +102,7 @@ static void run_order(int ncells, int reps) {
     buildKuhnTetMesh(ncells, coords, ec);
     const size_t nE = ec.size()/4;
     std::vector<double> Zd(o.Z.begin(), o.Z.end());
-    HoCvfemTetDofHandler dh; buildGpu(dh, ec, coords, Zd);
+    HoCvfemTetDofHandler dh; buildDofsFromHost(dh, ec, coords, Zd);
     const long nDof = dh.numDof;
     std::vector<double> geom(nE*10);
     for (size_t e=0;e<nE;++e){ double c4[4][3];

@@ -1,5 +1,5 @@
 // Multi-rank gate for the high-order DOF numbering + halo (Phase B foundation).
-// Builds a small procedural cube, runs HODofHandler::buildDistributed (owner+key)
+// Builds a small procedural cube, runs HODofHandler::buildDistributedHost (owner+key)
 // and HoHalo (receiver-driven), then two correctness gates that DON'T need the
 // operator:
 //   A. global owned-DOF count == analytic (ncells*P+1)^3  (no orphans/double-own)
@@ -126,13 +126,13 @@ int main(int argc, char** argv)
 
     // --- build distributed HO DOF + halo ---
     HODofHandler dof;
-    dof.buildDistributed(elemCorners, (long)nodeCount, P, cornerGid, cornerOwner, elemOwner, rank, sharedCorner);
+    dof.buildDistributedHost(elemCorners, (long)nodeCount, P, cornerGid, cornerOwner, elemOwner, rank, sharedCorner);
     long nShared = 0; for (long d = 0; d < dof.numDof; ++d) nShared += dof.dofShared[d];
-    if (rank == 0) printf("[dbg] buildDistributed done  numDof=%ld nEdge=%ld nFace=%ld shared=%ld\n",
+    if (rank == 0) printf("[dbg] buildDistributedHost done  numDof=%ld nEdge=%ld nFace=%ld shared=%ld\n",
                           dof.numDof, dof.nEdge, dof.nFace, nShared); fflush(stdout);
 
     // Resolve edge/face ownership (min-rank-among-holders) BEFORE building the halo.
-    resolveHoDofOwnership(dof.dofShared, dof.dofKey, dof.dofOwner, rank, peers);
+    resolveHoDofOwnershipHost(dof.dofShared, dof.dofKey, dof.dofOwner, rank, peers);
 
     HoHalo<RealType> halo;
     halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, dof.dofBoundary, rank, peers);
