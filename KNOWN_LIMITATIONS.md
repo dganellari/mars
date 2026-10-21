@@ -45,6 +45,57 @@ including element numberings that are not aligned with the coordinate axes.
   solve is the largest cost of a multigrid iteration.
 
 ## Not supported yet
+- **General non-conformal flow coupling.** A scalar tetrahedral interface component
+  pairs supplied nonmatching faces and forms diffusion stencils, checked on CUDA.
+  Donor exchange, automatic CSR graph extension and owned-row insertion pass
+  1/2/4-rank CUDA checks for the original dual-pass fixture. Independent passes do
+  not conserve arbitrary nodal fields on nonmatching faces. A new coplanar shared-overlap
+  path inserts equal and opposite scalar fluxes; host scalar, CUDA scalar and
+  1/2/4-rank host/CUDA MPI checks pass. The new face-set search/coverage plan and complete
+  scalar diffusion channel pass host and CUDA checks on 1/2/4 ranks, with equal and
+  unequal diffusivities on procedural meshes.
+  This path accepts stationary coplanar P1 triangular interfaces and supplied reciprocal
+  candidate peers. Coverage checks compare the supplied faces; they cannot detect a region
+  omitted from both side sets. The scalar mesh example accepts two disjoint Tet4 Exodus
+  blocks through `prepare_nonconformal_mesh.py`, preserving file node and element indices.
+  Input validation requires named inlet/outlet/wall and two interface sets covering all
+  exterior faces. The file-based nonmatching Tet4 channel passes host and CUDA solves
+  on 1/2/4 ranks, including analytic scalar, boundary-reaction and interface-flux checks.
+  HIP validation remains pending. It replicates input staging
+  for small meshes, then assembles owned rows and exchanges solution ghosts on device.
+  It is not the scalable ElementDomain loader. Hex/tet interfaces, pyramids and
+  general flow-driver integration remain unfinished. The separate scalar HIP checks remain unvalidated.
+  An experimental `mars_nonconformal_flow` example adds steady constant-density,
+  constant-viscosity channel flow on the PI's stationary 2 by 1 by 1 Tet4 mesh.
+  It shares overlap mass fluxes between pressure correction and momentum advection,
+  includes the coupled symmetric viscous stress, and uses physical pressure with a
+  zero-pressure outlet. The inlet profile is 16 U y(1-y)z(1-z), with stationary no-slip
+  walls; the plug-flow check instead prescribes uniform velocity on those walls.
+  It requires the prepared input's `--flow-boundaries` face labels. Host flux,
+  analytic plug-flow and MPI channel tests pass. The PI channel also passes CUDA
+  on 1/2/4 ranks and the plug check on one GPU, with owned fields matching the host
+  within 1.12e-16 absolute. The partitioned channel also passes user-run HIP
+  comparisons on 1/2/4 ranks and the analytic plug check on one GPU.
+  Its new partitioned-input mode reads only incident cells and required coordinates
+  per rank, with persistent solution halos and explicit candidate peers. Host runs
+  on 1/2/4 ranks reproduce the validated fields within 1.12e-16. User-supplied CUDA
+  and HIP comparisons after the storage changes report maximum velocity difference
+  2.78e-17 and pressure difference 1.67e-16 against the earlier CUDA reference.
+  Raw files from these latest runs have not been independently retrieved.
+  Offline preparation still reads the whole
+  mesh and partitions by file-index ranges. This is not general ElementDomain
+  integration or evidence of performance scaling. Its trace jump
+  is weakly controlled, not an exact nodewise equality. On the current no-slip
+  channel the maximum trace jump is 2.394e-3 and the normalized raw velocity
+  divergence is 0.03835290 despite roundoff-level corrected-flux balance. Their
+  accuracy on the original mesh is not established by conservation alone. A host
+  procedural refinement study at n=2/4/8 now shows decreasing velocity and pressure
+  differences against shared-node controls, including a fixed 2:1 nonmatching
+  transverse resolution. Raw divergence decreases from n=4 to n=8, but is not
+  monotone on the coarsest pair. See docs/Nonconformal-Channel-Flow.md.
+  High-Reynolds flow, spatial
+  convergence on general meshes, moving interfaces, mixed elements and pyramids
+  are not validated by these checks.
 - **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming
   meshes only. Meshes refined by the AMR module have hanging nodes, which the solver does not
   constrain yet. The solver is validated on box-shaped hexahedra. On distorted hexahedra the CVFEM

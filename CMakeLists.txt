@@ -127,6 +127,7 @@ include(cmake/MarsOptions.cmake)
 enable_testing()
 if(MARS_ENABLE_TESTS)
     include(cmake/Tests.cmake)
+    add_subdirectory(tests/nonconformal)
 endif()
 
 include(cmake/MarsCMakeFunctions.cmake)
