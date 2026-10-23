@@ -57,6 +57,10 @@ if(MARS_ENABLE_HIP)
         include(cmake/rocmlibs_target.cmake)
         set(CMAKE_HIP_STANDARD 20)
         add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
+        # gfx90a/gfx942 add doubles atomically in hardware, but without this flag hipcc emits a
+        # compare-and-swap loop for atomicAdd on doubles. Safe for device memory (hipMalloc), which is
+        # all MARS updates atomically.
+        add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-munsafe-fp-atomics>)
         if(MARS_HIP_ROCPRIM_REDUCTIONS)
             add_compile_definitions(MARS_HIP_ROCPRIM_REDUCTIONS)
         endif()
@@ -474,6 +478,7 @@ if(CMAKE_CUDA_COMPILER AND TARGET mars)
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 elseif(CMAKE_HIP_COMPILER AND TARGET mars)
     target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_HIP)
+    target_compile_options(mars PUBLIC $<$<COMPILE_LANGUAGE:HIP>:-munsafe-fp-atomics>)
 endif()
 
 # The headers are installed in the layout of the source tree (below), so an installed MARS gets the
