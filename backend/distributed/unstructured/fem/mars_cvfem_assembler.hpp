@@ -158,7 +158,8 @@ public:
                 // Release finished rows early on HIP to reduce register spills.
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
 #else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif
@@ -408,7 +409,8 @@ public:
             case CvfemKernelVariant::Tensor:
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
 #else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif

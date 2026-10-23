@@ -40,8 +40,11 @@ constexpr bool tensor_early_schedule_valid() {
 }
 static_assert(tensor_early_schedule_valid());
 
+// The launch bounds give the compiler the real block size: without them it must allow 1024-thread
+// blocks, caps the kernel at 128 VGPRs and spills. With (256, 2) the assembly on MI300A takes 14.1 instead
+// of 25.4 ms (hex192, same matrix). Launch with at most 256 threads.
 template <typename KeyType, typename RealType, int BlockSize = 256>
-__global__ void cvfem_hex_assembly_kernel_tensor_early(
+__global__ void __launch_bounds__(BlockSize, 2) cvfem_hex_assembly_kernel_tensor_early(
     const KeyType *__restrict__ d_conn0, const KeyType *__restrict__ d_conn1,
     const KeyType *__restrict__ d_conn2, const KeyType *__restrict__ d_conn3,
     const KeyType *__restrict__ d_conn4, const KeyType *__restrict__ d_conn5,
