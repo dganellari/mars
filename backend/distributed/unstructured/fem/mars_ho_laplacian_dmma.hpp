@@ -36,6 +36,7 @@
 #include <type_traits>
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
 #include "mars_ho_laplacian_mfma_direct.hpp"
+#include <string>
 #endif
 #if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
 #include <mma.h>
@@ -146,6 +147,7 @@ __device__ inline void dmma_tile_8x8x8(HoLaplacianDmmaWarpData& w,
     syncWarp();
 }
 #endif
+#endif // MARS_HO_DMMA_DEVICE
 
 // Scalar (CUDA-core) twin of dmma_tile_8x8x8: IDENTICAL staging (fill_A/fill_B
 // into smem_A[8x4] / smem_B[4x8] per k-tile) and IDENTICAL smem_C col-major
@@ -182,15 +184,19 @@ __device__ inline void scalar_tile_8x8x8(HoLaplacianDmmaWarpData& w,
     syncWarp();
 }
 
-// Dispatch the 8x8x8 contraction: TileMode 0 = WMMA tensor core, 1 = scalar.
+// Dispatch the 8x8x8 contraction: TileMode 0 = matrix instructions, 1 = scalar. A target without FP64
+// matrix instructions (CUDA below SM80, AMD other than gfx90a/gfx942) runs the scalar contraction for
+// both modes: the same result, where the kernel used to compute nothing.
 template<int TileMode, typename FillA, typename FillB>
 __device__ inline void tile_8x8x8(HoLaplacianDmmaWarpData& w, FillA fill_A, FillB fill_B)
 {
+#if defined(MARS_HO_DMMA_DEVICE)
     if constexpr (TileMode == 0) dmma_tile_8x8x8(w, fill_A, fill_B);
     else                         scalar_tile_8x8x8(w, fill_A, fill_B);
+#else
+    scalar_tile_8x8x8(w, fill_A, fill_B);
+#endif
 }
-
-#endif // MARS_HO_DMMA_DEVICE
 
 // CG matrix-free Laplacian apply on FP64 tensor cores (DMMA). One WARP/element.
 //   d_u_dof  : global input field
@@ -227,7 +233,6 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
     static_assert(BlockSize % 64 == 0, "AMD: both elements of a wavefront run the matrix instructions together");
 #endif
 
-#if defined(MARS_HO_DMMA_DEVICE)
     constexpr int n   = P + 1;   // 8
     constexpr int nn  = n * n;   // 64
     constexpr int N3  = nn * n;  // 512
@@ -457,13 +462,6 @@ ho_laplacian_apply_cg_dmma(const RealType* __restrict__ d_u_dof,
     if (active)
         for (int l = laneId; l < N3; l += laneGroup)
             atomicAdd(&d_y_dof[edof[l]], w.b_y[l]);
-
-#else  // no FP64 matrix instructions on this target
-    // FP64 WMMA m8n8k4 requires SM80+ (A100 / H100 / GH200). Build with
-    // -DCMAKE_CUDA_ARCHITECTURES=80 (or higher) to enable this kernel.
-    (void)d_u_dof; (void)d_y_dof; (void)d_elemDof;
-    (void)d_D; (void)d_G; (void)d_w; (void)numElements;
-#endif
 }
 
 // Host launcher: opts into >48 KB dynamic smem (once, lazily) and launches with
@@ -501,6 +499,22 @@ inline cudaError_t ho_laplacian_dmma_launch_impl(const RealType* d_u_dof,
     return cudaGetLastError();
 }
 
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+// The direct kernel needs FP64 MFMA, which MARS compiles for gfx90a and gfx942 (mars_gpu_mma.cuh). Any
+// other AMD GPU takes the staged kernel, whose contraction then runs on the scalar units.
+inline bool hoDirectMfmaAvailable()
+{
+    static const bool available = [] {
+        int device = 0;
+        hipDeviceProp_t prop{};
+        if (hipGetDevice(&device) != hipSuccess || hipGetDeviceProperties(&prop, device) != hipSuccess) return false;
+        const std::string arch = prop.gcnArchName; // e.g. "gfx942:sramecc+:xnack-"
+        return arch.rfind("gfx90a", 0) == 0 || arch.rfind("gfx942", 0) == 0;
+    }();
+    return available;
+}
+#endif
+
 // Per-quad-point metric (general/curved). d_G is [numElements * N3 * 6].
 template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
@@ -514,7 +528,9 @@ inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
     static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
-    return ho_laplacian_mfma_direct_launch<0>(
+    if (hoDirectMfmaAvailable())
+        return ho_laplacian_mfma_direct_launch<0>(d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+    return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
 #else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
@@ -538,7 +554,9 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
     static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
-    return ho_laplacian_mfma_direct_launch<1>(
+    if (hoDirectMfmaAvailable())
+        return ho_laplacian_mfma_direct_launch<1>(d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+    return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
 #else
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
