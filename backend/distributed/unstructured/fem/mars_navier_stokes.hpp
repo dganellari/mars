@@ -461,7 +461,7 @@ __global__ void nsLaplacianCsrKernel(HexElements<KeyType> hex, const RealType* x
     {
         double w[8];
         nsFaceWeights(ip, corner, area, k * 12 + ip, w);
-        int L = hexLRSCV[2 * ip], R = hexLRSCV[2 * ip + 1];
+        int L = hexLeftNode(ip), R = hexRightNode(ip);
         for (int m = 0; m < 8; ++m)
         {
             Ke[L][m] -= w[m];
@@ -547,7 +547,7 @@ __global__ void nsFaceFluxKernel(HexElements<KeyType> hex, const RealType* x, co
         size_t f = k * 12 + ip;
         double w[8];
         nsFaceWeights(ip, corner, area, f, w);
-        KeyType L = n[hexLRSCV[2 * ip]], R = n[hexLRSCV[2 * ip + 1]];
+        KeyType L = n[hexLeftNode(ip)], R = n[hexRightNode(ip)];
         double average = 0, nodal = 0, compact = 0;
         for (int d = 0; d < comps; ++d)
         {
@@ -592,7 +592,7 @@ __global__ void nsFaceDivergenceKernel(HexElements<KeyType> hex, const RealType*
 #pragma unroll
     for (int ip = 0; ip < 12; ++ip)
     {
-        KeyType L = hex.node[hexLRSCV[2 * ip]][e], R = hex.node[hexLRSCV[2 * ip + 1]][e];
+        KeyType L = hex.node[hexLeftNode(ip)][e], R = hex.node[hexRightNode(ip)][e];
         atomicAdd(&div[L], flux[k * 12 + ip]);
         atomicAdd(&div[R], -flux[k * 12 + ip]);
     }
@@ -612,7 +612,7 @@ __global__ void nsAdvectionKernel(HexElements<KeyType> hex, const RealType* flux
 #pragma unroll
     for (int ip = 0; ip < 12; ++ip)
     {
-        KeyType L = hex.node[hexLRSCV[2 * ip]][e], R = hex.node[hexLRSCV[2 * ip + 1]][e];
+        KeyType L = hex.node[hexLeftNode(ip)][e], R = hex.node[hexRightNode(ip)][e];
         RealType F = flux[k * 12 + ip];
         for (int d = 0; d < comps; ++d)
         {
@@ -636,7 +636,7 @@ __global__ void nsDivergenceTransposeKernel(HexElements<KeyType> hex, Components
 #pragma unroll
     for (int ip = 0; ip < 12; ++ip)
     {
-        KeyType L = n[hexLRSCV[2 * ip]], R = n[hexLRSCV[2 * ip + 1]];
+        KeyType L = n[hexLeftNode(ip)], R = n[hexRightNode(ip)];
         size_t f    = k * 12 + ip;
         RealType dp = RealType(0.5) * (p[L] - p[R]);
         for (int d = 0; d < comps; ++d)
