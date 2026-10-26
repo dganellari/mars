@@ -55,3 +55,25 @@ there is headroom:
   separate passes.
 - BP3 iterations grow with the mesh and the degree under Jacobi, as expected; a
   multigrid preconditioner is the companion paper's step.
+
+## DSS: MARSIR-generated against the hand gather
+
+`--dss-ptx` (the DSS generated from `mir.dss`, bit-identical; every FCG history is the
+same as with the hand gather). At p = 1 the generated kernel packs 16 elements into a
+128-thread block, 8 lanes each; the hand gather uses a warp per element. At p = 3 both
+use a warp per element.
+
+| | p = 1 hand | p = 1 generated | p = 3 hand | p = 3 generated |
+|---|---|---|---|---|
+| DSS | 1.63 ms, 165 GB/s | 0.48 ms, 555 GB/s | 0.33 ms, 815 GB/s | 0.42 ms, 636 GB/s |
+| BP1 operator + DSS (GDoF/s) | 1.03 | 2.28 | 10.2 | 8.98 |
+| BP3 operator + DSS (GDoF/s) | 0.56 | 0.81 | 5.10 | 4.78 |
+| FCG iteration, BP1 / BP3 | 2.85 / 4.45 ms | 1.64 / 3.26 ms | 1.49 / 2.05 ms | 1.60 / 2.14 ms |
+
+So the generated DSS for p = 1 (3.4x) and the hand gather for p >= 3. The generated
+kernel's 1.3x at p = 3 is the gap already measured at p = 7 (All-MARSIR form,
+`cellwise_unstructured_dss.md`). BP1 p = 1 operator + DSS is now 2.28 GDoF/s, against
+the paper's 2.7 (A100, Table 7, general geometry, unstructured DSS). In the BP1 p = 1
+FCG iteration (1.64 ms), the operator takes 0.47 ms, the DSS 0.48 ms, and the vector
+updates and pairings the remaining 0.69 ms (four passes, about 16 vector reads and
+writes).
