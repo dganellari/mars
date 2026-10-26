@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
             else if (v == "wmma_tensor")    kernelVariant = CvfemKernelVariant::WmmaTensor;
             else if (v == "wgmma_tensor")   kernelVariant = CvfemKernelVariant::WgmmaTensor;
             else if (v == "tensor_faces")   kernelVariant = CvfemKernelVariant::TensorFaces;
+            else if (v == "tensor_early")   kernelVariant = CvfemKernelVariant::TensorEarly;
             else {
                 if (rank == 0) {
                     std::cerr << "Error: Unknown kernel variant: " << v << std::endl;
@@ -427,10 +428,10 @@ int main(int argc, char** argv) {
     };
 
     // Warmup
-    timer.start();
+    // events on the assembly stream, so the times hold the kernels only, not a host synchronization
+    timer.start(assemblyStream);
     runAssembly();
-    cudaStreamSynchronize(assemblyStream);  // Only sync assembly stream
-    timer.stop();
+    timer.stop(assemblyStream);
     perf.assemblyWarmupTime = timer.elapsedMs();
 
     // Timed iterations with load balance tracking
@@ -444,10 +445,9 @@ int main(int argc, char** argv) {
         MARS_NVTX_POP();
         
         MARS_NVTX_PUSH("Assembly Kernel");
-        timer.start();
+        timer.start(assemblyStream);
         runAssembly();
-        cudaStreamSynchronize(assemblyStream);  // Only sync assembly stream
-        timer.stop();
+        timer.stop(assemblyStream);
         MARS_NVTX_POP();
         double iterTime = timer.elapsedMs();
         perf.recordIteration(iterTime);

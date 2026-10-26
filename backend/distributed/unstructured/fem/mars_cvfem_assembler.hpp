@@ -17,6 +17,7 @@
 #include "mars_cvfem_node_data.hpp"
 #include "mars_cvfem_coloring.hpp"
 #include "../utils/mars_gpu_runtime.hpp"
+#include <stdexcept>
 
 namespace mars {
 namespace fem {
@@ -35,7 +36,8 @@ enum class CvfemKernelVariant {
     SmemCache,     // Smem node cache: deduplicate+load ~400 unique nodes/block, 5cyc vs 30cyc L2
     WmmaTensor,    // FP64 WMMA tensor cores: 1 warp/element, diffusion = S^T x D matmul (SM80+)
     WgmmaTensor,   // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
-    TensorFaces    // Tensor's element matrix with 16 threads per element: each face once, then the rows
+    TensorFaces,   // Tensor's element matrix with 16 threads per element: each face once, then the rows
+    TensorEarly    // HIP only: one thread per element, rows released after their last face (the former HIP Tensor)
 };
 
 // High-level CVFEM assembler for hex elements
@@ -193,6 +195,26 @@ public:
                     d_matrix, d_rhs
                 );
                 break;
+
+            case CvfemKernelVariant::TensorEarly:
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType, 256, true>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+#else
+                throw std::runtime_error("the tensor_early kernel is built for HIP only");
+#endif
 
             case CvfemKernelVariant::TensorColored: {
                 // Graph-colored tensor kernel: atomic-free CSR scatter.
@@ -560,6 +582,7 @@ public:
             case CvfemKernelVariant::WmmaTensor:    return "wmma_tensor";
             case CvfemKernelVariant::WgmmaTensor: return "wgmma_tensor";
             case CvfemKernelVariant::TensorFaces: return "tensor_faces";
+            case CvfemKernelVariant::TensorEarly: return "tensor_early";
             default: return "unknown";
         }
     }
