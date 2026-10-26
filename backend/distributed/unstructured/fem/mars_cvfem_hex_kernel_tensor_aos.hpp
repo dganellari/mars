@@ -22,7 +22,7 @@ namespace fem {
 // Connectivity, mdot, and areaVec remain SoA (sequential element access).
 // =============================================================================
 
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __global__ void cvfem_hex_assembly_kernel_tensor_aos(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -184,6 +184,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor_aos(
         int row_start = matrix->rowPtr[row_dof];
         int row_end   = matrix->rowPtr[row_dof + 1];
         int diag_pos  = matrix->diagPtr[row_dof];
+        RealType diagonal = 0.0;
 
         #pragma unroll
         for (int j = 0; j < 8; ++j) {
@@ -194,7 +195,8 @@ __global__ void cvfem_hex_assembly_kernel_tensor_aos(
             if (value == 0.0) continue;
 
             if (i == j) {
-                atomicAdd(&matrix->values[diag_pos], value);
+                if constexpr (LumpMissing) diagonal += value;
+                else atomicAdd(&matrix->values[diag_pos], value);
             } else {
                 int left  = row_start;
                 int right = row_end - 1;
@@ -210,7 +212,14 @@ __global__ void cvfem_hex_assembly_kernel_tensor_aos(
                         right = mid - 1;
                     }
                 }
+                if constexpr (LumpMissing) {
+                    if (left > right) diagonal += value;
+                }
             }
+        }
+        if constexpr (LumpMissing) {
+            // Preserve the full row sum when the graph omits a coupling.
+            if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
         }
     }
 }

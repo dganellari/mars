@@ -30,7 +30,7 @@ namespace fem {
 // =============================================================================
 // Shared kernel body (inlined into both variants via __device__ __forceinline__)
 // =============================================================================
-template<typename KeyType, typename RealType>
+template<typename KeyType, typename RealType, bool LumpMissing = false>
 __device__ __forceinline__ void cvfem_hex_perip_body(
     int elemIdx,
     const KeyType* __restrict__ d_conn0,
@@ -125,7 +125,8 @@ __device__ __forceinline__ void cvfem_hex_perip_body(
                 else if (col <  col_dof)   left  = mid + 1;
                 else                       right = mid - 1;
             }
-            pos[i * 8 + j] = found;
+            // Missing valid couplings belong on the diagonal in graph mode.
+            pos[i * 8 + j] = (LumpMissing && found < 0) ? diag_pos : found;
         }
     }
 
@@ -227,7 +228,7 @@ __device__ __forceinline__ void cvfem_hex_perip_body(
 // =============================================================================
 // Variant 1: no launch_bounds (natural register count, ~108-140 regs estimated)
 // =============================================================================
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __global__ void cvfem_hex_assembly_kernel_tensor_perip(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -258,7 +259,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor_perip(
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= (int)numElements) return;
-    cvfem_hex_perip_body<KeyType, RealType>(
+    cvfem_hex_perip_body<KeyType, RealType, LumpMissing>(
         elemIdx,
         d_conn0, d_conn1, d_conn2, d_conn3,
         d_conn4, d_conn5, d_conn6, d_conn7,
@@ -274,7 +275,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor_perip(
 // Variant 2: __launch_bounds__(256, 2) forces 2 blocks/SM.
 // With lhs[64] removed, spilling burden is ~7 regs (vs ~44 regs for tensor+lb2).
 // =============================================================================
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __launch_bounds__(256, 2)
 __global__ void cvfem_hex_assembly_kernel_tensor_perip_lb2(
     const KeyType* __restrict__ d_conn0,
@@ -306,7 +307,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor_perip_lb2(
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= (int)numElements) return;
-    cvfem_hex_perip_body<KeyType, RealType>(
+    cvfem_hex_perip_body<KeyType, RealType, LumpMissing>(
         elemIdx,
         d_conn0, d_conn1, d_conn2, d_conn3,
         d_conn4, d_conn5, d_conn6, d_conn7,

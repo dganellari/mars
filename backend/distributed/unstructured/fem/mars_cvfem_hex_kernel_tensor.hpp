@@ -26,7 +26,7 @@ namespace fem {
 // Best for: Architectures with abundant registers and fast atomics (GH200)
 // =============================================================================
 
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __global__ void cvfem_hex_assembly_kernel_tensor(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -261,6 +261,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
         int row_start = matrix->rowPtr[row_dof];
         int row_end = matrix->rowPtr[row_dof + 1];
         int diag_pos = matrix->diagPtr[row_dof];
+        RealType diagonal = 0.0;
 
         #pragma unroll
         for (int j = 0; j < 8; ++j) {
@@ -274,7 +275,8 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
             // collapse two different element corners can map to the same DOF,
             // and the diagonal entry must catch all such contributions.
             if (col_dof == row_dof) {
-                atomicAdd(&matrix->values[diag_pos], value);
+                if constexpr (LumpMissing) diagonal += value;
+                else atomicAdd(&matrix->values[diag_pos], value);
             } else {
                 // Off-diagonal - binary search
                 int left = row_start;
@@ -293,7 +295,14 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
                         right = mid - 1;
                     }
                 }
+                if constexpr (LumpMissing) {
+                    if (left > right) diagonal += value;
+                }
             }
+        }
+        if constexpr (LumpMissing) {
+            // Preserve the full row sum when the graph omits a coupling.
+            if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
         }
     }
 }

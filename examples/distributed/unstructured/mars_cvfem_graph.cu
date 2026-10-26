@@ -10,9 +10,14 @@
 #include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
+#include <thrust/execution_policy.h>
+#include <thrust/for_each.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/counting_iterator.h>
 #include "../../../backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include <mpi.h>
 #include <iomanip>
+#include <climits>
 #include <chrono>
 #include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 #ifndef MARS_DISABLE_NVTX
@@ -48,6 +53,7 @@ int main(int argc, char** argv) {
     int bucketSize = 64;  // Cornerstone octree bucket size (smaller = finer partitioning)
     int bucketSizeFocus = 8;  // Focus tree bucket size (per-rank refined view; smaller = finer halo)
     bool quiet = false;
+    bool check = false, checkWarp = false, checkMdot = false, checkGamma = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
     for (int i = 1; i < argc; ++i) {
@@ -83,6 +89,7 @@ int main(int argc, char** argv) {
             else if (v == "smem_cache")       kernelVariant = CvfemKernelVariant::SmemCache;
             else if (v == "wmma_tensor")    kernelVariant = CvfemKernelVariant::WmmaTensor;
             else if (v == "wgmma_tensor")   kernelVariant = CvfemKernelVariant::WgmmaTensor;
+            else if (v == "tensor_faces")   kernelVariant = CvfemKernelVariant::TensorFaces;
             else {
                 if (rank == 0) {
                     std::cerr << "Error: Unknown kernel variant: " << v << std::endl;
@@ -90,6 +97,13 @@ int main(int argc, char** argv) {
                 MPI_Finalize();
                 return 1;
             }
+        } else if (arg == "--check" || arg.find("--check=") == 0) {
+            // --check=warp,mdot,gamma turns on only the named perturbations, to locate a difference
+            const std::string what = arg == "--check" ? "warp,mdot,gamma" : arg.substr(8);
+            check      = true;
+            checkWarp  = what.find("warp") != std::string::npos;
+            checkMdot  = what.find("mdot") != std::string::npos;
+            checkGamma = what.find("gamma") != std::string::npos;
         } else if (arg == "--quiet") {
             quiet = true;
         } else if (arg[0] != '-' && meshFile.empty()) {
@@ -110,6 +124,9 @@ int main(int argc, char** argv) {
             std::cout << "  --bucket-size-focus=N  Focus tree bucket size (default: 8, lower = finer halo at cost of memory)\n";
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
             std::cout << "  --quiet             Suppress detailed output\n";
+            std::cout << "  --check[=warp,mdot,gamma]  Warped mesh, signed mass flux, varying gamma (default all three);\n"
+                         "                      compare every matrix and RHS entry with the original kernel, exit 1 if\n"
+                         "                      they differ (unit-cube meshes)\n";
             std::cout << "\nBackward compatible positional syntax:\n";
             std::cout << "  " << argv[0] << " <mesh_file> [options]\n";
         }
@@ -239,6 +256,25 @@ int main(int argc, char** argv) {
     const auto& d_y = domain.getNodeY();
     const auto& d_z = domain.getNodeZ();
 
+    // --check: a smoothly warped copy of the coordinates, so the Jacobian changes from face to face. A
+    // function of position only, so ranks agree on shared nodes. Sized for a unit cube of 16+ cells per side.
+    cstone::DeviceVector<RealType> d_xw, d_yw, d_zw;
+    if (checkWarp) {
+        d_xw.resize(nodeCount); d_yw.resize(nodeCount); d_zw.resize(nodeCount);
+        const RealType *x = d_x.data(), *y = d_y.data(), *z = d_z.data();
+        RealType *xw = d_xw.data(), *yw = d_yw.data(), *zw = d_zw.data();
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nodeCount),
+                         [=] __device__(size_t n) {
+                             const RealType tau = 6.283185307179586, eps = 0.01;
+                             xw[n] = x[n] + eps * sin(tau * y[n]) * sin(tau * z[n]);
+                             yw[n] = y[n] + eps * sin(tau * z[n] + 1.0) * sin(tau * x[n]);
+                             zw[n] = z[n] + eps * sin(tau * x[n] + 2.0) * sin(tau * y[n] + 0.5);
+                         });
+    }
+    const RealType* px = checkWarp ? d_xw.data() : d_x.data();
+    const RealType* py = checkWarp ? d_yw.data() : d_y.data();
+    const RealType* pz = checkWarp ? d_zw.data() : d_z.data();
+
     cstone::DeviceVector<RealType> d_phi(nodeCount);
     cstone::DeviceVector<RealType> d_gamma(nodeCount);
     cstone::DeviceVector<RealType> d_beta(nodeCount);
@@ -248,7 +284,7 @@ int main(int argc, char** argv) {
 
     // GPU kernel for field initialization
     initFields<RealType>(
-        d_x.data(), d_y.data(), d_z.data(),
+        px, py, pz,
         d_phi.data(), d_gamma.data(), d_beta.data(),
         d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
         nodeCount
@@ -266,9 +302,22 @@ int main(int argc, char** argv) {
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
         elementCount,
-        d_x.data(), d_y.data(), d_z.data(),
+        px, py, pz,
         d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data()
     );
+
+    // --check: gamma varies, and mdot = u . area for a uniform velocity, signed and with both upwind sides
+    if (checkGamma) {
+        RealType* gamma = d_gamma.data();
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nodeCount),
+                         [=] __device__(size_t n) { gamma[n] = 0.1 * (1.0 + 0.5 * sin(3.0 * px[n] + 2.0 * py[n] + pz[n])); });
+    }
+    if (checkMdot) {
+        RealType* mdot = d_mdot.data();
+        const RealType *ax = d_areaVec_x.data(), *ay = d_areaVec_y.data(), *az = d_areaVec_z.data();
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(elementCount * 12),
+                         [=] __device__(size_t f) { mdot[f] = 1.0 * ax[f] + 0.5 * ay[f] - 0.3 * az[f]; });
+    }
 
     cudaDeviceSynchronize();
     auto fieldInitEnd = std::chrono::high_resolution_clock::now();
@@ -330,7 +379,7 @@ int main(int argc, char** argv) {
     if (kernelVariant == CvfemKernelVariant::TensorAoS) {
         if (rank == 0) std::cout << "Packing AoS node data..." << std::endl;
         d_nodeData = packNodeData<RealType>(
-            d_x.data(), d_y.data(), d_z.data(),
+            px, py, pz,
             d_phi.data(), d_gamma.data(), d_beta.data(),
             d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
             nodeCount);
@@ -357,7 +406,7 @@ int main(int argc, char** argv) {
             std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
             std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
             elementCount,
-            d_x.data(), d_y.data(), d_z.data(),
+            px, py, pz,
             d_gamma.data(), d_phi.data(), d_beta.data(),
             d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
             d_mdot.data(), d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data(),
@@ -411,6 +460,92 @@ int main(int argc, char** argv) {
     dumpOwnedRowsIfRequested<KeyType, RealType>(rank, nodeCount, numDofs, nnz, d_nodeToDof.data(),
                                                 d_nodeOwnership.data(), domain.getLocalToGlobalSfcMap().data(),
                                                 d_rowPtr.data(), d_values.data(), d_diagPtr.data(), d_rhs.data());
+
+    // --check: assemble with the original kernel into a second matrix and compare entry by entry
+    bool checkPassed = true;
+    if (check) {
+        cstone::DeviceVector<RealType> d_refValues(nnz, 0.0), d_refRhs(numTotalDofs, 0.0);
+        MatrixType h_ref{d_rowPtr.data(), d_colInd.data(), d_refValues.data(), d_diagPtr.data(), numTotalDofs, nnz};
+        MatrixType* d_ref;
+        cudaMalloc(&d_ref, sizeof(MatrixType));
+        cudaMemcpy(d_ref, &h_ref, sizeof(MatrixType), cudaMemcpyHostToDevice);
+        Assembler::Config refConfig = config;
+        refConfig.variant   = CvfemKernelVariant::Original;
+        refConfig.blockSize = 256; // the original kernel cannot launch 512 threads on every GPU
+        Assembler::assembleGraphLump(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+            elementCount, px, py, pz,
+            d_gamma.data(), d_phi.data(), d_beta.data(),
+            d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
+            d_mdot.data(), d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data(),
+            d_nodeToDof.data(), d_nodeOwnership.data(),
+            d_ref, d_refRhs.data(), refConfig);
+        cudaCheckCall(cudaStreamSynchronize(assemblyStream));
+        cudaCheckCall(cudaGetLastError());
+
+        const RealType *a = d_values.data(), *ra = d_refValues.data(), *b = d_rhs.data(), *rb = d_refRhs.data();
+        auto maxOf = [](auto f, size_t n) {
+            return mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n), f,
+                                         RealType(0), thrust::maximum<RealType>());
+        };
+        // rows past the owned ones stay zero in both matrices, so all nnz entries can be compared
+        RealType local[4] = {
+            maxOf([=] __host__ __device__(size_t k) { return fabs(a[k] - ra[k]); }, nnz),
+            maxOf([=] __host__ __device__(size_t k) { return fabs(ra[k]); }, nnz),
+            maxOf([=] __host__ __device__(size_t k) { return fabs(b[k] - rb[k]); }, numDofs),
+            maxOf([=] __host__ __device__(size_t k) { return fabs(rb[k]); }, numDofs)};
+        // a max-reduction can step over NaN, so count the non-finite entries separately
+        auto nonFinite = [](auto f, size_t n) {
+            return mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n), f,
+                                         RealType(0), thrust::plus<RealType>());
+        };
+        const RealType bad =
+            nonFinite([=] __host__ __device__(size_t j) { return RealType(!isfinite(a[j]) || !isfinite(ra[j])); }, nnz) +
+            nonFinite([=] __host__ __device__(size_t j) { return RealType(!isfinite(b[j]) || !isfinite(rb[j])); }, numDofs);
+        RealType global[4], globalBad;
+        MPI_Allreduce(local, global, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&bad, &globalBad, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        // the kernels add the same terms in different orders: allow rounding, relative to the largest entry
+        const RealType tol = 1e-12;
+        checkPassed = globalBad == 0 && global[1] > 0 && global[3] > 0 && global[0] <= tol * global[1] &&
+                      global[2] <= tol * global[3];
+        if (rank == 0)
+            std::cout << std::scientific << std::setprecision(3) << "check against original: matrix max |diff| "
+                      << global[0] << " of max |entry| " << global[1] << ", rhs max |diff| " << global[2]
+                      << " of max |entry| " << global[3] << ", non-finite " << std::defaultfloat << globalBad
+                      << std::scientific << ": " << (checkPassed ? "PASS" : "FAIL") << std::endl;
+        // on failure, where: the number of differing entries and this rank's largest one
+        if (!checkPassed && local[0] > tol * global[1]) {
+            const RealType big = tol * global[1], worst = local[0];
+            const int* rowPtr = d_rowPtr.data();
+            const int* colInd = d_colInd.data();
+            const size_t count = mars::transformReduce(
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(size_t(nnz)),
+                [=] __host__ __device__(size_t j) { return size_t(fabs(a[j] - ra[j]) > big); }, size_t(0),
+                thrust::plus<size_t>());
+            const size_t k = mars::transformReduce(
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(size_t(nnz)),
+                [=] __host__ __device__(size_t j) { return fabs(a[j] - ra[j]) == worst ? j : ~size_t(0); }, ~size_t(0),
+                thrust::minimum<size_t>());
+            const int row = mars::transformReduce(
+                thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(numTotalDofs),
+                [=] __host__ __device__(int r) { return size_t(rowPtr[r]) <= k && k < size_t(rowPtr[r + 1]) ? r : INT_MAX; },
+                INT_MAX, thrust::minimum<int>());
+            RealType value, ref;
+            int col, diag;
+            cudaMemcpy(&value, a + k, sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&ref, ra + k, sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&col, colInd + k, sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&diag, d_diagPtr.data() + row, sizeof(int), cudaMemcpyDeviceToHost);
+            std::cout << "rank " << rank << ": " << count << " of " << nnz << " entries differ; largest at row " << row
+                      << " col " << col << (size_t(diag) == k ? " (diagonal)" : "") << ": " << value << " vs original "
+                      << ref << std::endl;
+        }
+        cudaFree(d_ref);
+    }
 
     // Compute DD load imbalance from node counts (owned / ghost / total)
     MARS_NVTX_PUSH("Post-processing");
@@ -492,5 +627,5 @@ int main(int argc, char** argv) {
     cudaFree(d_matrix);
     if (d_nodeData) cudaFree(d_nodeData);
     MPI_Finalize();
-    return 0;
+    return checkPassed ? 0 : 1;
 }

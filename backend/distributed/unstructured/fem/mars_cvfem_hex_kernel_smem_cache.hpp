@@ -93,7 +93,7 @@ struct SmemPtrs {
 template<typename KeyType, typename RealType,
          int BlockSize = 256,
          int HTSIZE    = 2048,   // power of 2, >= 8 * BlockSize: the table never fills
-         int MAX_NODES = 512>
+         int MAX_NODES = 512, bool LumpMissing = false>
 __launch_bounds__(BlockSize, 2)
 __global__ void cvfem_hex_assembly_kernel_smem_cache(
     const KeyType* __restrict__ d_conn0,
@@ -285,7 +285,8 @@ __global__ void cvfem_hex_assembly_kernel_smem_cache(
                 else if (col <  col_dof)   left  = mid + 1;
                 else                       right = mid - 1;
             }
-            pos[i * 8 + j] = found;
+            // Missing valid couplings belong on the diagonal in graph mode.
+            pos[i * 8 + j] = (LumpMissing && found < 0) ? diag_pos : found;
         }
     }
 

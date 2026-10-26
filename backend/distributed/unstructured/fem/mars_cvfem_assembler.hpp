@@ -8,6 +8,7 @@
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
 #include "mars_cvfem_hex_kernel_tensor_early.hpp"
 #endif
+#include "mars_cvfem_hex_kernel_tensor_faces.hpp"
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
@@ -33,7 +34,8 @@ enum class CvfemKernelVariant {
     TensorPeripLb2,// Same + __launch_bounds__(256,2): forces 2 blocks/SM, ~7 regs forced spill
     SmemCache,     // Smem node cache: deduplicate+load ~400 unique nodes/block, 5cyc vs 30cyc L2
     WmmaTensor,    // FP64 WMMA tensor cores: 1 warp/element, diffusion = S^T x D matmul (SM80+)
-    WgmmaTensor    // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
+    WgmmaTensor,   // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
+    TensorFaces    // Tensor's element matrix with 16 threads per element: each face once, then the rows
 };
 
 // High-level CVFEM assembler for hex elements
@@ -155,14 +157,31 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // Release finished rows early on HIP to reduce register spills.
+                // On HIP, 16 threads per element: on MI300A (hex192) 12.6 ms against 14.2 ms for tensor_early,
+                // 94 VGPRs and no scratch against 256 and 428 B. On H100 the one-thread kernel stays faster.
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType>
-                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
 #else
-                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
+            case CvfemKernelVariant::TensorFaces:
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -184,7 +203,7 @@ public:
                     const int  cSize   = col->colorSize(c);
                     const int* cList   = col->colorStart(c);
                     const int  cBlocks = (cSize + blockSize - 1) / blockSize;
-                    cvfem_hex_assembly_kernel_tensor_colored<KeyType, RealType, 256>
+                    cvfem_hex_assembly_kernel_tensor_colored<KeyType, RealType, 256, true>
                         <<<cBlocks, blockSize, 0, config.stream>>>(
                         cList, static_cast<size_t>(cSize),
                         d_conn0, d_conn1, d_conn2, d_conn3,
@@ -203,7 +222,7 @@ public:
             case CvfemKernelVariant::TensorAoS:
                 // AoS node data: packs 9 fields per node into one 72-byte struct.
                 // Reduces scattered node reads from 9 × 1 sector/field to 3 sectors/node.
-                cvfem_hex_assembly_kernel_tensor_aos<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_aos<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -218,7 +237,7 @@ public:
                 // Pre-lookup all 64 CSR positions, scatter LHS per SCS.
                 // lhs[64 doubles] → pos[64 ints]: saves ~64 registers.
                 // Binary search moved out of 12-iteration SCS hot loop.
-                cvfem_hex_assembly_kernel_tensor_perip<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_perip<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -235,7 +254,7 @@ public:
                 // Same as TensorPerip + __launch_bounds__(256,2).
                 // Forces 2 blocks/SM with ~7 regs of forced spilling (vs ~44 for tensor+lb2).
                 // The launch bounds allow at most 256 threads, whatever config.blockSize says.
-                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256>
+                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256, true>
                     <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
@@ -259,7 +278,7 @@ public:
                     constexpr int    SC_HT  = 2048;
                     constexpr int    SC_BS  = 256;
                     constexpr size_t smemSz = smemCacheBytes<SC_HT, SC_MN>();
-                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
+                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN, true>;
                     cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
                     cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                     scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
@@ -283,7 +302,7 @@ public:
                 // FP64 WMMA: 1 warp (32 threads) per element, diffusion = S^T x D
                 // Optimised for Hopper/GH200 (SM90a): hardware smem atomics, 228 KB smem.
                 // Request 100% shared memory carveout so all 228 KB go to smem not L1.
-                auto* wmmaKernelPtr = cvfem_hex_assembly_kernel_tensor_wmma<KeyType, RealType, 256>;
+                auto* wmmaKernelPtr = cvfem_hex_assembly_kernel_tensor_wmma<KeyType, RealType, 256, true>;
                 cudaFuncSetAttribute(wmmaKernelPtr,
                     cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                 constexpr int WarpsPerBlock = 256 / 32;  // 8 elements per block
@@ -307,7 +326,7 @@ public:
                 // Hopper WGMMA: 2 elem/warp (75% Jacobian util), async WGMMA m64n8k4 for diffusion.
                 // BlockSize=128 = 1 warpgroup = 8 elements/block.
                 // ~29 KB smem/block allows up to 7 blocks/SM from smem.
-                auto* wgmmaKernelPtr = cvfem_hex_assembly_kernel_wgmma<KeyType, RealType, 128>;
+                auto* wgmmaKernelPtr = cvfem_hex_assembly_kernel_wgmma<KeyType, RealType, 128, true>;
                 cudaFuncSetAttribute(wgmmaKernelPtr,
                     cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                 constexpr int ElemsPerBlock = 8;  // 4 warps × 2 elements/warp
@@ -426,6 +445,22 @@ public:
                 );
                 break;
 
+            case CvfemKernelVariant::TensorFaces:
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
             case CvfemKernelVariant::TensorColored: {
                 const CvfemColoringData* col = config.coloring;
                 for (int c = 0; c < col->numColors; ++c) {
@@ -524,6 +559,7 @@ public:
             case CvfemKernelVariant::SmemCache:      return "smem_cache";
             case CvfemKernelVariant::WmmaTensor:    return "wmma_tensor";
             case CvfemKernelVariant::WgmmaTensor: return "wgmma_tensor";
+            case CvfemKernelVariant::TensorFaces: return "tensor_faces";
             default: return "unknown";
         }
     }
