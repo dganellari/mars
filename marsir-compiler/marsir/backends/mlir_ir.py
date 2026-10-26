@@ -339,6 +339,102 @@ def emit_full(ea, p=7, pad_faces=False, real="f64"):
     return text if real == "f64" else text.replace("f64", real)
 
 
+def emit_galerkin(ga, p=7, q=None, real="f64"):
+    """A form-galerkin operator (marsir.ir.GalerkinApply) on one element as mir: u
+    (n^3 GLL values, n = p + 1) -> B along each axis to the q^3 Gauss points (q =
+    p + 2 by default, the CEED benchmark choice) -> the reference gradient, D along
+    each axis, for the components the outputs read -> the pointwise outputs, one
+    mir.flux -> back through the transposed sweeps of the outputs given:
+    w = v + sum_d Dt along d of dv_d, then y = Bt along each axis of w.
+    Arguments: u, B (q x n), Bt (n x q), then D and Dt (q x q) when a gradient is
+    read, then G (K x q x q x q: the K geometry components read). real: the scalar
+    type (f64, or f32)."""
+    o = ga.op
+    n = p + 1
+    q = q or p + 2
+
+    def ty(dims):
+        return "tensor<%sxf64>" % "x".join(str(d) for d in dims)
+
+    tq = ty([q, q, q])
+    grads = [d for d in range(3) if "du%d" % d in ga.free_vars]
+    args = ["%%u: %s" % ty([n, n, n]), "%%B: %s" % ty([q, n]), "%%Bt: %s" % ty([n, q])]
+    if grads:
+        args += ["%%D: %s" % ty([q, q]), "%%Dt: %s" % ty([q, q])]
+    if ga.geometry:
+        args.append("%%G: %s" % ty([ga.geometry, q, q, q]))
+    banner = AUTOGEN_BANNER.format(backend="mlir-galerkin", name=o.name, flux=o.flux_src)
+    L = [banner.rstrip("\n"), "// RUN: mir-opt %s | mir-opt",
+         "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), ty([n, n, n]))]
+    v = [0]
+
+    def fresh(tag):
+        v[0] += 1
+        return "%%%s%d" % (tag, v[0])
+
+    def contract(x, dims, mat, rows, axis):
+        out = list(dims)
+        out[axis] = rows
+        r = fresh("c")
+        L.append("  %s = mir.contract %s, %s {axis = %d : i64} : (%s, %s) -> %s"
+                 % (r, x, mat, axis, ty(dims), ty([rows, dims[axis]]), ty(out)))
+        return r, out
+
+    def sweep(x, dims, mat, rows):
+        for axis in range(3):
+            x, dims = contract(x, dims, mat, rows, axis)
+        return x
+
+    uq = sweep("%u", [n, n, n], "%B", q)
+    inputs = []   # (name, SSA value)
+    if ga.needs_u:
+        inputs.append(("u", uq))
+    for d in grads:
+        inputs.append(("du%d" % d, contract(uq, [q, q, q], "%D", q, d)[0]))
+    for k in range(ga.geometry):
+        g = fresh("g")
+        L.append("  %s = tensor.extract_slice %%G[%d, 0, 0, 0] [1, %d, %d, %d] [1, 1, 1, 1] : %s to %s"
+                 % (g, k, q, q, q, ty([ga.geometry, q, q, q]), tq))
+        inputs.append(("g%d" % k, g))
+    names = [nm for nm, _ in inputs]
+    outs = [nm for nm, _ in ga.outputs]
+    x = fresh("x")
+    head = "%s:%d" % (x, len(outs)) if len(outs) > 1 else x
+    res_ty = "(%s)" % ", ".join([tq] * len(outs)) if len(outs) > 1 else tq
+    L.append("  %s = mir.flux ins(%s) : (%s) -> %s {"
+             % (head, ", ".join(val for _, val in inputs), ", ".join([tq] * len(inputs)), res_ty))
+    L.append("  ^bb0(%s):" % ", ".join("%%a%d: f64" % i for i in range(len(inputs))))
+    valnames = {nm: "%%a%d" % i for i, nm in enumerate(names)}
+    ctr = [0]
+    body = []
+    yields = [to_mlir_ssa(expr, valnames, body, ctr) for _, expr in ga.outputs]
+    L.extend(body)
+    L.append("    mir.yield %s : %s" % (", ".join(yields), ", ".join(["f64"] * len(yields))))
+    L.append("  }")
+    result = {nm: (x if len(outs) == 1 else "%s#%d" % (x, i)) for i, nm in enumerate(outs)}
+
+    w = result.get("v")
+    for d in range(3):
+        if "dv%d" % d not in result:
+            continue
+        t, _ = contract(result["dv%d" % d], [q, q, q], "%Dt", q, d)
+        if w is None:
+            w = t
+            continue
+        s = fresh("w")
+        L.append("  %s = mir.flux ins(%s, %s) : (%s, %s) -> %s {" % (s, w, t, tq, tq, tq))
+        L.append("  ^bb0(%a0: f64, %a1: f64):")
+        L.append("    %t = arith.addf %a0, %a1 : f64")
+        L.append("    mir.yield %t : f64")
+        L.append("  }")
+        w = s
+    y = sweep(w, [q, q, q], "%Bt", n)
+    L.append("  return %s : %s" % (y, ty([n, n, n])))
+    L.append("}")
+    text = "\n".join(L) + "\n"
+    return text if real == "f64" else text.replace("f64", real)
+
+
 def emit_full_batched(ea, p=7, tpb=128):
     """The FUSED batched form: one memref-level scf.parallel (blocks x threads)
     over elements -- thread t of block b applies the WHOLE operator to element

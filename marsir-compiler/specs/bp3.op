@@ -1,0 +1,10 @@
+# CEED benchmark problem BP3: the Laplacian (diffusion) on a general hex, Gauss
+# points q = p + 2. g0..g5 = the symmetric w det J J^-1 J^-T at each Gauss point,
+# row by row (00, 01, 02, 11, 12, 22).
+operator bp3 {
+    element = hex
+    form    = galerkin
+    dv0     = g0*du0 + g1*du1 + g2*du2
+    dv1     = g1*du0 + g3*du1 + g4*du2
+    dv2     = g2*du0 + g4*du1 + g5*du2
+}

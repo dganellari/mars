@@ -103,8 +103,30 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   SmallVector<OpOperand *> ins = op.getDpsInputOperands();
   SmallVector<OpOperand *> outs;
   for (OpOperand &o : op.getDpsInitsMutable()) outs.push_back(&o);
-  if (outs.size() != 1)
-    return op->emitOpError("cellwise schedule: one output expected");
+  if (outs.size() != 1) {
+    // Several outputs: a pointwise op (a mir.flux with several results, e.g. the
+    // three gradient outputs of a Galerkin Laplacian). One phase over its points
+    // computes them all from one load of the inputs.
+    if (!red.empty() || init)
+      return op->emitOpError("cellwise schedule: several outputs only for an elementwise op");
+    Block *region = op.getBlock();
+    phase(b, loc, ranges, [&](OpBuilder &pb, Location pl, ValueRange ivs) {
+      IRMapping map;
+      for (OpOperand *in : ins) {
+        Value v = in->get();
+        map.map(region->getArgument(in->getOperandNumber()),
+                isa<MemRefType>(v.getType())
+                    ? pb.create<memref::LoadOp>(pl, v, indices(op.getMatchingIndexingMap(in), ivs)).getResult()
+                    : v);
+      }
+      for (Operation &rop : region->without_terminator()) pb.clone(rop, map);
+      for (unsigned k = 0; k < outs.size(); ++k)
+        pb.create<memref::StoreOp>(pl, map.lookup(region->getTerminator()->getOperand(k)), outs[k]->get(),
+                                   indices(op.getMatchingIndexingMap(outs[k]), ivs));
+    });
+    op->erase();
+    return success();
+  }
 
   int blocked = -1;   // the parallel loop dimension run inside the thread
   if (!red.empty()) {

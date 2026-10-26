@@ -248,25 +248,31 @@ struct FluxLowering : public OpRewritePattern<mir::FluxOp> {
 
   LogicalResult matchAndRewrite(mir::FluxOp op,
                                 PatternRewriter &rewriter) const override {
-    if (op.getResults().size() != 1)
-      return failure();  // single-output flux for now
+    // Several results (e.g. the gradient outputs of a Galerkin Laplacian) are the
+    // outputs of one elementwise generic over the same points.
+    if (op.getResults().empty())
+      return failure();
     auto resType = dyn_cast<RankedTensorType>(op.getResult(0).getType());
     if (!resType)
       return failure();
+    for (Value r : op.getResults())
+      if (r.getType() != resType)
+        return op.emitOpError("all results must have the same type");
     Location loc = op.getLoc();
     int64_t rank = resType.getRank();
 
-    // Identity map for every input and the output; all loops parallel.
+    // Identity map for every input and output; all loops parallel.
     AffineMap id = rewriter.getMultiDimIdentityMap(rank);
-    SmallVector<AffineMap> maps(op.getInputs().size() + 1, id);
+    SmallVector<AffineMap> maps(op.getInputs().size() + op.getResults().size(), id);
     SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
 
-    Value init = rewriter.create<tensor::EmptyOp>(loc, resType.getShape(),
-                                                  resType.getElementType());
+    SmallVector<Value> inits;
+    for (unsigned i = 0; i < op.getResults().size(); ++i)
+      inits.push_back(rewriter.create<tensor::EmptyOp>(loc, resType.getShape(), resType.getElementType()));
 
     Block &fluxBody = op.getBody().front();
     auto generic = rewriter.create<linalg::GenericOp>(
-        loc, TypeRange{resType}, op.getInputs(), ValueRange{init}, maps, iters,
+        loc, op.getResultTypes(), op.getInputs(), inits, maps, iters,
         [&](OpBuilder &b, Location l, ValueRange args) {
           // Wire flux block args -> linalg per-element args, clone the pointwise
           // ops, then translate mir.yield into linalg.yield.

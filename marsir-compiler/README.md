@@ -77,6 +77,31 @@ the whole kernel regenerates — e.g. `specs/laplacian_orthocube.op` uses
 `flux = g2*deriv`, and the compiler drops both tangential contractions and the
 interp buffer automatically.
 
+### Galerkin operators (`form = galerkin`)
+
+A standard Galerkin operator on q^3 Gauss points (q = p + 2 by default), in the
+libCEED QFunction split: the spec gives only the pointwise outputs at a Gauss point.
+Inputs: `u` (the field's value there), `du0..du2` (its reference gradient), `g0..g5`
+(per-point geometry the caller fills). Outputs: `v` (tested against the basis values),
+`dv0..dv2` (tested against the reference gradient). The compiler builds only the sweeps
+those names need: u -> B along each axis -> (D along axis d for each du_d read) ->
+outputs -> (Dt along axis d of each dv_d) + v -> Bt along each axis.
+
+```
+operator bp1 {                    operator bp3 {
+    element = hex                     element = hex
+    form    = galerkin                form    = galerkin
+    v       = g0*u                    dv0     = g0*du0 + g1*du1 + g2*du2
+}                                     dv1     = g1*du0 + g3*du1 + g4*du2
+                                      dv2     = g2*du0 + g4*du1 + g5*du2
+                                  }
+```
+
+`specs/bp1.op` and `specs/bp3.op` are the CEED benchmark problems BP1 (mass, g0 = w
+det J) and BP3 (Laplacian, g = the symmetric w det J J^-1 J^-T). `mlir_ir.emit_galerkin`
+writes them as mir; `marsir-mlir/test/bp_gpu_pipeline.py` builds the PTX or the CPU
+gate (`tools/emu_bp.cpp`: the emulated kernel against direct quadrature sums).
+
 ## Local validation (no GPU)
 
 ```bash

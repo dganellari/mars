@@ -10,12 +10,23 @@ Grammar (deliberately tiny, line-oriented):
 
 '#' starts a comment. Only one operator per file. `flux` is an arithmetic
 expression over the quadrature-slot inputs (see mir.ir.FLUX_INPUTS).
+
+`form = galerkin` (a standard Galerkin operator on Gauss points) has no `flux`;
+instead it gives one or more of the pointwise outputs `v` (tested against the
+basis values) and `dv0`, `dv1`, `dv2` (tested against the reference gradient), as
+expressions over the inputs of mir.ir.GALERKIN_INPUTS:
+
+    operator bp1 {
+        element = hex
+        form    = galerkin
+        v       = g0*u
+    }
 """
 
 import re
 
 from .expr import parse_expr
-from .ir import Operator
+from .ir import GALERKIN_OUTPUTS, Operator
 
 _HEADER = re.compile(r"^\s*operator\s+([A-Za-z_]\w*)\s*\{\s*$")
 _KV = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*$")
@@ -61,10 +72,28 @@ def parse_spec(text: str) -> Operator:
     if not closed:
         raise ValueError("operator block not closed with '}'")
 
-    for req in ("element", "form", "flux"):
+    for req in ("element", "form"):
         if req not in fields:
             raise ValueError(f"missing required key {req!r}")
 
+    if fields["form"] == "galerkin":
+        outputs = [(k, fields[k]) for k in GALERKIN_OUTPUTS if k in fields]
+        if not outputs:
+            raise ValueError(f"form galerkin needs at least one of {GALERKIN_OUTPUTS}")
+        extra = set(fields) - {"element", "form"} - set(GALERKIN_OUTPUTS)
+        if extra:
+            raise ValueError(f"unknown key(s) {sorted(extra)} for form galerkin")
+        return Operator(
+            name=name,
+            element=fields["element"],
+            form="galerkin",
+            flux=None,
+            flux_src="; ".join(f"{k} = {v}" for k, v in outputs),
+            outputs=[(k, parse_expr(v)) for k, v in outputs],
+        )
+
+    if "flux" not in fields:
+        raise ValueError("missing required key 'flux'")
     return Operator(
         name=name,
         element=fields["element"],

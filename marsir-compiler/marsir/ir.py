@@ -22,17 +22,43 @@ from .expr import Var, Num, Binary, simplify, _is_zero
 FLUX_INPUTS = {"deriv", "dt1", "dt2", "g0", "g1", "g2"}
 
 SUPPORTED_ELEMENTS = {"hex"}
-SUPPORTED_FORMS = {"diffusion"}
+SUPPORTED_FORMS = {"diffusion", "galerkin"}
+
+# form = galerkin: a standard Galerkin operator, the libCEED QFunction split. At each
+# Gauss point the spec may read
+#   u        : the field's value          (B u, B the basis at the Gauss points)
+#   du0..du2 : its reference gradient     (D_q along axis d of B u)
+#   g0..g5   : per-point geometry, filled by the caller (e.g. w det J for a mass
+#              operator, the 6 entries of the symmetric w det J J^-1 J^-T for a
+#              Laplacian)
+# and gives the outputs it tests against: v (basis values) and dv0..dv2 (the basis'
+# reference gradient). The compiler builds only the sweeps those names need.
+GALERKIN_INPUTS = {"u", "du0", "du1", "du2"} | {f"g{k}" for k in range(6)}
+GALERKIN_OUTPUTS = ("v", "dv0", "dv1", "dv2")
 
 
 class Operator:
     """What the user authored in the .op spec."""
-    def __init__(self, name, element, form, flux, flux_src):
+    def __init__(self, name, element, form, flux, flux_src, outputs=None):
         self.name = name
         self.element = element
         self.form = form
         self.flux = flux
         self.flux_src = flux_src  # original text, for the IR dump / provenance
+        self.outputs = outputs    # form galerkin: [(output name, expr)] in GALERKIN_OUTPUTS order
+
+
+class GalerkinApply:
+    """Synthesized schedule of a form-galerkin operator: interpolate to the Gauss
+    points (u, and the reference gradient when the outputs read it), the pointwise
+    outputs, then integrate back through the transposed sweeps of the outputs given."""
+    def __init__(self, op, needs_u, needs_grad, geometry, free_vars):
+        self.op = op
+        self.outputs = op.outputs
+        self.needs_u = needs_u
+        self.needs_grad = needs_grad
+        self.geometry = geometry      # number of geometry components read (g0 .. g{geometry-1})
+        self.free_vars = free_vars
 
 
 class ElementApply:
@@ -101,13 +127,24 @@ def block_for(op):
     return Block(fields=["u"], shape=op.element, basis="gll", scheme="knaus-scs")
 
 
-def synthesize(op: Operator) -> ElementApply:
+def synthesize(op: Operator):
     if op.element not in SUPPORTED_ELEMENTS:
         raise ValueError(f"element {op.element!r} not supported "
                          f"(have {sorted(SUPPORTED_ELEMENTS)})")
     if op.form not in SUPPORTED_FORMS:
         raise ValueError(f"form {op.form!r} not supported "
                          f"(have {sorted(SUPPORTED_FORMS)})")
+    if op.form == "galerkin":
+        fv = set()
+        for _, expr in op.outputs:
+            fv |= expr.free_vars()
+        unknown = fv - GALERKIN_INPUTS
+        if unknown:
+            raise ValueError(f"galerkin outputs reference unknown name(s) {sorted(unknown)}; "
+                             f"available at a Gauss point: {sorted(GALERKIN_INPUTS)}")
+        geometry = 1 + max((int(x[1:]) for x in fv if x.startswith("g")), default=-1)
+        return GalerkinApply(op, needs_u="u" in fv, needs_grad=bool(fv & {"du0", "du1", "du2"}),
+                             geometry=geometry, free_vars=fv)
 
     fv = op.flux.free_vars()
     unknown = fv - FLUX_INPUTS
