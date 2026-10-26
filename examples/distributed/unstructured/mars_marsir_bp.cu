@@ -19,10 +19,15 @@
 // the paper's Table 7), an FCG iteration. Rates are per unique DoF, (ne p + 1)^3; the
 // bandwidth counts what one pass must move at least: u and y, and the geometry.
 //
+// --dss-ptx <dss_p{p}_sm90.ptx>: the DSS MARSIR generates from mir.dss
+// (marsir-mlir/test/dss_gpu_pipeline.py p; same bits as the hand gather, so the same
+// history) instead of the hand dss<P>.
+//
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
-//                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20]
+//                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
+#include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
@@ -34,6 +39,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -224,7 +230,7 @@ __global__ void difference_kernel(double* __restrict__ out, const double* __rest
 #define BP_CK(call) MARS_CELLWISE_CK(call)
 
 struct Options {
-    std::string ptx_dir, spec = "bp3";
+    std::string ptx_dir, spec = "bp3", dss_ptx;
     int p = 3, ne = 32, maxit = 2000, reps = 20;
     double deform = 0.05, tol = 1e-10;
 };
@@ -295,6 +301,11 @@ int run(const Options& o)
     thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
     const cellwise::UnstructuredTopology topo =
         cellwise::build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()), E, E);
+    std::unique_ptr<marsir::DssPtx> dss_gen(o.dss_ptx.empty() ? nullptr : new marsir::DssPtx(o.dss_ptx, P));
+    auto dss = [&topo, gen = dss_gen.get(), E](const double* in, double* out, cudaStream_t st) {
+        if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
+        else cellwise::dss<P>(in, out, topo, nullptr, st);
+    };
 
     // Checks of the operator.
     apply(raw(ones), raw(y), stream);
@@ -372,10 +383,10 @@ int run(const Options& o)
     // The preconditioner: the assembled diagonal on every copy, inverted, Dirichlet zeroed.
     diagonal_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(G), raw(dB), raw(dDB), raw(s), E, K);
     BP_CK(cudaGetLastError());
-    cellwise::dss<P>(raw(s), raw(diag), topo, nullptr, stream);
+    dss(raw(s), raw(diag), stream);
     inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, o.ne, bp3);
     BP_CK(cudaGetLastError());
-    const cellwise::DssJacobi<P> precond{&topo, nullptr, raw(inv), raw(s)};
+    const cellwise::DssJacobi<decltype(dss)> precond{dss, raw(inv), raw(s), N};
 
     cellwise::FcgReduction red(MPI_COMM_SELF);
     cudaEvent_t t0, t1;
@@ -409,10 +420,10 @@ int run(const Options& o)
         return ms / o.reps;
     };
     const float op_ms = time_ms([&] { apply(raw(u), raw(y), stream); });
-    const float dss_ms = time_ms([&] { cellwise::dss<P>(raw(y), raw(s), topo, nullptr, stream); });
+    const float dss_ms = time_ms([&] { dss(raw(y), raw(s), stream); });
     const float both_ms = time_ms([&] {
         apply(raw(u), raw(y), stream);
-        cellwise::dss<P>(raw(y), raw(s), topo, nullptr, stream);
+        dss(raw(y), raw(s), stream);
     });
     const double op_bytes = (2.0 * N + (double)E * K * q3) * 8.0, dss_bytes = 2.0 * N * 8.0;
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
@@ -431,8 +442,8 @@ int run(const Options& o)
     printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
     printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s (u, y, geometry)\n", op_ms,
            unique / (op_ms * 1e6), N / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
-    printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s\n", dss_ms, unique / (dss_ms * 1e6),
-           dss_bytes / (dss_ms * 1e6));
+    printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s  (%s)\n", dss_ms, unique / (dss_ms * 1e6),
+           dss_bytes / (dss_ms * 1e6), dss_gen ? "MARSIR-generated" : "hand gather");
     printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
            unique / (both_ms * 1e6));
     printf("  FCG iteration %7.3f ms  (solve %.1f ms)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms);
@@ -457,6 +468,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--tol")) o.tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else error = "unknown option";
     }
     int ranks = 1;
@@ -467,7 +479,7 @@ int main(int argc, char** argv)
     if (!error && ranks != 1) error = "one rank for now";
     if (error) {
         fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3 --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                        "[--maxit k] [--reps r]\n", error, argv[0]);
+                        "[--maxit k] [--reps r] [--dss-ptx file]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

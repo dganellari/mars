@@ -171,19 +171,19 @@ struct FcgReduction {
     }
 };
 
-// The DSS-Jacobi preconditioner of degree P: z = inv_diag * DSS(r), with the block
-// partials of <r, z> and <q, z> (q may be r's partner of the first call, zero).
-template <int P>
+// The DSS-Jacobi preconditioner: z = inv_diag * DSS(r), with the block partials of
+// <r, z> and <q, z> (q is zero at the first call). dss(in, out, stream) is any DSS of
+// the n local copies (the hand dss<P>, or the MARSIR-generated one).
+template <class Dss>
 struct DssJacobi {
-    const UnstructuredTopology* T;
-    UnstructuredHalo* halo;   // null on one rank
+    Dss dss;
     const double* inv_diag;
-    double* s;                // scratch: DSS(r)
+    double* s;   // scratch: DSS(r)
+    long long n;
 
     int operator()(const double* r, const double* q, double* z, double* partial, cudaStream_t stream) const
     {
-        dss<P>(r, s, *T, halo, stream);
-        const long long n = T->local * (long long)(P + 1) * (P + 1) * (P + 1);
+        dss(r, s, stream);
         static const int grid = resident_grid(fcg_detail::jacobi_kernel);
         fcg_detail::jacobi_kernel<<<grid, kThreads, 0, stream>>>(s, inv_diag, r, q, z, n, partial);
         MARS_CELLWISE_CK(cudaGetLastError());
