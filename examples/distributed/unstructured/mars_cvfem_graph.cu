@@ -90,6 +90,8 @@ int main(int argc, char** argv) {
             else if (v == "wmma_tensor")    kernelVariant = CvfemKernelVariant::WmmaTensor;
             else if (v == "wgmma_tensor")   kernelVariant = CvfemKernelVariant::WgmmaTensor;
             else if (v == "tensor_faces")   kernelVariant = CvfemKernelVariant::TensorFaces;
+            else if (v == "tensor_faces_agg") kernelVariant = CvfemKernelVariant::TensorFacesAgg;
+            else if (v == "tensor_faces_agg512") kernelVariant = CvfemKernelVariant::TensorFacesAgg512;
             else if (v == "tensor_early")   kernelVariant = CvfemKernelVariant::TensorEarly;
             else {
                 if (rank == 0) {

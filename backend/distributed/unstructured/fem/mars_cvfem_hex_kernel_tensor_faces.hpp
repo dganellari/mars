@@ -66,6 +66,20 @@ constexpr bool tensorFacesTablesValid()
 }
 static_assert(tensorFacesTablesValid(), "face/node maps must match hexLeftNode/hexRightNode");
 
+// the largest power of 2 not above n, and its log2: the hash table of the aggregated scatter
+constexpr int tensorFacesTableSlots(size_t n)
+{
+    int slots = 1;
+    while (size_t(slots) * 2 <= n) slots *= 2;
+    return slots;
+}
+constexpr int tensorFacesLog2(int n)
+{
+    int bits = 0;
+    while ((1 << bits) < n) ++bits;
+    return bits;
+}
+
 template<typename RealType>
 struct TensorFacesElement
 {
@@ -85,7 +99,11 @@ struct TensorFacesElement
     uint8_t own[8];
 };
 
-template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
+// Aggregate (graph mode only): the block adds up the contributions of its elements to shared rows in a
+// shared-memory table first, then sends one global atomic per destination. On MI300A every global atomic
+// is forwarded past the L2 to the fabric; with 16 elements per block this cuts them 234 to 156 million
+// and the assembly 12.3 to 10.1 ms (hex192). On H100, where atomics stay in the L2, it doubles the time.
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool Aggregate = false>
 __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_faces(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -240,65 +258,173 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
         s.face.q[ip] = q;
     }
     syncWarp();
-    if (!active) return;
 
     // Phase 3: lanes i and 8 + i gather row i, columns 0-3 and 4-7, from the 3 faces of node i
     const int i    = lane & 7;
     const int col0 = (lane >> 3) * 4;
     RealType lhs[4] = {0, 0, 0, 0}, rhs = 0;
-#pragma unroll
-    for (int k = 0; k < 3; ++k)
+    if (active)
     {
-        const int face    = tensorFacesOfNode(i, k);
-        const RealType sg = (tensorFacesLeft(face) == i) ? RealType(1) : RealType(-1); // L gains, R loses
 #pragma unroll
-        for (int j = 0; j < 4; ++j)
-            lhs[j] += sg * s.face.c[col0 + j][face];
-        rhs -= sg * s.face.q[face];
+        for (int k = 0; k < 3; ++k)
+        {
+            const int face    = tensorFacesOfNode(i, k);
+            const RealType sg = (tensorFacesLeft(face) == i) ? RealType(1) : RealType(-1); // L gains, R loses
+#pragma unroll
+            for (int j = 0; j < 4; ++j)
+                lhs[j] += sg * s.face.c[col0 + j][face];
+            rhs -= sg * s.face.q[face];
+        }
     }
 
     const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
-    const int row_dof      = s.dof[i];
-    if (s.own[i] == 0 || row_dof < 0 || row_dof >= numOwnedRows) return;
-    if (col0 == 0) atomicAdd(&d_rhs[row_dof], rhs);
-    const int row_start = matrix->rowPtr[row_dof];
-    const int row_end   = matrix->rowPtr[row_dof + 1];
-    const int diag_pos  = matrix->diagPtr[row_dof];
-    RealType diagonal = 0.0;
-#pragma unroll
-    for (int j = 0; j < 4; ++j)
+    const int row_dof      = active ? s.dof[i] : -1;
+    const bool ownRow      = active && s.own[i] != 0 && row_dof >= 0 && row_dof < numOwnedRows;
+
+    if constexpr (!Aggregate)
     {
-        const int col_dof = s.dof[col0 + j];
-        if (col_dof < 0) continue;
-        const RealType value = lhs[j];
-        if (value == 0.0) continue;
-        // DOF equality: under periodic collapse two corners can share the diagonal
-        if (col_dof == row_dof)
+        if (!ownRow) return;
+        if (col0 == 0) atomicAdd(&d_rhs[row_dof], rhs);
+        const int row_start = matrix->rowPtr[row_dof];
+        const int row_end   = matrix->rowPtr[row_dof + 1];
+        const int diag_pos  = matrix->diagPtr[row_dof];
+        RealType diagonal = 0.0;
+#pragma unroll
+        for (int j = 0; j < 4; ++j)
         {
-            if constexpr (LumpMissing) diagonal += value;
-            else atomicAdd(&matrix->values[diag_pos], value);
-            continue;
-        }
-        int left = row_start, right = row_end - 1;
-        while (left <= right)
-        {
-            const int mid = (left + right) >> 1;
-            const int col = matrix->colInd[mid];
-            if (col == col_dof)
+            const int col_dof = s.dof[col0 + j];
+            if (col_dof < 0) continue;
+            const RealType value = lhs[j];
+            if (value == 0.0) continue;
+            // DOF equality: under periodic collapse two corners can share the diagonal
+            if (col_dof == row_dof)
             {
-                atomicAdd(&matrix->values[mid], value);
-                break;
+                if constexpr (LumpMissing) diagonal += value;
+                else atomicAdd(&matrix->values[diag_pos], value);
+                continue;
             }
-            if (col < col_dof) left = mid + 1;
-            else right = mid - 1;
+            int left = row_start, right = row_end - 1;
+            while (left <= right)
+            {
+                const int mid = (left + right) >> 1;
+                const int col = matrix->colInd[mid];
+                if (col == col_dof)
+                {
+                    atomicAdd(&matrix->values[mid], value);
+                    break;
+                }
+                if (col < col_dof) left = mid + 1;
+                else right = mid - 1;
+            }
+            if constexpr (LumpMissing) {
+                if (left > right) diagonal += value;
+            }
         }
         if constexpr (LumpMissing) {
-            if (left > right) diagonal += value;
+            // Preserve the full row sum when the graph omits a coupling.
+            if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
         }
     }
-    if constexpr (LumpMissing) {
-        // Preserve the full row sum when the graph omits a coupling.
-        if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
+    else
+    {
+        static_assert(LumpMissing, "aggregation bounds the destinations per row by the graph pattern");
+        // A destination is a matrix value index, or -1 - row for the right-hand side. This lane's go to
+        // fixed slots (compile-time indices keep them in registers): right-hand side, diagonal, 4 columns.
+        constexpr int EmptyKey = -2147483647 - 1;
+        int key[6];
+        RealType val[6];
+#pragma unroll
+        for (int t = 0; t < 6; ++t)
+        {
+            key[t] = EmptyKey;
+            val[t] = 0;
+        }
+        if (ownRow)
+        {
+            if (col0 == 0)
+            {
+                key[0] = -1 - row_dof;
+                val[0] = rhs;
+            }
+            const int row_start = matrix->rowPtr[row_dof];
+            const int row_end   = matrix->rowPtr[row_dof + 1];
+            RealType diagonal   = 0.0;
+#pragma unroll
+            for (int j = 0; j < 4; ++j)
+            {
+                const int col_dof = s.dof[col0 + j];
+                const RealType value = lhs[j];
+                if (col_dof < 0 || value == 0.0) continue;
+                if (col_dof == row_dof)
+                {
+                    diagonal += value;
+                    continue;
+                }
+                int left = row_start, right = row_end - 1;
+                while (left <= right)
+                {
+                    const int mid = (left + right) >> 1;
+                    const int col = matrix->colInd[mid];
+                    if (col == col_dof)
+                    {
+                        key[2 + j] = mid;
+                        val[2 + j] = value;
+                        break;
+                    }
+                    if (col < col_dof) left = mid + 1;
+                    else right = mid - 1;
+                }
+                if (left > right) diagonal += value;
+            }
+            if (diagonal != 0.0)
+            {
+                key[1] = matrix->diagPtr[row_dof];
+                val[1] = diagonal;
+            }
+        }
+
+        // Neighbouring elements share rows, so the block adds up its contributions in a shared hash table
+        // and sends one global atomic per distinct destination. The table reuses the element storage, dead
+        // now. A row has at most 5 destinations in the graph pattern (rhs, diagonal, 3 edge neighbours in
+        // the element), so the table is at most 5/8 full; should periodic aliases ever fill it, the
+        // contribution goes straight to global memory.
+        constexpr int Slots    = tensorFacesTableSlots(sizeof(shared) / (sizeof(RealType) + sizeof(int)));
+        constexpr int SlotBits = tensorFacesLog2(Slots);
+        RealType* tableVal = reinterpret_cast<RealType*>(shared);
+        int* tableKey      = reinterpret_cast<int*>(tableVal + Slots);
+        __syncthreads();
+        for (int t = threadIdx.x; t < Slots; t += BlockSize)
+        {
+            tableKey[t] = EmptyKey;
+            tableVal[t] = 0;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int t = 0; t < 6; ++t)
+        {
+            if (key[t] == EmptyKey) continue;
+            unsigned h  = (unsigned(key[t]) * 2654435761u) >> (32 - SlotBits);
+            bool stored = false;
+            for (int probe = 0; probe < Slots && !stored; ++probe)
+            {
+                const int prev = atomicCAS(&tableKey[h], EmptyKey, key[t]);
+                if (prev == EmptyKey || prev == key[t])
+                {
+                    atomicAdd(&tableVal[h], val[t]);
+                    stored = true;
+                }
+                h = (h + 1) & (Slots - 1);
+            }
+            if (!stored) atomicAdd(key[t] >= 0 ? &matrix->values[key[t]] : &d_rhs[-1 - key[t]], val[t]);
+        }
+        __syncthreads();
+        for (int t = threadIdx.x; t < Slots; t += BlockSize)
+        {
+            const int k = tableKey[t];
+            if (k == EmptyKey) continue;
+            const RealType v = tableVal[t];
+            if (v != 0.0) atomicAdd(k >= 0 ? &matrix->values[k] : &d_rhs[-1 - k], v);
+        }
     }
 }
 
