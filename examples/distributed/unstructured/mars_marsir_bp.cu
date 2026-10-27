@@ -29,12 +29,22 @@
 // (marsir-mlir/test/dss_gpu_pipeline.py p; same bits as the hand gather, so the same
 // history) instead of the hand dss<P>.
 //
+// --block B: the elements are stored in blocks of B^3 (B divides ne), block after block,
+// lexicographic inside a block (the default B = ne is the plain lexicographic cube).
+// --rotate stores each block in one of the 24 proper rotations of its frame, so element
+// frames and block interfaces see every orientation. --block-dss uses the block DSS
+// (solvers/mars_cellwise_block_dss.hpp: three passes inside the blocks, then the block
+// skeleton; B = 2, 4, 8, 16 or 32) and checks it against the hand gather on a random
+// vector (the sums run in another order: equal to rounding).
+//
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
+//                     [--block B] [--rotate] [--block-dss]
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_block_dss.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 
@@ -42,6 +52,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -68,15 +79,88 @@ __device__ void lattice_vertex(int i, int j, int k, int ne, double deform, doubl
     for (int d = 0; d < 3; ++d) x[d] += bump;
 }
 
-// Element e = (ex ne + ey) ne + ez, corners in VTK order (corner_bits).
+// Blocks of B^3 elements, M = ne / B per axis: element e is element (lx B + ly) B + lz
+// of block e / B^3, block (mx M + my) M + mz. Rotation r of a block (0: none): its local
+// axis d runs along global axis perm[d], reversed when flip[d].
+struct Layout {
+    int ne, B, M, rotate;
+};
+__constant__ Layout c_layout;
+__constant__ int c_rotation[24][6];   // perm[3], flip[3]
+
+std::vector<int> proper_rotations()
+{
+    std::vector<int> r;
+    int p[3] = {0, 1, 2};
+    do {
+        const int inversions = (p[0] > p[1]) + (p[0] > p[2]) + (p[1] > p[2]);
+        for (int f = 0; f < 8; ++f)
+            if ((inversions + (f & 1) + (f >> 1 & 1) + (f >> 2 & 1)) % 2 == 0)
+                r.insert(r.end(), {p[0], p[1], p[2], f & 1, f >> 1 & 1, f >> 2 & 1});
+    } while (std::next_permutation(p, p + 3));
+    return r;
+}
+
+// Global lattice position of position u (0 .. extent per axis, extent = the block's
+// vertices or nodes per edge) of block blk.
+__device__ void place(long long blk, const int (&u)[3], int extent, long long (&g)[3])
+{
+    const Layout& L = c_layout;
+    const int* r = c_rotation[L.rotate ? (int)(((unsigned)blk * 2654435761u >> 8) % 24) : 0];
+    const long long m[3] = {blk / ((long long)L.M * L.M), (blk / L.M) % L.M, blk % L.M};
+    for (int d = 0; d < 3; ++d) g[r[d]] = m[r[d]] * extent + (r[3 + d] ? extent - u[d] : u[d]);
+}
+
+__device__ void element_in_block(long long e, long long& blk, int (&l)[3])
+{
+    const int B = c_layout.B;
+    const long long B3 = (long long)B * B * B;
+    blk = e / B3;
+    const int le = (int)(e % B3);
+    l[0] = le / (B * B);
+    l[1] = (le / B) % B;
+    l[2] = le % B;
+}
+
+// Global lattice vertex of element e's corner with bits b.
+__device__ void element_vertex(long long e, const int (&b)[3], long long (&g)[3])
+{
+    long long blk;
+    int l[3];
+    element_in_block(e, blk, l);
+    const int u[3] = {l[0] + b[0], l[1] + b[1], l[2] + b[2]};
+    place(blk, u, c_layout.B, g);
+}
+
+// Global node coordinates (0 .. ne P) of node (a, b, c) of element e at degree P.
+__device__ void element_node(long long e, int P, const int (&x)[3], long long (&g)[3])
+{
+    long long blk;
+    int l[3];
+    element_in_block(e, blk, l);
+    const int u[3] = {l[0] * P + x[0], l[1] * P + x[1], l[2] * P + x[2]};
+    place(blk, u, c_layout.B * P, g);
+}
+
+// Corners in VTK order (corner_bits) of the element's own frame.
 __device__ void element_corners(long long e, int ne, double deform, double c[8][3])
 {
-    const int ez = (int)(e % ne), ey = (int)((e / ne) % ne), ex = (int)(e / ((long long)ne * ne));
     for (int k = 0; k < 8; ++k) {
-        int bx, by, bz;
-        cellwise::corner_bits(k, bx, by, bz);
-        lattice_vertex(ex + bx, ey + by, ez + bz, ne, deform, c[k]);
+        int b[3];
+        long long g[3];
+        cellwise::corner_bits(k, b[0], b[1], b[2]);
+        element_vertex(e, b, g);
+        lattice_vertex((int)g[0], (int)g[1], (int)g[2], ne, deform, c[k]);
     }
+}
+
+// The node is on the cube's boundary.
+__device__ bool boundary_node(long long e, int P, int a, int b, int c)
+{
+    long long g[3];
+    element_node(e, P, {a, b, c}, g);
+    const long long last = (long long)c_layout.ne * P;
+    return g[0] == 0 || g[1] == 0 || g[2] == 0 || g[0] == last || g[1] == last || g[2] == last;
 }
 
 // The trilinear map and its Jacobian J[a][b] = dx_a / dxi_b at reference point r.
@@ -167,9 +251,7 @@ __global__ void exact_kernel(double* __restrict__ u, long long E, int ne, double
     if (t >= E * n3) return;
     const long long e = t / n3;
     const int node = (int)(t % n3), a = node / (n * n), b = (node / n) % n, c = node % n;
-    const int ez = (int)(e % ne), ey = (int)((e / ne) % ne), ex = (int)(e / ((long long)ne * ne));
-    const int I = ex * P + a, Jx = ey * P + b, K = ez * P + c, last = ne * P;
-    if (dirichlet && (I == 0 || Jx == 0 || K == 0 || I == last || Jx == last || K == last)) {
+    if (dirichlet && boundary_node(e, P, a, b, c)) {
         u[t] = 0.0;
         return;
     }
@@ -213,7 +295,7 @@ __global__ void diagonal_kernel(const double* __restrict__ G, const double* __re
 
 // inv_diag = mask / diag, mask = 0 on the cube's boundary copies when `dirichlet`.
 template <int P>
-__global__ void inverse_kernel(const double* __restrict__ diag, double* __restrict__ inv, long long E, int ne,
+__global__ void inverse_kernel(const double* __restrict__ diag, double* __restrict__ inv, long long E,
                                bool dirichlet)
 {
     constexpr int n = P + 1, n3 = n * n * n;
@@ -221,21 +303,25 @@ __global__ void inverse_kernel(const double* __restrict__ diag, double* __restri
     if (t >= E * n3) return;
     const long long e = t / n3;
     const int node = (int)(t % n3), a = node / (n * n), b = (node / n) % n, c = node % n;
-    const int ez = (int)(e % ne), ey = (int)((e / ne) % ne), ex = (int)(e / ((long long)ne * ne));
-    const int I = ex * P + a, Jx = ey * P + b, K = ez * P + c, last = ne * P;
-    const bool boundary = I == 0 || Jx == 0 || K == 0 || I == last || Jx == last || K == last;
-    inv[t] = dirichlet && boundary ? 0.0 : 1.0 / diag[t];
+    inv[t] = dirichlet && boundary_node(e, P, a, b, c) ? 0.0 : 1.0 / diag[t];
 }
 
-__global__ void mesh_kernel(long long E, int ne, unsigned long long* const* key, int* const* lid)
+// Corner keys of the elements (blocks = false) or of the blocks as hexes (blocks = true):
+// the global lattice vertex of each corner, in the element's or block's own frame.
+__global__ void mesh_kernel(long long count, bool blocks, unsigned long long* const* key, int* const* lid)
 {
     const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= E) return;
-    const int ez = (int)(e % ne), ey = (int)((e / ne) % ne), ex = (int)(e / ((long long)ne * ne));
+    if (e >= count) return;
+    const long long side = (blocks ? c_layout.M : c_layout.ne) + 1;
     for (int c = 0; c < 8; ++c) {
-        int bx, by, bz;
-        cellwise::corner_bits(c, bx, by, bz);
-        const long long v = ((long long)(ex + bx) * (ne + 1) + ey + by) * (ne + 1) + ez + bz;
+        int b[3];
+        long long g[3];
+        cellwise::corner_bits(c, b[0], b[1], b[2]);
+        if (blocks)
+            place(e, b, 1, g);
+        else
+            element_vertex(e, b, g);
+        const long long v = (g[0] * side + g[1]) * side + g[2];
         key[c][e] = (unsigned long long)v;
         lid[c][e] = (int)v;
     }
@@ -248,11 +334,63 @@ __global__ void difference_kernel(double* __restrict__ out, const double* __rest
     if (t < n) out[t] = fabs(a[t] - b[t]);
 }
 
+__global__ void random_kernel(double* __restrict__ v, long long n)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= n) return;
+    unsigned long long h = (unsigned long long)t * 0x9E3779B97F4A7C15ull;
+    h ^= h >> 31;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 29;
+    v[t] = (double)(h >> 11) * 0x1.0p-52 - 1.0;
+}
+
 #define BP_CK(call) MARS_CELLWISE_CK(call)
+
+// The unstructured tables of the elements, or of the blocks as hexes (one rank: all
+// local).
+cellwise::UnstructuredTopology mesh_topology(long long count, bool blocks, cudaStream_t stream)
+{
+    thrust::device_vector<unsigned long long> key[8];
+    thrust::device_vector<int> lid[8];
+    std::vector<unsigned long long*> kp(8);
+    std::vector<int*> lp(8);
+    for (int c = 0; c < 8; ++c) {
+        key[c].resize(count);
+        lid[c].resize(count);
+        kp[c] = thrust::raw_pointer_cast(key[c].data());
+        lp[c] = thrust::raw_pointer_cast(lid[c].data());
+    }
+    thrust::device_vector<unsigned long long*> d_kp(kp.begin(), kp.end());
+    thrust::device_vector<int*> d_lp(lp.begin(), lp.end());
+    mesh_kernel<<<blocks_for(count), cellwise::kThreads, 0, stream>>>(count, blocks, thrust::raw_pointer_cast(d_kp.data()),
+                                                                      thrust::raw_pointer_cast(d_lp.data()));
+    BP_CK(cudaStreamSynchronize(stream));
+    const std::vector<const unsigned long long*> ckp(kp.begin(), kp.end());
+    const std::vector<const int*> clp(lp.begin(), lp.end());
+    thrust::device_vector<const unsigned long long*> d_ckp(ckp.begin(), ckp.end());
+    thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
+    return cellwise::build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()),
+                                    count, count);
+}
+
+template <int P>
+void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, cudaStream_t st)
+{
+    switch (B) {
+    case 2: cellwise::block_dss<P, 2>(in, out, S, st); break;
+    case 4: cellwise::block_dss<P, 4>(in, out, S, st); break;
+    case 8: cellwise::block_dss<P, 8>(in, out, S, st); break;
+    case 16: cellwise::block_dss<P, 16>(in, out, S, st); break;
+    default: cellwise::block_dss<P, 32>(in, out, S, st); break;
+    }
+    BP_CK(cudaGetLastError());
+}
 
 struct Options {
     std::string ptx_dir, spec = "bp3", dss_ptx;
-    int p = 3, ne = 32, maxit = 2000, reps = 20;
+    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0;
+    bool rotate = false, block_dss = false;
     double deform = 0.05, tol = 1e-10;
 };
 
@@ -283,6 +421,11 @@ int run(const Options& o)
     BP_CK(cudaMemcpyToSymbol(c_gauss, gq.data(), Q * sizeof(double)));
     BP_CK(cudaMemcpyToSymbol(c_weight, wq.data(), Q * sizeof(double)));
     BP_CK(cudaMemcpyToSymbol(c_gll, zeta.data(), n * sizeof(double)));
+    const int Bk = o.block ? o.block : o.ne;
+    const Layout layout{o.ne, Bk, o.ne / Bk, o.rotate ? 1 : 0};
+    const std::vector<int> rotations = proper_rotations();
+    BP_CK(cudaMemcpyToSymbol(c_layout, &layout, sizeof(layout)));
+    BP_CK(cudaMemcpyToSymbol(c_rotation, rotations.data(), rotations.size() * sizeof(int)));
     thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB), dgq(gq), dwq(wq);
     auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
 
@@ -305,33 +448,36 @@ int run(const Options& o)
         else op.apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G), out, E, st);
     };
 
-    // The unstructured tables of the cube (one rank: every element local).
-    thrust::device_vector<unsigned long long> key[8];
-    thrust::device_vector<int> lid[8];
-    std::vector<unsigned long long*> kp(8);
-    std::vector<int*> lp(8);
-    for (int c = 0; c < 8; ++c) {
-        key[c].resize(E);
-        lid[c].resize(E);
-        kp[c] = thrust::raw_pointer_cast(key[c].data());
-        lp[c] = thrust::raw_pointer_cast(lid[c].data());
-    }
-    thrust::device_vector<unsigned long long*> d_kp(kp.begin(), kp.end());
-    thrust::device_vector<int*> d_lp(lp.begin(), lp.end());
-    mesh_kernel<<<blocks_for(E), cellwise::kThreads, 0, stream>>>(E, o.ne, thrust::raw_pointer_cast(d_kp.data()),
-                                                                  thrust::raw_pointer_cast(d_lp.data()));
-    BP_CK(cudaStreamSynchronize(stream));
-    const std::vector<const unsigned long long*> ckp(kp.begin(), kp.end());
-    const std::vector<const int*> clp(lp.begin(), lp.end());
-    thrust::device_vector<const unsigned long long*> d_ckp(ckp.begin(), ckp.end());
-    thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
-    const cellwise::UnstructuredTopology topo =
-        cellwise::build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()), E, E);
+    // The unstructured tables of the elements, and with --block-dss of the blocks.
+    const cellwise::UnstructuredTopology topo = mesh_topology(E, false, stream);
+    const long long nblocks = (long long)layout.M * layout.M * layout.M;
+    const cellwise::UnstructuredTopology skeleton_topo =
+        o.block_dss ? mesh_topology(nblocks, true, stream) : cellwise::UnstructuredTopology{};
+    const cellwise::BlockSkeleton skeleton{
+        cellwise::topo_detail::raw(skeleton_topo.face_nbr), cellwise::topo_detail::raw(skeleton_topo.edge_off),
+        cellwise::topo_detail::raw(skeleton_topo.edge_ent), cellwise::topo_detail::raw(skeleton_topo.vert_off),
+        cellwise::topo_detail::raw(skeleton_topo.vert_ent), cellwise::topo_detail::raw(skeleton_topo.face_code),
+        nblocks, o.block_dss ? skeleton_topo.edges() : 0, o.block_dss ? skeleton_topo.vertices() : 0};
     std::unique_ptr<marsir::DssPtx> dss_gen(o.dss_ptx.empty() ? nullptr : new marsir::DssPtx(o.dss_ptx, P));
-    auto dss = [&topo, gen = dss_gen.get(), E](const double* in, double* out, cudaStream_t st) {
-        if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
+    auto dss = [&topo, &skeleton, gen = dss_gen.get(), E, Bk, block = o.block_dss](const double* in, double* out,
+                                                                                   cudaStream_t st) {
+        if (block) block_dss<P>(Bk, in, out, skeleton, st);
+        else if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
         else cellwise::dss<P>(in, out, topo, nullptr, st);
     };
+    // The block DSS against the hand gather on a random vector.
+    double block_err = 0.0, block_scale = 0.0;
+    if (o.block_dss) {
+        random_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(y), N);
+        cellwise::dss<P>(raw(y), raw(r), topo, nullptr, stream);
+        dss(raw(y), raw(q), stream);
+        difference_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(z), raw(r), raw(q), N);
+        BP_CK(cudaStreamSynchronize(stream));
+        block_err = thrust::reduce(z.begin(), z.end(), 0.0, thrust::maximum<double>());
+        std::vector<double> hr(N);
+        thrust::copy(r.begin(), r.end(), hr.begin());
+        for (double v : hr) block_scale = std::fmax(block_scale, std::fabs(v));
+    }
 
     // Checks of the operator.
     apply(raw(ones), raw(y), stream);
@@ -410,7 +556,7 @@ int run(const Options& o)
     diagonal_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(G), raw(dB), raw(dDB), raw(s), E, K);
     BP_CK(cudaGetLastError());
     dss(raw(s), raw(diag), stream);
-    inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, o.ne, bp3);
+    inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, bp3);
     BP_CK(cudaGetLastError());
     const cellwise::DssJacobi<decltype(dss)> precond{dss, raw(inv), raw(s), N};
     if (tri) {
@@ -458,10 +604,14 @@ int run(const Options& o)
     });
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
-                      (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax;
+                      (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
+                      block_err <= 1e-13 * block_scale;
 
     printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
            o.spec.c_str(), P, Q, o.ne, E, unique, N, o.deform, tri ? "trilinear (corners)" : "stored");
+    if (Bk != o.ne || o.rotate) printf("  blocks of %d^3 elements (%lld)%s\n", Bk, nblocks, o.rotate ? ", rotated" : "");
+    if (o.block_dss)
+        printf("  block DSS vs hand gather, random vector: max diff %.1e of max %.1e\n", block_err, block_scale);
     if (bp3)
         printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
     else
@@ -474,7 +624,7 @@ int run(const Options& o)
     printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s (u, y, geometry)\n", op_ms,
            unique / (op_ms * 1e6), N / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
     printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s  (%s)\n", dss_ms, unique / (dss_ms * 1e6),
-           dss_bytes / (dss_ms * 1e6), dss_gen ? "MARSIR-generated" : "hand gather");
+           dss_bytes / (dss_ms * 1e6), o.block_dss ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
     printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
            unique / (both_ms * 1e6));
     printf("  FCG iteration %7.3f ms  (solve %.1f ms)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms);
@@ -490,6 +640,16 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
+        if (!strcmp(argv[i], "--rotate")) {
+            o.rotate = true;
+            --i;
+            continue;
+        }
+        if (!strcmp(argv[i], "--block-dss")) {
+            o.block_dss = true;
+            --i;
+            continue;
+        }
         if (i + 1 >= argc) error = "an option needs a value";
         else if (!strcmp(argv[i], "--ptx-dir")) o.ptx_dir = argv[i + 1];
         else if (!strcmp(argv[i], "--spec")) o.spec = argv[i + 1];
@@ -500,6 +660,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
+        else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     int ranks = 1;
@@ -509,9 +670,15 @@ int main(int argc, char** argv)
         error = "--spec is bp1, bp3, bp1_tri or bp3_tri";
     if (!error && o.p != 1 && o.p != 3 && o.p != 7) error = "--p is 1, 3 or 7 (the generated degrees)";
     if (!error && ranks != 1) error = "one rank for now";
+    if (!error && (o.block < 0 || (o.block && o.ne % o.block))) error = "--block must divide --ne";
+    if (!error && o.block_dss) {
+        const int b = o.block ? o.block : o.ne;
+        if (b != 2 && b != 4 && b != 8 && b != 16 && b != 32) error = "--block-dss needs --block 2, 4, 8, 16 or 32";
+        if (!o.dss_ptx.empty()) error = "--block-dss and --dss-ptx exclude each other";
+    }
     if (error) {
         fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                        "[--maxit k] [--reps r] [--dss-ptx file]\n", error, argv[0]);
+                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
