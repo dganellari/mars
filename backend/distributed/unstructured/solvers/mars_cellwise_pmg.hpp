@@ -5,7 +5,9 @@
 // smoothing through the DSS, element-local GLL interpolation between degrees
 // (restriction is its transpose on the raw residual), and on the p = 1 level Chebyshev
 // steps or a given coarse solve (BoomerAMG, mars_cellwise_amg.hpp). One V-cycle per
-// BiCGStab preconditioner call.
+// BiCGStab preconditioner call. The second constructor takes any operator level by level
+// from p = 7 or 3 down (e.g. the BP3 Galerkin Laplacian of mars_marsir_bp.cu, with FCG;
+// reference marsir-mlir/test/cellwise_bp_mg_ref.py).
 // Design: docs/design/cellwise_unstructured_dss.md ("Multigrid on unstructured meshes");
 // reference: marsir-mlir/test/cellwise_pmg_ref.py, which it must match.
 
@@ -149,6 +151,45 @@ struct PmgKernels {
 template <class Apply7>
 class PMultigrid {
 public:
+    using LevelApply = std::function<void(int, const double*, double*, cudaStream_t)>;
+
+    // Any operator given level by level (e.g. the BP3 Galerkin form of mars_marsir_bp.cu),
+    // one rank: top = 7 or 3, the finest degree; apply(p, u, y, stream) at p = top .. 1;
+    // elem(p) the element diagonals at p (summed here). For a symmetric operator, pre ==
+    // post gives a symmetric V-cycle (the smoother is a polynomial in D^-1 A). Apply7 must
+    // be constructible from a lambda (std::function).
+    PMultigrid(int top, LevelApply apply, const std::function<const double*(int)>& elem, const UnstructuredTopology& T,
+               int pre, int post, int coarse_steps, MPI_Comm comm, cudaStream_t stream)
+        : apply7_([apply](const double* u, double* y, cudaStream_t s) { apply(7, u, y, s); }), T_(view(T)),
+          E_(T.local), diag7_(nullptr), G3_(nullptr), G1_(nullptr), halos_{}, pre_(pre), post_(post),
+          coarse_steps_(coarse_steps), stream_(stream), M3_(cvfem_matrices<3>()), M1_(cvfem_matrices<1>()),
+          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply))
+    {
+        if (top == 7) {
+            r7_ = alloc(E_ * 512), d7_ = alloc(E_ * 512), y7_ = alloc(E_ * 512), own7_ = alloc(E_ * 512);
+            dss<7>(elem(7), own7_, T, nullptr, stream_);
+            diag7_ = own7_;
+        }
+        b3_ = alloc(E_ * 64), x3_ = alloc(E_ * 64), r3_ = alloc(E_ * 64), d3_ = alloc(E_ * 64), y3_ = alloc(E_ * 64);
+        diag3_ = alloc(E_ * 64);
+        b1_ = alloc(E_ * 8), x1_ = alloc(E_ * 8), d1_ = alloc(E_ * 8), y1_ = alloc(E_ * 8), diag1_ = alloc(E_ * 8);
+        dss<3>(elem(3), diag3_, T, nullptr, stream_);
+        dss<1>(elem(1), diag1_, T, nullptr, stream_);
+        Reduction red(comm);
+        if (top == 7) lmax_[0] = power_iteration<7>(red);
+        lmax_[1] = power_iteration<3>(red);
+        lmax_[2] = power_iteration<1>(red);
+    }
+
+    // x = one V-cycle from the top level applied to the raw residual b (x continuous).
+    void cycle(const double* b, double* x) const
+    {
+        if (top_ == 7)
+            vcycle<7>(b, x);
+        else
+            vcycle<3>(b, x);
+    }
+
     PMultigrid(Apply7 apply7, const UnstructuredTopology& T, const double* diag7, const double* G3, const double* G1,
                std::array<UnstructuredHalo*, 3> halos, int pre, int post, int coarse_steps, MPI_Comm comm,
                cudaStream_t stream)
@@ -175,7 +216,8 @@ public:
     }
     ~PMultigrid()
     {
-        for (double* p : {r7_, d7_, y7_, b3_, x3_, r3_, d3_, y3_, diag3_, b1_, x1_, d1_, y1_, diag1_}) cudaFree(p);
+        for (double* p : {r7_, d7_, y7_, own7_, b3_, x3_, r3_, d3_, y3_, diag3_, b1_, x1_, d1_, y1_, diag1_})
+            cudaFree(p);
     }
     PMultigrid(const PMultigrid&) = delete;
     PMultigrid& operator=(const PMultigrid&) = delete;
@@ -252,7 +294,8 @@ private:
     template <int P>
     void apply(const double* u, double* y) const
     {
-        if constexpr (P == 7) apply7_(u, y, stream_);
+        if (lower_) lower_(P, u, y, stream_);
+        else if constexpr (P == 7) apply7_(u, y, stream_);
         else if (gen_) gen_->apply(P, u, y, stream_);
         else if constexpr (P == 3) cvfem_apply<3>(u, y, G3_, E_, M3_, stream_);
         else cvfem_apply<1>(u, y, G1_, E_, M1_, stream_);
@@ -383,6 +426,9 @@ private:
     std::array<double, 3> lmax_{};
     std::function<void(const double*, double*)> coarse_solve_;
     PmgKernels* gen_ = nullptr;
+    int top_ = 7;
+    LevelApply lower_;           // the level-by-level operator (null: CVFEM below p = 7)
+    double* own7_ = nullptr;     // the summed p = 7 diagonal, when this class forms it
 };
 
 }  // namespace cellwise

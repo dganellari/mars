@@ -40,16 +40,34 @@
 // (<ptx-dir>/block_dss_p{p}_b{B}_sm90.ptx), also checked bit for bit against the hand
 // block nodes.
 //
+// --mg (BP3): FCG preconditioned by a p-multigrid V-cycle instead of DSS + Jacobi
+// (solvers/mars_cellwise_pmg.hpp): levels p -> 3 -> 1 (7 -> 3 -> 1, or 3 -> 1; p = 1 alone
+// takes the coarse solve), the BP3 Galerkin form rediscretized at each degree (the
+// MARSIR kernels bp3_p{3,1} in --ptx-dir), --pre / --post Chebyshev-Jacobi steps (equal
+// by default: a symmetric cycle), on p = 1 --coarse Chebyshev steps or, with --amg,
+// BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles; a Hypre build).
+// Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
+// assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
+// of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
+//
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
+//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]
+
+#include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_block_dss.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
+
+#ifdef MARS_ENABLE_HYPRE
+#include "backend/distributed/unstructured/solvers/mars_cellwise_amg.hpp"
+#endif
 
 #include <mpi.h>
 #include <thrust/device_vector.h>
@@ -69,7 +87,12 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kMaxQ = 9;   // Gauss points per axis at p = 7
-__constant__ double c_gauss[kMaxQ], c_weight[kMaxQ], c_gll[kMaxQ];
+__constant__ double c_gll[kMaxQ];
+
+// A Gauss rule passed by value: each multigrid level has its own (q = p + 2).
+struct Rule {
+    double x[kMaxQ], w[kMaxQ];
+};
 
 unsigned blocks_for(long long n) { return (unsigned)((n + cellwise::kThreads - 1) / cellwise::kThreads); }
 
@@ -192,7 +215,7 @@ __device__ void trilinear(const double c[8][3], const double r[3], double x[3], 
 
 // One thread per (element, Gauss point): G[e][k][point], K = 1 (BP1: w det J) or 6 (BP3:
 // w det J J^-1 J^-T, entries 00 01 02 11 12 22).
-__global__ void geometry_kernel(double* __restrict__ G, long long E, int Q, int K, int ne, double deform)
+__global__ void geometry_kernel(double* __restrict__ G, long long E, int Q, int K, int ne, double deform, Rule rule)
 {
     const long long q3 = (long long)Q * Q * Q;
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -201,12 +224,12 @@ __global__ void geometry_kernel(double* __restrict__ G, long long E, int Q, int 
     const int pt = (int)(t % q3), a = pt / (Q * Q), b = (pt / Q) % Q, c = pt % Q;
     double corners[8][3], x[3], J[3][3];
     element_corners(e, ne, deform, corners);
-    const double r[3] = {c_gauss[a], c_gauss[b], c_gauss[c]};
+    const double r[3] = {rule.x[a], rule.x[b], rule.x[c]};
     trilinear(corners, r, x, J);
     const double det = J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1]) -
                        J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0]) +
                        J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
-    const double wdet = det * c_weight[a] * c_weight[b] * c_weight[c];
+    const double wdet = det * rule.w[a] * rule.w[b] * rule.w[c];
     double* g = G + e * K * q3 + pt;
     if (K == 1) {
         g[0] = wdet;
@@ -392,10 +415,96 @@ void block_dss(int B, const double* in, double* out, const cellwise::BlockSkelet
     BP_CK(cudaGetLastError());
 }
 
+// The 1D matrices at degree P with q = P + 2 Gauss points: B (GLL basis at the Gauss
+// points), D (Gauss-point derivative), their transposes, DB = D B for the diagonal.
+struct Basis {
+    std::vector<double> zeta, gq, wq, B, Bt, D, Dt, DB;
+};
+
+Basis basis(int P)
+{
+    const int n = P + 1, Q = P + 2;
+    Basis b;
+    std::vector<double> wgll, Dgll, val, der;
+    fem::gllBasis(P, b.zeta, wgll, Dgll);
+    fem::gaussLegendre(Q, b.gq, b.wq);
+    b.B.resize(Q * n), b.Bt.resize(n * Q), b.D.resize(Q * Q), b.Dt.resize(Q * Q), b.DB.assign(Q * n, 0.0);
+    for (int a = 0; a < Q; ++a) {
+        fem::lagrangeValDeriv(b.zeta, b.gq[a], val, der);
+        for (int i = 0; i < n; ++i) b.B[a * n + i] = b.Bt[i * Q + a] = val[i];
+        fem::lagrangeValDeriv(b.gq, b.gq[a], val, der);
+        for (int k = 0; k < Q; ++k) b.D[a * Q + k] = b.Dt[k * Q + a] = der[k];
+    }
+    for (int a = 0; a < Q; ++a)
+        for (int i = 0; i < n; ++i)
+            for (int m = 0; m < Q; ++m) b.DB[a * n + i] += b.D[a * Q + m] * b.B[m * n + i];
+    return b;
+}
+
+Rule rule_of(const Basis& b)
+{
+    Rule r{};
+    for (size_t a = 0; a < b.gq.size(); ++a) r.x[a] = b.gq[a], r.w[a] = b.wq[a];
+    return r;
+}
+
+// A coarser BP3 level of the multigrid: the same mesh at degree PL (q = PL + 2), stored
+// geometry, the MARSIR operator bp3_p{PL} and the element diagonal.
+struct Bp3Level {
+    thrust::device_vector<double> B, Bt, D, Dt, DB, G, elem;
+    std::unique_ptr<marsir::GalerkinPtx> op;
+    long long E = 0;
+
+    void apply(const double* u, double* y, cudaStream_t st) const
+    {
+        auto c = [](const thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
+        op->apply(u, c(B), c(Bt), c(D), c(Dt), c(G), y, E, st);
+    }
+};
+
+template <int PL>
+std::unique_ptr<Bp3Level> bp3_level(const std::string& ptx_dir, long long E, int ne, double deform, cudaStream_t st)
+{
+    constexpr int n3 = (PL + 1) * (PL + 1) * (PL + 1), Q = PL + 2, q3 = Q * Q * Q;
+    const Basis b = basis(PL);
+    auto L = std::make_unique<Bp3Level>();
+    L->E = E;
+    L->B = b.B, L->Bt = b.Bt, L->D = b.D, L->Dt = b.Dt, L->DB = b.DB;
+    L->G.resize(E * 6 * q3);
+    L->elem.resize(E * n3);
+    auto c = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
+    geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, st>>>(c(L->G), E, Q, 6, ne, deform, rule_of(b));
+    diagonal_kernel<PL><<<blocks_for(E * n3), cellwise::kThreads, 0, st>>>(c(L->G), c(L->B), c(L->DB), c(L->elem), E, 6);
+    MARS_CELLWISE_CK(cudaGetLastError());
+    L->op = std::make_unique<marsir::GalerkinPtx>(ptx_dir + "/bp3_p" + std::to_string(PL) + "_sm90.ptx",
+                                                  "bp3_apply_p" + std::to_string(PL), PL, Q, true, 6);
+    return L;
+}
+
+// out = b - y.
+__global__ void residual_kernel(double* __restrict__ out, const double* __restrict__ b, const double* __restrict__ y,
+                                long long n)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < n) out[t] = b[t] - y[t];
+}
+
+// sqrt of the sum over global nodes of v^2 (each node once: its counting copy).
+template <int P>
+double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cudaStream_t st)
+{
+    static const int grid = cellwise::resident_grid(cellwise::level_wdot_kernel<P>);
+    thrust::device_vector<double> partial(grid);
+    cellwise::level_wdot_kernel<P><<<grid, cellwise::kThreads, 0, st>>>(
+        v, v, cellwise::topo_detail::raw(T.counting), T.local, thrust::raw_pointer_cast(partial.data()));
+    MARS_CELLWISE_CK(cudaStreamSynchronize(st));
+    return std::sqrt(thrust::reduce(partial.begin(), partial.end(), 0.0));
+}
+
 struct Options {
     std::string ptx_dir, spec = "bp3", dss_ptx, block_dss;   // block_dss: "", "passes" or "nodes"
-    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0;
-    bool rotate = false;
+    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 3, post = 3, coarse = 100, amg_cycles = 1;
+    bool rotate = false, mg = false, amg = false;
     double deform = 0.05, tol = 1e-10;
 };
 
@@ -408,24 +517,10 @@ int run(const Options& o)
     const long long E = (long long)o.ne * o.ne * o.ne, N = E * n3;
     const long long unique = (long long)(o.ne * P + 1) * (o.ne * P + 1) * (o.ne * P + 1);
 
-    // The 1D matrices: B (GLL basis at the Gauss points), D (Gauss-point derivative),
-    // their transposes, and DB = D B for the diagonal.
-    std::vector<double> zeta, wgll, Dgll, gq, wq;
-    fem::gllBasis(P, zeta, wgll, Dgll);
-    fem::gaussLegendre(Q, gq, wq);
-    std::vector<double> B(Q * n), Bt(n * Q), D(Q * Q), Dt(Q * Q), DB(Q * n, 0.0), val, der;
-    for (int a = 0; a < Q; ++a) {
-        fem::lagrangeValDeriv(zeta, gq[a], val, der);
-        for (int i = 0; i < n; ++i) B[a * n + i] = Bt[i * Q + a] = val[i];
-        fem::lagrangeValDeriv(gq, gq[a], val, der);
-        for (int b = 0; b < Q; ++b) D[a * Q + b] = Dt[b * Q + a] = der[b];
-    }
-    for (int a = 0; a < Q; ++a)
-        for (int i = 0; i < n; ++i)
-            for (int m = 0; m < Q; ++m) DB[a * n + i] += D[a * Q + m] * B[m * n + i];
-    BP_CK(cudaMemcpyToSymbol(c_gauss, gq.data(), Q * sizeof(double)));
-    BP_CK(cudaMemcpyToSymbol(c_weight, wq.data(), Q * sizeof(double)));
-    BP_CK(cudaMemcpyToSymbol(c_gll, zeta.data(), n * sizeof(double)));
+    const Basis fine = basis(P);
+    const std::vector<double>&B = fine.B, &Bt = fine.Bt, &D = fine.D, &Dt = fine.Dt, &DB = fine.DB, &gq = fine.gq,
+                             &wq = fine.wq;
+    BP_CK(cudaMemcpyToSymbol(c_gll, fine.zeta.data(), n * sizeof(double)));
     const int Bk = o.block ? o.block : o.ne;
     const Layout layout{o.ne, Bk, o.ne / Bk, o.rotate ? 1 : 0};
     const std::vector<int> rotations = proper_rotations();
@@ -438,7 +533,8 @@ int run(const Options& o)
     BP_CK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     thrust::device_vector<double> G(E * K * q3), u(N), y(N), b(N), x(N), diag(N), inv(N), s(N), r(N), q(N), z(N),
         pdir(N), ones(N, 1.0), X(tri ? E * 24 : 0);
-    geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(G), E, Q, K, o.ne, o.deform);
+    geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(G), E, Q, K, o.ne, o.deform,
+                                                                         rule_of(fine));
     BP_CK(cudaGetLastError());
     if (tri) {
         corners_kernel<<<blocks_for(E), cellwise::kThreads, 0, stream>>>(raw(X), E, o.ne, o.deform);
@@ -581,6 +677,56 @@ int run(const Options& o)
     inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, bp3);
     BP_CK(cudaGetLastError());
     const cellwise::DssJacobi<decltype(dss)> precond{dss, raw(inv), raw(s), N};
+    cudaEvent_t t0, t1;
+    BP_CK(cudaEventCreate(&t0));
+    BP_CK(cudaEventCreate(&t1));
+
+    // --mg: the levels below p, the V-cycle, and on p = 1 Chebyshev steps or BoomerAMG.
+    using LevelApply = std::function<void(const double*, double*, cudaStream_t)>;
+    using Multigrid = cellwise::PMultigrid<LevelApply>;
+    std::unique_ptr<Bp3Level> L3, L1;
+    std::unique_ptr<Multigrid> mg;
+#ifdef MARS_ENABLE_HYPRE
+    std::unique_ptr<cellwise::P1Amg> amg;
+#endif
+    thrust::device_vector<double> elem_fine;
+    float setup_ms = 0.0f;
+    std::array<double, 3> lmax{};
+    if (o.mg) {
+        BP_CK(cudaEventRecord(t0, stream));
+        // The fine element diagonal (s is scratch from here on). The copy runs on the
+        // default stream, which does not wait for the non-blocking one that wrote s.
+        BP_CK(cudaStreamSynchronize(stream));
+        elem_fine = s;
+        if constexpr (P == 7) L3 = bp3_level<3>(o.ptx_dir, E, o.ne, o.deform, stream);
+        if constexpr (P > 1) L1 = bp3_level<1>(o.ptx_dir, E, o.ne, o.deform, stream);
+        auto level_apply = [&](int lp, const double* in, double* out, cudaStream_t st) {
+            if (lp == P) apply(in, out, st);
+            else if (lp == 3) L3->apply(in, out, st);
+            else L1->apply(in, out, st);
+        };
+        auto level_elem = [&](int lp) -> const double* {
+            return lp == P ? raw(elem_fine) : (lp == 3 ? raw(L3->elem) : raw(L1->elem));
+        };
+        if constexpr (P > 1) {
+            mg = std::make_unique<Multigrid>(P, level_apply, level_elem, topo, o.pre, o.post, o.coarse, MPI_COMM_SELF,
+                                             stream);
+            lmax = mg->lambda_max();
+        }
+#ifdef MARS_ENABLE_HYPRE
+        if (o.amg) {
+            const LevelApply apply1 = P == 1 ? LevelApply(apply)
+                                             : LevelApply([&](const double* in, double* out, cudaStream_t st) {
+                                                   L1->apply(in, out, st);
+                                               });
+            amg = std::make_unique<cellwise::P1Amg>(topo, apply1, nullptr, MPI_COMM_SELF, stream, o.amg_cycles);
+            if (mg) mg->set_coarse_solve([&](const double* in, double* out) { amg->solve(in, out); });
+        }
+#endif
+        BP_CK(cudaEventRecord(t1, stream));
+        BP_CK(cudaEventSynchronize(t1));
+        BP_CK(cudaEventElapsedTime(&setup_ms, t0, t1));
+    }
     if (tri) {
         BP_CK(cudaStreamSynchronize(stream));
         G.clear();
@@ -588,16 +734,37 @@ int run(const Options& o)
     }
 
     cellwise::FcgReduction red(MPI_COMM_SELF);
-    cudaEvent_t t0, t1;
-    BP_CK(cudaEventCreate(&t0));
-    BP_CK(cudaEventCreate(&t1));
+    auto solve = [&](const auto& pc) {
+        return cellwise::fcg(apply, pc, raw(b), raw(x), N, raw(r), raw(q), raw(z), raw(pdir), red, o.tol, o.maxit,
+                             stream);
+    };
     BP_CK(cudaEventRecord(t0, stream));
-    const cellwise::FcgResult res =
-        cellwise::fcg(apply, precond, raw(b), raw(x), N, raw(r), raw(q), raw(z), raw(pdir), red, o.tol, o.maxit, stream);
+    cellwise::FcgResult res;
+    if (!o.mg) {
+        res = solve(precond);
+    } else {
+        auto cycle = [&](const double* in, double* out, cudaStream_t) {
+            if (mg) mg->cycle(in, out);
+#ifdef MARS_ENABLE_HYPRE
+            else amg->solve(in, out);
+#endif
+        };
+        res = solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N});
+    }
     BP_CK(cudaEventRecord(t1, stream));
     BP_CK(cudaEventSynchronize(t1));
     float solve_ms = 0.0f;
     BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
+    // The true assembled residual over the free nodes, relative to that of b.
+    apply(raw(x), raw(y), stream);
+    residual_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(b), raw(y), N);
+    cellwise::dss<P>(raw(s), raw(r), topo, nullptr, stream);
+    cellwise::dss<P>(raw(b), raw(q), topo, nullptr, stream);
+    if (bp3) {
+        cellwise::zero_dirichlet<P>(raw(r), topo, stream);
+        cellwise::zero_dirichlet<P>(raw(q), topo, stream);
+    }
+    const double true_rel = counted_norm<P>(raw(r), topo, stream) / counted_norm<P>(raw(q), topo, stream);
     difference_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(x), raw(u), N);
     BP_CK(cudaStreamSynchronize(stream));
     const double err = thrust::reduce(s.begin(), s.end(), 0.0, thrust::maximum<double>());
@@ -641,7 +808,12 @@ int run(const Options& o)
     else
         printf("  BP1 applied to 1, summed: %.15f (the volume: 1)\n", sum1);
     printf("  first %lld elements vs direct quadrature sums: %.1e of max %.1e\n", Ec, oracle_err, oracle_scale);
-    printf("  FCG + DSS-Jacobi: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e\n", res.iterations, res.relative);
+    if (o.mg)
+        printf("  multigrid p=%d%s%s, Chebyshev (%d,%d), coarse %s; lmax %.4f %.4f %.4f; setup %.1f ms\n", P,
+               P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post,
+               o.amg ? "BoomerAMG" : "Chebyshev", lmax[0], lmax[1], lmax[2], setup_ms);
+    printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
+           o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
     for (int k : {1, 5, 10, 20, 50, 100})
         if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
     printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
@@ -651,7 +823,8 @@ int run(const Options& o)
            dss_bytes / (dss_ms * 1e6), block_gen ? "block, MARSIR-generated" : !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
     printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
            unique / (both_ms * 1e6));
-    printf("  FCG iteration %7.3f ms  (solve %.1f ms)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms);
+    printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms,
+           o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
     BP_CK(cudaStreamDestroy(stream));
     return pass ? 0 : 1;
 }
@@ -664,8 +837,8 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
-        if (!strcmp(argv[i], "--rotate")) {
-            o.rotate = true;
+        if (!strcmp(argv[i], "--rotate") || !strcmp(argv[i], "--mg") || !strcmp(argv[i], "--amg")) {
+            (argv[i][2] == 'r' ? o.rotate : argv[i][2] == 'm' ? o.mg : o.amg) = true;
             --i;
             continue;
         }
@@ -681,6 +854,10 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
+        else if (!strcmp(argv[i], "--pre")) o.pre = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--post")) o.post = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--coarse")) o.coarse = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-cycles")) o.amg_cycles = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     int ranks = 1;
@@ -691,6 +868,12 @@ int main(int argc, char** argv)
     if (!error && o.p != 1 && o.p != 3 && o.p != 7) error = "--p is 1, 3 or 7 (the generated degrees)";
     if (!error && ranks != 1) error = "one rank for now";
     if (!error && (o.block < 0 || (o.block && o.ne % o.block))) error = "--block must divide --ne";
+    if (!error && o.mg && o.spec.rfind("bp3", 0) != 0) error = "--mg is for bp3 and bp3_tri";
+    if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
+    if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
+#ifndef MARS_ENABLE_HYPRE
+    if (!error && o.amg) error = "--amg needs a Hypre build (MARS_ENABLE_HYPRE)";
+#endif
     if (!error && !o.block_dss.empty()) {
         if (o.block_dss != "passes" && o.block_dss != "nodes" && o.block_dss != "generated")
             error = "--block-dss is passes, nodes or generated";
@@ -700,7 +883,7 @@ int main(int argc, char** argv)
     }
     if (error) {
         fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated]\n", error, argv[0]);
+                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

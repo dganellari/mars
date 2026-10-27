@@ -126,6 +126,19 @@ jacobi_kernel(const double* __restrict__ s, const double* __restrict__ inv_diag,
     store_partial<2>(acc, partial);
 }
 
+// The block partials of <r, z> and <q, z> for a z made elsewhere.
+__global__ void __launch_bounds__(kThreads)
+dots_kernel(const double* __restrict__ r, const double* __restrict__ q, const double* __restrict__ z, long long n,
+            double* __restrict__ partial)
+{
+    double acc[2] = {0.0, 0.0};
+    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (long long)gridDim.x * blockDim.x) {
+        acc[0] += r[i] * z[i];
+        acc[1] += q[i] * z[i];
+    }
+    store_partial<2>(acc, partial);
+}
+
 }  // namespace fcg_detail
 
 // The scalars, the block partials of the reductions, and the communicator.
@@ -186,6 +199,24 @@ struct DssJacobi {
         dss(r, s, stream);
         static const int grid = resident_grid(fcg_detail::jacobi_kernel);
         fcg_detail::jacobi_kernel<<<grid, kThreads, 0, stream>>>(s, inv_diag, r, q, z, n, partial);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        return grid;
+    }
+};
+
+// A preconditioner given as z = M r with a continuous z, e.g. a multigrid V-cycle
+// (cycle(r, z, stream)); the partials of <r, z> and <q, z> follow in one pass. For FCG's
+// theory M should be symmetric positive definite.
+template <class Cycle>
+struct CyclePrecond {
+    Cycle cycle;
+    long long n;
+
+    int operator()(const double* r, const double* q, double* z, double* partial, cudaStream_t stream) const
+    {
+        cycle(r, z, stream);
+        static const int grid = resident_grid(fcg_detail::dots_kernel);
+        fcg_detail::dots_kernel<<<grid, kThreads, 0, stream>>>(r, q, z, n, partial);
         MARS_CELLWISE_CK(cudaGetLastError());
         return grid;
     }

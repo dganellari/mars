@@ -31,6 +31,7 @@
 #include <thrust/sort.h>
 #include <thrust/tuple.h>
 
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -147,10 +148,24 @@ __global__ void scatter_kernel(const double* __restrict__ u, const int* __restri
 
 class P1Amg {
 public:
-    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank);
-    // cycles: V-cycles per coarse solve.
+    // y = A u at p = 1 on the local elements, for the element matrices.
+    using Apply1 = std::function<void(const double*, double*, cudaStream_t)>;
+
+    // G1, M1: the p = 1 CVFEM metric and matrices; halo1: the p = 1 exchange (null on one
+    // rank); cycles: V-cycles per coarse solve.
     P1Amg(const UnstructuredTopology& T, const double* G1, const CvfemMatrices<1>& M1, UnstructuredHalo* halo1,
           MPI_Comm comm, cudaStream_t stream, int cycles = 1)
+        : P1Amg(
+              T,
+              [G1, M1, E = T.local](const double* u, double* y, cudaStream_t s) { cvfem_apply<1>(u, y, G1, E, M1, s); },
+              halo1, comm, stream, cycles)
+    {
+    }
+
+    // Any p = 1 operator (e.g. the BP3 Galerkin form), symmetric for BoomerAMG's V-cycle
+    // to be a symmetric preconditioner.
+    P1Amg(const UnstructuredTopology& T, const Apply1& apply1, UnstructuredHalo* halo1, MPI_Comm comm,
+          cudaStream_t stream, int cycles = 1)
         : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
@@ -186,7 +201,7 @@ public:
         thrust::device_vector<double> columns(8 * n);
         for (int j = 0; j < 8; ++j) {
             if (n > 0) unit_kernel<<<blocks(n), kThreads, 0, stream_>>>(raw(v_), E, j);
-            cvfem_apply<1>(raw(v_), raw(columns) + (long long)j * n, G1, E, M1, stream_);
+            apply1(raw(v_), raw(columns) + (long long)j * n, stream_);
         }
 
         // Entries: this rank's rows directly, the others' sent to their owners.
