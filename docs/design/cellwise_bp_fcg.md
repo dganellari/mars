@@ -250,3 +250,32 @@ Jacobi, 2.3x / 2.6x / 4.8x with the setup (power iterations and AMG setup, once 
 Two cycles beat one at every degree, so they are the driver's default. An FCG iteration now
 costs 10.9 / 15.2 / 23.5 ms (Jacobi 4.4 / 2.1 / 2.9 ms): the V-cycle, mostly its operator
 applies on the fine level.
+
+### Smoothing steps (k, k)
+
+AMG x2, tol 3e-12 (every true residual below Jacobi's):
+
+| BP3 | (1,1) | (2,2) | (3,3) |
+|---|---|---|---|
+| p = 3 (ne 64) | 23 it, 6.2e-11, 2.6e-13, 162 ms | 19 it, 6.8e-11, 7.9e-13, 202 ms | 13 it, 7.7e-11, 9.3e-13, 197 ms |
+| p = 7 (ne 32) | 26 it, 8.5e-11, 3.2e-13, 266 ms | 17 it, 4.5e-11, 6.9e-13, 284 ms | 12 it, 1.6e-11, 2.4e-13, 282 ms |
+
+A V-cycle makes 2k operator applies on the fine level (k - 1 before, one for the residual, k
+after) and FCG one more, so an iteration costs 7.0 / 10.6 / 15.2 ms at p = 3 and 10.2 / 16.7 /
+23.5 ms at p = 7. At p = 3, (1,1) is 1.22x faster than (3,3) and stops at a lower residual and
+error. At p = 7 the three are within 7% and (1,1) stopped at a 5x larger residual than (3,3),
+so p = 7 is not resolved.
+
+With an exact coarse solve (reference, to a true residual of 1e-10):
+
+| exact p = 1 solve | (1,1) | (2,2) | (3,3) |
+|---|---|---|---|
+| p = 3, ne 2 / 4 / 8 / 16 | 12 / 16 / 19 / 20 | 11 / 12 / 12 / 12 | 8 / 8 / 8 / 8 |
+| p = 7, ne 2 / 4 | 20 / 23 | 12 / 13 | 8 / 9 |
+
+That is about 60 fine-level applies for every k at p = 3 (20 x 3, 12 x 5, 8 x 7). With AMG x2
+at ne 64 the stronger smoothers lose more to the inexact coarse solve (13 against the exact
+solve's 8 at (3,3), 19 against 12 at (2,2), 23 against 20 at (1,1)), so the lead of (1,1) at
+p = 3 comes from the coarse solve. One AMG cycle costs about 0.8 ms of an iteration (x1 against
+x2 at (3,3), p = 3 and 7). Next: more AMG cycles with (2,2) and (3,3); the default stays (3,3)
+until then.
