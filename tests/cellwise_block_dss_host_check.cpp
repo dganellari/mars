@@ -1,9 +1,10 @@
 // Host check of the block-structured DSS bodies (backend/distributed/unstructured/
 // solvers/mars_cellwise_block_dss.hpp): an M^3 lattice of blocks, each block in a random
 // proper rotation (so the skeleton sees every face frame and reversed edges), random
-// values on every copy. The passes and the skeleton, run thread by thread in launch
-// order, must give every copy the sum over all copies of its node, found here by the
-// node's global coordinates. The skeleton tables are built by brute force in the format
+// values on every copy. Each block stage (the passes, or one thread per block node) and
+// the skeleton, run thread by thread in launch order, must give every copy the sum over
+// all copies of its node, found here by the node's global coordinates. A non-finite
+// output fails, and a corrupted copy of the output must fail the same comparison. The skeleton tables are built by brute force in the format
 // of build_topology (face frame codes from the corner keys, reversed bit on edges).
 //
 // Build and run from the MARS root:
@@ -132,22 +133,43 @@ int check(int M, unsigned seed)
     std::map<std::array<long long, 3>, double> total;
     for (long long t = 0; t < N; ++t) total[node_of(t)] += in[t];
 
-    for (long long t = 0; t < N; ++t) cw::block_pass_z<P, B>(in.data(), out.data(), t);
-    if constexpr (B > 1) {
-        const long long pairs = blocks * cw::block_pairs_per_block<P, B>;
-        for (long long t = 0; t < pairs; ++t) cw::block_pass_xy<P, B, 0>(out.data(), t);
-        for (long long t = 0; t < pairs; ++t) cw::block_pass_xy<P, B, 1>(out.data(), t);
+    // Largest error over all copies; any non-finite output or reference is an error.
+    auto error = [&](const std::vector<double>& y) {
+        double err = 0.0;
+        for (long long t = 0; t < N; ++t) {
+            const double ref = total[node_of(t)];
+            if (!std::isfinite(y[t]) || !std::isfinite(ref)) return (double)INFINITY;
+            err = std::fmax(err, std::fabs(y[t] - ref));
+        }
+        return err;
+    };
+    int fails = 0;
+    for (const bool nodes : {false, true}) {
+        std::fill(out.begin(), out.end(), std::nan(""));
+        if (nodes) {
+            const long long m = blocks * cw::block_nodes_per_block<P, B>;
+            for (long long t = 0; t < m; ++t) cw::block_node_sum<P, B>(in.data(), out.data(), t);
+        } else {
+            for (long long t = 0; t < N; ++t) cw::block_pass_z<P, B>(in.data(), out.data(), t);
+            if constexpr (B > 1) {
+                const long long pairs = blocks * cw::block_pairs_per_block<P, B>;
+                for (long long t = 0; t < pairs; ++t) cw::block_pass_xy<P, B, 0>(out.data(), t);
+                for (long long t = 0; t < pairs; ++t) cw::block_pass_xy<P, B, 1>(out.data(), t);
+            }
+        }
+        const long long threads = cw::block_skeleton_threads<P, B>(sk);
+        for (long long t = 0; t < threads; ++t) cw::block_skeleton_node<P, B>(out.data(), sk, t);
+        const double err = error(out);
+        std::vector<double> bad = out;
+        bad[rng() % N] = std::nan("");
+        const bool ok = err <= 1e-13 && !(error(bad) <= 1e-13);
+        printf("block DSS p=%d B=%d (%s), %d^3 rotated blocks (%lld copies, %zu nodes): max|err| = %.2e, "
+               "corrupted copy rejected: %s  %s\n",
+               P, B, nodes ? "block nodes" : "passes", M, N, total.size(), err, error(bad) <= 1e-13 ? "no" : "yes",
+               ok ? "PASS" : "FAIL");
+        fails += !ok;
     }
-    const long long threads = cw::block_skeleton_threads<P, B>(sk);
-    for (long long t = 0; t < threads; ++t) cw::block_skeleton_node<P, B>(out.data(), sk, t);
-
-    double err = 0.0;
-    for (long long t = 0; t < N; ++t) err = std::fmax(err, std::fabs(out[t] - total[node_of(t)]));
-    if (std::isnan(err)) err = INFINITY;
-    const bool ok = err <= 1e-13;
-    printf("block DSS p=%d B=%d, %d^3 rotated blocks (%lld copies, %zu nodes): max|err| = %.2e  %s\n", P, B, M, N,
-           total.size(), err, ok ? "PASS" : "FAIL");
-    return ok ? 0 : 1;
+    return fails;
 }
 
 }  // namespace

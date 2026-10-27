@@ -141,9 +141,11 @@ vector to 1.8e-15 relative, and iteration counts and histories match.
 
 FCG iteration, BP1: p = 1 2.85 -> 1.43 ms (B = 32), p = 3 1.48 -> 1.38, p = 7 1.61 -> 1.63.
 So the block DSS for p <= 3 (5.6x at p = 1, 1.35x at p = 3), the hand gather at p = 7.
-The GB/s column counts the minimum traffic (read and write every copy once); the block
-DSS moves more: the z pass reads and writes everything, then the x and y passes read and
-write the copies on element faces (all of them at p = 1, 2 n^2 / n^3 = 1/4 at p = 7). At
-p = 7 that is about 3 N values against the gather's 2 N, which is why the gather wins
-there. Fusing the passes (a tile of elements per thread block, the three passes in
-shared memory) is the next step for p = 1, where every pass touches every copy.
+The GB/s column is a convention: the minimum traffic (read and write every copy once).
+Neither kernel moves only that: the gather also reads the other copies of shared nodes,
+and the passes read and write the copies on element faces again after the z pass (all of
+them at p = 1, 2 n^2 / n^3 = 1/4 at p = 7). Counting values accessed, that is about 3 N
+for the passes against 2 N plus the shared copies for the gather; cache reuse decides
+the actual memory traffic, which was not measured. So this is a hypothesis for why the
+gather wins at p = 7, not a demonstrated cause. The DSS is about 20% of the p = 1 FCG
+iteration (0.29 of 1.43 ms), so further DSS work is judged by the iteration time.

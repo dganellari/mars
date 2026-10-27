@@ -32,14 +32,15 @@
 // --block B: the elements are stored in blocks of B^3 (B divides ne), block after block,
 // lexicographic inside a block (the default B = ne is the plain lexicographic cube).
 // --rotate stores each block in one of the 24 proper rotations of its frame, so element
-// frames and block interfaces see every orientation. --block-dss uses the block DSS
-// (solvers/mars_cellwise_block_dss.hpp: three passes inside the blocks, then the block
-// skeleton; B = 2, 4, 8, 16 or 32) and checks it against the hand gather on a random
-// vector (the sums run in another order: equal to rounding).
+// frames and block interfaces see every orientation. --block-dss passes|nodes uses the
+// block DSS (solvers/mars_cellwise_block_dss.hpp: three passes inside the blocks, or one
+// thread per block node, then the block skeleton; B = 2, 4, 8, 16 or 32) and checks it
+// against the hand gather on a random vector (the sums run in another order: equal to
+// rounding).
 //
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
-//                     [--block B] [--rotate] [--block-dss]
+//                     [--block B] [--rotate] [--block-dss passes|nodes]
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
@@ -331,7 +332,9 @@ __global__ void difference_kernel(double* __restrict__ out, const double* __rest
                                   const double* __restrict__ b, long long n)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n) out[t] = fabs(a[t] - b[t]);
+    if (t >= n) return;
+    const double d = a[t] - b[t];
+    out[t] = isfinite(d) ? fabs(d) : INFINITY;   // the maximum reduction must not drop a NaN
 }
 
 __global__ void random_kernel(double* __restrict__ v, long long n)
@@ -375,22 +378,22 @@ cellwise::UnstructuredTopology mesh_topology(long long count, bool blocks, cudaS
 }
 
 template <int P>
-void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, cudaStream_t st)
+void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, bool nodes, cudaStream_t st)
 {
     switch (B) {
-    case 2: cellwise::block_dss<P, 2>(in, out, S, st); break;
-    case 4: cellwise::block_dss<P, 4>(in, out, S, st); break;
-    case 8: cellwise::block_dss<P, 8>(in, out, S, st); break;
-    case 16: cellwise::block_dss<P, 16>(in, out, S, st); break;
-    default: cellwise::block_dss<P, 32>(in, out, S, st); break;
+    case 2: cellwise::block_dss<P, 2>(in, out, S, nodes, st); break;
+    case 4: cellwise::block_dss<P, 4>(in, out, S, nodes, st); break;
+    case 8: cellwise::block_dss<P, 8>(in, out, S, nodes, st); break;
+    case 16: cellwise::block_dss<P, 16>(in, out, S, nodes, st); break;
+    default: cellwise::block_dss<P, 32>(in, out, S, nodes, st); break;
     }
     BP_CK(cudaGetLastError());
 }
 
 struct Options {
-    std::string ptx_dir, spec = "bp3", dss_ptx;
+    std::string ptx_dir, spec = "bp3", dss_ptx, block_dss;   // block_dss: "", "passes" or "nodes"
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0;
-    bool rotate = false, block_dss = false;
+    bool rotate = false;
     double deform = 0.05, tol = 1e-10;
 };
 
@@ -452,22 +455,22 @@ int run(const Options& o)
     const cellwise::UnstructuredTopology topo = mesh_topology(E, false, stream);
     const long long nblocks = (long long)layout.M * layout.M * layout.M;
     const cellwise::UnstructuredTopology skeleton_topo =
-        o.block_dss ? mesh_topology(nblocks, true, stream) : cellwise::UnstructuredTopology{};
+        !o.block_dss.empty() ? mesh_topology(nblocks, true, stream) : cellwise::UnstructuredTopology{};
     const cellwise::BlockSkeleton skeleton{
         cellwise::topo_detail::raw(skeleton_topo.face_nbr), cellwise::topo_detail::raw(skeleton_topo.edge_off),
         cellwise::topo_detail::raw(skeleton_topo.edge_ent), cellwise::topo_detail::raw(skeleton_topo.vert_off),
         cellwise::topo_detail::raw(skeleton_topo.vert_ent), cellwise::topo_detail::raw(skeleton_topo.face_code),
-        nblocks, o.block_dss ? skeleton_topo.edges() : 0, o.block_dss ? skeleton_topo.vertices() : 0};
+        nblocks, o.block_dss.empty() ? 0 : skeleton_topo.edges(), o.block_dss.empty() ? 0 : skeleton_topo.vertices()};
     std::unique_ptr<marsir::DssPtx> dss_gen(o.dss_ptx.empty() ? nullptr : new marsir::DssPtx(o.dss_ptx, P));
-    auto dss = [&topo, &skeleton, gen = dss_gen.get(), E, Bk, block = o.block_dss](const double* in, double* out,
-                                                                                   cudaStream_t st) {
-        if (block) block_dss<P>(Bk, in, out, skeleton, st);
+    auto dss = [&topo, &skeleton, gen = dss_gen.get(), E, Bk, block = !o.block_dss.empty(),
+                nodes = o.block_dss == "nodes"](const double* in, double* out, cudaStream_t st) {
+        if (block) block_dss<P>(Bk, in, out, skeleton, nodes, st);
         else if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
         else cellwise::dss<P>(in, out, topo, nullptr, st);
     };
     // The block DSS against the hand gather on a random vector.
     double block_err = 0.0, block_scale = 0.0;
-    if (o.block_dss) {
+    if (!o.block_dss.empty()) {
         random_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(y), N);
         cellwise::dss<P>(raw(y), raw(r), topo, nullptr, stream);
         dss(raw(y), raw(q), stream);
@@ -476,7 +479,7 @@ int run(const Options& o)
         block_err = thrust::reduce(z.begin(), z.end(), 0.0, thrust::maximum<double>());
         std::vector<double> hr(N);
         thrust::copy(r.begin(), r.end(), hr.begin());
-        for (double v : hr) block_scale = std::fmax(block_scale, std::fabs(v));
+        for (double v : hr) block_scale = std::isfinite(v) ? std::fmax(block_scale, std::fabs(v)) : INFINITY;
     }
 
     // Checks of the operator.
@@ -610,8 +613,9 @@ int run(const Options& o)
     printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
            o.spec.c_str(), P, Q, o.ne, E, unique, N, o.deform, tri ? "trilinear (corners)" : "stored");
     if (Bk != o.ne || o.rotate) printf("  blocks of %d^3 elements (%lld)%s\n", Bk, nblocks, o.rotate ? ", rotated" : "");
-    if (o.block_dss)
-        printf("  block DSS vs hand gather, random vector: max diff %.1e of max %.1e\n", block_err, block_scale);
+    if (!o.block_dss.empty())
+        printf("  block DSS (%s) vs hand gather, random vector: max diff %.1e of max %.1e\n", o.block_dss.c_str(),
+               block_err, block_scale);
     if (bp3)
         printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
     else
@@ -624,7 +628,7 @@ int run(const Options& o)
     printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s (u, y, geometry)\n", op_ms,
            unique / (op_ms * 1e6), N / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
     printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s  (%s)\n", dss_ms, unique / (dss_ms * 1e6),
-           dss_bytes / (dss_ms * 1e6), o.block_dss ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
+           dss_bytes / (dss_ms * 1e6), !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
     printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
            unique / (both_ms * 1e6));
     printf("  FCG iteration %7.3f ms  (solve %.1f ms)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms);
@@ -645,11 +649,6 @@ int main(int argc, char** argv)
             --i;
             continue;
         }
-        if (!strcmp(argv[i], "--block-dss")) {
-            o.block_dss = true;
-            --i;
-            continue;
-        }
         if (i + 1 >= argc) error = "an option needs a value";
         else if (!strcmp(argv[i], "--ptx-dir")) o.ptx_dir = argv[i + 1];
         else if (!strcmp(argv[i], "--spec")) o.spec = argv[i + 1];
@@ -661,6 +660,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
         else error = "unknown option";
     }
     int ranks = 1;
@@ -671,14 +671,15 @@ int main(int argc, char** argv)
     if (!error && o.p != 1 && o.p != 3 && o.p != 7) error = "--p is 1, 3 or 7 (the generated degrees)";
     if (!error && ranks != 1) error = "one rank for now";
     if (!error && (o.block < 0 || (o.block && o.ne % o.block))) error = "--block must divide --ne";
-    if (!error && o.block_dss) {
+    if (!error && !o.block_dss.empty()) {
+        if (o.block_dss != "passes" && o.block_dss != "nodes") error = "--block-dss is passes or nodes";
         const int b = o.block ? o.block : o.ne;
         if (b != 2 && b != 4 && b != 8 && b != 16 && b != 32) error = "--block-dss needs --block 2, 4, 8, 16 or 32";
         if (!o.dss_ptx.empty()) error = "--block-dss and --dss-ptx exclude each other";
     }
     if (error) {
         fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss]\n", error, argv[0]);
+                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

@@ -13,6 +13,9 @@
 //  - After the passes, all copies of a node inside one block hold that block's sum. The
 //    skeleton (block faces, edges and corners) then adds ONE copy per block and writes
 //    the total to every copy. Adding all copies would count a block's sum once per copy.
+// Instead of the passes, the first stage can also run one thread per block node, which
+// sums the node's copies in the block (up to 8) and writes the sum to each: every copy
+// is read once and written once, and no thread depends on another.
 // The skeleton tables are the unstructured ones (mars_cellwise_topology.hpp) built over
 // the blocks as hexes, so the blocks may form any conforming hex mesh, in any
 // orientation. One rank for now (no ghost blocks).
@@ -175,6 +178,23 @@ MARS_CW_HD inline void block_pass_xy(double* __restrict__ v, long long t)
     v[hi] = s;
 }
 
+// ---- one thread per block node (instead of the passes) --------------------------------
+// Thread t: node (X, Y, Z) of block t / (Pm + 1)^3, Z fastest. Every copy belongs to
+// exactly one block node, so in and out are each touched once per copy.
+template <int P, int B>
+constexpr long long block_nodes_per_block = (long long)(B * P + 1) * (B * P + 1) * (B * P + 1);
+
+template <int P, int B>
+MARS_CW_HD inline void block_node_sum(const double* __restrict__ in, double* __restrict__ out, long long t)
+{
+    constexpr int m = B * P + 1;
+    const int x[3] = {(int)((t / (m * m)) % m), (int)((t / m) % m), (int)(t % m)};
+    const long long blk = t / ((long long)m * m * m);
+    double s = 0.0;
+    for_block_copies<P, B>(blk, x, [&](long long k) { s += in[k]; });
+    for_block_copies<P, B>(blk, x, [&](long long k) { out[k] = s; });
+}
+
 // ---- skeleton --------------------------------------------------------------------------
 // One thread per skeleton node: interior nodes of block faces (each pair once, from its
 // lower copy), then interior nodes of block edges, then block corners. These sets are
@@ -272,6 +292,15 @@ __global__ void __launch_bounds__(kBlockDssThreads) block_pass_xy_kernel(double*
 }
 
 template <int P, int B>
+__global__ void __launch_bounds__(kBlockDssThreads)
+block_node_sum_kernel(const double* __restrict__ in, double* __restrict__ out, long long nodes)
+{
+    for (long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x; t < nodes;
+         t += (long long)gridDim.x * blockDim.x)
+        block_node_sum<P, B>(in, out, t);
+}
+
+template <int P, int B>
 __global__ void __launch_bounds__(kBlockDssThreads) block_skeleton_kernel(double* __restrict__ v, BlockSkeleton S,
                                                                           long long threads)
 {
@@ -280,21 +309,27 @@ __global__ void __launch_bounds__(kBlockDssThreads) block_skeleton_kernel(double
         block_skeleton_node<P, B>(v, S, t);
 }
 
-// out = DSS(in) on S.blocks blocks of B^3 elements of degree P: three passes, then the
-// skeleton, four launches on one stream. in and out must not alias.
+// out = DSS(in) on S.blocks blocks of B^3 elements of degree P: the block stage (three
+// passes, or one thread per block node when `nodes`), then the skeleton, on one stream.
+// in and out must not alias.
 template <int P, int B>
-void block_dss(const double* in, double* out, const BlockSkeleton& S, cudaStream_t stream = 0)
+void block_dss(const double* in, double* out, const BlockSkeleton& S, bool nodes, cudaStream_t stream = 0)
 {
     using Sh = BlockShape<P, B>;
     auto grid = [](long long work) {
         return (unsigned)std::min<long long>((work + kBlockDssThreads - 1) / kBlockDssThreads, 1LL << 20);
     };
     const long long N = S.blocks * Sh::B3 * Sh::n3;
-    block_pass_z_kernel<P, B><<<grid(N), kBlockDssThreads, 0, stream>>>(in, out, N);
-    if constexpr (B > 1) {
-        const long long pairs = S.blocks * block_pairs_per_block<P, B>;
-        block_pass_xy_kernel<P, B, 0><<<grid(pairs), kBlockDssThreads, 0, stream>>>(out, pairs);
-        block_pass_xy_kernel<P, B, 1><<<grid(pairs), kBlockDssThreads, 0, stream>>>(out, pairs);
+    if (nodes) {
+        const long long m = S.blocks * block_nodes_per_block<P, B>;
+        block_node_sum_kernel<P, B><<<grid(m), kBlockDssThreads, 0, stream>>>(in, out, m);
+    } else {
+        block_pass_z_kernel<P, B><<<grid(N), kBlockDssThreads, 0, stream>>>(in, out, N);
+        if constexpr (B > 1) {
+            const long long pairs = S.blocks * block_pairs_per_block<P, B>;
+            block_pass_xy_kernel<P, B, 0><<<grid(pairs), kBlockDssThreads, 0, stream>>>(out, pairs);
+            block_pass_xy_kernel<P, B, 1><<<grid(pairs), kBlockDssThreads, 0, stream>>>(out, pairs);
+        }
     }
     const long long sk = block_skeleton_threads<P, B>(S);
     if (sk > 0) block_skeleton_kernel<P, B><<<grid(sk), kBlockDssThreads, 0, stream>>>(out, S, sk);
