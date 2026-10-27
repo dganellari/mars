@@ -15,7 +15,7 @@ lowering path, not just a pretty dump.
 """
 
 from ..ir import ElementApply  # noqa: F401  (kept for callers/type context)
-from ..expr import Num, Var, Unary, Binary
+from ..expr import Num, Var, Unary, Binary, parse_expr
 from .common import AUTOGEN_BANNER
 
 # AST binary op -> arith float op. Unary '-' maps to arith.negf separately.
@@ -348,7 +348,16 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
     w = v + sum_d Dt along d of dv_d, then y = Bt along each axis of w.
     Arguments: u, B (q x n), Bt (n x q), then D and Dt (q x q) when a gradient is
     read, then G (K x q x q x q: the K geometry components read). real: the scalar
-    type (f64, or f32)."""
+    type (f64, or f32).
+
+    geometry = trilinear: instead of G, gq and wq (q: the Gauss points and weights on
+    [-1, 1]) and X (3 x 2 x 2 x 2: the element's corners by component, then corner bit
+    along each axis). The flux takes them broadcast (the coordinate and weight along
+    axis d vary along d only, the corners are scalars of the element) and forms, at
+    each point and in registers, J[a][b] = d x_a / d xi_b of the trilinear map, the
+    adjugate and det J, and from them the inputs the spec reads: wdetj = w det J and
+    m_de = w adj adj^T / det (= w det J J^-1 J^-T). Nothing per Gauss point is stored
+    or staged."""
     o = ga.op
     n = p + 1
     q = q or p + 2
@@ -363,6 +372,8 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
         args += ["%%D: %s" % ty([q, q]), "%%Dt: %s" % ty([q, q])]
     if ga.geometry:
         args.append("%%G: %s" % ty([ga.geometry, q, q, q]))
+    if ga.trilinear:
+        args += ["%%gq: %s" % ty([q]), "%%wq: %s" % ty([q]), "%%X: %s" % ty([3, 2, 2, 2])]
     banner = AUTOGEN_BANNER.format(backend="mlir-galerkin", name=o.name, flux=o.flux_src)
     L = [banner.rstrip("\n"), "// RUN: mir-opt %s | mir-opt",
          "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), ty([n, n, n]))]
@@ -396,17 +407,68 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
         L.append("  %s = tensor.extract_slice %%G[%d, 0, 0, 0] [1, %d, %d, %d] [1, 1, 1, 1] : %s to %s"
                  % (g, k, q, q, q, ty([ga.geometry, q, q, q]), tq))
         inputs.append(("g%d" % k, g))
+    geo_names = sorted(ga.free_vars & ({"wdetj"} | {"m%d%d" % (d, e) for d in range(3) for e in range(d, 3)}))
+    dims = [[0, 1, 2] for _ in inputs]   # grid dimensions each flux input varies along
+    if ga.trilinear and geo_names:
+        for d in range(3):
+            inputs += [("xi%d" % d, "%gq"), ("w%d" % d, "%wq")]
+            dims += [[d], [d]]
+        for a in range(3):
+            for c in range(8):
+                x = fresh("x")
+                L.append("  %s = tensor.extract_slice %%X[%d, %d, %d, %d] [1, 1, 1, 1] [1, 1, 1, 1] : %s to tensor<f64>"
+                         % (x, a, c >> 2, (c >> 1) & 1, c & 1, ty([3, 2, 2, 2])))
+                inputs.append(("X%d%d" % (a, c), x))
+                dims.append([])
     names = [nm for nm, _ in inputs]
     outs = [nm for nm, _ in ga.outputs]
     x = fresh("x")
     head = "%s:%d" % (x, len(outs)) if len(outs) > 1 else x
     res_ty = "(%s)" % ", ".join([tq] * len(outs)) if len(outs) > 1 else tq
-    L.append("  %s = mir.flux ins(%s) : (%s) -> %s {"
-             % (head, ", ".join(val for _, val in inputs), ", ".join([tq] * len(inputs)), res_ty))
+    in_tys = [ty([q] * len(dm)) if dm else "tensor<f64>" for dm in dims]
+    attr = ("{dims = [%s]} " % ", ".join("array<i64%s>" % ((": " + ", ".join(map(str, dm))) if dm else "")
+                                          for dm in dims)) if any(dm != [0, 1, 2] for dm in dims) else ""
+    L.append("  %s = mir.flux %sins(%s) : (%s) -> %s {"
+             % (head, attr, ", ".join(val for _, val in inputs), ", ".join(in_tys), res_ty))
     L.append("  ^bb0(%s):" % ", ".join("%%a%d: f64" % i for i in range(len(inputs))))
     valnames = {nm: "%%a%d" % i for i, nm in enumerate(names)}
     ctr = [0]
     body = []
+    if ga.trilinear and geo_names:
+        # The trilinear map's Jacobian: corner c = (i, j, k) bits along the axes, N_0 =
+        # (1 - xi) / 2, N_1 = (1 + xi) / 2, so J[a][b] = 1/2 sum over the other two axes'
+        # bits of (X at bit 1 - X at bit 0 along b) times their N.
+        for d in range(3):
+            valnames["n%d0" % d] = to_mlir_ssa(parse_expr("0.5 - 0.5*xi%d" % d), valnames, body, ctr)
+            valnames["n%d1" % d] = to_mlir_ssa(parse_expr("0.5 + 0.5*xi%d" % d), valnames, body, ctr)
+        valnames["w"] = to_mlir_ssa(parse_expr("w0*w1*w2"), valnames, body, ctr)
+        for a in range(3):
+            for b in range(3):
+                o1, o2 = [ax for ax in range(3) if ax != b]
+                terms = []
+                for s1 in range(2):
+                    for s2 in range(2):
+                        bits_hi, bits_lo = [0, 0, 0], [0, 0, 0]
+                        bits_hi[b], bits_hi[o1], bits_hi[o2] = 1, s1, s2
+                        bits_lo[o1], bits_lo[o2] = s1, s2
+                        hi = 4 * bits_hi[0] + 2 * bits_hi[1] + bits_hi[2]
+                        lo = 4 * bits_lo[0] + 2 * bits_lo[1] + bits_lo[2]
+                        terms.append("(X%d%d - X%d%d)*n%d%d*n%d%d" % (a, hi, a, lo, o1, s1, o2, s2))
+                valnames["J%d%d" % (a, b)] = to_mlir_ssa(parse_expr("0.5*(%s)" % " + ".join(terms)), valnames, body, ctr)
+        # The adjugate (adj = det J^-1), det J, then the geometry the spec reads.
+        adj = {(0, 0): "J11*J22 - J12*J21", (0, 1): "J02*J21 - J01*J22", (0, 2): "J01*J12 - J02*J11",
+               (1, 0): "J12*J20 - J10*J22", (1, 1): "J00*J22 - J02*J20", (1, 2): "J02*J10 - J00*J12",
+               (2, 0): "J10*J21 - J11*J20", (2, 1): "J01*J20 - J00*J21", (2, 2): "J00*J11 - J01*J10"}
+        for (d, r), text in adj.items():
+            valnames["adj%d%d" % (d, r)] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
+        valnames["det"] = to_mlir_ssa(parse_expr("J00*adj00 + J01*adj10 + J02*adj20"), valnames, body, ctr)
+        for name in geo_names:
+            if name == "wdetj":
+                text = "w*det"
+            else:
+                d, e = int(name[1]), int(name[2])
+                text = "w*(%s)/det" % " + ".join("adj%d%d*adj%d%d" % (d, r, e, r) for r in range(3))
+            valnames[name] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
     yields = [to_mlir_ssa(expr, valnames, body, ctr) for _, expr in ga.outputs]
     L.extend(body)
     L.append("    mir.yield %s : %s" % (", ".join(yields), ", ".join(["f64"] * len(yields))))

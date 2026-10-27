@@ -21,6 +21,9 @@ expressions over the inputs of mir.ir.GALERKIN_INPUTS:
         form    = galerkin
         v       = g0*u
     }
+
+`geometry = trilinear` computes the geometry inside the kernel from each element's 8
+corners; the outputs then read wdetj and m00..m22 instead of g0..g5 (mir.ir.TRILINEAR_INPUTS).
 """
 
 import re
@@ -80,7 +83,7 @@ def parse_spec(text: str) -> Operator:
         outputs = [(k, fields[k]) for k in GALERKIN_OUTPUTS if k in fields]
         if not outputs:
             raise ValueError(f"form galerkin needs at least one of {GALERKIN_OUTPUTS}")
-        extra = set(fields) - {"element", "form"} - set(GALERKIN_OUTPUTS)
+        extra = set(fields) - {"element", "form", "geometry"} - set(GALERKIN_OUTPUTS)
         if extra:
             raise ValueError(f"unknown key(s) {sorted(extra)} for form galerkin")
         return Operator(
@@ -90,6 +93,7 @@ def parse_spec(text: str) -> Operator:
             flux=None,
             flux_src="; ".join(f"{k} = {v}" for k, v in outputs),
             outputs=[(k, parse_expr(v)) for k, v in outputs],
+            geometry=fields.get("geometry", "stored"),
         )
 
     if "flux" not in fields:

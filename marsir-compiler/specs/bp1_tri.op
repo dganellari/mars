@@ -1,0 +1,8 @@
+# BP1 (mass) with the geometry computed in the kernel from each element's 8 corners
+# (trilinear map): wdetj = w det J at each Gauss point, nothing stored per point.
+operator bp1_tri {
+    element  = hex
+    form     = galerkin
+    geometry = trilinear
+    v        = wdetj*u
+}

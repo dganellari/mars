@@ -9,6 +9,10 @@
 //   y[i,j,k]   = sum_abc Bt[i,a] Bt[j,b] Bt[k,c] w[a,b,c]
 // Defines: BP_NAME (kernel), BP_SPEC_BP1 | BP_SPEC_BP3, BP_Q, BP_K (geometry components),
 // BP_GRAD (D and Dt are arguments), MIR_EMU_REAL (float for the f32 kernel).
+// BP_TRILINEAR (geometry = trilinear): the kernel takes gq (random points in [-1, 1]), wq
+// (random positive weights) and the corners X (a perturbed unit cube per element) instead
+// of G; the oracle forms G from them by direct sums over the corners (w det J, or the
+// symmetric w det J J^-1 J^-T) and checks the same action.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -28,6 +32,7 @@ using Real = MIR_EMU_REAL;
 #define BP_STR_(x) #x
 #define BP_STR(x) BP_STR_(x)
 
+using D1 = Desc<Real, 1>;
 using D2 = Desc<Real, 2>;
 using D4 = Desc<Real, 4>;
 using D5 = Desc<Real, 5>;
@@ -36,7 +41,9 @@ void BP_CAT(_mlir_ciface_, BP_NAME)(D4*, D2*, D2*,
 #ifdef BP_GRAD
                                     D2*, D2*,
 #endif
-#if BP_K > 0
+#ifdef BP_TRILINEAR
+                                    D1*, D1*, D5*,
+#elif BP_K > 0
                                     D5*,
 #endif
                                     D4*);
@@ -61,6 +68,58 @@ int main(int argc, char** argv)
         for (int j = 0; j < n; ++j) Bt[j * Q + i] = B[i * n + j];
     for (int i = 0; i < Q; ++i)
         for (int j = 0; j < Q; ++j) Dt[j * Q + i] = D[i * Q + j];
+#ifdef BP_TRILINEAR
+    // Random points, positive weights, corners of a perturbed unit cube.
+    std::vector<double> gq = rand(Q), wq1(Q), X(E * 24);
+    for (auto& w : wq1) w = 1.0 + 0.5 * val(rng);
+    for (long long e = 0; e < E; ++e)
+        for (int c = 0; c < 3; ++c)
+            for (int corner = 0; corner < 8; ++corner) {
+                const int bit = (corner >> (2 - c)) & 1;   // corner = (i, j, k) bits, X[c][i][j][k]
+                X[e * 24 + c * 8 + corner] = bit + 0.15 * val(rng);
+            }
+    // G from the corners: J[a][b] = sum_ijk X[a][i][j][k] M0(i) M1(j) M2(k) with M = the
+    // linear basis (1 -+ xi) / 2 at the point's coordinate, or its derivative -+ 1/2 for
+    // axis b.
+    for (long long e = 0; e < E; ++e)
+        for (long long pt = 0; pt < q3; ++pt) {
+            const int qa[3] = {(int)(pt / (Q * Q)), (int)((pt / Q) % Q), (int)(pt % Q)};
+            double J[3][3];
+            for (int a = 0; a < 3; ++a)
+                for (int b2 = 0; b2 < 3; ++b2) {
+                    double s = 0;
+                    for (int corner = 0; corner < 8; ++corner) {
+                        const int bits[3] = {corner >> 2, (corner >> 1) & 1, corner & 1};
+                        double f = X[e * 24 + a * 8 + corner];
+                        for (int ax = 0; ax < 3; ++ax) {
+                            const double sign = bits[ax] ? 0.5 : -0.5;
+                            f *= ax == b2 ? sign : 0.5 + sign * gq[qa[ax]];
+                        }
+                        s += f;
+                    }
+                    J[a][b2] = s;
+                }
+            const double det = J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1]) -
+                               J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0]) +
+                               J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
+            double inv[3][3];
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) {
+                    const int r1 = (c + 1) % 3, r2 = (c + 2) % 3, c1 = (r + 1) % 3, c2 = (r + 2) % 3;
+                    inv[r][c] = (J[r1][c1] * J[r2][c2] - J[r1][c2] * J[r2][c1]) / det;
+                }
+            const double wdet = wq1[qa[0]] * wq1[qa[1]] * wq1[qa[2]] * det;
+            if (K == 1) {
+                G[e * q3 + pt] = wdet;
+                continue;
+            }
+            const int sym[6][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 1}, {1, 2}, {2, 2}};
+            for (int k = 0; k < 6; ++k) {
+                const int d = sym[k][0], f = sym[k][1];
+                G[(e * K + k) * q3 + pt] = wdet * (inv[d][0] * inv[f][0] + inv[d][1] * inv[f][1] + inv[d][2] * inv[f][2]);
+            }
+        }
+#endif
 
     // The kernel's inputs in its precision; the oracle sees the same rounded values.
     auto narrow = [](std::vector<double>& v) {
@@ -73,6 +132,11 @@ int main(int argc, char** argv)
     };
     std::vector<Real> ru = narrow(u), rB = narrow(B), rBt = narrow(Bt), rD = narrow(D), rDt = narrow(Dt),
                       rG = narrow(G), Y(E * n3, (Real)std::nan(""));
+#ifdef BP_TRILINEAR
+    std::vector<Real> rgq = narrow(gq), rwq = narrow(wq1), rX = narrow(X);
+    D1 dgq{rgq.data(), rgq.data(), 0, {Q}, {1}}, dwq{rwq.data(), rwq.data(), 0, {Q}, {1}};
+    D5 dX{rX.data(), rX.data(), 0, {E, 3, 2, 2, 2}, {24, 8, 4, 2, 1}};
+#endif
 
     D4 du{ru.data(), ru.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
     D4 dy{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
@@ -95,7 +159,9 @@ int main(int argc, char** argv)
 #ifdef BP_GRAD
                                                &dD, &dDt,
 #endif
-#if BP_K > 0
+#ifdef BP_TRILINEAR
+                                               &dgq, &dwq, &dX,
+#elif BP_K > 0
                                                &dG,
 #endif
                                                &dy);

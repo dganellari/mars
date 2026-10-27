@@ -163,15 +163,21 @@ def Mir_FluxOp : Mir_Op<"flux",
     metric, ...) and yields the per-point output(s). Lowers to a `linalg.generic`
     elementwise map over the quadrature grid, and fuses with the surrounding
     contractions into one loop.
+
+    `dims` (optional, one array per input): the grid dimensions an input varies
+    along, in order; it is broadcast along the others. [0] is a 1D table along the
+    first axis (e.g. the Gauss coordinate), [] a scalar of the element (e.g. a corner
+    coordinate). Without it every input has the grid's shape.
   }];
 
-  let arguments = (ins Variadic<AnyRankedTensor>:$inputs);
+  let arguments = (ins Variadic<AnyRankedTensor>:$inputs, OptionalAttr<ArrayAttr>:$dims);
   let results = (outs Variadic<AnyRankedTensor>:$results);
   let regions = (region SizedRegion<1>:$body);
 
   let assemblyFormat = [{
     attr-dict `ins` `(` $inputs `)` `:` functional-type($inputs, $results) $body
   }];
+  let hasVerifier = 1;
 }
 
 def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp", "CellwiseOp"]>]> {

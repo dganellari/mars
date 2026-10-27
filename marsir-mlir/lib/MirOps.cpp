@@ -46,6 +46,33 @@ mlir::LogicalResult mir::DssOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult mir::FluxOp::verify() {
+  if (getResults().empty())
+    return emitOpError("needs a result");
+  auto grid = llvm::dyn_cast<mlir::RankedTensorType>(getResult(0).getType());
+  if (!grid)
+    return emitOpError("results must be ranked tensors");
+  if (!getDims())
+    return mlir::success();
+  if (getDims()->size() != getInputs().size())
+    return emitOpError("dims needs one entry per input");
+  for (auto [input, attr] : llvm::zip(getInputs(), *getDims())) {
+    auto dims = llvm::dyn_cast<mlir::DenseI64ArrayAttr>(attr);
+    auto type = llvm::dyn_cast<mlir::RankedTensorType>(input.getType());
+    if (!dims || !type || type.getRank() != (int64_t)dims.size())
+      return emitOpError("each dims entry is an i64 array as long as its input's rank");
+    int64_t last = -1;
+    for (auto [k, d] : llvm::enumerate(dims.asArrayRef())) {
+      if (d <= last || d >= grid.getRank())
+        return emitOpError("dims must be increasing grid dimensions");
+      if (type.getDimSize(k) != grid.getDimSize(d))
+        return emitOpError("an input's extent must match the grid along its dimension");
+      last = d;
+    }
+  }
+  return mlir::success();
+}
+
 mlir::LogicalResult mir::InterpolateOp::verify() {
   if (getCounting() && getAccumulate())
     return emitOpError("counting writes zeros on the other copies, so it cannot accumulate");

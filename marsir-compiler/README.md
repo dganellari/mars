@@ -102,6 +102,13 @@ det J) and BP3 (Laplacian, g = the symmetric w det J J^-1 J^-T). `mlir_ir.emit_g
 writes them as mir; `marsir-mlir/test/bp_gpu_pipeline.py` builds the PTX or the CPU
 gate (`tools/emu_bp.cpp`: the emulated kernel against direct quadrature sums).
 
+`geometry = trilinear` replaces `g0..g5` with `wdetj` (w det J) and `m00 m01 m02 m11
+m12 m22` (w det J J^-1 J^-T) of the trilinear map, which the kernel computes at each
+Gauss point from the element's 8 corners (`specs/bp1_tri.op`, `specs/bp3_tri.op`). The
+kernel takes gq, wq (the 1D Gauss points and weights) and X (3 x 2 x 2 x 2 corners)
+instead of G. The mir.flux reads them through `dims`: a coordinate and weight per axis,
+and the corners as scalars of the element. So no geometry is stored or staged per point.
+
 ## Local validation (no GPU)
 
 ```bash

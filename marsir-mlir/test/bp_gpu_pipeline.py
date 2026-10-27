@@ -15,7 +15,10 @@ PTX, or to the CPU warp emulation.
 against direct six-index sums. --q=Q sets the Gauss points (default p + 2), --f32 the
 precision, --warps=W the warps per block.
 
-Run from marsir-mlir/:  python3 test/bp_gpu_pipeline.py {bp1|bp3} [p] [--emulate]
+Specs bp1_tri / bp3_tri (geometry = trilinear) take gq, wq (q: Gauss points and weights) and the
+corners X (E x 3 x 2 x 2 x 2) instead of G.
+
+Run from marsir-mlir/:  python3 test/bp_gpu_pipeline.py {bp1|bp3|bp1_tri|bp3_tri} [p] [--emulate]
 """
 import os
 import re
@@ -49,7 +52,7 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     args = m.group(2).split(", ")
     args[0] += ' {mir.element, mir.stage = "in"}'
     args[-1] += ' {mir.element, mir.stage = "out"}'
-    if "%G:" in src:
+    if "%G:" in src or "%X:" in src:   # stored geometry, or the corners (geometry = trilinear)
         args[-2] += " {mir.element}"
     ir = ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {" + ir[m.end(3):]
 
@@ -65,10 +68,14 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
                     bufferized)
         if "--emulate" in sys.argv:
             grad = "%D:" in src
+            tri = "%X:" in src
             k = re.search(r"%G: tensor<(\d+)x", src)
+            # The pointwise action of bp1_tri / bp3_tri is that of bp1 / bp3 on the geometry
+            # the harness forms from the corners.
             return hl.emulate(ir, p, harness="emu_bp.cpp",
-                              defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.upper()}", f"-DBP_Q={q}",
-                                       f"-DBP_K={k.group(1) if k else 0}"] + (["-DBP_GRAD"] if grad else []))
+                              defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.split('_')[0].upper()}",
+                                       f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
+                              + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else []))
         suffix = "_f32" if real == "f32" else ""
         named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(")
         status = hl.finish(named, p, suffix, no_chain=True, prefix=spec)

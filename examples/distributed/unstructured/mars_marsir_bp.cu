@@ -9,6 +9,11 @@
 // sin(pi z) (1,1,1), GLL nodes of degree p, q = p + 2 Gauss points. Geometry per Gauss
 // point on the GPU: w det J (BP1), the symmetric w det J J^-1 J^-T (BP3).
 //
+// --spec bp1_tri | bp3_tri: the same operators from specs with `geometry = trilinear`;
+// the kernel reads the element's 8 corners and forms the geometry in registers. The
+// stored geometry is still built for the checks and the diagonal, then freed before the
+// solve and the timing.
+//
 // Checks: BP1 applied to 1 sums to the volume (1); BP3 applied to 1 is 0; the operator on
 // the first elements equals direct quadrature sums on the host. Solve: b = A u with u =
 // sin(pi x) sin(pi y) sin(pi z) at the nodes (zero on the boundary for BP3), so FCG
@@ -17,7 +22,8 @@
 //
 // Timing (one GPU): the operator apply, the DSS, apply + DSS (the assembled operator, as
 // the paper's Table 7), an FCG iteration. Rates are per unique DoF, (ne p + 1)^3; the
-// bandwidth counts what one pass must move at least: u and y, and the geometry.
+// bandwidth counts what one pass must move at least: u and y, and the geometry (stored
+// per Gauss point, or the 24 corner coordinates).
 //
 // --dss-ptx <dss_p{p}_sm90.ptx>: the DSS MARSIR generates from mir.dss
 // (marsir-mlir/test/dss_gpu_pipeline.py p; same bits as the hand gather, so the same
@@ -136,6 +142,21 @@ __global__ void geometry_kernel(double* __restrict__ G, long long E, int Q, int 
     }
 }
 
+// X[e][a][bx][by][bz]: the corners by component, then corner bit along each reference
+// axis, as the trilinear kernels read them.
+__global__ void corners_kernel(double* __restrict__ X, long long E, int ne, double deform)
+{
+    const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= E) return;
+    double c[8][3];
+    element_corners(e, ne, deform, c);
+    for (int k = 0; k < 8; ++k) {
+        int bx, by, bz;
+        cellwise::corner_bits(k, bx, by, bz);
+        for (int a = 0; a < 3; ++a) X[e * 24 + a * 8 + bx * 4 + by * 2 + bz] = c[k][a];
+    }
+}
+
 // u = sin(pi x) sin(pi y) sin(pi z) at every copy; zero on the cube's boundary copies
 // when `dirichlet` (sin vanishes there up to rounding; the copies are set exactly).
 template <int P>
@@ -239,7 +260,7 @@ template <int P>
 int run(const Options& o)
 {
     constexpr int n = P + 1, n3 = n * n * n, Q = P + 2, q3 = Q * Q * Q;
-    const bool bp3 = o.spec == "bp3";
+    const bool bp3 = o.spec.rfind("bp3", 0) == 0, tri = o.spec.substr(3) == "_tri";
     const int K = bp3 ? 6 : 1;
     const long long E = (long long)o.ne * o.ne * o.ne, N = E * n3;
     const long long unique = (long long)(o.ne * P + 1) * (o.ne * P + 1) * (o.ne * P + 1);
@@ -262,21 +283,26 @@ int run(const Options& o)
     BP_CK(cudaMemcpyToSymbol(c_gauss, gq.data(), Q * sizeof(double)));
     BP_CK(cudaMemcpyToSymbol(c_weight, wq.data(), Q * sizeof(double)));
     BP_CK(cudaMemcpyToSymbol(c_gll, zeta.data(), n * sizeof(double)));
-    thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB);
+    thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB), dgq(gq), dwq(wq);
     auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
 
     cudaStream_t stream;
     BP_CK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     thrust::device_vector<double> G(E * K * q3), u(N), y(N), b(N), x(N), diag(N), inv(N), s(N), r(N), q(N), z(N),
-        pdir(N), ones(N, 1.0);
+        pdir(N), ones(N, 1.0), X(tri ? E * 24 : 0);
     geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(G), E, Q, K, o.ne, o.deform);
     BP_CK(cudaGetLastError());
+    if (tri) {
+        corners_kernel<<<blocks_for(E), cellwise::kThreads, 0, stream>>>(raw(X), E, o.ne, o.deform);
+        BP_CK(cudaGetLastError());
+    }
 
     const std::string kernel = o.spec + "_apply_p" + std::to_string(P);
     const std::string path = o.ptx_dir + "/" + o.spec + "_p" + std::to_string(P) + "_sm90.ptx";
-    marsir::GalerkinPtx op(path, kernel, P, Q, bp3, K);
+    marsir::GalerkinPtx op(path, kernel, P, Q, bp3, tri ? 0 : K);
     auto apply = [&](const double* in, double* out, cudaStream_t st) {
-        op.apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G), out, E, st);
+        if (tri) op.apply_trilinear(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(dgq), raw(dwq), raw(X), out, E, st);
+        else op.apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G), out, E, st);
     };
 
     // The unstructured tables of the cube (one rank: every element local).
@@ -387,6 +413,11 @@ int run(const Options& o)
     inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, o.ne, bp3);
     BP_CK(cudaGetLastError());
     const cellwise::DssJacobi<decltype(dss)> precond{dss, raw(inv), raw(s), N};
+    if (tri) {
+        BP_CK(cudaStreamSynchronize(stream));
+        G.clear();
+        G.shrink_to_fit();
+    }
 
     cellwise::FcgReduction red(MPI_COMM_SELF);
     cudaEvent_t t0, t1;
@@ -425,12 +456,12 @@ int run(const Options& o)
         apply(raw(u), raw(y), stream);
         dss(raw(y), raw(s), stream);
     });
-    const double op_bytes = (2.0 * N + (double)E * K * q3) * 8.0, dss_bytes = 2.0 * N * 8.0;
+    const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
                       (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax;
 
-    printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f\n", o.spec.c_str(), P,
-           Q, o.ne, E, unique, N, o.deform);
+    printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
+           o.spec.c_str(), P, Q, o.ne, E, unique, N, o.deform, tri ? "trilinear (corners)" : "stored");
     if (bp3)
         printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
     else
@@ -474,11 +505,12 @@ int main(int argc, char** argv)
     int ranks = 1;
     MPI_Comm_size(MPI_COMM_WORLD, &ranks);
     if (!error && o.ptx_dir.empty()) error = "--ptx-dir is required";
-    if (!error && o.spec != "bp1" && o.spec != "bp3") error = "--spec is bp1 or bp3";
+    if (!error && o.spec != "bp1" && o.spec != "bp3" && o.spec != "bp1_tri" && o.spec != "bp3_tri")
+        error = "--spec is bp1, bp3, bp1_tri or bp3_tri";
     if (!error && o.p != 1 && o.p != 3 && o.p != 7) error = "--p is 1, 3 or 7 (the generated degrees)";
     if (!error && ranks != 1) error = "one rank for now";
     if (error) {
-        fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3 --p 1|3|7 [--ne N] [--deform a] [--tol t] "
+        fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
                         "[--maxit k] [--reps r] [--dss-ptx file]\n", error, argv[0]);
         MPI_Finalize();
         return 1;

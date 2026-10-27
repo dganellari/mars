@@ -261,9 +261,21 @@ struct FluxLowering : public OpRewritePattern<mir::FluxOp> {
     Location loc = op.getLoc();
     int64_t rank = resType.getRank();
 
-    // Identity map for every input and output; all loops parallel.
+    // Identity map for every output, and for every input unless `dims` broadcasts it
+    // (an input varying along some grid dimensions only); all loops parallel.
     AffineMap id = rewriter.getMultiDimIdentityMap(rank);
-    SmallVector<AffineMap> maps(op.getInputs().size() + op.getResults().size(), id);
+    SmallVector<AffineMap> maps;
+    for (unsigned i = 0; i < op.getInputs().size(); ++i) {
+      if (!op.getDims()) {
+        maps.push_back(id);
+        continue;
+      }
+      SmallVector<AffineExpr> exprs;
+      for (int64_t d : llvm::cast<DenseI64ArrayAttr>((*op.getDims())[i]).asArrayRef())
+        exprs.push_back(rewriter.getAffineDimExpr(d));
+      maps.push_back(AffineMap::get(rank, 0, exprs, rewriter.getContext()));
+    }
+    maps.append(op.getResults().size(), id);
     SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
 
     SmallVector<Value> inits;
