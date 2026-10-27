@@ -398,6 +398,20 @@ __device__ inline void nsFaceWeights(int ip, const double corner[8][3], const Co
         w[m] = dndx[m][0] * area.c[0][f] + dndx[m][1] * area.c[1][f] + dndx[m][2] * area.c[2][f];
 }
 
+// Face ip of local element k. Face-major on AMD, so the lanes of a wave read one face of consecutive
+// elements in one coalesced access: on MI300A it cut the four face kernels of the channel case from 26.8
+// to 12.0 ms per step. On H100 the two layouts measured the same, so CUDA keeps k * 12 + ip.
+#if defined(__HIPCC__)
+inline constexpr bool nsFaceMajor = true;
+#else
+inline constexpr bool nsFaceMajor = false;
+#endif
+
+__host__ __device__ inline size_t nsFace(size_t k, int ip, size_t count)
+{
+    return nsFaceMajor ? size_t(ip) * count + k : k * 12 + ip;
+}
+
 // The pattern of the local slot matrix: (row << 32 | col) for every pair of corners of an element.
 template<typename KeyType>
 __global__ void nsPatternKeysKernel(HexElements<KeyType> hex, unsigned long long* keys)
@@ -460,7 +474,7 @@ __global__ void nsLaplacianCsrKernel(HexElements<KeyType> hex, const RealType* x
     for (int ip = 0; ip < 12; ++ip)
     {
         double w[8];
-        nsFaceWeights(ip, corner, area, k * 12 + ip, w);
+        nsFaceWeights(ip, corner, area, nsFace(k, ip, hex.count), w);
         int L = hexLeftNode(ip), R = hexRightNode(ip);
         for (int m = 0; m < 8; ++m)
         {
@@ -525,7 +539,7 @@ __global__ void nsToDofKernel(size_t n, const uint8_t* isDof, const int* dofInde
 
 // ---------------------------------------------------------------------------
 // Time step kernels. Element loops run over the local elements, with the face
-// data of element k at k * 12 + face; node loops over the DOF slots (isDof).
+// data of element k at nsFace(k, face, count); node loops over the DOF slots (isDof).
 // ---------------------------------------------------------------------------
 
 // The stabilized face flux F = A . (u_L + u_R) / 2 - h [ (grad p . A) + A . (g_L + g_R) / 2 ]
@@ -544,7 +558,7 @@ __global__ void nsFaceFluxKernel(HexElements<KeyType> hex, const RealType* x, co
     nsCorners(hex, hex.first + k, x, y, z, n, corner);
     for (int ip = 0; ip < 12; ++ip)
     {
-        size_t f = k * 12 + ip;
+        size_t f = nsFace(k, ip, hex.count);
         double w[8];
         nsFaceWeights(ip, corner, area, f, w);
         KeyType L = n[hexLeftNode(ip)], R = n[hexRightNode(ip)];
@@ -573,7 +587,7 @@ __global__ void nsFaceGradientKernel(HexElements<KeyType> hex, const RealType* x
     nsCorners(hex, hex.first + k, x, y, z, n, corner);
     for (int ip = 0; ip < 12; ++ip)
     {
-        size_t f = k * 12 + ip;
+        size_t f = nsFace(k, ip, hex.count);
         double w[8], gradient = 0;
         nsFaceWeights(ip, corner, area, f, w);
         for (int m = 0; m < 8; ++m)
@@ -593,8 +607,9 @@ __global__ void nsFaceDivergenceKernel(HexElements<KeyType> hex, const RealType*
     for (int ip = 0; ip < 12; ++ip)
     {
         KeyType L = hex.node[hexLeftNode(ip)][e], R = hex.node[hexRightNode(ip)][e];
-        atomicAdd(&div[L], flux[k * 12 + ip]);
-        atomicAdd(&div[R], -flux[k * 12 + ip]);
+        RealType F = flux[nsFace(k, ip, hex.count)];
+        atomicAdd(&div[L], F);
+        atomicAdd(&div[R], -F);
     }
 }
 
@@ -613,7 +628,7 @@ __global__ void nsAdvectionKernel(HexElements<KeyType> hex, const RealType* flux
     for (int ip = 0; ip < 12; ++ip)
     {
         KeyType L = hex.node[hexLeftNode(ip)][e], R = hex.node[hexRightNode(ip)][e];
-        RealType F = flux[k * 12 + ip];
+        RealType F = flux[nsFace(k, ip, hex.count)];
         for (int d = 0; d < comps; ++d)
         {
             atomicAdd(&adv.c[d][L], -RealType(0.5) * F * u.c[d][R]);
@@ -637,7 +652,7 @@ __global__ void nsDivergenceTransposeKernel(HexElements<KeyType> hex, Components
     for (int ip = 0; ip < 12; ++ip)
     {
         KeyType L = n[hexLeftNode(ip)], R = n[hexRightNode(ip)];
-        size_t f    = k * 12 + ip;
+        size_t f    = nsFace(k, ip, hex.count);
         RealType dp = RealType(0.5) * (p[L] - p[R]);
         for (int d = 0; d < comps; ++d)
         {
@@ -1516,9 +1531,9 @@ private:
             const KeyType* c[8];
             for (int i = 0; i < 8; ++i)
                 c[i] = hex_.node[i] + hex_.first;
-            precomputeAreaVectors<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], hex_.count,
-                                                        x(), y(), z(), area_[0].data(), area_[1].data(),
-                                                        area_[2].data());
+            precomputeAreaVectors<KeyType, RealType, nsFaceMajor>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7],
+                                                                  hex_.count, x(), y(), z(), area_[0].data(),
+                                                                  area_[1].data(), area_[2].data());
             cudaCheckError();
             nsMassKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), massLocal_.data());
         }

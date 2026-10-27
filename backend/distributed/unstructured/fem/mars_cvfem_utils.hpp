@@ -303,8 +303,9 @@ __device__ inline void quad_area_by_triangulation_generic(const RealType areacoo
     areaVec[2] *= RealType(0.5);
 }
 
-// Pre-compute area vectors for all elements and all SCS
-template<typename KeyType, typename RealType>
+// Pre-compute area vectors for all elements and all SCS. FaceMajor stores face scs of element e at
+// scs * numElements + e instead of e * 12 + scs.
+template<typename KeyType, typename RealType, bool FaceMajor = false>
 __global__ void precomputeAreaVectorsKernel(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
@@ -365,7 +366,7 @@ __global__ void precomputeAreaVectorsKernel(
         quad_area_by_triangulation_generic(scscoords, areaVec);
 
         // Store
-        size_t offset = elemIdx * 12 + scs;
+        size_t offset = FaceMajor ? scs * numElements + elemIdx : elemIdx * 12 + scs;
         d_areaVec_x[offset] = areaVec[0];
         d_areaVec_y[offset] = areaVec[1];
         d_areaVec_z[offset] = areaVec[2];
@@ -373,7 +374,7 @@ __global__ void precomputeAreaVectorsKernel(
 }
 
 // Compute area vectors on the device.
-template<typename KeyType, typename RealType>
+template<typename KeyType, typename RealType, bool FaceMajor = false>
 void precomputeAreaVectors(
     const KeyType* d_conn0, const KeyType* d_conn1,
     const KeyType* d_conn2, const KeyType* d_conn3,
@@ -386,7 +387,7 @@ void precomputeAreaVectors(
 {
     int blockSize = 256;
     int numBlocks = (numElements + blockSize - 1) / blockSize;
-    precomputeAreaVectorsKernel<KeyType, RealType><<<numBlocks, blockSize, 0, stream>>>(
+    precomputeAreaVectorsKernel<KeyType, RealType, FaceMajor><<<numBlocks, blockSize, 0, stream>>>(
         d_conn0, d_conn1, d_conn2, d_conn3,
         d_conn4, d_conn5, d_conn6, d_conn7,
         numElements,
