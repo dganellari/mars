@@ -37,8 +37,8 @@ enum class CvfemKernelVariant {
     WmmaTensor,    // FP64 WMMA tensor cores: 1 warp/element, diffusion = S^T x D matmul (SM80+)
     WgmmaTensor,   // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
     TensorFaces,   // Tensor's element matrix with 16 threads per element: each face once, then the rows
-    TensorFacesAgg, // TensorFaces adding up shared rows per block before the global atomics (the HIP Tensor)
-    TensorFacesAgg512, // The same with 32 elements per block (experiment)
+    TensorFacesAgg, // TensorFaces adding up shared rows per block before the global atomics, 16 elements per block
+    TensorFacesAgg512, // The same with 32 elements per block (the HIP Tensor)
     TensorEarly    // HIP only: one thread per element, rows released after their last face (the former HIP Tensor)
 };
 
@@ -161,12 +161,13 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // On HIP, 16 threads per element with the atomics added up per block first: on MI300A (hex192)
-                // 8.6 ms against 14.5 ms for tensor_early. On H100 the one-thread kernel stays faster.
+                // On HIP, 16 threads per element, 32 elements per block, the atomics added up per block first:
+                // on MI300A (hex192) 8.2 ms against 14.0 ms for tensor_early and 8.4 ms with 16 elements per
+                // block. On H100 the one-thread kernel stays faster.
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true, true>
-                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 512, true, true>
+                    <<<unsigned((numElements + 31) / 32), 512, 0, config.stream>>>(
 #else
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif
