@@ -106,8 +106,10 @@ gate (`tools/emu_bp.cpp`: the emulated kernel against direct quadrature sums).
 m12 m22` (w det J J^-1 J^-T) of the trilinear map, which the kernel computes at each
 Gauss point from the element's 8 corners (`specs/bp1_tri.op`, `specs/bp3_tri.op`). The
 kernel takes gq, wq (the 1D Gauss points and weights) and X (3 x 2 x 2 x 2 corners)
-instead of G. The mir.flux reads them through `dims`: a coordinate and weight per axis,
-and the corners as scalars of the element. So no geometry is stored or staged per point.
+instead of G. A scalar mir.flux first turns the corners into the 21 coefficients of the
+map's derivatives (7 per component; the mixed ones are shared by the three derivatives),
+and the point flux reads them through `dims`, with a coordinate and weight per axis. Each
+J entry is then 3 FMAs. So no geometry is stored or staged per point.
 
 ## Local validation (no GPU)
 

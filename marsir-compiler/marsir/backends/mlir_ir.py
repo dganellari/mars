@@ -352,12 +352,13 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
 
     geometry = trilinear: instead of G, gq and wq (q: the Gauss points and weights on
     [-1, 1]) and X (3 x 2 x 2 x 2: the element's corners by component, then corner bit
-    along each axis). The flux takes them broadcast (the coordinate and weight along
-    axis d vary along d only, the corners are scalars of the element) and forms, at
-    each point and in registers, J[a][b] = d x_a / d xi_b of the trilinear map, the
-    adjugate and det J, and from them the inputs the spec reads: wdetj = w det J and
-    m_de = w adj adj^T / det (= w det J J^-1 J^-T). Nothing per Gauss point is stored
-    or staged."""
+    along each axis). A scalar flux first turns the corners into the 21 coefficients
+    the Jacobian needs: x_a = sum over masks m of c[a][m] prod_{d in m} xi_d, and J reads
+    the 7 with m != 0 (the mixed ones are shared by the three derivatives). The point
+    flux takes those and the coordinate and weight along each axis (dims broadcasts
+    them) and forms, in registers, J[a][b] (3 FMAs each), the adjugate and det J, and
+    from them the inputs the spec reads: wdetj = w det J and m_de = w adj adj^T / det
+    (= w det J J^-1 J^-T). Nothing per Gauss point is stored or staged."""
     o = ga.op
     n = p + 1
     q = q or p + 2
@@ -413,13 +414,42 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
         for d in range(3):
             inputs += [("xi%d" % d, "%gq"), ("w%d" % d, "%wq")]
             dims += [[d], [d]]
+        # The element's scalars come first, ahead of every sweep, so they do not split
+        # the point flux from the contractions it fuses with.
+        corners, pre = [], []
         for a in range(3):
             for c in range(8):
                 x = fresh("x")
-                L.append("  %s = tensor.extract_slice %%X[%d, %d, %d, %d] [1, 1, 1, 1] [1, 1, 1, 1] : %s to tensor<f64>"
-                         % (x, a, c >> 2, (c >> 1) & 1, c & 1, ty([3, 2, 2, 2])))
-                inputs.append(("X%d%d" % (a, c), x))
-                dims.append([])
+                pre.append("  %s = tensor.extract_slice %%X[%d, %d, %d, %d] [1, 1, 1, 1] [1, 1, 1, 1] : %s to tensor<f64>"
+                           % (x, a, c >> 2, (c >> 1) & 1, c & 1, ty([3, 2, 2, 2])))
+                corners.append(x)
+        # c[a][m] = 1/8 sum over corners of X[a][corner] prod_{d in m} s_d, s_d = -1 or +1
+        # for the corner's bit along axis d (bit d of m: xi_d is a factor).
+        coef = [(a, m) for a in range(3) for m in range(1, 8)]
+        cbody, cnames, cctr = [], {"X%d%d" % (a, c): "%%a%d" % (8 * a + c) for a in range(3) for c in range(8)}, [0]
+        cyields = []
+        for a, m in coef:
+            terms = []
+            for c in range(8):
+                bits = (c >> 2, (c >> 1) & 1, c & 1)
+                sign = 1
+                for d in range(3):
+                    if m >> d & 1 and not bits[d]:
+                        sign = -sign
+                terms.append(("+ " if sign > 0 else "- ") + "X%d%d" % (a, c))
+            cyields.append(to_mlir_ssa(parse_expr("0.125*(%s)" % " ".join(terms).lstrip("+ ")), cnames, cbody, cctr))
+        cx = fresh("x")
+        pre.append("  %s:%d = mir.flux {dims = [%s]} ins(%s) : (%s) -> (%s) {"
+                   % (cx, len(coef), ", ".join(["array<i64>"] * 24), ", ".join(corners), ", ".join(["tensor<f64>"] * 24),
+                      ", ".join(["tensor<f64>"] * len(coef))))
+        pre.append("  ^bb0(%s):" % ", ".join("%%a%d: f64" % i for i in range(24)))
+        pre.extend(cbody)
+        pre.append("    mir.yield %s : %s" % (", ".join(cyields), ", ".join(["f64"] * len(coef))))
+        pre.append("  }")
+        L[3:3] = pre
+        for i, (a, m) in enumerate(coef):
+            inputs.append(("c%d%d" % (a, m), "%s#%d" % (cx, i)))
+            dims.append([])
     names = [nm for nm, _ in inputs]
     outs = [nm for nm, _ in ga.outputs]
     x = fresh("x")
@@ -435,26 +465,16 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
     ctr = [0]
     body = []
     if ga.trilinear and geo_names:
-        # The trilinear map's Jacobian: corner c = (i, j, k) bits along the axes, N_0 =
-        # (1 - xi) / 2, N_1 = (1 + xi) / 2, so J[a][b] = 1/2 sum over the other two axes'
-        # bits of (X at bit 1 - X at bit 0 along b) times their N.
-        for d in range(3):
-            valnames["n%d0" % d] = to_mlir_ssa(parse_expr("0.5 - 0.5*xi%d" % d), valnames, body, ctr)
-            valnames["n%d1" % d] = to_mlir_ssa(parse_expr("0.5 + 0.5*xi%d" % d), valnames, body, ctr)
+        # J[a][b] = d x_a / d xi_b in Horner form, o1 < o2 the other axes:
+        # (c[b] + c[b,o1] xi_o1) + xi_o2 (c[b,o2] + c[b,o1,o2] xi_o1).
         valnames["w"] = to_mlir_ssa(parse_expr("w0*w1*w2"), valnames, body, ctr)
         for a in range(3):
             for b in range(3):
                 o1, o2 = [ax for ax in range(3) if ax != b]
-                terms = []
-                for s1 in range(2):
-                    for s2 in range(2):
-                        bits_hi, bits_lo = [0, 0, 0], [0, 0, 0]
-                        bits_hi[b], bits_hi[o1], bits_hi[o2] = 1, s1, s2
-                        bits_lo[o1], bits_lo[o2] = s1, s2
-                        hi = 4 * bits_hi[0] + 2 * bits_hi[1] + bits_hi[2]
-                        lo = 4 * bits_lo[0] + 2 * bits_lo[1] + bits_lo[2]
-                        terms.append("(X%d%d - X%d%d)*n%d%d*n%d%d" % (a, hi, a, lo, o1, s1, o2, s2))
-                valnames["J%d%d" % (a, b)] = to_mlir_ssa(parse_expr("0.5*(%s)" % " + ".join(terms)), valnames, body, ctr)
+                mb, m1, m2 = 1 << b, 1 << o1, 1 << o2
+                text = "(c%d%d + c%d%d*xi%d) + xi%d*(c%d%d + c%d7*xi%d)" % (
+                    a, mb, a, mb | m1, o1, o2, a, mb | m2, a, o1)
+                valnames["J%d%d" % (a, b)] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
         # The adjugate (adj = det J^-1), det J, then the geometry the spec reads.
         adj = {(0, 0): "J11*J22 - J12*J21", (0, 1): "J02*J21 - J01*J22", (0, 2): "J01*J12 - J02*J11",
                (1, 0): "J12*J20 - J10*J22", (1, 1): "J00*J22 - J02*J20", (1, 2): "J02*J10 - J00*J12",

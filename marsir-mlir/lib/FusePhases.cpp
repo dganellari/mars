@@ -31,7 +31,9 @@
 //
 // Values defined between phases (views, constants, scratch allocations) are first
 // hoisted to the top of the element body, in order, so merged code still sees
-// them; none of them depends on a phase.
+// them; none of them depends on a phase. So are the element's scalars (loads of
+// buffers nothing in the body writes, arithmetic, stores to a lane's own buffer),
+// which then do not stand between phases that could merge.
 
 #include "mir/MirPasses.h"
 
@@ -260,18 +262,48 @@ void fuseReductions(scf::ParallelOp phase) {
 
 void fuse(scf::ParallelOp elements) {
   Block *body = elements.getBody();
-  // Hoist what sits between phases (it does not depend on them).
+  // Hoist what sits between phases and does not depend on them: effect-free ops,
+  // loads of buffers no op in the body stores to, and stores to a lane's own buffer
+  // (a memref.alloca without {mir.scratch}), when their operands are available above
+  // the first phase.
+  DenseSet<Value> written;
+  body->walk([&](memref::StoreOp st) { written.insert(rootOf(st.getMemRef())); });
+  auto independent = [&](Operation &op) {
+    if (op.getNumRegions() > 0 || &op == body->getTerminator())
+      return false;
+    if (isMemoryEffectFree(&op))
+      return true;
+    if (auto ld = dyn_cast<memref::LoadOp>(op))
+      return !written.contains(rootOf(ld.getMemRef()));
+    if (auto st = dyn_cast<memref::StoreOp>(op)) {
+      auto a = rootOf(st.getMemRef()).getDefiningOp<memref::AllocaOp>();
+      return a && !a->hasAttr("mir.scratch");
+    }
+    return false;
+  };
   SmallVector<Operation *> hoist;
+  DenseSet<Operation *> above;   // defined above the first phase, or hoisted there
   bool seenPhase = false;
   for (Operation &op : *body) {
     if (isPhase(&op)) {
       seenPhase = true;
       continue;
     }
-    if (seenPhase && &op != body->getTerminator() && op.getNumRegions() == 0 && isMemoryEffectFree(&op))
+    if (!seenPhase) {
+      above.insert(&op);
+      continue;
+    }
+    auto available = [&](Value v) {
+      Operation *def = v.getDefiningOp();
+      return !def || def->getBlock() != body || above.count(def);
+    };
+    if (independent(op) && llvm::all_of(op.getOperands(), available)) {
       hoist.push_back(&op);
-    else if (seenPhase && isa<memref::AllocaOp>(op))
+      above.insert(&op);
+    } else if (isa<memref::AllocaOp>(op)) {
       hoist.push_back(&op);
+      above.insert(&op);
+    }
   }
   Operation *firstPhase = nullptr;
   for (Operation &op : *body)
