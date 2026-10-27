@@ -149,3 +149,21 @@ for the passes against 2 N plus the shared copies for the gather; cache reuse de
 the actual memory traffic, which was not measured. So this is a hypothesis for why the
 gather wins at p = 7, not a demonstrated cause. The DSS is about 20% of the p = 1 FCG
 iteration (0.29 of 1.43 ms), so further DSS work is judged by the iteration time.
+
+### One thread per block node (920754ee)
+
+Instead of the three passes, one thread per block node sums the node's copies in the
+block and writes the sum to each (every copy read once, written once), then the same
+skeleton. B = 32, rotated, BP1, one session (the B = 8 runs of this session were lost
+to a file-name error in the run command):
+
+| B = 32 | DSS passes | DSS block nodes | FCG iteration passes | FCG iteration block nodes |
+|---|---|---|---|---|
+| p = 1 | 0.292 ms | 0.221 ms | 1.432 ms | 1.363 ms |
+| p = 3 | 0.239 ms | 0.133 ms | 1.379 ms | 1.258 ms |
+| p = 7 | 0.159 ms | 0.145 ms | 1.642 ms | 1.621 ms |
+
+Block nodes beat the passes at every degree; all PASS, equal to the hand gather to
+2.7e-15. Against the hand gather (earlier session, B = 8 layout): FCG iteration p = 1
+2.85 -> 1.36 ms, p = 3 1.48 -> 1.26 ms; at p = 7 the gather's 0.129 ms DSS and 1.61 ms
+iteration are within 2% of block nodes, not measured in the same session.
