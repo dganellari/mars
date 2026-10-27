@@ -123,3 +123,27 @@ for BP3 at p = 3, and slower for BP1 at p = 1 (1.48x) and p = 3 (1.24x), where t
 geometry is one value per point. FCG iteration, BP3: 4.45 -> 3.99 ms (p = 1), 2.07 -> 2.09
 (p = 3), 2.89 -> 2.70 (p = 7). At p <= 3 the trilinear kernels still use about twice the
 registers; whether that limits them is not measured.
+
+## DSS: block-structured (passes inside blocks + block skeleton)
+
+`--block B --rotate --block-dss` (227bf5a8, `solvers/mars_cellwise_block_dss.hpp`): the
+elements stored in blocks of B^3, every block in a pseudo-random one of the 24 proper
+rotations; a pass per axis inside the blocks (z out of place, x and y in place), then the
+block skeleton from the unstructured tables built over the blocks. Same 16.8M cell-wise
+vectors, BP1, GH200. Every run PASS; the block DSS equals the hand gather on a random
+vector to 1.8e-15 relative, and iteration counts and histories match.
+
+| DSS, ms | hand gather | block, B = 8 | block, B = 32 |
+|---|---|---|---|
+| p = 1 (ne 128) | 1.640 (164 GB/s) | 0.356 | 0.292 (64 blocks) |
+| p = 3 (ne 64) | 0.320 | 0.259 | 0.237 (8 blocks) |
+| p = 7 (ne 32) | 0.129 (2079 GB/s) | 0.177 | 0.157 (1 block, no skeleton) |
+
+FCG iteration, BP1: p = 1 2.85 -> 1.43 ms (B = 32), p = 3 1.48 -> 1.38, p = 7 1.61 -> 1.63.
+So the block DSS for p <= 3 (5.6x at p = 1, 1.35x at p = 3), the hand gather at p = 7.
+The GB/s column counts the minimum traffic (read and write every copy once); the block
+DSS moves more: the z pass reads and writes everything, then the x and y passes read and
+write the copies on element faces (all of them at p = 1, 2 n^2 / n^3 = 1/4 at p = 7). At
+p = 7 that is about 3 N values against the gather's 2 N, which is why the gather wins
+there. Fusing the passes (a tile of elements per thread block, the three passes in
+shared memory) is the next step for p = 1, where every pass touches every copy.
