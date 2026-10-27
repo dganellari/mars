@@ -66,6 +66,28 @@ constexpr bool tensorFacesTablesValid()
 }
 static_assert(tensorFacesTablesValid(), "face/node maps must match hexLeftNode/hexRightNode");
 
+// Loads and atomics through a pointer known to be in device global memory. The CSR arrays reached through
+// the matrix struct are generic pointers, so on AMD the compiler emits flat instructions, which also count
+// against the shared-memory wait counter; as global instructions the aggregated kernel is 1% faster on MI300A.
+template<class T>
+__device__ __forceinline__ T tensorFacesLoadGlobal(const T* p)
+{
+#if defined(__HIP_DEVICE_COMPILE__)
+    return *(const __attribute__((address_space(1))) T*)p;
+#else
+    return *p;
+#endif
+}
+template<class T>
+__device__ __forceinline__ void tensorFacesAtomicAddGlobal(T* p, T v)
+{
+#if defined(__HIP_DEVICE_COMPILE__)
+    __hip_atomic_fetch_add((__attribute__((address_space(1))) T*)p, v, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+#else
+    atomicAdd(p, v);
+#endif
+}
+
 // the largest power of 2 not above n, and its log2: the hash table of the aggregated scatter
 constexpr int tensorFacesTableSlots(size_t n)
 {
@@ -103,6 +125,8 @@ struct TensorFacesElement
 // shared-memory table first, then sends one global atomic per destination. On MI300A every global atomic
 // is forwarded past the L2 to the fabric; with 16 elements per block this cuts them 234 to 156 million
 // and the assembly 12.3 to 10.1 ms (hex192). On H100, where atomics stay in the L2, it doubles the time.
+// This path also loads a short CSR row whole, with independent loads, and matches the columns in
+// registers instead of a binary search of dependent loads per column: 10.1 to 8.6 ms on MI300A.
 template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool Aggregate = false>
 __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_faces(
     const KeyType* __restrict__ d_conn0,
@@ -328,6 +352,8 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
     else
     {
         static_assert(LumpMissing, "aggregation bounds the destinations per row by the graph pattern");
+        auto ld  = [](const int* p) { return tensorFacesLoadGlobal(p); };
+        auto add = [&](int k, RealType v) { tensorFacesAtomicAddGlobal(k >= 0 ? &matrix->values[k] : &d_rhs[-1 - k], v); };
         // A destination is a matrix value index, or -1 - row for the right-hand side. This lane's go to
         // fixed slots (compile-time indices keep them in registers): right-hand side, diagonal, 4 columns.
         constexpr int EmptyKey = -2147483647 - 1;
@@ -346,9 +372,15 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
                 key[0] = -1 - row_dof;
                 val[0] = rhs;
             }
-            const int row_start = matrix->rowPtr[row_dof];
-            const int row_end   = matrix->rowPtr[row_dof + 1];
+            const int row_start = ld(&matrix->rowPtr[row_dof]);
+            const int row_end   = ld(&matrix->rowPtr[row_dof + 1]);
             RealType diagonal   = 0.0;
+            constexpr int RowMax = 8;
+            const bool wholeRow  = row_end - row_start <= RowMax;
+            int rowCols[RowMax];
+#pragma unroll
+            for (int t = 0; t < RowMax; ++t)
+                rowCols[t] = (wholeRow && row_start + t < row_end) ? ld(&matrix->colInd[row_start + t]) : -1;
 #pragma unroll
             for (int j = 0; j < 4; ++j)
             {
@@ -360,11 +392,25 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
                     diagonal += value;
                     continue;
                 }
+                if (wholeRow)
+                {
+                    int pos = -1;
+#pragma unroll
+                    for (int t = 0; t < RowMax; ++t)
+                        if (rowCols[t] == col_dof) pos = row_start + t;
+                    if (pos >= 0)
+                    {
+                        key[2 + j] = pos;
+                        val[2 + j] = value;
+                    }
+                    else diagonal += value;
+                    continue;
+                }
                 int left = row_start, right = row_end - 1;
                 while (left <= right)
                 {
                     const int mid = (left + right) >> 1;
-                    const int col = matrix->colInd[mid];
+                    const int col = ld(&matrix->colInd[mid]);
                     if (col == col_dof)
                     {
                         key[2 + j] = mid;
@@ -378,7 +424,7 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
             }
             if (diagonal != 0.0)
             {
-                key[1] = matrix->diagPtr[row_dof];
+                key[1] = ld(&matrix->diagPtr[row_dof]);
                 val[1] = diagonal;
             }
         }
@@ -415,7 +461,7 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
                 }
                 h = (h + 1) & (Slots - 1);
             }
-            if (!stored) atomicAdd(key[t] >= 0 ? &matrix->values[key[t]] : &d_rhs[-1 - key[t]], val[t]);
+            if (!stored) add(key[t], val[t]);
         }
         __syncthreads();
         for (int t = threadIdx.x; t < Slots; t += BlockSize)
@@ -423,7 +469,7 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
             const int k = tableKey[t];
             if (k == EmptyKey) continue;
             const RealType v = tableVal[t];
-            if (v != 0.0) atomicAdd(k >= 0 ? &matrix->values[k] : &d_rhs[-1 - k], v);
+            if (v != 0.0) add(k, v);
         }
     }
 }

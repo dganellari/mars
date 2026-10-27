@@ -162,7 +162,7 @@ public:
 
             case CvfemKernelVariant::Tensor:
                 // On HIP, 16 threads per element with the atomics added up per block first: on MI300A (hex192)
-                // 10.1 ms against 14.1 ms for tensor_early. On H100 the one-thread kernel stays faster.
+                // 8.6 ms against 14.5 ms for tensor_early. On H100 the one-thread kernel stays faster.
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
                 if (numElements == 0) break;
                 cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true, true>
