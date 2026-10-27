@@ -99,3 +99,27 @@ f64 instructions to the pointwise loop, all recomputed at every point, including
 corner differences that are constant for the element. What it saves is memory: G is
 E 6 q^3 doubles for BP3 (2.7 GB at p = 1, 1.6 GB at p = 3) against 24 doubles per
 element (0.4 GB, 50 MB).
+
+### 21 per-element coefficients (02fb73e3)
+
+The Jacobian of the trilinear map needs only 7 coefficients per component (the mixed
+ones are shared by the three derivatives). A scalar flux computes these 21 from the
+corners once per element, in every lane, and each J entry is then 3 FMAs at a point.
+Phases, shared memory and warps per block are the same as stored at every p; no spills.
+Same runs as above, one session for stored and the 21-coefficient form:
+
+| operator, ms | stored | corners (9bbb398c) | 21 coefficients | registers stored / 21 coef. |
+|---|---|---|---|---|
+| BP1 p = 1 | 0.467 | 1.005 | 0.691 | 40 / 80 |
+| BP1 p = 3 | 0.382 | 0.605 | 0.473 | 64 / 96 |
+| BP1 p = 7 | 0.730 | 0.712 | 0.685 | 212 / 212 |
+| BP3 p = 1 | 2.156 | 2.045 | 1.710 | 56 / 114 |
+| BP3 p = 3 | 1.109 | 1.316 | 1.138 | 72 / 126 |
+| BP3 p = 7 | 2.132 | 2.012 | 1.932 | 206 / 206 |
+
+The coefficient form is faster than the corner form in every case. Against stored geometry,
+it is faster for BP3 at p = 1 (21%) and p = 7 (9%) and BP1 at p = 7 (6%), equal within 3%
+for BP3 at p = 3, and slower for BP1 at p = 1 (1.48x) and p = 3 (1.24x), where the stored
+geometry is one value per point. FCG iteration, BP3: 4.45 -> 3.99 ms (p = 1), 2.07 -> 2.09
+(p = 3), 2.89 -> 2.70 (p = 7). At p <= 3 the trilinear kernels still use about twice the
+registers; whether that limits them is not measured.
