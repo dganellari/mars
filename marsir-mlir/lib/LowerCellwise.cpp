@@ -679,28 +679,33 @@ BlockGeom blockGeom(int64_t P, int64_t B) {
   return {P, B, n, n * n * n, B * B * B, B * P};
 }
 
-// The copies of block node coordinate X along one axis (axis_copies): how many (1 or
-// 2), and element index l and local coordinate a of the first (the representative) and
-// the second.
+// The copies of block node coordinate X (index) along one axis (axis_copies): how many
+// (1 or 2, index), and element index l and local coordinate a (i32) of the first (the
+// representative) and the second. Everything inside a block is 32-bit, as in the hand
+// kernel: 64-bit division by a constant costs several times the instructions.
 struct AxisCopies {
   Value count, l0, a0, l1, a1;
 };
 
-AxisCopies axisCopies(Emit &z, const BlockGeom &g, Value X) {
-  const Value last = z.eq(X, z.idx(g.Pm)), q = z.div(X, z.idx(g.P)), r = z.rem(X, z.idx(g.P));
+AxisCopies axisCopies(Emit &z, const BlockGeom &g, Value Xindex) {
+  const Value X = z.toI32(Xindex);
+  const Value last = z.eq(X, z.i32(g.Pm)), q = z.div(X, z.i32(g.P)), r = z.rem(X, z.i32(g.P));
   AxisCopies c;
-  c.l0 = z.select(last, z.idx(g.B - 1), q);
-  c.a0 = z.select(last, z.idx(g.P), r);
-  const Value two = z.band(z.band(z.eq(r, z.idx(0)), z.lt(z.idx(0), X)), z.lt(X, z.idx(g.Pm)));
+  c.l0 = z.select(last, z.i32(g.B - 1), q);
+  c.a0 = z.select(last, z.i32(g.P), r);
+  const Value two = z.band(z.band(z.eq(r, z.i32(0)), z.lt(z.i32(0), X)), z.lt(X, z.i32(g.Pm)));
   c.count = z.select(two, z.idx(2), z.idx(1));
-  c.l1 = z.sub(c.l0, z.idx(1));
-  c.a1 = z.idx(g.P);
+  c.l1 = z.sub(c.l0, z.i32(1));
+  c.a1 = z.i32(g.P);
   return c;
 }
 
+// Copy index of element (l0, l1, l2) of block blk (index), node (a0, a1, a2) (i32).
 Value blockCopy(Emit &z, const BlockGeom &g, Value blk, const Value (&l)[3], const Value (&a)[3]) {
-  const Value e = z.add(z.mul(blk, z.idx(g.B3)), z.add(z.mul(z.add(z.mul(l[0], z.idx(g.B)), l[1]), z.idx(g.B)), l[2]));
-  return z.add(z.mul(e, z.idx(g.n3)), z.add(z.mul(z.add(z.mul(a[0], z.idx(g.n)), a[1]), z.idx(g.n)), a[2]));
+  const Value le = z.add(z.mul(z.add(z.mul(l[0], z.i32(g.B)), l[1]), z.i32(g.B)), l[2]);
+  const Value node = z.add(z.mul(z.add(z.mul(a[0], z.i32(g.n)), a[1]), z.i32(g.n)), a[2]);
+  const Value e = z.add(z.mul(blk, z.idx(g.B3)), z.toIndex(le));
+  return z.add(z.mul(e, z.idx(g.n3)), z.toIndex(node));
 }
 
 Value blockRepresentative(Emit &z, const BlockGeom &g, Value blk, const Value (&x)[3]) {
@@ -767,9 +772,11 @@ LogicalResult lowerOne(mir::BlockSumOp op) {
   const Value total = x.mul(blocks, x.idx(m * m * m));
   const Type real = cast<MemRefType>(values.getType()).getElementType();
   flatItems(b, loc, total, [&](Emit &z, Value t) {
-    const Value xyz[3] = {z.rem(z.div(t, z.idx(m * m)), z.idx(m)), z.rem(z.div(t, z.idx(m)), z.idx(m)),
-                          z.rem(t, z.idx(m))};
+    // One 64-bit division for the block; the node inside it in 32 bits.
     const Value blk = z.div(t, z.idx(m * m * m));
+    const Value r = z.toI32(z.sub(t, z.mul(blk, z.idx(m * m * m))));
+    const Value xyz[3] = {z.toIndex(z.div(r, z.i32(m * m))), z.toIndex(z.rem(z.div(r, z.i32(m)), z.i32(m))),
+                          z.toIndex(z.rem(r, z.i32(m)))};
     const Value s = forBlockCopies(z, g, blk, xyz, z.zero(real),
                                    [&](Emit &u, Value k, Value acc) { return u.addf(acc, u.load(values, k)); });
     forBlockCopies(z, g, blk, xyz, Value(), [&](Emit &u, Value k, Value) {
