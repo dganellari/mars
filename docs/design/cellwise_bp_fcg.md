@@ -167,3 +167,14 @@ Block nodes beat the passes at every degree; all PASS, equal to the hand gather 
 2.7e-15. Against the hand gather (earlier session, B = 8 layout): FCG iteration p = 1
 2.85 -> 1.36 ms, p = 3 1.48 -> 1.26 ms; at p = 7 the gather's 0.129 ms DSS and 1.61 ms
 iteration are within 2% of block nodes, not measured in the same session.
+
+B = 8, rotated, BP1, hand gather and both block stages in one session:
+
+| B = 8 | DSS hand / passes / nodes (ms) | FCG iteration hand / passes / nodes (ms) |
+|---|---|---|
+| p = 1 | 1.648 / 0.355 / 0.269 | 2.852 / 1.500 / 1.410 |
+| p = 3 | 0.321 / 0.260 / 0.168 | 1.480 / 1.413 / 1.300 |
+| p = 7 | 0.128 / 0.176 / 0.173 | 1.605 / 1.663 / 1.656 |
+
+So block nodes for p <= 3 (larger blocks better: B = 32 gives 0.221 and 0.133 ms), and
+the hand gather at p = 7, where it is 3% faster per FCG iteration than either block stage.
