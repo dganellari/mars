@@ -77,3 +77,25 @@ the paper's 2.7 (A100, Table 7, general geometry, unstructured DSS). In the BP1 
 FCG iteration (1.64 ms), the operator takes 0.47 ms, the DSS 0.48 ms, and the vector
 updates and pairings the remaining 0.69 ms (four passes, about 16 vector reads and
 writes).
+
+## Geometry: stored per Gauss point against trilinear from the corners
+
+`--spec bp1_tri | bp3_tri` (9bbb398c): the kernel reads the element's 8 corners and
+forms w det J (BP1) or w det J J^-1 J^-T (BP3) in registers at each Gauss point. Same
+mesh and sizes as above (16.8M cell-wise, GH200). Every run PASS; the host oracle (from
+the stored G) agrees to rounding, and iteration counts and histories match the stored
+runs (BP3 final residuals differ in the 4th digit).
+
+| operator, ms | p = 1 stored | p = 1 trilinear | p = 3 stored | p = 3 trilinear | p = 7 stored | p = 7 trilinear |
+|---|---|---|---|---|---|---|
+| BP1 | 0.466 (1548 GB/s) | 1.005 | 0.383 (1384 GB/s) | 0.605 | 0.730 | 0.712 |
+| BP3 | 2.153 (1387 GB/s) | 2.045 | 1.082 (1701 GB/s) | 1.316 | 2.140 | 2.012 |
+
+Trilinear is faster only for BP3 at p = 1 and p = 7 (5-6%) and BP1 at p = 7 (2%), and
+slower elsewhere (BP1 p = 1 2.2x). With the geometry gone the trilinear kernels move
+137-668 GB/s, so they are no longer limited by bandwidth: the per-point geometry costs
+more than reading it. The PTX shows the geometry adds about 170 (BP1) and 230 (BP3)
+f64 instructions to the pointwise loop, all recomputed at every point, including the
+corner differences that are constant for the element. What it saves is memory: G is
+E 6 q^3 doubles for BP3 (2.7 GB at p = 1, 1.6 GB at p = 3) against 24 doubles per
+element (0.4 GB, 50 MB).
