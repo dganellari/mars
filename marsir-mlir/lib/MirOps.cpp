@@ -73,6 +73,17 @@ mlir::LogicalResult mir::FluxOp::verify() {
   return mlir::success();
 }
 
+// Node numbers of a block stay well inside 32 bits up to these sizes.
+static mlir::LogicalResult verifyBlock(mlir::Operation *op, int64_t degree, int64_t block) {
+  if (degree < 1 || degree > 8 || block < 1 || block > 64)
+    return op->emitOpError("degree must be in [1, 8] and block in [1, 64]");
+  return mlir::success();
+}
+
+mlir::LogicalResult mir::BlockSumOp::verify() { return verifyBlock(*this, getDegree(), getBlock()); }
+
+mlir::LogicalResult mir::BlockSkeletonOp::verify() { return verifyBlock(*this, getDegree(), getBlock()); }
+
 mlir::LogicalResult mir::InterpolateOp::verify() {
   if (getCounting() && getAccumulate())
     return emitOpError("counting writes zeros on the other copies, so it cannot accumulate");

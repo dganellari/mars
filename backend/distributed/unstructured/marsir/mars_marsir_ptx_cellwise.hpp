@@ -9,7 +9,10 @@
 //   BicgstabPtx generated/bicgstab_p7_sm90.ptx: the vector updates, partial
 //               folding and Krylov scalar steps of BiCGStab (mlir_ir.emit_bicgstab);
 //   MarsirJacobi  PrecondPtx behind the interface of UnstructuredJacobi, for the
-//               Krylov solvers of mars_cellwise_krylov.hpp.
+//               Krylov solvers of mars_cellwise_krylov.hpp;
+//   BlockDssPtx generated/block_dss_p{p}_b{B}_sm90.ptx (block_dss_gpu_pipeline.py, from
+//               mir.block_sum and mir.block_skeleton): same bits as
+//               cellwise::block_dss<P, B> of mars_cellwise_block_dss.hpp with block nodes.
 //
 // Kernel contract: the arguments of mir.dss in order (values, ghost, elements,
 // face_nbr, face_code, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent,
@@ -161,6 +164,37 @@ public:
 
 private:
     CUfunction fn_;
+};
+
+class BlockDssPtx : public CellwisePtx {
+public:
+    BlockDssPtx(const std::string& ptx_path, int p, int block)
+        : CellwisePtx(ptx_path, p),
+          block_(block),
+          sum_(function("block_sum_p" + std::to_string(p) + "_b" + std::to_string(block))),
+          skeleton_(function("block_skeleton_p" + std::to_string(p) + "_b" + std::to_string(block)))
+    {
+    }
+
+    // out = DSS(in) on the S.local blocks of block^3 elements; S: the tables built over
+    // the blocks as hexes (one rank). in and out must not alias.
+    void run(const double* d_in, double* d_out, const cellwise::UnstructuredTopology& S, cudaStream_t stream = 0)
+    {
+        const long long b = block_, m = b * p_ + 1, interior = m - 2;
+        const long long N = S.local * b * b * b * n3();
+        const long long nodes = S.local * m * m * m;
+        const long long skeleton = S.local * 6 * interior * interior + S.edges() * interior + S.vertices();
+        auto chunks = [](long long items) { return (items + 31) / 32; };   // 32 items per element
+        std::vector<Arg> sum{{d_in, N}, {d_out, N}};
+        launch(sum_, sum, chunks(nodes), stream);
+        std::vector<Arg> skel{{d_out, N},          vec(S.face_nbr), vec(S.face_code), vec(S.edge_off),
+                              vec(S.edge_ent),     vec(S.vert_off), vec(S.vert_ent)};
+        launch(skeleton_, skel, chunks(skeleton), stream);
+    }
+
+private:
+    int block_;
+    CUfunction sum_, skeleton_;
 };
 
 class PrecondPtx : public CellwisePtx {

@@ -47,6 +47,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -119,6 +120,7 @@ struct Emit {
   Value rem(Value x, Value y) { return b.create<arith::RemUIOp>(loc, x, y); }
   Value band(Value x, Value y) { return b.create<arith::AndIOp>(loc, x, y); }
   Value lt(Value x, Value y) { return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, x, y); }
+  Value eq(Value x, Value y) { return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, x, y); }
   Value select(Value c, Value x, Value y) { return b.create<arith::SelectOp>(loc, c, x, y); }
   Value addf(Value x, Value y) { return b.create<arith::AddFOp>(loc, x, y); }
   Value load(Value m, Value i) { return b.create<memref::LoadOp>(loc, m, ValueRange{i}); }
@@ -661,13 +663,276 @@ LogicalResult lowerOne(mir::InterpolateOp op) {
   return success();
 }
 
+// ---- block-structured DSS: mir.block_sum, mir.block_skeleton ---------------------------
+// The bodies of block_node_sum and block_skeleton_node in MARS's
+// mars_cellwise_block_dss.hpp, in the same summation order, so the same bits. Both are
+// flat: one work item per block node or skeleton node, 32 items to an "element" with
+// one lane each, 8 elements to a thread block, so --mir-warp-per-element maps item t to
+// consecutive threads as the hand kernels' grid-stride loops do.
+
+struct BlockGeom {
+  int64_t P, B, n, n3, B3, Pm;
+};
+
+BlockGeom blockGeom(int64_t P, int64_t B) {
+  const int64_t n = P + 1;
+  return {P, B, n, n * n * n, B * B * B, B * P};
+}
+
+// The copies of block node coordinate X along one axis (axis_copies): how many (1 or
+// 2), and element index l and local coordinate a of the first (the representative) and
+// the second.
+struct AxisCopies {
+  Value count, l0, a0, l1, a1;
+};
+
+AxisCopies axisCopies(Emit &z, const BlockGeom &g, Value X) {
+  const Value last = z.eq(X, z.idx(g.Pm)), q = z.div(X, z.idx(g.P)), r = z.rem(X, z.idx(g.P));
+  AxisCopies c;
+  c.l0 = z.select(last, z.idx(g.B - 1), q);
+  c.a0 = z.select(last, z.idx(g.P), r);
+  const Value two = z.band(z.band(z.eq(r, z.idx(0)), z.lt(z.idx(0), X)), z.lt(X, z.idx(g.Pm)));
+  c.count = z.select(two, z.idx(2), z.idx(1));
+  c.l1 = z.sub(c.l0, z.idx(1));
+  c.a1 = z.idx(g.P);
+  return c;
+}
+
+Value blockCopy(Emit &z, const BlockGeom &g, Value blk, const Value (&l)[3], const Value (&a)[3]) {
+  const Value e = z.add(z.mul(blk, z.idx(g.B3)), z.add(z.mul(z.add(z.mul(l[0], z.idx(g.B)), l[1]), z.idx(g.B)), l[2]));
+  return z.add(z.mul(e, z.idx(g.n3)), z.add(z.mul(z.add(z.mul(a[0], z.idx(g.n)), a[1]), z.idx(g.n)), a[2]));
+}
+
+Value blockRepresentative(Emit &z, const BlockGeom &g, Value blk, const Value (&x)[3]) {
+  const AxisCopies c[3] = {axisCopies(z, g, x[0]), axisCopies(z, g, x[1]), axisCopies(z, g, x[2])};
+  return blockCopy(z, g, blk, {c[0].l0, c[1].l0, c[2].l0}, {c[0].a0, c[1].a0, c[2].a0});
+}
+
+// The copies of block node x of block blk in lexicographic order (for_block_copies):
+// with `acc`, folds body(copy, acc) and returns the result; without, runs body(copy).
+Value forBlockCopies(Emit &z, const BlockGeom &g, Value blk, const Value (&x)[3], Value acc,
+                     function_ref<Value(Emit &, Value, Value)> body) {
+  const AxisCopies c[3] = {axisCopies(z, g, x[0]), axisCopies(z, g, x[1]), axisCopies(z, g, x[2])};
+  const SmallVector<Value> inits = acc ? SmallVector<Value>{acc} : SmallVector<Value>{};
+  std::function<Value(Emit &, int, Value (&)[3], Value (&)[3], ValueRange)> level =
+      [&](Emit &y, int d, Value (&l)[3], Value (&a)[3], ValueRange carried) -> Value {
+    auto loop = y.b.create<scf::ForOp>(
+        y.loc, y.idx(0), c[d].count, y.idx(1), carried,
+        [&](OpBuilder &lb, Location ll, Value i, ValueRange in) {
+          Emit u{lb, ll};
+          const Value first = u.eq(i, u.idx(0));
+          l[d] = u.select(first, c[d].l0, c[d].l1);
+          a[d] = u.select(first, c[d].a0, c[d].a1);
+          Value r = d < 2 ? level(u, d + 1, l, a, in) : body(u, blockCopy(u, g, blk, l, a), in.empty() ? Value() : in[0]);
+          if (in.empty())
+            lb.create<scf::YieldOp>(ll);
+          else
+            lb.create<scf::YieldOp>(ll, r);
+        });
+    return loop.getNumResults() ? loop.getResult(0) : Value();
+  };
+  Value l[3], a[3];
+  return level(z, 0, l, a, inits);
+}
+
+// Flat loop over `total` items: elements of 32 items, one lane each, item(t) per item.
+void flatItems(OpBuilder &b, Location loc, Value total, function_ref<void(Emit &, Value)> item) {
+  Emit x{b, loc};
+  const Value chunks = x.div(x.add(total, x.idx(31)), x.idx(32));
+  auto loop = b.create<scf::ParallelOp>(
+      loc, ValueRange{x.idx(0)}, ValueRange{chunks}, ValueRange{x.idx(1)},
+      [&](OpBuilder &eb, Location l, ValueRange w) {
+        lanes(eb, l, 32, [&](OpBuilder &pb, Location pl, Value lane) {
+          Emit z{pb, pl};
+          const Value t = z.add(z.mul(w[0], z.idx(32)), lane);
+          pb.create<scf::IfOp>(pl, z.lt(t, total), [&](OpBuilder &tb, Location tl) {
+            Emit u{tb, tl};
+            item(u, t);
+            tb.create<scf::YieldOp>(tl);
+          });
+        });
+      });
+  loop->setAttr("mir.elements", b.getUnitAttr());
+  loop->setAttr("mir.warps_per_block", b.getI64IntegerAttr(8));
+}
+
+LogicalResult lowerOne(mir::BlockSumOp op) {
+  const BlockGeom g = blockGeom(op.getDegree(), op.getBlock());
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emit x{b, loc};
+  const Value values = op.getValues(), out = op.getOut();
+  const int64_t m = g.Pm + 1;
+  const Value blocks = x.div(b.create<memref::DimOp>(loc, values, 0), x.idx(g.B3 * g.n3));
+  const Value total = x.mul(blocks, x.idx(m * m * m));
+  const Type real = cast<MemRefType>(values.getType()).getElementType();
+  flatItems(b, loc, total, [&](Emit &z, Value t) {
+    const Value xyz[3] = {z.rem(z.div(t, z.idx(m * m)), z.idx(m)), z.rem(z.div(t, z.idx(m)), z.idx(m)),
+                          z.rem(t, z.idx(m))};
+    const Value blk = z.div(t, z.idx(m * m * m));
+    const Value s = forBlockCopies(z, g, blk, xyz, z.zero(real),
+                                   [&](Emit &u, Value k, Value acc) { return u.addf(acc, u.load(values, k)); });
+    forBlockCopies(z, g, blk, xyz, Value(), [&](Emit &u, Value k, Value) {
+      u.store(s, out, k);
+      return Value();
+    });
+  });
+  op.erase();
+  return success();
+}
+
+LogicalResult lowerOne(mir::BlockSkeletonOp op) {
+  const BlockGeom g = blockGeom(op.getDegree(), op.getBlock());
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emit x{b, loc};
+  const Value v = op.getValues(), faceNbr = op.getFaceNbr(), faceCode = op.getFaceCode(), edgeOff = op.getEdgeOff(),
+              edgeEnt = op.getEdgeEnt(), vertOff = op.getVertOff(), vertEnt = op.getVertEnt();
+  const int64_t Pm = g.Pm, m = Pm - 1;
+  const Type real = cast<MemRefType>(v.getType()).getElementType();
+  const Value blocks = x.div(b.create<memref::DimOp>(loc, faceNbr, 0), x.idx(6));
+  const Value edges = x.sub(b.create<memref::DimOp>(loc, edgeOff, 0), x.idx(1));
+  const Value vertices = x.sub(b.create<memref::DimOp>(loc, vertOff, 0), x.idx(1));
+  const Value faces = x.mul(blocks, x.idx(6 * m * m)), edgeItems = x.mul(edges, x.idx(m));
+  const Value total = x.add(x.add(faces, edgeItems), vertices);
+  // Coordinates on face f at (i, j) and on edge k at position t (block_face_xyz,
+  // block_edge_xyz): o0 / o1, the other axes in increasing order.
+  auto faceXyz = [&](Emit &z, Value f, Value i, Value j, Value (&xyz)[3]) {
+    const Value axis = z.div(f, z.idx(2)), side = z.mul(z.rem(f, z.idx(2)), z.idx(Pm));
+    const Value a0 = z.eq(axis, z.idx(0)), a1 = z.eq(axis, z.idx(1)), a2 = z.eq(axis, z.idx(2));
+    xyz[0] = z.select(a0, side, i);
+    xyz[1] = z.select(a0, i, z.select(a1, side, j));
+    xyz[2] = z.select(a2, side, j);
+  };
+  auto edgeXyz = [&](Emit &z, Value k, Value t, Value (&xyz)[3]) {
+    const Value axis = z.div(k, z.idx(4));
+    const Value side0 = z.mul(z.rem(z.div(k, z.idx(2)), z.idx(2)), z.idx(Pm)), side1 = z.mul(z.rem(k, z.idx(2)), z.idx(Pm));
+    const Value a0 = z.eq(axis, z.idx(0)), a1 = z.eq(axis, z.idx(1)), a2 = z.eq(axis, z.idx(2));
+    xyz[0] = z.select(a0, t, side0);
+    xyz[1] = z.select(a0, side0, z.select(a1, t, side1));
+    xyz[2] = z.select(a2, t, side1);
+  };
+  auto cornerXyz = [&](Emit &z, Value c, Value (&xyz)[3]) {
+    const Value q = z.rem(c, z.idx(4));
+    const Value bx = z.b.create<arith::OrIOp>(z.loc, z.eq(q, z.idx(1)), z.eq(q, z.idx(2)));
+    const Value by = z.lt(z.idx(1), q);
+    xyz[0] = z.select(bx, z.idx(Pm), z.idx(0));
+    xyz[1] = z.select(by, z.idx(Pm), z.idx(0));
+    xyz[2] = z.mul(z.div(c, z.idx(4)), z.idx(Pm));
+  };
+  auto scatter = [&](Emit &z, Value blk, const Value (&xyz)[3], Value s) {
+    forBlockCopies(z, g, blk, xyz, Value(), [&](Emit &u, Value k, Value) {
+      u.store(s, v, k);
+      return Value();
+    });
+  };
+  // A star [begin, end) of 2 or more entries: sum one copy per block in order, then
+  // write the sum to every copy. at(entry) gives the entry's block and node.
+  auto star = [&](Emit &z, Value off, Value ent, Value g0,
+                  function_ref<Value(Emit &, Value, Value (&)[3])> at) {
+    const Value begin = z.toIndex(z.load(off, g0)), end = z.toIndex(z.load(off, z.add(g0, z.idx(1))));
+    z.b.create<scf::IfOp>(z.loc, z.lt(z.idx(1), z.sub(end, begin)), [&](OpBuilder &tb, Location tl) {
+      Emit u{tb, tl};
+      auto sum = tb.create<scf::ForOp>(tl, begin, end, u.idx(1), ValueRange{u.zero(real)},
+                                       [&](OpBuilder &lb, Location ll, Value e, ValueRange acc) {
+                                         Emit w{lb, ll};
+                                         Value xyz[3];
+                                         const Value blk = at(w, w.load(ent, e), xyz);
+                                         lb.create<scf::YieldOp>(
+                                             ll, w.addf(acc[0], w.load(v, blockRepresentative(w, g, blk, xyz))));
+                                       });
+      tb.create<scf::ForOp>(tl, begin, end, u.idx(1), ValueRange{},
+                            [&](OpBuilder &lb, Location ll, Value e, ValueRange) {
+                              Emit w{lb, ll};
+                              Value xyz[3];
+                              const Value blk = at(w, w.load(ent, e), xyz);
+                              scatter(w, blk, xyz, sum.getResult(0));
+                              lb.create<scf::YieldOp>(ll);
+                            });
+      tb.create<scf::YieldOp>(tl);
+    });
+  };
+  auto vertexItem = [&](Emit &z, Value t) {
+    star(z, vertOff, vertEnt, t, [&](Emit &w, Value ent, Value (&xyz)[3]) {
+      const Value c = w.toIndex(ent);
+      cornerXyz(w, w.rem(c, w.idx(8)), xyz);
+      return w.div(c, w.idx(8));
+    });
+  };
+  auto edgeItem = [&](Emit &z, Value t) {
+    const Value T = z.add(z.idx(1), z.rem(t, z.idx(m)));
+    star(z, edgeOff, edgeEnt, z.div(t, z.idx(m)), [&](Emit &w, Value ent, Value (&xyz)[3]) {
+      const Value k = w.toIndex(w.band(ent, w.i32(0x7fffffff)));
+      const Value pos = w.select(w.lt(ent, w.i32(0)), w.sub(w.idx(Pm), T), T);
+      edgeXyz(w, w.rem(k, w.idx(12)), pos, xyz);
+      return w.div(k, w.idx(12));
+    });
+  };
+  auto faceItem = [&](Emit &z, Value t) {
+    const Value c = z.div(t, z.idx(m * m)), q = z.rem(t, z.idx(m * m));
+    const Value nbr = z.load(faceNbr, c);
+    z.b.create<scf::IfOp>(z.loc, z.lt(z.toI32(c), nbr), [&](OpBuilder &tb, Location tl) {   // the lower copy only
+      Emit u{tb, tl};
+      const Value code = u.toIndex(u.entry(faceCode, u.toI32(c)));
+      const Value own = u.rem(code, u.idx(8)), oth = u.rem(u.div(code, u.idx(8)), u.idx(8));
+      auto bit = [&](Value word, int64_t k) { return u.eq(u.rem(u.div(word, u.idx(k)), u.idx(2)), u.idx(1)); };
+      const Value i = u.add(u.idx(1), u.div(q, u.idx(m))), j = u.add(u.idx(1), u.rem(q, u.idx(m)));
+      // face_to_canonical with the own frame, then canonical_to_face with the other's.
+      const Value di = u.select(bit(own, 1), u.sub(u.idx(Pm), i), i), dj = u.select(bit(own, 2), u.sub(u.idx(Pm), j), j);
+      const Value I = u.select(bit(own, 4), di, dj), J = u.select(bit(own, 4), dj, di);
+      const Value ei = u.select(bit(oth, 4), I, J), ej = u.select(bit(oth, 4), J, I);
+      const Value i2 = u.select(bit(oth, 1), u.sub(u.idx(Pm), ei), ei), j2 = u.select(bit(oth, 2), u.sub(u.idx(Pm), ej), ej);
+      const Value nb = u.toIndex(nbr);
+      Value xa[3], xb[3];
+      faceXyz(u, u.rem(c, u.idx(6)), i, j, xa);
+      faceXyz(u, u.rem(nb, u.idx(6)), i2, j2, xb);
+      const Value blkA = u.div(c, u.idx(6)), blkB = u.div(nb, u.idx(6));
+      const Value s = u.addf(u.load(v, blockRepresentative(u, g, blkA, xa)), u.load(v, blockRepresentative(u, g, blkB, xb)));
+      scatter(u, blkA, xa, s);
+      scatter(u, blkB, xb, s);
+      tb.create<scf::YieldOp>(tl);
+    });
+  };
+  flatItems(b, loc, total, [&](Emit &z, Value t) {
+    if (m == 0) {   // no interior face or edge nodes: corners only
+      vertexItem(z, t);
+      return;
+    }
+    z.b.create<scf::IfOp>(
+        z.loc, z.lt(t, faces), [&](OpBuilder &tb, Location tl) {
+          Emit u{tb, tl};
+          faceItem(u, t);
+          tb.create<scf::YieldOp>(tl);
+        },
+        [&](OpBuilder &eb, Location el) {
+          Emit u{eb, el};
+          const Value te = u.sub(t, faces);
+          eb.create<scf::IfOp>(
+              el, u.lt(te, edgeItems), [&](OpBuilder &tb, Location tl) {
+                Emit w{tb, tl};
+                edgeItem(w, te);
+                tb.create<scf::YieldOp>(tl);
+              },
+              [&](OpBuilder &vb, Location vl) {
+                Emit w{vb, vl};
+                vertexItem(w, w.sub(te, edgeItems));
+                vb.create<scf::YieldOp>(vl);
+              });
+          eb.create<scf::YieldOp>(el);
+        });
+  });
+  op.erase();
+  return success();
+}
+
 struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerCellwisePass)
 
   StringRef getArgument() const final { return "mir-lower-cellwise"; }
   StringRef getDescription() const final {
     return "Lower mir.dss (the staged gather: per-element phases over own copies, face "
-           "pairs, edge/corner stars, write-back) and mir.cellwise (a per-copy phase) to "
+           "pairs, edge/corner stars, write-back), mir.cellwise (a per-copy phase) and the "
+           "block-structured DSS (mir.block_sum, mir.block_skeleton: flat item loops) to "
            "per-element parallel loops";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -677,13 +942,15 @@ struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<M
   void runOnOperation() override {
     SmallVector<Operation *> ops;
     getOperation()->walk([&](Operation *op) {
-      if (isa<mir::DssOp, mir::CellwiseOp, mir::InterpolateOp>(op))
+      if (isa<mir::DssOp, mir::CellwiseOp, mir::InterpolateOp, mir::BlockSumOp, mir::BlockSkeletonOp>(op))
         ops.push_back(op);
     });
     for (Operation *op : ops)
-      if (failed(isa<mir::DssOp>(op)        ? lowerOne(cast<mir::DssOp>(op))
-                 : isa<mir::CellwiseOp>(op) ? lowerOne(cast<mir::CellwiseOp>(op))
-                                            : lowerOne(cast<mir::InterpolateOp>(op))))
+      if (failed(isa<mir::DssOp>(op)           ? lowerOne(cast<mir::DssOp>(op))
+                 : isa<mir::CellwiseOp>(op)    ? lowerOne(cast<mir::CellwiseOp>(op))
+                 : isa<mir::BlockSumOp>(op)    ? lowerOne(cast<mir::BlockSumOp>(op))
+                 : isa<mir::BlockSkeletonOp>(op) ? lowerOne(cast<mir::BlockSkeletonOp>(op))
+                                               : lowerOne(cast<mir::InterpolateOp>(op))))
         return signalPassFailure();
   }
 };

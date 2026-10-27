@@ -180,6 +180,60 @@ def Mir_FluxOp : Mir_Op<"flux",
   let hasVerifier = 1;
 }
 
+def Mir_BlockSumOp : Mir_Op<"block_sum"> {
+  let summary = "DSS inside the blocks of a block-structured hex mesh";
+  let description = [{
+    The first stage of the block-structured DSS of MARS
+    (backend/distributed/unstructured/solvers/mars_cellwise_block_dss.hpp): the
+    elements are stored in blocks of B^3 (B = `block`), block after block, the
+    elements of a block in lexicographic order, nodes (a, b, c) -> (a n + b) n + c
+    with n = degree + 1. For every node of every block, out at each of the node's
+    copies in that block gets the sum of `values` over those copies (up to 8),
+    summed in lexicographic order of the copies. Block-boundary nodes then hold their
+    block's part only; mir.block_skeleton completes them.
+  }];
+  let arguments = (ins
+      Arg<MemRefRankOf<[F64], [1]>, "local copies", [MemRead]>:$values,
+      Arg<MemRefRankOf<[F64], [1]>, "", [MemWrite]>:$out,
+      I64Attr:$degree,
+      I64Attr:$block);
+  let assemblyFormat = [{
+    `ins` `(` $values `)` `outs` `(` $out `)` attr-dict `:` type(operands)
+  }];
+  let hasVerifier = 1;
+}
+
+def Mir_BlockSkeletonOp : Mir_Op<"block_skeleton"> {
+  let summary = "DSS across the block skeleton, in place";
+  let description = [{
+    The second stage of the block-structured DSS (after mir.block_sum, on its
+    output, in place): every node on a block face, edge or corner shared by
+    several blocks gets, at all its copies in all those blocks, the sum over the
+    blocks of ONE copy per block (all copies in a block hold that block's part).
+    The tables are MARS's UnstructuredTopology built over the blocks as hexes
+    (see mir.dss): face pairs with frame codes, edge stars (bit 31: reversed),
+    corner stars. One thread per skeleton node: interior nodes of block faces
+    (each pair once, from its lower copy, summed lower + upper), then interior
+    nodes of block edges, then block corners (stars summed in their stored order).
+  }];
+  let arguments = (ins
+      Arg<MemRefRankOf<[F64], [1]>, "copies, summed in place", [MemRead, MemWrite]>:$values,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$face_nbr,
+      Arg<MemRefRankOf<[I8], [1]>, "", [MemRead]>:$face_code,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$edge_ent,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_off,
+      Arg<MemRefRankOf<[I32], [1]>, "", [MemRead]>:$vert_ent,
+      I64Attr:$degree,
+      I64Attr:$block);
+  let assemblyFormat = [{
+    `ins` `(` $values `)` `faces` `(` $face_nbr `,` $face_code `)`
+    `edges` `(` $edge_off `,` $edge_ent `)` `vertices` `(` $vert_off `,` $vert_ent `)`
+    attr-dict `:` type(operands)
+  }];
+  let hasVerifier = 1;
+}
+
 def Mir_YieldOp : Mir_Op<"yield", [Pure, Terminator, ParentOneOf<["FluxOp", "DssOp", "CellwiseOp"]>]> {
   let summary = "terminator of mir.flux (per-point result), mir.dss and mir.cellwise (per-copy results)";
   let arguments = (ins Variadic<AnyType>:$operands);

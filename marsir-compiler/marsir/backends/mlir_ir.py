@@ -635,6 +635,37 @@ def emit_dss(p=7, real="f64"):
         ""])
 
 
+def emit_block_dss(p, block):
+    """The block-structured DSS (MARS's mars_cellwise_block_dss.hpp, the block-node form)
+    as two kernels, run in this order on one stream:
+      block_sum_p{p}_b{B}(values, out)          every block node: out at its copies in
+                                                the block = the sum of values over them
+      block_skeleton_p{p}_b{B}(out, face_nbr, face_code, edge_off, edge_ent, vert_off,
+                               vert_ent)        the nodes shared between blocks, in place,
+                                                from one copy per block
+    The tables are MARS's UnstructuredTopology built over the blocks as hexes."""
+    tag = f"p{p}_b{block}"
+    attrs = f"{{degree = {p} : i64, block = {block} : i64}}"
+    return "\n".join([
+        # mir.noalias: values and out are different arrays; the skeleton tables are
+        # read-only and never overlap the copies.
+        f"func.func @block_sum_{tag}(%values: memref<?xf64>, %out: memref<?xf64>) "
+        "attributes {mir.kernel, mir.noalias} {",
+        f"  mir.block_sum ins(%values) outs(%out) {attrs} : memref<?xf64>, memref<?xf64>",
+        "  return",
+        "}",
+        f"func.func @block_skeleton_{tag}(%values: memref<?xf64>, %face_nbr: memref<?xi32>, "
+        "%face_code: memref<?xi8>, %edge_off: memref<?xi32>, %edge_ent: memref<?xi32>, "
+        "%vert_off: memref<?xi32>, %vert_ent: memref<?xi32>) attributes {mir.kernel, mir.noalias} {",
+        "  mir.block_skeleton ins(%values) faces(%face_nbr, %face_code) edges(%edge_off, %edge_ent)",
+        f"          vertices(%vert_off, %vert_ent) {attrs}",
+        "          : memref<?xf64>, memref<?xi32>, memref<?xi8>, memref<?xi32>, memref<?xi32>, memref<?xi32>, "
+        "memref<?xi32>",
+        "  return",
+        "}",
+        ""])
+
+
 def emit_dss_precond(p=7, az=True, zz=True):
     """The Jacobi preconditioner of the cell-wise solver as one mir.dss with an
     epilogue: z = 0 on Dirichlet copies, DSS(q) / diag elsewhere, and with az / zz
