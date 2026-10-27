@@ -45,7 +45,7 @@
 // takes the coarse solve), the BP3 Galerkin form rediscretized at each degree (the
 // MARSIR kernels bp3_p{3,1} in --ptx-dir), --pre / --post Chebyshev-Jacobi steps (equal
 // by default: a symmetric cycle), on p = 1 --coarse Chebyshev steps or, with --amg,
-// BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles; a Hypre build).
+// BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 2; a Hypre build).
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -503,7 +503,8 @@ double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cu
 
 struct Options {
     std::string ptx_dir, spec = "bp3", dss_ptx, block_dss;   // block_dss: "", "passes" or "nodes"
-    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 3, post = 3, coarse = 100, amg_cycles = 1;
+    // amg_cycles 2: faster solves than 1 at p = 1, 3, 7 at equal accuracy (docs/design/cellwise_bp_fcg.md).
+    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 3, post = 3, coarse = 100, amg_cycles = 2;
     bool rotate = false, mg = false, amg = false;
     double deform = 0.05, tol = 1e-10;
 };

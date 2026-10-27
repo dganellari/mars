@@ -212,3 +212,41 @@ ncu after the change (p = 3, B = 32): block_sum 85.1M instructions (was 104.4M; 
 The remaining 1.24x instructions in block_sum are not attributed (the copy loops are
 dynamic scf.for nests; the hand kernel's SASS was not compared). Left there: about 1.4%
 of the FCG iteration at p = 3, where the hand block nodes are used anyway.
+
+## BP3 p-multigrid (7cefa3e8, 643c9c68)
+
+`--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin
+form rediscretized at each degree (MARSIR bp3_p{3,1}, q = p + 2, stored geometry),
+Chebyshev-Jacobi (3,3) through the DSS (equal pre and post: a symmetric cycle), restriction
+of the raw residual, continuous corrections; on p = 1 BoomerAMG (`--amg`, the assembled p = 1
+matrix from the same operator) or Chebyshev steps (`--coarse`). Reference
+`marsir-mlir/test/cellwise_bp_mg_ref.py`: transfers adjoint (2e-16), the fixed V-cycle
+symmetric (3-5e-16) and positive definite on ne = 2; with an exact coarse solve, FCG to a
+true residual of 1e-10 takes 8 / 8 / 8 iterations at p = 3, ne = 2 / 4 / 8 (Jacobi 20 / 45 /
+93) and 8 / 9 at p = 7, ne = 2 / 4 (Jacobi 71 / 160).
+
+GPU gate (ne = 4, Chebyshev-100 coarse, the reference's `--gpu` run): lmax, iterations,
+the history at it 1 and 5, the true residual and the error equal the reference to every
+printed digit at p = 3 (8 it) and p = 7 (9 it).
+
+With BoomerAMG the iterations grow mildly with the mesh (one AMG cycle: p = 3, ne = 16 / 32
+/ 64: 12 / 14 / 17; p = 7, ne = 8 / 16 / 32: 9 / 12 / 14); more AMG cycles bring them back
+(p = 3, ne = 32: 14 / 10 / 8 iterations with 1 / 2 / 4 cycles), so the inexact coarse solve
+is the cause.
+
+Equal accuracy (16.8M cell-wise, GH200). At the same FCG tolerance the V-cycle runs stop 7-21x
+less accurate (true residual 6.5e-10 to 1.9e-9 against Jacobi's 9e-11: FCG's sqrt(<r,z>/<r0,z0>)
+depends on the preconditioner), so they ran at tol 3e-12; every one then reached a true
+residual at or below Jacobi's and a smaller error:
+
+| BP3 | Jacobi: it, true residual, error, solve | V-cycle + AMG x1 | V-cycle + AMG x2 |
+|---|---|---|---|
+| p = 1 (ne 128) | 307, 9.2e-11, 5.2e-12, 1363 ms | 23, 3.3e-11, 6.1e-13, 202 + 398 ms setup | 16, 2.3e-11, 5.2e-13, 175 + 406 ms |
+| p = 3 (ne 64) | 770, 8.5e-11, 3.2e-12, 1586 ms | 19, 3.2e-11, 6.0e-13, 272 + 407 ms | 13, 7.7e-11, 9.3e-13, 197 + 416 ms |
+| p = 7 (ne 32) | 1225, 9.2e-11, 2.3e-12, 3531 ms | 16, 7.0e-11, 1.5e-12, 363 + 477 ms | 12, 1.6e-11, 2.4e-13, 282 + 461 ms |
+
+With two AMG cycles the solve is 7.8x (p = 1), 8.0x (p = 3) and 12.5x (p = 7) faster than
+Jacobi, 2.3x / 2.6x / 4.8x with the setup (power iterations and AMG setup, once per matrix).
+Two cycles beat one at every degree, so they are the driver's default. An FCG iteration now
+costs 10.9 / 15.2 / 23.5 ms (Jacobi 4.4 / 2.1 / 2.9 ms): the V-cycle, mostly its operator
+applies on the fine level.
