@@ -137,6 +137,9 @@ class Level:
     def dss(self, fc):
         return self.scatter(fc)[self.gidx]
 
+    def nodes(self, u):   # a continuous vector's node values (each node once)
+        out = np.zeros(self.NG ** 3); out[self.gidx.ravel()] = u.ravel(); return out
+
     def jacobi(self, r):   # z = Jacobi(DSS(r)), zero on Dirichlet copies
         return self.mask * self.dss(r) / self.diag
 
@@ -177,7 +180,7 @@ class VCycle:
         lam = 0.0
         for _ in range(30):
             w = lv.jacobi(lv.apply(v))
-            nw = np.linalg.norm(lv.scatter(w)[lv.inner]); nv = np.linalg.norm(lv.scatter(v)[lv.inner])
+            nw = np.linalg.norm(lv.nodes(w)); nv = np.linalg.norm(lv.nodes(v))   # as the GPU's counted norm
             lam = nw / nv; v = w / nw
         return lam
 
