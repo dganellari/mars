@@ -200,3 +200,10 @@ generated kernels alike):
 The generated form equals or beats the hand kernels at p = 1 and is 1.2-1.4x slower at
 p >= 3 (2-4% of the FCG iteration at p = 3; at p = 7 the hand gather is used anyway).
 The cause of the gap is not measured.
+
+ncu at p = 3, B = 32 put the gap in block_sum (generated 104.4M instructions, 48
+registers, 200 us against the hand kernel's 68.9M, 37, 143 us; the skeleton 13.5 vs
+12.2 us). The lowering did the per-axis copy arithmetic in 64-bit integers; in 32 bits
+(840d1c28, one 64-bit division per item) the generated DSS at p = 3 is 0.162 -> 0.149 ms
+(B = 32) and 0.212 -> 0.189 ms (B = 8), against 0.134 / 0.169 ms by hand: 1.11-1.12x,
+FCG iteration 1.282 / 1.323 ms against 1.264 / 1.300 (1.4-1.8%). Bits still identical.
