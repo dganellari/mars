@@ -207,3 +207,8 @@ registers, 200 us against the hand kernel's 68.9M, 37, 143 us; the skeleton 13.5
 (840d1c28, one 64-bit division per item) the generated DSS at p = 3 is 0.162 -> 0.149 ms
 (B = 32) and 0.212 -> 0.189 ms (B = 8), against 0.134 / 0.169 ms by hand: 1.11-1.12x,
 FCG iteration 1.282 / 1.323 ms against 1.264 / 1.300 (1.4-1.8%). Bits still identical.
+ncu after the change (p = 3, B = 32): block_sum 85.1M instructions (was 104.4M; hand
+68.9M), 42 registers (hand 37), 167 us (hand 143 us); the skeleton 12.26 us (hand 12.22).
+The remaining 1.24x instructions in block_sum are not attributed (the copy loops are
+dynamic scf.for nests; the hand kernel's SASS was not compared). Left there: about 1.4%
+of the FCG iteration at p = 3, where the hand block nodes are used anyway.
