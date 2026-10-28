@@ -337,3 +337,24 @@ With Chebyshev on p = 1 the histories (it 1, it 5, the final values, the error) 
 printed digit. With Jacobi the first iterations agree and the last value after 189 iterations
 differs in the third digit (the order of the global sums). With BoomerAMG the iterations agree
 within one. All runs PASS.
+
+### Weak scaling, 1 against 8 GPUs (dfe43110)
+
+The same work per GPU, `--mg --amg` with the defaults, tol 3e-12; 8 GPUs = 2 nodes, 2 x 2 x 2
+ranks. The coarse solve is the host time of the BoomerAMG solve with its two p = 1 DSS, once per
+V-cycle (iterations + 1). Repeat runs agree within 3%.
+
+| per GPU | iterations | FCG iteration | coarse solve per V-cycle | share of the solve | AMG setup / setup |
+|---|---|---|---|---|---|
+| p = 3, 64^3, 1 GPU | 13 | 12.15 ms | 2.81 ms | 25% | 262 / 402 ms |
+| p = 3, 64^3, 8 GPUs | 13 | 19.56 ms (62%) | 9.05 ms | 50% | 764 / 973 ms |
+| p = 7, 32^3, 1 GPU | 14 | 17.49 ms | 1.70 ms | 10% | 231 / 481 ms |
+| p = 7, 32^3, 8 GPUs | 14 | 24.77 ms (71%) | 7.43 ms | 32% | 680 / 991 ms |
+
+The iterations do not grow. The fine level scales: operator + DSS 1.42 -> 1.49 ms at p = 3 and
+2.26 -> 2.41 ms at p = 7. The coarse solve explains 6.7 of the 7.4 ms added per iteration at
+p = 3 and 6.1 of 7.3 ms at p = 7, and the AMG setup about 90% of the added setup. At p = 7 each
+GPU holds about 35k p = 1 rows in both runs, yet the solve takes 4.4x longer: on 8 GPUs a
+BoomerAMG cycle is bound by communication and latency, not by work. The p = 7, 8-GPU run
+prints FAIL with an error of 1.8e-13: one of the two element-local checks (direct quadrature,
+or BP3 applied to 1) fails there; which one is not yet read.
