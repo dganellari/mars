@@ -98,11 +98,15 @@ __global__ void scale_kernel(double* __restrict__ v, long long n, double s)
     if (t < n) v[t] *= s;
 }
 
-// Deterministic start of the power iteration (the same hash as the structured multigrid).
-__global__ void hash_kernel(double* __restrict__ v, long long n)
+// Deterministic start of the power iteration (the same hash as the structured multigrid)
+// of the copy's index: global (element gid * n3 + node) when gid is given, so the start
+// is the same on any rank count, else local.
+__global__ void hash_kernel(double* __restrict__ v, long long n, const unsigned long long* __restrict__ gid, int n3)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n) v[t] = (double)(((unsigned long long)t * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
+    if (t >= n) return;
+    const unsigned long long i = gid ? gid[t / n3] * n3 + t % n3 : (unsigned long long)t;
+    v[t] = (double)((i * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
 }
 
 inline unsigned blocks(long long n) { return (unsigned)((n + kThreads - 1) / kThreads); }
@@ -153,28 +157,32 @@ class PMultigrid {
 public:
     using LevelApply = std::function<void(int, const double*, double*, cudaStream_t)>;
 
-    // Any operator given level by level (e.g. the BP3 Galerkin form of mars_marsir_bp.cu),
-    // one rank: top = 7 or 3, the finest degree; apply(p, u, y, stream) at p = top .. 1;
-    // elem(p) the element diagonals at p (summed here). For a symmetric operator, pre ==
-    // post gives a symmetric V-cycle (the smoother is a polynomial in D^-1 A). Apply7 must
-    // be constructible from a lambda (std::function).
+    // Any operator given level by level (e.g. the BP3 Galerkin form of mars_marsir_bp.cu):
+    // top = 7 or 3, the finest degree; apply(p, u, y, stream) at p = top .. 1; elem(p) the
+    // element diagonals at p (summed here); halos[0..2] the exchanges at p = 7, 3, 1 (null
+    // on one rank; slot 0 unused at top = 3); gid: a global id of each of the
+    // tables' elements (cellwise::block_elements), so the power iteration starts from the
+    // same vector on any rank count (null: from the local index). For a symmetric
+    // operator, pre == post gives a symmetric V-cycle (the smoother is a polynomial in
+    // D^-1 A). Apply7 must be constructible from a lambda (std::function).
     PMultigrid(int top, LevelApply apply, const std::function<const double*(int)>& elem, const UnstructuredTopology& T,
-               int pre, int post, int coarse_steps, MPI_Comm comm, cudaStream_t stream)
+               std::array<UnstructuredHalo*, 3> halos, const unsigned long long* gid, int pre, int post,
+               int coarse_steps, MPI_Comm comm, cudaStream_t stream)
         : apply7_([apply](const double* u, double* y, cudaStream_t s) { apply(7, u, y, s); }), T_(view(T)),
-          E_(T.local), diag7_(nullptr), G3_(nullptr), G1_(nullptr), halos_{}, pre_(pre), post_(post),
+          E_(T.local), diag7_(nullptr), G3_(nullptr), G1_(nullptr), halos_(halos), pre_(pre), post_(post),
           coarse_steps_(coarse_steps), stream_(stream), M3_(cvfem_matrices<3>()), M1_(cvfem_matrices<1>()),
-          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply))
+          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply)), gid_(gid)
     {
         if (top == 7) {
             r7_ = alloc(E_ * 512), d7_ = alloc(E_ * 512), y7_ = alloc(E_ * 512), own7_ = alloc(E_ * 512);
-            dss<7>(elem(7), own7_, T, nullptr, stream_);
+            dss<7>(elem(7), own7_, T, halos_[0], stream_);
             diag7_ = own7_;
         }
         b3_ = alloc(E_ * 64), x3_ = alloc(E_ * 64), r3_ = alloc(E_ * 64), d3_ = alloc(E_ * 64), y3_ = alloc(E_ * 64);
         diag3_ = alloc(E_ * 64);
         b1_ = alloc(E_ * 8), x1_ = alloc(E_ * 8), d1_ = alloc(E_ * 8), y1_ = alloc(E_ * 8), diag1_ = alloc(E_ * 8);
-        dss<3>(elem(3), diag3_, T, nullptr, stream_);
-        dss<1>(elem(1), diag1_, T, nullptr, stream_);
+        dss<3>(elem(3), diag3_, T, halos_[1], stream_);
+        dss<1>(elem(1), diag1_, T, halos_[2], stream_);
         Reduction red(comm);
         if (top == 7) lmax_[0] = power_iteration<7>(red);
         lmax_[1] = power_iteration<3>(red);
@@ -388,7 +396,7 @@ private:
         double* y = P == 7 ? y7_ : (P == 3 ? y3_ : y1_);
         double* v = alloc(n);
         double* w = alloc(n);
-        if (n > 0) pmg_detail::hash_kernel<<<pmg_detail::blocks(n), kThreads, 0, stream_>>>(y, n);
+        if (n > 0) pmg_detail::hash_kernel<<<pmg_detail::blocks(n), kThreads, 0, stream_>>>(y, n, gid_, n3);
         MARS_CELLWISE_CK(cudaGetLastError());
         step<P, true>(y, nullptr, d, v, 0.0, 1.0);   // v = Jacobi(DSS(hash))
         double lam = 0.0;
@@ -429,6 +437,7 @@ private:
     int top_ = 7;
     LevelApply lower_;           // the level-by-level operator (null: CVFEM below p = 7)
     double* own7_ = nullptr;     // the summed p = 7 diagonal, when this class forms it
+    const unsigned long long* gid_ = nullptr;   // element ids for the power iteration's start
 };
 
 }  // namespace cellwise

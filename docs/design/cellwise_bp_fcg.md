@@ -304,3 +304,20 @@ Jacobi). GPU gate of this default (ne = 4, Chebyshev-100 coarse): lmax, iteratio
 at it 1 and 5, the true residual and the error equal the reference to every printed digit at
 p = 3 (11 it) and p = 7 (12 it). The default run at p = 3, ne 64 prints `Chebyshev (2,2), coarse
 BoomerAMG x3` and repeats the explicit run to every digit.
+
+## Several ranks
+
+`mars_marsir_bp` runs on any number of ranks (one GPU each). Each rank owns a sub-block of the
+cube (`cellwise::Decomposition`); its tables hold its elements and the ghost elements around
+them (`cellwise::block_elements`), and every DSS exchanges the shared copies with
+`cellwise::UnstructuredHalo`, one per degree (p, and 3 and 1 for the multigrid). FCG sums its
+dot products with `MPI_Allreduce`, the true residual and the checks are global, and BoomerAMG
+gets the p = 1 halo and the world communicator. The power iteration of the multigrid starts
+from a hash of each copy's global index (element id x n3 + node), which equals the local index
+on one rank, so its start vector no longer depends on the partition. The block layout and the
+generated DSS options stay on one rank.
+
+Expected: the DSS gives the same bits on any rank count and only the global sums change, so
+with DSS-Jacobi and with the V-cycle on Chebyshev-100 the history matches one rank to rounding.
+BoomerAMG coarsens each partition differently, so its iterations may differ a little. GPU gate
+pending.

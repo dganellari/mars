@@ -50,6 +50,15 @@
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
 //
+// Several MPI ranks (one GPU each, by the rank's index on its node; GPU-aware MPI, on Cray
+// MPICH MPICH_GPU_SUPPORT_ENABLED=1): each rank owns a sub-block of the cube
+// (cellwise::Decomposition), with the ghost elements around it in its tables, and every
+// DSS exchanges the shared copies (cellwise::UnstructuredHalo, one per degree). The DSS
+// gives the same bits on any rank count and the global sums differ by rounding, so with
+// DSS-Jacobi, or the V-cycle with Chebyshev on p = 1, the history must match one rank to
+// rounding. BoomerAMG coarsens each partition differently: its iterations may differ a
+// little. --block, --rotate, --block-dss and --dss-ptx are for one rank.
+//
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
@@ -76,6 +85,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -105,11 +115,14 @@ __device__ void lattice_vertex(int i, int j, int k, int ne, double deform, doubl
     for (int d = 0; d < 3; ++d) x[d] += bump;
 }
 
-// Blocks of B^3 elements, M = ne / B per axis: element e is element (lx B + ly) B + lz
-// of block e / B^3, block (mx M + my) M + mz. Rotation r of a block (0: none): its local
-// axis d runs along global axis perm[d], reversed when flip[d].
+// B = 0, the plain layout: this rank's box of n[0] x n[1] x n[2] elements at element
+// offset o, lexicographic (on one rank, the whole cube). Otherwise blocks of B^3 elements
+// (one rank), M = ne / B per axis: element e is element (lx B + ly) B + lz of block
+// e / B^3, block (mx M + my) M + mz. Rotation r of a block (0: none): its local axis d
+// runs along global axis perm[d], reversed when flip[d].
 struct Layout {
     int ne, B, M, rotate;
+    int n[3], o[3];
 };
 __constant__ Layout c_layout;
 __constant__ int c_rotation[24][6];   // perm[3], flip[3]
@@ -148,24 +161,21 @@ __device__ void element_in_block(long long e, long long& blk, int (&l)[3])
     l[2] = le % B;
 }
 
-// Global lattice vertex of element e's corner with bits b.
-__device__ void element_vertex(long long e, const int (&b)[3], long long (&g)[3])
+// Global lattice coordinates (0 .. ne P) of point x (0 .. P per axis) of element e's own
+// frame at degree P: its node x, or at P = 1 its corner with bits x.
+__device__ void element_point(long long e, int P, const int (&x)[3], long long (&g)[3])
 {
-    long long blk;
-    int l[3];
-    element_in_block(e, blk, l);
-    const int u[3] = {l[0] + b[0], l[1] + b[1], l[2] + b[2]};
-    place(blk, u, c_layout.B, g);
-}
-
-// Global node coordinates (0 .. ne P) of node (a, b, c) of element e at degree P.
-__device__ void element_node(long long e, int P, const int (&x)[3], long long (&g)[3])
-{
+    const Layout& L = c_layout;
+    if (L.B == 0) {
+        const long long l[3] = {e / ((long long)L.n[1] * L.n[2]), (e / L.n[2]) % L.n[1], e % L.n[2]};
+        for (int d = 0; d < 3; ++d) g[d] = (L.o[d] + l[d]) * P + x[d];
+        return;
+    }
     long long blk;
     int l[3];
     element_in_block(e, blk, l);
     const int u[3] = {l[0] * P + x[0], l[1] * P + x[1], l[2] * P + x[2]};
-    place(blk, u, c_layout.B * P, g);
+    place(blk, u, L.B * P, g);
 }
 
 // Corners in VTK order (corner_bits) of the element's own frame.
@@ -175,7 +185,7 @@ __device__ void element_corners(long long e, int ne, double deform, double c[8][
         int b[3];
         long long g[3];
         cellwise::corner_bits(k, b[0], b[1], b[2]);
-        element_vertex(e, b, g);
+        element_point(e, 1, b, g);
         lattice_vertex((int)g[0], (int)g[1], (int)g[2], ne, deform, c[k]);
     }
 }
@@ -184,7 +194,7 @@ __device__ void element_corners(long long e, int ne, double deform, double c[8][
 __device__ bool boundary_node(long long e, int P, int a, int b, int c)
 {
     long long g[3];
-    element_node(e, P, {a, b, c}, g);
+    element_point(e, P, {a, b, c}, g);
     const long long last = (long long)c_layout.ne * P;
     return g[0] == 0 || g[1] == 0 || g[2] == 0 || g[0] == last || g[1] == last || g[2] == last;
 }
@@ -332,21 +342,28 @@ __global__ void inverse_kernel(const double* __restrict__ diag, double* __restri
     inv[t] = dirichlet && boundary_node(e, P, a, b, c) ? 0.0 : 1.0 / diag[t];
 }
 
-// Corner keys of the elements (blocks = false) or of the blocks as hexes (blocks = true):
-// the global lattice vertex of each corner, in the element's or block's own frame.
-__global__ void mesh_kernel(long long count, bool blocks, unsigned long long* const* key, int* const* lid)
+// Corner keys: of the tables' elements by their lattice ids gid (the plain layout, own
+// and ghost elements in the order of cellwise::block_elements), of the elements of the
+// block layout (gid null), or of the blocks as hexes (blocks): the global lattice vertex
+// of each corner, in the element's or block's own frame.
+__global__ void mesh_kernel(long long count, bool blocks, const unsigned long long* __restrict__ gid,
+                            unsigned long long* const* key, int* const* lid)
 {
     const long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (e >= count) return;
-    const long long side = (blocks ? c_layout.M : c_layout.ne) + 1;
+    const long long ne = c_layout.ne, side = (blocks ? c_layout.M : ne) + 1;
     for (int c = 0; c < 8; ++c) {
         int b[3];
         long long g[3];
         cellwise::corner_bits(c, b[0], b[1], b[2]);
-        if (blocks)
+        if (gid) {
+            const long long id = (long long)gid[e];
+            g[0] = id / (ne * ne) + b[0], g[1] = (id / ne) % ne + b[1], g[2] = id % ne + b[2];
+        } else if (blocks) {
             place(e, b, 1, g);
-        else
-            element_vertex(e, b, g);
+        } else {
+            element_point(e, 1, b, g);
+        }
         const long long v = (g[0] * side + g[1]) * side + g[2];
         key[c][e] = (unsigned long long)v;
         lid[c][e] = (int)v;
@@ -375,9 +392,10 @@ __global__ void random_kernel(double* __restrict__ v, long long n)
 
 #define BP_CK(call) MARS_CELLWISE_CK(call)
 
-// The unstructured tables of the elements, or of the blocks as hexes (one rank: all
-// local).
-cellwise::UnstructuredTopology mesh_topology(long long count, bool blocks, cudaStream_t stream)
+// The unstructured tables of `count` elements (the first `local` this rank's, the rest
+// ghosts), with the corner keys of mesh_kernel.
+cellwise::UnstructuredTopology mesh_topology(long long count, long long local, bool blocks,
+                                             const unsigned long long* gid, cudaStream_t stream)
 {
     thrust::device_vector<unsigned long long> key[8];
     thrust::device_vector<int> lid[8];
@@ -391,15 +409,15 @@ cellwise::UnstructuredTopology mesh_topology(long long count, bool blocks, cudaS
     }
     thrust::device_vector<unsigned long long*> d_kp(kp.begin(), kp.end());
     thrust::device_vector<int*> d_lp(lp.begin(), lp.end());
-    mesh_kernel<<<blocks_for(count), cellwise::kThreads, 0, stream>>>(count, blocks, thrust::raw_pointer_cast(d_kp.data()),
-                                                                      thrust::raw_pointer_cast(d_lp.data()));
+    mesh_kernel<<<blocks_for(count), cellwise::kThreads, 0, stream>>>(
+        count, blocks, gid, thrust::raw_pointer_cast(d_kp.data()), thrust::raw_pointer_cast(d_lp.data()));
     BP_CK(cudaStreamSynchronize(stream));
     const std::vector<const unsigned long long*> ckp(kp.begin(), kp.end());
     const std::vector<const int*> clp(lp.begin(), lp.end());
     thrust::device_vector<const unsigned long long*> d_ckp(ckp.begin(), ckp.end());
     thrust::device_vector<const int*> d_clp(clp.begin(), clp.end());
     return cellwise::build_topology(thrust::raw_pointer_cast(d_ckp.data()), thrust::raw_pointer_cast(d_clp.data()),
-                                    count, count);
+                                    count, local);
 }
 
 template <int P>
@@ -489,7 +507,20 @@ __global__ void residual_kernel(double* __restrict__ out, const double* __restri
     if (t < n) out[t] = b[t] - y[t];
 }
 
-// sqrt of the sum over global nodes of v^2 (each node once: its counting copy).
+double all_sum(double v)
+{
+    MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD));
+    return v;
+}
+
+double all_max(double v)
+{
+    MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &v, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
+    return v;
+}
+
+// sqrt of the sum over global nodes of v^2 (each node once: its counting copy, on the
+// rank that holds it).
 template <int P>
 double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cudaStream_t st)
 {
@@ -498,7 +529,7 @@ double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cu
     cellwise::level_wdot_kernel<P><<<grid, cellwise::kThreads, 0, st>>>(
         v, v, cellwise::topo_detail::raw(T.counting), T.local, thrust::raw_pointer_cast(partial.data()));
     MARS_CELLWISE_CK(cudaStreamSynchronize(st));
-    return std::sqrt(thrust::reduce(partial.begin(), partial.end(), 0.0));
+    return std::sqrt(all_sum(thrust::reduce(partial.begin(), partial.end(), 0.0)));
 }
 
 struct Options {
@@ -516,7 +547,12 @@ int run(const Options& o)
     constexpr int n = P + 1, n3 = n * n * n, Q = P + 2, q3 = Q * Q * Q;
     const bool bp3 = o.spec.rfind("bp3", 0) == 0, tri = o.spec.substr(3) == "_tri";
     const int K = bp3 ? 6 : 1;
-    const long long E = (long long)o.ne * o.ne * o.ne, N = E * n3;
+    const cellwise::Decomposition dec(MPI_COMM_WORLD, o.ne, o.ne, o.ne);
+    const bool root = dec.rank == 0;
+    const cellwise::Block& box = dec.local;
+    const long long E = box.elements(), N = E * n3;   // this rank's elements and copies
+    long long N_all = N;
+    MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &N_all, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD));
     const long long unique = (long long)(o.ne * P + 1) * (o.ne * P + 1) * (o.ne * P + 1);
 
     const Basis fine = basis(P);
@@ -524,7 +560,9 @@ int run(const Options& o)
                              &wq = fine.wq;
     BP_CK(cudaMemcpyToSymbol(c_gll, fine.zeta.data(), n * sizeof(double)));
     const int Bk = o.block ? o.block : o.ne;
-    const Layout layout{o.ne, Bk, o.ne / Bk, o.rotate ? 1 : 0};
+    const bool blocked = o.block || o.rotate || !o.block_dss.empty();   // the block layout (one rank)
+    const Layout layout{o.ne, blocked ? Bk : 0, o.ne / Bk, o.rotate ? 1 : 0, {box.nx, box.ny, box.nz},
+                        {box.ox, box.oy, box.oz}};
     const std::vector<int> rotations = proper_rotations();
     BP_CK(cudaMemcpyToSymbol(c_layout, &layout, sizeof(layout)));
     BP_CK(cudaMemcpyToSymbol(c_rotation, rotations.data(), rotations.size() * sizeof(int)));
@@ -551,11 +589,31 @@ int run(const Options& o)
         else op.apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G), out, E, st);
     };
 
-    // The unstructured tables of the elements, and with --block-dss of the blocks.
-    const cellwise::UnstructuredTopology topo = mesh_topology(E, false, stream);
+    // The unstructured tables: in the plain layout of this rank's elements and the ghost
+    // elements around them (gid, owner: their lattice ids and owner ranks), in the block
+    // layout of its elements; with --block-dss also of the blocks.
+    thrust::device_vector<unsigned long long> gid;
+    thrust::device_vector<int> owner;
+    if (!blocked) cellwise::block_elements(dec, gid, owner);
+    const unsigned long long* d_gid = blocked ? nullptr : thrust::raw_pointer_cast(gid.data());
+    const cellwise::UnstructuredTopology topo =
+        mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
     const long long nblocks = (long long)layout.M * layout.M * layout.M;
     const cellwise::UnstructuredTopology skeleton_topo =
-        !o.block_dss.empty() ? mesh_topology(nblocks, true, stream) : cellwise::UnstructuredTopology{};
+        !o.block_dss.empty() ? mesh_topology(nblocks, nblocks, true, nullptr, stream) : cellwise::UnstructuredTopology{};
+    // On several ranks the exchanges at p, and for the multigrid at 3 and 1.
+    std::unique_ptr<cellwise::UnstructuredHalo> halo, halo3, halo1;
+    if (dec.size > 1) {
+        const int* d_owner = thrust::raw_pointer_cast(owner.data());
+        halo.reset(new cellwise::UnstructuredHalo(topo, d_gid, d_owner, MPI_COMM_WORLD, P));
+        if (o.mg && P == 7) halo3.reset(new cellwise::UnstructuredHalo(topo, d_gid, d_owner, MPI_COMM_WORLD, 3));
+        if (o.mg && P > 1) halo1.reset(new cellwise::UnstructuredHalo(topo, d_gid, d_owner, MPI_COMM_WORLD, 1));
+    }
+    cellwise::UnstructuredHalo* const h = halo.get();
+    cellwise::UnstructuredHalo* const h3 = P == 3 ? h : halo3.get();
+    cellwise::UnstructuredHalo* const h1 = P == 1 ? h : halo1.get();
+    // The tables and halos were built on the default stream, which `stream` does not wait for.
+    BP_CK(cudaDeviceSynchronize());
     const cellwise::BlockSkeleton skeleton{
         cellwise::topo_detail::raw(skeleton_topo.face_nbr), cellwise::topo_detail::raw(skeleton_topo.edge_off),
         cellwise::topo_detail::raw(skeleton_topo.edge_ent), cellwise::topo_detail::raw(skeleton_topo.vert_off),
@@ -567,13 +625,13 @@ int run(const Options& o)
                                                                  std::to_string(Bk) + "_sm90.ptx",
                                                              P, Bk)
                                    : nullptr);
-    auto dss = [&topo, &skeleton, &skeleton_topo, gen = dss_gen.get(), bgen = block_gen.get(), E, Bk,
+    auto dss = [&topo, &skeleton, &skeleton_topo, gen = dss_gen.get(), bgen = block_gen.get(), E, Bk, h,
                 block = !o.block_dss.empty(), nodes = o.block_dss != "passes"](const double* in, double* out,
                                                                                  cudaStream_t st) {
         if (bgen) bgen->run(in, out, skeleton_topo, st);
         else if (block) block_dss<P>(Bk, in, out, skeleton, nodes, st);
         else if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
-        else cellwise::dss<P>(in, out, topo, nullptr, st);
+        else cellwise::dss<P>(in, out, topo, h, st);
     };
     // The block DSS against the hand gather on a random vector.
     double block_err = 0.0, block_scale = 0.0;
@@ -602,7 +660,7 @@ int run(const Options& o)
     // Checks of the operator.
     apply(raw(ones), raw(y), stream);
     BP_CK(cudaStreamSynchronize(stream));
-    const double sum1 = thrust::reduce(y.begin(), y.end(), 0.0);
+    const double sum1 = all_sum(thrust::reduce(y.begin(), y.end(), 0.0));
     exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3);
     BP_CK(cudaGetLastError());
     apply(raw(u), raw(b), stream);   // b = A u
@@ -616,6 +674,8 @@ int run(const Options& o)
             max1 = std::fmax(max1, std::fabs(hy[i]));
             maxu = std::fmax(maxu, std::fabs(hb[i]));
         }
+        max1 = all_max(max1);
+        maxu = all_max(maxu);
     }
     // The first elements against direct quadrature sums on the host.
     const long long Ec = std::min<long long>(E, 4);
@@ -670,6 +730,8 @@ int run(const Options& o)
                 oracle_scale = std::fmax(oracle_scale, std::fabs(sum));
             }
         }
+        oracle_err = all_max(oracle_err);
+        oracle_scale = all_max(oracle_scale);
     }
 
     // The preconditioner: the assembled diagonal on every copy, inverted, Dirichlet zeroed.
@@ -711,8 +773,9 @@ int run(const Options& o)
             return lp == P ? raw(elem_fine) : (lp == 3 ? raw(L3->elem) : raw(L1->elem));
         };
         if constexpr (P > 1) {
-            mg = std::make_unique<Multigrid>(P, level_apply, level_elem, topo, o.pre, o.post, o.coarse, MPI_COMM_SELF,
-                                             stream);
+            mg = std::make_unique<Multigrid>(P, level_apply, level_elem, topo,
+                                             std::array<cellwise::UnstructuredHalo*, 3>{P == 7 ? h : nullptr, h3, h1},
+                                             d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream);
             lmax = mg->lambda_max();
         }
 #ifdef MARS_ENABLE_HYPRE
@@ -721,7 +784,7 @@ int run(const Options& o)
                                              : LevelApply([&](const double* in, double* out, cudaStream_t st) {
                                                    L1->apply(in, out, st);
                                                });
-            amg = std::make_unique<cellwise::P1Amg>(topo, apply1, nullptr, MPI_COMM_SELF, stream, o.amg_cycles);
+            amg = std::make_unique<cellwise::P1Amg>(topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles);
             if (mg) mg->set_coarse_solve([&](const double* in, double* out) { amg->solve(in, out); });
         }
 #endif
@@ -735,7 +798,7 @@ int run(const Options& o)
         G.shrink_to_fit();
     }
 
-    cellwise::FcgReduction red(MPI_COMM_SELF);
+    cellwise::FcgReduction red(MPI_COMM_WORLD);
     auto solve = [&](const auto& pc) {
         return cellwise::fcg(apply, pc, raw(b), raw(x), N, raw(r), raw(q), raw(z), raw(pdir), red, o.tol, o.maxit,
                              stream);
@@ -760,8 +823,8 @@ int run(const Options& o)
     // The true assembled residual over the free nodes, relative to that of b.
     apply(raw(x), raw(y), stream);
     residual_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(b), raw(y), N);
-    cellwise::dss<P>(raw(s), raw(r), topo, nullptr, stream);
-    cellwise::dss<P>(raw(b), raw(q), topo, nullptr, stream);
+    cellwise::dss<P>(raw(s), raw(r), topo, h, stream);
+    cellwise::dss<P>(raw(b), raw(q), topo, h, stream);
     if (bp3) {
         cellwise::zero_dirichlet<P>(raw(r), topo, stream);
         cellwise::zero_dirichlet<P>(raw(q), topo, stream);
@@ -769,12 +832,13 @@ int run(const Options& o)
     const double true_rel = counted_norm<P>(raw(r), topo, stream) / counted_norm<P>(raw(q), topo, stream);
     difference_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(x), raw(u), N);
     BP_CK(cudaStreamSynchronize(stream));
-    const double err = thrust::reduce(s.begin(), s.end(), 0.0, thrust::maximum<double>());
+    const double err = all_max(thrust::reduce(s.begin(), s.end(), 0.0, thrust::maximum<double>()));
     double umax = 0.0;
     {
         std::vector<double> hu(N);
         thrust::copy(u.begin(), u.end(), hu.begin());
         for (double v : hu) umax = std::fmax(umax, std::fabs(v));
+        umax = all_max(umax);
     }
 
     auto time_ms = [&](auto&& f) {
@@ -785,7 +849,7 @@ int run(const Options& o)
         BP_CK(cudaEventSynchronize(t1));
         float ms = 0.0f;
         BP_CK(cudaEventElapsedTime(&ms, t0, t1));
-        return ms / o.reps;
+        return (float)all_max(ms / o.reps);   // the slowest rank
     };
     const float op_ms = time_ms([&] { apply(raw(u), raw(y), stream); });
     const float dss_ms = time_ms([&] { dss(raw(y), raw(s), stream); });
@@ -793,40 +857,51 @@ int run(const Options& o)
         apply(raw(u), raw(y), stream);
         dss(raw(y), raw(s), stream);
     });
+    // Bytes per GPU (this rank's), rates over all ranks.
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
+    solve_ms = (float)all_max(solve_ms);
+    setup_ms = (float)all_max(setup_ms);
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
                       (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
-    printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
-           o.spec.c_str(), P, Q, o.ne, E, unique, N, o.deform, tri ? "trilinear (corners)" : "stored");
-    if (Bk != o.ne || o.rotate) printf("  blocks of %d^3 elements (%lld)%s\n", Bk, nblocks, o.rotate ? ", rotated" : "");
-    if (!o.block_dss.empty())
-        printf("  block DSS (%s) vs hand gather, random vector: max diff %.1e of max %.1e\n", o.block_dss.c_str(),
-               block_err, block_scale);
-    if (block_gen) printf("  generated vs hand block nodes: %lld copies differ in their bits\n", block_bits);
-    if (bp3)
-        printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
-    else
-        printf("  BP1 applied to 1, summed: %.15f (the volume: 1)\n", sum1);
-    printf("  first %lld elements vs direct quadrature sums: %.1e of max %.1e\n", Ec, oracle_err, oracle_scale);
-    if (o.mg)
-        printf("  multigrid p=%d%s%s, Chebyshev (%d,%d), coarse %s x%d; lmax %.4f %.4f %.4f; setup %.1f ms\n", P,
-               P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post, o.amg ? "BoomerAMG" : "Chebyshev",
-               o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
-    printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
-           o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
-    for (int k : {1, 5, 10, 20, 50, 100})
-        if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
-    printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
-    printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s (u, y, geometry)\n", op_ms,
-           unique / (op_ms * 1e6), N / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
-    printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s  (%s)\n", dss_ms, unique / (dss_ms * 1e6),
-           dss_bytes / (dss_ms * 1e6), block_gen ? "block, MARSIR-generated" : !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
-    printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
-           unique / (both_ms * 1e6));
-    printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f, solve_ms,
-           o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
+    if (root) {
+        printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
+               o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
+               tri ? "trilinear (corners)" : "stored");
+        if (dec.size > 1)
+            printf("  %d ranks (%d x %d x %d); rank 0: %d x %d x %d elements, %lld ghosts, %d peers\n", dec.size,
+                   dec.P[0], dec.P[1], dec.P[2], box.nx, box.ny, box.nz, topo.elements - topo.local, h->peers());
+        if (Bk != o.ne || o.rotate)
+            printf("  blocks of %d^3 elements (%lld)%s\n", Bk, nblocks, o.rotate ? ", rotated" : "");
+        if (!o.block_dss.empty())
+            printf("  block DSS (%s) vs hand gather, random vector: max diff %.1e of max %.1e\n", o.block_dss.c_str(),
+                   block_err, block_scale);
+        if (block_gen) printf("  generated vs hand block nodes: %lld copies differ in their bits\n", block_bits);
+        if (bp3)
+            printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
+        else
+            printf("  BP1 applied to 1, summed: %.15f (the volume: 1)\n", sum1);
+        printf("  first %lld elements vs direct quadrature sums: %.1e of max %.1e\n", Ec, oracle_err, oracle_scale);
+        if (o.mg)
+            printf("  multigrid p=%d%s%s, Chebyshev (%d,%d), coarse %s x%d; lmax %.4f %.4f %.4f; setup %.1f ms\n", P,
+                   P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post, o.amg ? "BoomerAMG" : "Chebyshev",
+                   o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
+        printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
+               o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
+        for (int k : {1, 5, 10, 20, 50, 100})
+            if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
+        printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
+        printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s per GPU (u, y, geometry)\n",
+               op_ms, unique / (op_ms * 1e6), N_all / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
+        printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s per GPU  (%s)\n", dss_ms,
+               unique / (dss_ms * 1e6), dss_bytes / (dss_ms * 1e6),
+               block_gen ? "block, MARSIR-generated" : !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
+        printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
+               unique / (both_ms * 1e6));
+        printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f,
+               solve_ms, o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
+    }
     BP_CK(cudaStreamDestroy(stream));
     return pass ? 0 : 1;
 }
@@ -836,6 +911,20 @@ int run(const Options& o)
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    int rank = 0, ranks = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+    // One GPU per rank, by the rank's index on its node, before any CUDA object exists
+    // (the PTX modules and the reductions bind to the current device).
+    {
+        MPI_Comm node;
+        MARS_CELLWISE_MPI(MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node));
+        int local = 0, devices = 0;
+        MARS_CELLWISE_MPI(MPI_Comm_rank(node, &local));
+        MARS_CELLWISE_MPI(MPI_Comm_free(&node));
+        MARS_CELLWISE_CK(cudaGetDeviceCount(&devices));
+        MARS_CELLWISE_CK(cudaSetDevice(local % devices));
+    }
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
@@ -862,13 +951,12 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-cycles")) o.amg_cycles = atoi(argv[i + 1]);
         else error = "unknown option";
     }
-    int ranks = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &ranks);
     if (!error && o.ptx_dir.empty()) error = "--ptx-dir is required";
     if (!error && o.spec != "bp1" && o.spec != "bp3" && o.spec != "bp1_tri" && o.spec != "bp3_tri")
         error = "--spec is bp1, bp3, bp1_tri or bp3_tri";
     if (!error && o.p != 1 && o.p != 3 && o.p != 7) error = "--p is 1, 3 or 7 (the generated degrees)";
-    if (!error && ranks != 1) error = "one rank for now";
+    if (!error && ranks > 1 && (o.block || o.rotate || !o.block_dss.empty() || !o.dss_ptx.empty()))
+        error = "--block, --rotate, --block-dss and --dss-ptx are for one rank";
     if (!error && (o.block < 0 || (o.block && o.ne % o.block))) error = "--block must divide --ne";
     if (!error && o.mg && o.spec.rfind("bp3", 0) != 0) error = "--mg is for bp3 and bp3_tri";
     if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
@@ -884,9 +972,20 @@ int main(int argc, char** argv)
         if (b != 2 && b != 4 && b != 8 && b != 16 && b != 32) error = "--block-dss needs --block 2, 4, 8, 16 or 32";
         if (!o.dss_ptx.empty()) error = "--block-dss and --dss-ptx exclude each other";
     }
+    // The halos pass device pointers to MPI; Cray MPICH accepts them only with
+    // MPICH_GPU_SUPPORT_ENABLED=1, and fails later with an unreadable error otherwise.
+    if (!error && ranks > 1) {
+        char version[MPI_MAX_LIBRARY_VERSION_STRING];
+        int len = 0;
+        MPI_Get_library_version(version, &len);
+        const char* gpu = getenv("MPICH_GPU_SUPPORT_ENABLED");
+        if (strstr(version, "MPICH") && !(gpu && !strcmp(gpu, "1")))
+            error = "MPICH_GPU_SUPPORT_ENABLED=1 is required on several ranks (GPU-aware MPI)";
+    }
     if (error) {
-        fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                        "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]\n", error, argv[0]);
+        if (rank == 0)
+            fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
+                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
