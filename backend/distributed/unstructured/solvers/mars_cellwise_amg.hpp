@@ -146,6 +146,16 @@ __global__ void scatter_kernel(const double* __restrict__ u, const int* __restri
 
 }  // namespace amg_detail
 
+// The BoomerAMG options that set how deep and how wide the hierarchy is; the defaults are
+// those of HypreAmgPcgSolver. All run on the GPU in Hypre 2.33: PMIS coarsening, and
+// aggressive levels with 2-stage extended+e interpolation (Hypre's device default).
+struct AmgSettings {
+    double strong_threshold = 0.25;
+    int aggressive_levels = 0;
+    int max_coarse_size = 9;   // coarsening stops below this many rows
+    bool print = false;        // Hypre's setup statistics (levels, complexities)
+};
+
 class P1Amg {
 public:
     // y = A u at p = 1 on the local elements, for the element matrices.
@@ -165,7 +175,7 @@ public:
     // Any p = 1 operator (e.g. the BP3 Galerkin form), symmetric for BoomerAMG's V-cycle
     // to be a symmetric preconditioner.
     P1Amg(const UnstructuredTopology& T, const Apply1& apply1, UnstructuredHalo* halo1, MPI_Comm comm,
-          cudaStream_t stream, int cycles = 1)
+          cudaStream_t stream, int cycles = 1, const AmgSettings& settings = {})
         : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
@@ -263,7 +273,12 @@ public:
         HYPRE_BoomerAMGSetCoarsenType(amg_, 8);
         HYPRE_BoomerAMGSetInterpType(amg_, 6);
         HYPRE_BoomerAMGSetPMaxElmts(amg_, 4);
-        HYPRE_BoomerAMGSetStrongThreshold(amg_, 0.25);
+        HYPRE_BoomerAMGSetStrongThreshold(amg_, settings.strong_threshold);
+        if (settings.aggressive_levels > 0) {
+            HYPRE_BoomerAMGSetAggNumLevels(amg_, settings.aggressive_levels);
+            HYPRE_BoomerAMGSetAggInterpType(amg_, 7);
+        }
+        HYPRE_BoomerAMGSetMaxCoarseSize(amg_, settings.max_coarse_size);
         HYPRE_BoomerAMGSetRelaxType(amg_, 18);
         HYPRE_BoomerAMGSetRelaxOrder(amg_, 0);
         HYPRE_BoomerAMGSetNumSweeps(amg_, 1);
@@ -272,7 +287,7 @@ public:
         HYPRE_BoomerAMGSetMaxLevels(amg_, 25);
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
         HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
-        HYPRE_BoomerAMGSetPrintLevel(amg_, 0);
+        HYPRE_BoomerAMGSetPrintLevel(amg_, settings.print ? 1 : 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
         fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
         rows_global_ = total;

@@ -15,7 +15,7 @@
 // solve and the timing.
 //
 // Checks: BP1 applied to 1 sums to the volume (1); BP3 applied to 1 is 0; the operator on
-// the first elements equals direct quadrature sums on the host. Solve: b = A u with u =
+// the first elements equals direct quadrature sums on the host, on a random vector. Solve: b = A u with u =
 // sin(pi x) sin(pi y) sin(pi z) at the nodes (zero on the boundary for BP3), so FCG
 // must return u; its history must match marsir-mlir/test/cellwise_bp_ref.py
 // (GPU-comparable run) for the same --spec, --p, --ne, --deform.
@@ -46,6 +46,8 @@
 // MARSIR kernels bp3_p{3,1} in --ptx-dir), --pre / --post Chebyshev-Jacobi steps (2 and 2
 // by default: equal for a symmetric cycle), on p = 1 --coarse Chebyshev steps or, with --amg,
 // BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3; a Hypre build).
+// --amg-theta, --amg-agg and --amg-coarse-size set its hierarchy (cellwise::AmgSettings),
+// --amg-print prints Hypre's setup statistics.
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -62,7 +64,8 @@
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
-//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]
+//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t]
+//                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
 
 #include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
 
@@ -538,8 +541,11 @@ struct Options {
     // (2,2) smoothing and 3 AMG cycles: the fastest measured at equal accuracy at p = 3 and 7,
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
-    bool rotate = false, mg = false, amg = false;
+    bool rotate = false, mg = false, amg = false, amg_print = false;
     double deform = 0.05, tol = 1e-10;
+    // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
+    double amg_theta = 0.25;
+    int amg_agg = 0, amg_coarse_size = 9;
 };
 
 template <int P>
@@ -658,33 +664,40 @@ int run(const Options& o)
         for (long long i = 0; i < N; ++i) block_bits += std::memcmp(&hq[i], &hh[i], sizeof(double)) != 0;
     }
 
-    // Checks of the operator.
+    // Checks of the operator: BP1 applied to 1 sums to the volume, BP3 applied to 1 is 0, and
+    // on a random v (in x; A v in z, both free until the solve) the first elements equal
+    // direct quadrature sums. The rounding is of the size of |A| |v|, so both are relative to
+    // max |A v|: relative to A u, which shrinks like h^2 while the rounding shrinks like h,
+    // they tightened as the mesh was refined.
     apply(raw(ones), raw(y), stream);
+    random_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(x), N);
+    BP_CK(cudaGetLastError());
+    apply(raw(x), raw(z), stream);
     BP_CK(cudaStreamSynchronize(stream));
     const double sum1 = all_sum(thrust::reduce(y.begin(), y.end(), 0.0));
     exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3);
     BP_CK(cudaGetLastError());
     apply(raw(u), raw(b), stream);   // b = A u
     BP_CK(cudaStreamSynchronize(stream));
-    double max1 = 0.0, maxu = 0.0;
+    double max1 = 0.0, maxv = 0.0;
     {
-        std::vector<double> hy(N), hb(N);
+        std::vector<double> hy(N), hz(N);
         thrust::copy(y.begin(), y.end(), hy.begin());
-        thrust::copy(b.begin(), b.end(), hb.begin());
+        thrust::copy(z.begin(), z.end(), hz.begin());
         for (long long i = 0; i < N; ++i) {
             max1 = std::fmax(max1, std::fabs(hy[i]));
-            maxu = std::fmax(maxu, std::fabs(hb[i]));
+            maxv = std::fmax(maxv, std::fabs(hz[i]));
         }
         max1 = all_max(max1);
-        maxu = all_max(maxu);
+        maxv = all_max(maxv);
     }
     // The first elements against direct quadrature sums on the host.
     const long long Ec = std::min<long long>(E, 4);
     double oracle_err = 0.0, oracle_scale = 0.0;
     {
-        std::vector<double> hu(Ec * n3), hb(Ec * n3), hG(Ec * K * q3);
-        thrust::copy(u.begin(), u.begin() + Ec * n3, hu.begin());
-        thrust::copy(b.begin(), b.begin() + Ec * n3, hb.begin());
+        std::vector<double> hu(Ec * n3), hb(Ec * n3), hG(Ec * K * q3);   // v and A v
+        thrust::copy(x.begin(), x.begin() + Ec * n3, hu.begin());
+        thrust::copy(z.begin(), z.begin() + Ec * n3, hb.begin());
         thrust::copy(G.begin(), G.begin() + Ec * K * q3, hG.begin());
         const int sym[3][3] = {{0, 1, 2}, {1, 3, 4}, {2, 4, 5}};
         for (long long e = 0; e < Ec; ++e) {
@@ -797,7 +810,9 @@ int run(const Options& o)
                                                });
             BP_CK(cudaStreamSynchronize(stream));
             const auto a0 = std::chrono::steady_clock::now();
-            amg = std::make_unique<cellwise::P1Amg>(topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles);
+            amg = std::make_unique<cellwise::P1Amg>(
+                topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles,
+                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print});
             BP_CK(cudaStreamSynchronize(stream));
             amg_setup_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
             if (mg) mg->set_coarse_solve(coarse);
@@ -879,7 +894,7 @@ int run(const Options& o)
     coarse_s = all_max(coarse_s);
     amg_setup_ms = all_max(amg_setup_ms);
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
-                      (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
+                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
     if (root) {
@@ -896,14 +911,18 @@ int run(const Options& o)
                    block_err, block_scale);
         if (block_gen) printf("  generated vs hand block nodes: %lld copies differ in their bits\n", block_bits);
         if (bp3)
-            printf("  BP3 applied to 1: max %.1e (of max %.1e for u)\n", max1, maxu);
+            printf("  BP3 applied to 1: max %.1e (of max %.1e for a random v)\n", max1, maxv);
         else
             printf("  BP1 applied to 1, summed: %.15f (the volume: 1)\n", sum1);
-        printf("  first %lld elements vs direct quadrature sums: %.1e of max %.1e\n", Ec, oracle_err, oracle_scale);
+        printf("  first %lld elements vs direct quadrature sums, random v: %.1e of max %.1e\n", Ec, oracle_err,
+               oracle_scale);
         if (o.mg)
             printf("  multigrid p=%d%s%s, Chebyshev (%d,%d), coarse %s x%d; lmax %.4f %.4f %.4f; setup %.1f ms\n", P,
                    P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post, o.amg ? "BoomerAMG" : "Chebyshev",
                    o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
+        if (o.amg)
+            printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
+                   o.amg_agg, o.amg_coarse_size);
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})
@@ -950,6 +969,11 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
+        if (!strcmp(argv[i], "--amg-print")) {
+            o.amg_print = true;
+            --i;
+            continue;
+        }
         if (!strcmp(argv[i], "--rotate") || !strcmp(argv[i], "--mg") || !strcmp(argv[i], "--amg")) {
             (argv[i][2] == 'r' ? o.rotate : argv[i][2] == 'm' ? o.mg : o.amg) = true;
             --i;
@@ -971,6 +995,9 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--post")) o.post = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--coarse")) o.coarse = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-cycles")) o.amg_cycles = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-theta")) o.amg_theta = atof(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-agg")) o.amg_agg = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-coarse-size")) o.amg_coarse_size = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     if (!error && o.ptx_dir.empty()) error = "--ptx-dir is required";
@@ -984,6 +1011,8 @@ int main(int argc, char** argv)
     if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
+    if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
+        error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size at least 1";
 #ifndef MARS_ENABLE_HYPRE
     if (!error && o.amg) error = "--amg needs a Hypre build (MARS_ENABLE_HYPRE)";
 #endif
@@ -1007,7 +1036,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
