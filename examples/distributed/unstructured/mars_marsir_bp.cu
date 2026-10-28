@@ -83,6 +83,7 @@
 #include <thrust/reduce.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -750,8 +751,18 @@ int run(const Options& o)
     using Multigrid = cellwise::PMultigrid<LevelApply>;
     std::unique_ptr<Bp3Level> L3, L1;
     std::unique_ptr<Multigrid> mg;
+    // Host time in the BoomerAMG setup and solves (a solve with its two p = 1 DSS),
+    // synchronized at both ends; the solve synchronizes inside anyway.
+    double coarse_s = 0.0, amg_setup_ms = 0.0;
 #ifdef MARS_ENABLE_HYPRE
     std::unique_ptr<cellwise::P1Amg> amg;
+    auto coarse = [&](const double* in, double* out) {
+        BP_CK(cudaStreamSynchronize(stream));
+        const auto c0 = std::chrono::steady_clock::now();
+        amg->solve(in, out);
+        BP_CK(cudaStreamSynchronize(stream));
+        coarse_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
+    };
 #endif
     thrust::device_vector<double> elem_fine;
     float setup_ms = 0.0f;
@@ -784,8 +795,12 @@ int run(const Options& o)
                                              : LevelApply([&](const double* in, double* out, cudaStream_t st) {
                                                    L1->apply(in, out, st);
                                                });
+            BP_CK(cudaStreamSynchronize(stream));
+            const auto a0 = std::chrono::steady_clock::now();
             amg = std::make_unique<cellwise::P1Amg>(topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles);
-            if (mg) mg->set_coarse_solve([&](const double* in, double* out) { amg->solve(in, out); });
+            BP_CK(cudaStreamSynchronize(stream));
+            amg_setup_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
+            if (mg) mg->set_coarse_solve(coarse);
         }
 #endif
         BP_CK(cudaEventRecord(t1, stream));
@@ -811,7 +826,7 @@ int run(const Options& o)
         auto cycle = [&](const double* in, double* out, cudaStream_t) {
             if (mg) mg->cycle(in, out);
 #ifdef MARS_ENABLE_HYPRE
-            else amg->solve(in, out);
+            else coarse(in, out);
 #endif
         };
         res = solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N});
@@ -861,6 +876,8 @@ int run(const Options& o)
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
     solve_ms = (float)all_max(solve_ms);
     setup_ms = (float)all_max(setup_ms);
+    coarse_s = all_max(coarse_s);
+    amg_setup_ms = all_max(amg_setup_ms);
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
                       (bp3 ? max1 <= 1e-12 * maxu : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
@@ -901,6 +918,11 @@ int run(const Options& o)
                unique / (both_ms * 1e6));
         printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f,
                solve_ms, o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
+        if (o.amg)   // one coarse solve per V-cycle: FCG's iterations + the first
+            printf("  coarse solve  %7.3f ms per V-cycle, %.0f%% of the solve (BoomerAMG x%d and two p = 1 DSS); "
+                   "AMG setup %.0f ms\n",
+                   coarse_s * 1e3 / (res.iterations + 1), 100.0 * coarse_s * 1e3 / solve_ms, o.amg_cycles,
+                   amg_setup_ms);
     }
     BP_CK(cudaStreamDestroy(stream));
     return pass ? 0 : 1;
