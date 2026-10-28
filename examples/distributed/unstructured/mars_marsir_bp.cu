@@ -887,6 +887,13 @@ int run(const Options& o)
         apply(raw(u), raw(y), stream);
         dss(raw(y), raw(s), stream);
     });
+    // The p = 1 DSS on its own: a coarse solve makes two, the rest is BoomerAMG.
+    float dss1_ms = 0.0f;
+    if (o.amg) {
+        thrust::device_vector<double> a1(E * 8, 1.0), b1(E * 8);
+        BP_CK(cudaDeviceSynchronize());   // filled on the default stream
+        dss1_ms = time_ms([&] { cellwise::dss<1>(raw(a1), raw(b1), topo, h1, stream); });
+    }
     // Bytes per GPU (this rank's), rates over all ranks.
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
     solve_ms = (float)all_max(solve_ms);
@@ -938,9 +945,9 @@ int run(const Options& o)
         printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f,
                solve_ms, o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
         if (o.amg)   // one coarse solve per V-cycle: FCG's iterations + the first
-            printf("  coarse solve  %7.3f ms per V-cycle, %.0f%% of the solve (BoomerAMG x%d and two p = 1 DSS); "
-                   "AMG setup %.0f ms\n",
-                   coarse_s * 1e3 / (res.iterations + 1), 100.0 * coarse_s * 1e3 / solve_ms, o.amg_cycles,
+            printf("  coarse solve  %7.3f ms per V-cycle, %.0f%% of the solve (BoomerAMG x%d and two p = 1 DSS of "
+                   "%.3f ms); AMG setup %.0f ms\n",
+                   coarse_s * 1e3 / (res.iterations + 1), 100.0 * coarse_s * 1e3 / solve_ms, o.amg_cycles, dss1_ms,
                    amg_setup_ms);
     }
     BP_CK(cudaStreamDestroy(stream));
