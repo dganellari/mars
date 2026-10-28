@@ -393,3 +393,34 @@ hierarchy; a larger coarsest level removes levels without making a cycle cheaper
 the hierarchy has the same shape (5-6 levels, operator complexity 1.42-1.44) while a cycle
 costs about a third, so the cost on 8 GPUs is not the size of the hierarchy; most likely it is
 the communication at every level of every cycle (not measured directly). Defaults unchanged.
+
+### Weak scaling, 1 / 8 / 64 GPUs (dc7d4019)
+
+Same work per GPU (p = 3: 64^3 elements, p = 7: 32^3), defaults, tol 3e-12, one binary. Coarse
+= BoomerAMG plus two p = 1 DSS per V-cycle; the DSS time is measured on its own. Two 64-rank runs
+died with TASK FAILURE on jobs sharing node nid005854 only; with it excluded both reruns pass.
+
+| p = 3 | it | true residual | FCG iteration | solve / setup | coarse per V-cycle (p = 1 DSS) |
+|---|---|---|---|---|---|
+| x2, 1 GPU | 14 | 3.2e-11 | 11.64 ms | 163 / 461 ms | 2.34 ms (0.19) |
+| x2, 8 GPUs | 16 | 4.6e-11 | 16.63 | 266 / 910 | 6.58 (0.25) |
+| x2, 64 GPUs | 18 | 1.5e-10 | 18.75 | 338 / 1536 | 8.36 |
+| x3, 1 GPU | 13 | 8.0e-11 | 12.28 | 160 / 448 | 2.90 (0.19) |
+| x3, 8 GPUs | 13 | 2.2e-10 | 19.53 | 254 / 935 | 9.06 (0.25) |
+| x3, 64 GPUs | 14 | 4.2e-10 | 22.47 | 315 / 1479 | 11.64 (0.29) |
+
+| p = 7 | it | true residual | FCG iteration | solve / setup | coarse per V-cycle (p = 1 DSS) |
+|---|---|---|---|---|---|
+| x2, 1 GPU | 14 | 1.0e-10 | 17.34 | 243 / 512 | 1.51 (0.03) |
+| x2, 8 GPUs | 14 | 2.7e-10 | 22.63 | 317 / 930 | 5.44 (0.10) |
+| x2, 64 GPUs | 15 | 4.9e-10 | 25.80 | 387 / 1700 | 6.82 (0.11) |
+| x3, 1 GPU | 14 | 4.4e-11 | 17.67 | 247 / 511 | 1.78 (0.03) |
+| x3, 8 GPUs | 14 | 1.2e-10 | 24.79 | 347 / 963 | 7.42 (0.10) |
+| x3, 64 GPUs | 14 | 3.6e-10 | 28.02 | 392 / 1605 | 9.00 (0.14) |
+
+The coarse solve is BoomerAMG itself: the two p = 1 DSS are at most 0.6 ms of it. Without it, a
+p = 3 x3 iteration costs 9.2 / 9.8 / 10.3 ms on 1 / 8 / 64 GPUs. Most of the loss comes between
+1 and 8 GPUs; from 8 to 64 the solve grows by 13-27%. Iterations grow by at most two, but at the
+same FCG tolerance the true residual is 5-10x looser on 64 GPUs than on one, so a comparison at
+equal accuracy needs a tighter tolerance at scale. Setup grows the most (AMG setup ~300 -> ~1300
+ms).
