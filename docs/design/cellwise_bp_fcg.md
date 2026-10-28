@@ -264,14 +264,14 @@ Solve time, iterations and true residual at tol 3e-12 (Jacobi: 1586 ms and 8.5e-
 | p = 3, ne 64 | (1,1) | (2,2) | (3,3) |
 |---|---|---|---|
 | AMG x1 | 161 ms, 23 it, 6.2e-11 | 202 ms, 19 it, 6.8e-11 | 272 ms, 19 it, 3.2e-11 |
-| AMG x2 | | | 197 ms, 13 it, 7.7e-11 |
+| AMG x2 | | 163 ms, 14 it, 3.2e-11 | 197 ms, 13 it, 7.7e-11 |
 | AMG x3 | | **159 ms**, 13 it, 8.0e-11 | 177 ms, 11 it, 2.0e-11 |
 | AMG x4 | | 166 ms, 13 it, 3.9e-11 | 170 ms, 10 it, 9.0e-12 |
 
 | p = 7, ne 32 | (1,1) | (2,2) | (3,3) |
 |---|---|---|---|
 | AMG x1 | 269 ms, 26 it, 8.5e-11 | 284 ms, 17 it, 4.5e-11 | 363 ms, 16 it, 7.0e-11 |
-| AMG x2 | | | 282 ms, 12 it, 1.6e-11 |
+| AMG x2 | | 241 ms, 14 it, 1.0e-10 (above Jacobi's) | 282 ms, 12 it, 1.6e-11 |
 | AMG x3 | | **245 ms**, 14 it, 4.4e-11 | 267 ms, 11 it, 1.5e-11 |
 | AMG x4 | | 233 ms, 13 it, 1.5e-10 (above Jacobi's) | 248 ms, 10 it, 8.3e-11 |
 
@@ -293,6 +293,14 @@ come within 1-2 iterations of their exact-coarse counts and are the fastest. The
 per decade of true residual, (2,2) x3 / x4 and (3,3) x3 / x4 take 15.4-16.5 ms at p = 3 and
 23.6-24.6 ms at p = 7, against 19.5 / 26.1 ms for (3,3) x2 and 15.8 / 26.7 ms for (1,1) x1.
 
-Defaults now: (2,2) with 3 AMG cycles, the fastest solve at both degrees (159 ms at p = 3, 245 ms
-at p = 7: 1.24x / 1.15x faster than (3,3) x2, 10.0x / 14.4x faster than Jacobi, 2.9x / 4.9x with
-the setup). AMG alone at p = 1 keeps 2 cycles (3 and 4 not measured yet).
+(2,2) x2 takes about the same time per decade as x3 (15.5 / 24.1 ms against 15.7 / 23.6 ms), but
+at p = 7 it stopped above Jacobi's residual. AMG alone at p = 1 (ne 128; Jacobi 1363 ms, 9.2e-11):
+x1 202 ms / 23 it / 3.3e-11, x2 175 / 16 / 2.3e-11, x3 173 / 13 / 1.1e-11, x4 171 / 11 / 9.3e-12.
+
+Defaults now: (2,2) and 3 AMG cycles at every degree. That is the fastest solve at equal accuracy
+at p = 3 and 7 (159 ms and 245 ms: 1.24x / 1.15x faster than (3,3) x2, 10.0x / 14.4x faster than
+Jacobi, 2.9x / 4.9x with the setup) and 1% from the best at p = 1 (173 ms, 7.9x faster than
+Jacobi). GPU gate of this default (ne = 4, Chebyshev-100 coarse): lmax, iterations, the history
+at it 1 and 5, the true residual and the error equal the reference to every printed digit at
+p = 3 (11 it) and p = 7 (12 it). The default run at p = 3, ne 64 prints `Chebyshev (2,2), coarse
+BoomerAMG x3` and repeats the explicit run to every digit.

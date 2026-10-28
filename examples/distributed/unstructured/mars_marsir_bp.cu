@@ -45,8 +45,7 @@
 // takes the coarse solve), the BP3 Galerkin form rediscretized at each degree (the
 // MARSIR kernels bp3_p{3,1} in --ptx-dir), --pre / --post Chebyshev-Jacobi steps (2 and 2
 // by default: equal for a symmetric cycle), on p = 1 --coarse Chebyshev steps or, with --amg,
-// BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3 under the V-cycle
-// and 2 alone at p = 1; a Hypre build).
+// BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3; a Hypre build).
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -504,9 +503,9 @@ double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cu
 
 struct Options {
     std::string ptx_dir, spec = "bp3", dss_ptx, block_dss;   // block_dss: "", "passes" or "nodes"
-    // (2,2) smoothing with 3 AMG cycles, and 2 cycles for AMG alone at p = 1: the fastest
-    // measured at equal accuracy (docs/design/cellwise_bp_fcg.md). amg_cycles 0 = that default.
-    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 0;
+    // (2,2) smoothing and 3 AMG cycles: the fastest measured at equal accuracy at p = 3 and 7,
+    // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
+    int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     bool rotate = false, mg = false, amg = false;
     double deform = 0.05, tol = 1e-10;
 };
@@ -874,8 +873,7 @@ int main(int argc, char** argv)
     if (!error && o.mg && o.spec.rfind("bp3", 0) != 0) error = "--mg is for bp3 and bp3_tri";
     if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
-    if (!error && o.amg_cycles < 0) error = "--amg-cycles must be positive";
-    if (o.amg_cycles == 0) o.amg_cycles = o.p == 1 ? 2 : 3;
+    if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
 #ifndef MARS_ENABLE_HYPRE
     if (!error && o.amg) error = "--amg needs a Hypre build (MARS_ENABLE_HYPRE)";
 #endif
