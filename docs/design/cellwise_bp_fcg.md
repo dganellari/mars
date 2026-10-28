@@ -424,3 +424,17 @@ p = 3 x3 iteration costs 9.2 / 9.8 / 10.3 ms on 1 / 8 / 64 GPUs. Most of the los
 same FCG tolerance the true residual is 5-10x looser on 64 GPUs than on one, so a comparison at
 equal accuracy needs a tighter tolerance at scale. Setup grows the most (AMG setup ~300 -> ~1300
 ms).
+
+At equal accuracy (tol 3e-13: every true residual at or below about 1e-10; p = 7 x3 on 64 GPUs
+1.05e-10), solve ms and iterations, all PASS:
+
+| same work per GPU | 1 GPU | 8 GPUs | 64 GPUs |
+|---|---|---|---|
+| p = 3 x2 | 170, 15 | 280, 17 | 352, 19 |
+| p = 3 x3 | 170, 14 | 268, 14 | 355, 16 |
+| p = 7 x2 | 257, 15 | 358, 16 | 436, 17 |
+| p = 7 x3 | 261, 15 | 368, 15 | 409, 15 |
+
+With the faster cycle count at each size, the solve keeps 48% (p = 3) and 63% (p = 7) of the
+one-GPU time on 64 GPUs, and 76% / 88% from 8 to 64 GPUs. Iterations grow by at most four. One
+64-GPU setup took 5.6 s (p = 3 x2) against 1.3-1.6 s in the others, a one-off.
