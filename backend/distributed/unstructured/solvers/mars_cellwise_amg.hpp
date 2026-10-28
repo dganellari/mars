@@ -154,6 +154,9 @@ struct AmgSettings {
     int aggressive_levels = 0;
     int max_coarse_size = 9;   // coarsening stops below this many rows
     bool print = false;        // Hypre's setup statistics (levels, complexities)
+    // Groups of this many consecutive ranks hand their rows to the group's first rank,
+    // which alone runs BoomerAMG: fewer, larger ranks per level (1: every rank solves).
+    int ranks_per_solve = 1;
 };
 
 class P1Amg {
@@ -192,11 +195,38 @@ public:
         const auto ids = thrust::counting_iterator<int>(0);
         rows_ = thrust::copy_if(thrust::device, ids, ids + n, flag.begin(), copy_.begin(), NonZero{}) - copy_.begin();
         copy_.resize(rows_);
-        long long first = 0, rows = rows_, total = 0;
-        MARS_CELLWISE_MPI(MPI_Exscan(&rows, &first, 1, MPI_LONG_LONG, MPI_SUM, comm));
+        // Rows are numbered group by group, and inside a group rank by rank, so each
+        // leader's rows are contiguous and in the order of the gather.
+        grouped_ = settings.ranks_per_solve > 1;
+        const int leader_rank = rank / settings.ranks_per_solve * settings.ranks_per_solve;
+        MARS_CELLWISE_MPI(MPI_Comm_split(comm, rank / settings.ranks_per_solve, rank, &group_));
+        int g = 0, gsize = 1;
+        MARS_CELLWISE_MPI(MPI_Comm_rank(group_, &g));
+        MARS_CELLWISE_MPI(MPI_Comm_size(group_, &gsize));
+        leader_ = g == 0;
+        MARS_CELLWISE_MPI(MPI_Comm_split(comm, leader_ ? 0 : MPI_UNDEFINED, rank, &solvers_));
+        long long rows = rows_, in_group = 0, group_rows = 0, group_first = 0, total = 0;
+        MARS_CELLWISE_MPI(MPI_Exscan(&rows, &in_group, 1, MPI_LONG_LONG, MPI_SUM, group_));
+        if (g == 0) in_group = 0;
+        MARS_CELLWISE_MPI(MPI_Allreduce(&rows, &group_rows, 1, MPI_LONG_LONG, MPI_SUM, group_));
+        if (leader_) {
+            int s = 0;
+            MARS_CELLWISE_MPI(MPI_Comm_rank(solvers_, &s));
+            MARS_CELLWISE_MPI(MPI_Exscan(&group_rows, &group_first, 1, MPI_LONG_LONG, MPI_SUM, solvers_));
+            if (s == 0) group_first = 0;
+        }
+        MARS_CELLWISE_MPI(MPI_Bcast(&group_first, 1, MPI_LONG_LONG, 0, group_));
         MARS_CELLWISE_MPI(MPI_Allreduce(&rows, &total, 1, MPI_LONG_LONG, MPI_SUM, comm));
-        if (rank == 0) first = 0;
-        first_ = first;
+        first_ = group_first + in_group;
+        solve_first_ = group_first;
+        solve_rows_ = leader_ ? group_rows : 0;
+        // The leader's counts and offsets of the gather and scatter.
+        counts_.assign(leader_ ? gsize : 0, 0);
+        displs_.assign(leader_ ? gsize : 0, 0);
+        const int rows32 = (int)rows_;
+        MARS_CELLWISE_MPI(MPI_Gather(&rows32, 1, MPI_INT, counts_.data(), 1, MPI_INT, 0, group_));
+        for (int i = 1; i < (int)counts_.size(); ++i) displs_[i] = displs_[i - 1] + counts_[i - 1];
+        if (grouped_) own_.resize(rows_);
 
         // Every copy's vertex number and owner, through the counting copies and a DSS.
         thrust::device_vector<double> number(n), owner(n);
@@ -204,7 +234,7 @@ public:
         if (rows_ > 0) number_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(copy_), rows_, first_, raw(y_));
         dss<1>(raw(y_), raw(number), T_, halo_, stream_);
         MARS_CELLWISE_CK(cudaMemsetAsync(raw(y_), 0, n * sizeof(double), stream_));
-        if (rows_ > 0) owner_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(copy_), rows_, rank, raw(y_));
+        if (rows_ > 0) owner_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(copy_), rows_, leader_rank, raw(y_));
         dss<1>(raw(y_), raw(owner), T_, halo_, stream_);
 
         // The element matrices, one column per unit vector.
@@ -214,7 +244,7 @@ public:
             apply1(raw(v_), raw(columns) + (long long)j * n, stream_);
         }
 
-        // Entries: this rank's rows directly, the others' sent to their owners.
+        // Entries: this rank's rows directly, the others' sent to their owners (the leaders).
         thrust::device_vector<int> dest(E * 64);
         thrust::device_vector<long long> row(E * 64), col(E * 64);
         thrust::device_vector<double> val(E * 64);
@@ -256,16 +286,19 @@ public:
         if (mine + got > 0)
             local_entries_kernel<<<blocks(mine + got), kThreads>>>(raw(row) + dropped, raw(col) + dropped,
                                                                    raw(val) + dropped, mine, raw(recv), mine + got,
-                                                                   first_, raw(lrow), raw(lcol), raw(lval));
+                                                                   solve_first_, raw(lrow), raw(lcol), raw(lval));
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
-        A_ = fem::hypreFromEntries(comm, first_, (HYPRE_Int)rows_, total, lrow, lcol, lval);
+        rows_global_ = total;
+        if (!leader_) return;
+        fem::hypreCheck(solvers_, solve_rows_ <= 0x7fffffffLL, "cell-wise p = 1 BoomerAMG: too many rows on one rank");
+        A_ = fem::hypreFromEntries(solvers_, solve_first_, (HYPRE_Int)solve_rows_, total, lrow, lcol, lval);
 #if defined(HYPRE_USING_GPU)
         hypre_CSRMatrixMoveDiagFirstDevice(hypre_ParCSRMatrixDiag(A_.get()));   // relaxation reads it first
 #endif
-        HYPRE_BigInt part[2] = {(HYPRE_BigInt)first_, (HYPRE_BigInt)(first_ + rows_)};
-        HYPRE_ParVectorCreate(comm, (HYPRE_BigInt)total, part, &f_);
-        HYPRE_ParVectorCreate(comm, (HYPRE_BigInt)total, part, &u_);
+        HYPRE_BigInt part[2] = {(HYPRE_BigInt)solve_first_, (HYPRE_BigInt)(solve_first_ + solve_rows_)};
+        HYPRE_ParVectorCreate(solvers_, (HYPRE_BigInt)total, part, &f_);
+        HYPRE_ParVectorCreate(solvers_, (HYPRE_BigInt)total, part, &u_);
         HYPRE_ParVectorInitialize(f_);
         HYPRE_ParVectorInitialize(u_);
         // The settings of HypreAmgPcgSolver (PMIS, extended+i, l1-Jacobi), as `cycles` V-cycles.
@@ -289,14 +322,18 @@ public:
         HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
         HYPRE_BoomerAMGSetPrintLevel(amg_, settings.print ? 1 : 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
-        fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
-        rows_global_ = total;
+        fem::hypreCheck(solvers_, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
     }
     ~P1Amg()
     {
         if (amg_) HYPRE_BoomerAMGDestroy(amg_);
         if (f_) HYPRE_ParVectorDestroy(f_);
         if (u_) HYPRE_ParVectorDestroy(u_);
+        int finalized = 0;   // a caller may destroy this after MPI_Finalize
+        MPI_Finalized(&finalized);
+        if (finalized) return;
+        if (group_ != MPI_COMM_NULL) MPI_Comm_free(&group_);
+        if (solvers_ != MPI_COMM_NULL) MPI_Comm_free(&solvers_);
     }
     P1Amg(const P1Amg&) = delete;
     P1Amg& operator=(const P1Amg&) = delete;
@@ -308,16 +345,25 @@ public:
     {
         using namespace amg_detail;
         dss<1>(b1, raw(y_), T_, halo_, stream_);   // the assembled residual on every copy
-        if (rows_ > 0)
-            gather_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(y_), raw(copy_), rows_, data(f_));
+        // In groups the rows go through own_ to the leader and back; alone, straight into Hypre's vectors.
+        double* f = grouped_ ? raw(own_) : data(f_);
+        if (rows_ > 0) gather_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(y_), raw(copy_), rows_, f);
         MARS_CELLWISE_CK(cudaGetLastError());
-        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
-        HYPRE_ParVectorSetConstantValues(u_, 0.0);
-        HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
-        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // MPI and Hypre (on its own stream) read it next
+        if (grouped_)
+            MARS_CELLWISE_MPI(MPI_Gatherv(f, (int)rows_, MPI_DOUBLE, leader_ ? data(f_) : nullptr, counts_.data(),
+                                          displs_.data(), MPI_DOUBLE, 0, group_));
+        if (leader_) {
+            HYPRE_ParVectorSetConstantValues(u_, 0.0);
+            HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
+            MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        }
+        double* u = grouped_ ? raw(own_) : data(u_);
+        if (grouped_)
+            MARS_CELLWISE_MPI(MPI_Scatterv(leader_ ? data(u_) : nullptr, counts_.data(), displs_.data(), MPI_DOUBLE, u,
+                                           (int)rows_, MPI_DOUBLE, 0, group_));
         MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
-        if (rows_ > 0)
-            scatter_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(data(u_), raw(copy_), rows_, raw(v_));
+        if (rows_ > 0) scatter_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(u, raw(copy_), rows_, raw(v_));
         MARS_CELLWISE_CK(cudaGetLastError());
         dss<1>(raw(v_), x1, T_, halo_, stream_);
     }
@@ -339,6 +385,13 @@ private:
     mutable thrust::device_vector<double> y_, v_;   // scratch of the p = 1 size
     thrust::device_vector<int> copy_;                // the counting copy of every numbered vertex
     long long rows_ = 0, first_ = 0, rows_global_ = 0;
+    // Groups: this rank's group and the leaders' communicator (MPI_COMM_NULL off the leaders),
+    // the leader's rows, and its gather counts and offsets per group rank.
+    bool grouped_ = false, leader_ = true;
+    MPI_Comm group_ = MPI_COMM_NULL, solvers_ = MPI_COMM_NULL;
+    long long solve_first_ = 0, solve_rows_ = 0;
+    std::vector<int> counts_, displs_;
+    mutable thrust::device_vector<double> own_;   // this rank's rows on their way to and from the leader
     fem::HypreMatrix A_;
     HYPRE_ParVector f_ = nullptr, u_ = nullptr;
     HYPRE_Solver amg_ = nullptr;

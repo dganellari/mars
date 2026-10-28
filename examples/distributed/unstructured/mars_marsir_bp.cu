@@ -47,7 +47,8 @@
 // by default: equal for a symmetric cycle), on p = 1 --coarse Chebyshev steps or, with --amg,
 // BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3; a Hypre build).
 // --amg-theta, --amg-agg and --amg-coarse-size set its hierarchy (cellwise::AmgSettings),
-// --amg-print prints Hypre's setup statistics.
+// --amg-print prints Hypre's setup statistics, --amg-gather k solves on one rank in k (the
+// first of each k consecutive ranks; 4 = one GPU per node with 4 ranks per node).
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -65,7 +66,7 @@
 //                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
 //                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t]
-//                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
+//                     [--amg-agg k] [--amg-coarse-size n] [--amg-gather k] [--amg-print]]]
 
 #include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
 
@@ -545,7 +546,7 @@ struct Options {
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
-    int amg_agg = 0, amg_coarse_size = 9;
+    int amg_agg = 0, amg_coarse_size = 9, amg_gather = 1;
 };
 
 template <int P>
@@ -812,7 +813,7 @@ int run(const Options& o)
             const auto a0 = std::chrono::steady_clock::now();
             amg = std::make_unique<cellwise::P1Amg>(
                 topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles,
-                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print});
+                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print, o.amg_gather});
             BP_CK(cudaStreamSynchronize(stream));
             amg_setup_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
             if (mg) mg->set_coarse_solve(coarse);
@@ -928,8 +929,9 @@ int run(const Options& o)
                    P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post, o.amg ? "BoomerAMG" : "Chebyshev",
                    o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
         if (o.amg)
-            printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
-                   o.amg_agg, o.amg_coarse_size);
+            printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows, on 1 of %d "
+                   "ranks\n",
+                   o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_gather);
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})
@@ -1005,6 +1007,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-theta")) o.amg_theta = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-agg")) o.amg_agg = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-coarse-size")) o.amg_coarse_size = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-gather")) o.amg_gather = atoi(argv[i + 1]);
         else error = "unknown option";
     }
     if (!error && o.ptx_dir.empty()) error = "--ptx-dir is required";
@@ -1018,8 +1021,9 @@ int main(int argc, char** argv)
     if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
-    if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
-        error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size at least 1";
+    if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1 ||
+                   o.amg_gather < 1))
+        error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size and --amg-gather at least 1";
 #ifndef MARS_ENABLE_HYPRE
     if (!error && o.amg) error = "--amg needs a Hypre build (MARS_ENABLE_HYPRE)";
 #endif
@@ -1043,7 +1047,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-gather k] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
