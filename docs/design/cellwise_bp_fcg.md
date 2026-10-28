@@ -319,5 +319,21 @@ generated DSS options stay on one rank.
 
 Expected: the DSS gives the same bits on any rank count and only the global sums change, so
 with DSS-Jacobi and with the V-cycle on Chebyshev-100 the history matches one rank to rounding.
-BoomerAMG coarsens each partition differently, so its iterations may differ a little. GPU gate
-pending.
+BoomerAMG coarsens each partition differently, so its iterations may differ a little.
+
+GPU gate (21dea96a). One rank repeats the (2,2) gate above to every printed digit (p = 3: 11 it,
+p = 7: 12 it). On 1, 4 (2 x 2 x 1) and 8 (2 x 2 x 2) ranks, iterations and true residual:
+
+| | 1 rank | 4 ranks | 8 ranks |
+|---|---|---|---|
+| p = 3, ne 16, DSS-Jacobi | 189, 8.221e-11 | 189, 8.222e-11 | 189, 8.218e-11 |
+| p = 3, ne 16, V-cycle + Chebyshev-100 | 10, 1.427e-09 | 10, 1.427e-09 | 10, 1.427e-09 |
+| p = 7, ne 8, V-cycle + Chebyshev-100 | 12, 3.744e-10 | 12, 3.744e-10 | 12, 3.744e-10 |
+| p = 1, ne 16, BoomerAMG | 8, 2.765e-11 | 8, 2.317e-11 | 7, 3.867e-10 |
+| p = 3, ne 16, V-cycle + BoomerAMG | 11, 4.834e-10 | 11, 4.459e-10 | 11, 4.284e-10 |
+| p = 7, ne 8, V-cycle + BoomerAMG | 12, 4.153e-10 | 12, 4.512e-10 | 12, 4.122e-10 |
+
+With Chebyshev on p = 1 the histories (it 1, it 5, the final values, the error) agree to every
+printed digit. With Jacobi the first iterations agree and the last value after 189 iterations
+differs in the third digit (the order of the global sums). With BoomerAMG the iterations agree
+within one. All runs PASS.
