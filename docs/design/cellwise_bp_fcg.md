@@ -372,3 +372,24 @@ Fewer AMG cycles do not help on 8 GPUs (solve ms, iterations, true residual):
 
 Per decade of true residual x2 and x3 are within 5%. A cycle costs 2.1-2.6 ms on 8 GPUs
 (0.6-0.9 ms on one), plus about 1.2 ms per solve for the two p = 1 DSS and the copies.
+
+BoomerAMG's hierarchy options on 8 GPUs (43cd8396; solve ms, iterations, true residual; every
+run PASS):
+
+| 8 GPUs | levels, operator complexity | x2 | x3 |
+|---|---|---|---|
+| p = 3 default | 7, 1.44 | 263, 16, 4.6e-11 | 253, 13, 2.2e-10 |
+| p = 3 strong threshold 0.5 | 9, 1.85 | 260, 14, 5.8e-11 | 285, 13, 1.4e-10 |
+| p = 3 one aggressive level | 6, 1.05 | 320, 21, 7.3e-11 | 302, 17, 1.3e-10 |
+| p = 3 coarsest <= 500 rows | 5, 1.44 | 292, 15, 1.8e-10 | 285, 13, 2.6e-10 |
+| p = 7 default | 6, 1.44 | 318, 14, 2.7e-10 | 346, 14, 1.2e-10 |
+| p = 7 strong threshold 0.5 | 7, 1.82 | 334, 14, 1.7e-10 | 346, 13, 4.6e-10 |
+| p = 7 one aggressive level | 5, 1.05 | 415, 20, 1.6e-10 | 385, 17, 8.2e-11 |
+| p = 7 coarsest <= 500 rows | 5, 1.44 | 314, 14, 2.6e-10 | 348, 14, 1.1e-10 |
+
+None beats the default by more than the run-to-run spread. Aggressive coarsening makes a cycle
+about 15% cheaper but needs more iterations; a strong threshold of 0.5 makes a larger
+hierarchy; a larger coarsest level removes levels without making a cycle cheaper. On one GPU
+the hierarchy has the same shape (5-6 levels, operator complexity 1.42-1.44) while a cycle
+costs about a third, so the cost on 8 GPUs is not the size of the hierarchy; most likely it is
+the communication at every level of every cycle (not measured directly). Defaults unchanged.
