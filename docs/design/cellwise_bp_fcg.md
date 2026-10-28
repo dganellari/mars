@@ -215,15 +215,15 @@ of the FCG iteration at p = 3, where the hand block nodes are used anyway.
 
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
-`--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin
-form rediscretized at each degree (MARSIR bp3_p{3,1}, q = p + 2, stored geometry),
-Chebyshev-Jacobi (3,3) through the DSS (equal pre and post: a symmetric cycle), restriction
-of the raw residual, continuous corrections; on p = 1 BoomerAMG (`--amg`, the assembled p = 1
-matrix from the same operator) or Chebyshev steps (`--coarse`). Reference
-`marsir-mlir/test/cellwise_bp_mg_ref.py`: transfers adjoint (2e-16), the fixed V-cycle
-symmetric (3-5e-16) and positive definite on ne = 2; with an exact coarse solve, FCG to a
-true residual of 1e-10 takes 8 / 8 / 8 iterations at p = 3, ne = 2 / 4 / 8 (Jacobi 20 / 45 /
-93) and 8 / 9 at p = 7, ne = 2 / 4 (Jacobi 71 / 160).
+`--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form
+rediscretized at each degree (MARSIR bp3_p{3,1}, q = p + 2, stored geometry), Chebyshev-Jacobi
+(3,3) (the default is now (2,2), see the last subsection) through the DSS (equal pre and post:
+a symmetric cycle), restriction of the raw residual, continuous corrections; on p = 1 BoomerAMG
+(`--amg`, the assembled p = 1 matrix from the same operator) or Chebyshev steps (`--coarse`).
+Reference `marsir-mlir/test/cellwise_bp_mg_ref.py`: transfers adjoint (2e-16), the fixed
+V-cycle symmetric (3-5e-16) and positive definite on ne = 2; with an exact coarse solve, FCG to
+a true residual of 1e-10 takes 8 / 8 / 8 iterations at p = 3, ne = 2 / 4 / 8 (Jacobi
+20 / 45 / 93) and 8 / 9 at p = 7, ne = 2 / 4 (Jacobi 71 / 160).
 
 GPU gate (ne = 4, Chebyshev-100 coarse, the reference's `--gpu` run): lmax, iterations,
 the history at it 1 and 5, the true residual and the error equal the reference to every
@@ -247,24 +247,37 @@ residual at or below Jacobi's and a smaller error:
 
 With two AMG cycles the solve is 7.8x (p = 1), 8.0x (p = 3) and 12.5x (p = 7) faster than
 Jacobi, 2.3x / 2.6x / 4.8x with the setup (power iterations and AMG setup, once per matrix).
-Two cycles beat one at every degree, so they are the driver's default. An FCG iteration now
+Two cycles beat one at every degree at (3,3); the defaults are in the last subsection. An FCG iteration now
 costs 10.9 / 15.2 / 23.5 ms (Jacobi 4.4 / 2.1 / 2.9 ms): the V-cycle, mostly its operator
 applies on the fine level.
 
-### Smoothing steps (k, k)
+### Smoothing steps and AMG cycles
 
-AMG x2, tol 3e-12 (every true residual below Jacobi's):
+Correction to 98d8c275: its (1,1) and (2,2) runs had one AMG cycle, not two. That binary was
+older than 2a00e840 and still had the default of one cycle; an explicit `--amg-cycles 1` rerun of
+(1,1) gives the same result to every digit. The driver now prints the cycles (`coarse BoomerAMG
+x3`).
 
-| BP3 | (1,1) | (2,2) | (3,3) |
+Solve time, iterations and true residual at tol 3e-12 (Jacobi: 1586 ms and 8.5e-11 at p = 3,
+3531 ms and 9.2e-11 at p = 7):
+
+| p = 3, ne 64 | (1,1) | (2,2) | (3,3) |
 |---|---|---|---|
-| p = 3 (ne 64) | 23 it, 6.2e-11, 2.6e-13, 162 ms | 19 it, 6.8e-11, 7.9e-13, 202 ms | 13 it, 7.7e-11, 9.3e-13, 197 ms |
-| p = 7 (ne 32) | 26 it, 8.5e-11, 3.2e-13, 266 ms | 17 it, 4.5e-11, 6.9e-13, 284 ms | 12 it, 1.6e-11, 2.4e-13, 282 ms |
+| AMG x1 | 161 ms, 23 it, 6.2e-11 | 202 ms, 19 it, 6.8e-11 | 272 ms, 19 it, 3.2e-11 |
+| AMG x2 | | | 197 ms, 13 it, 7.7e-11 |
+| AMG x3 | | **159 ms**, 13 it, 8.0e-11 | 177 ms, 11 it, 2.0e-11 |
+| AMG x4 | | 166 ms, 13 it, 3.9e-11 | 170 ms, 10 it, 9.0e-12 |
 
-A V-cycle makes 2k operator applies on the fine level (k - 1 before, one for the residual, k
-after) and FCG one more, so an iteration costs 7.0 / 10.6 / 15.2 ms at p = 3 and 10.2 / 16.7 /
-23.5 ms at p = 7. At p = 3, (1,1) is 1.22x faster than (3,3) and stops at a lower residual and
-error. At p = 7 the three are within 7% and (1,1) stopped at a 5x larger residual than (3,3),
-so p = 7 is not resolved.
+| p = 7, ne 32 | (1,1) | (2,2) | (3,3) |
+|---|---|---|---|
+| AMG x1 | 269 ms, 26 it, 8.5e-11 | 284 ms, 17 it, 4.5e-11 | 363 ms, 16 it, 7.0e-11 |
+| AMG x2 | | | 282 ms, 12 it, 1.6e-11 |
+| AMG x3 | | **245 ms**, 14 it, 4.4e-11 | 267 ms, 11 it, 1.5e-11 |
+| AMG x4 | | 233 ms, 13 it, 1.5e-10 (above Jacobi's) | 248 ms, 10 it, 8.3e-11 |
+
+The two (1,1) x1 runs differ by 1% (161 / 162 ms, 266 / 269 ms). A V-cycle makes 2k operator
+applies on the fine level (k - 1 before, one for the residual, k after) and FCG one more; one AMG
+cycle adds 0.5-0.9 ms to an iteration.
 
 With an exact coarse solve (reference, to a true residual of 1e-10):
 
@@ -273,9 +286,13 @@ With an exact coarse solve (reference, to a true residual of 1e-10):
 | p = 3, ne 2 / 4 / 8 / 16 | 12 / 16 / 19 / 20 | 11 / 12 / 12 / 12 | 8 / 8 / 8 / 8 |
 | p = 7, ne 2 / 4 | 20 / 23 | 12 / 13 | 8 / 9 |
 
-That is about 60 fine-level applies for every k at p = 3 (20 x 3, 12 x 5, 8 x 7). With AMG x2
-at ne 64 the stronger smoothers lose more to the inexact coarse solve (13 against the exact
-solve's 8 at (3,3), 19 against 12 at (2,2), 23 against 20 at (1,1)), so the lead of (1,1) at
-p = 3 comes from the coarse solve. One AMG cycle costs about 0.8 ms of an iteration (x1 against
-x2 at (3,3), p = 3 and 7). Next: more AMG cycles with (2,2) and (3,3); the default stays (3,3)
-until then.
+That is about 60 fine-level applies for every k at p = 3 (20 x 3, 12 x 5, 8 x 7). With one AMG
+cycle the stronger smoothers lose more to the inexact coarse solve (19 iterations against 8 at
+(3,3), 19 against 12 at (2,2), 23 against 20 at (1,1)). With more cycles (2,2) x3 and (3,3) x4
+come within 1-2 iterations of their exact-coarse counts and are the fastest. The optimum is flat:
+per decade of true residual, (2,2) x3 / x4 and (3,3) x3 / x4 take 15.4-16.5 ms at p = 3 and
+23.6-24.6 ms at p = 7, against 19.5 / 26.1 ms for (3,3) x2 and 15.8 / 26.7 ms for (1,1) x1.
+
+Defaults now: (2,2) with 3 AMG cycles, the fastest solve at both degrees (159 ms at p = 3, 245 ms
+at p = 7: 1.24x / 1.15x faster than (3,3) x2, 10.0x / 14.4x faster than Jacobi, 2.9x / 4.9x with
+the setup). AMG alone at p = 1 keeps 2 cycles (3 and 4 not measured yet).
