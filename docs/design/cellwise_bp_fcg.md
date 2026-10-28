@@ -355,6 +355,20 @@ The iterations do not grow. The fine level scales: operator + DSS 1.42 -> 1.49 m
 2.26 -> 2.41 ms at p = 7. The coarse solve explains 6.7 of the 7.4 ms added per iteration at
 p = 3 and 6.1 of 7.3 ms at p = 7, and the AMG setup about 90% of the added setup. At p = 7 each
 GPU holds about 35k p = 1 rows in both runs, yet the solve takes 4.4x longer: on 8 GPUs a
-BoomerAMG cycle is bound by communication and latency, not by work. The p = 7, 8-GPU run
-prints FAIL with an error of 1.8e-13: one of the two element-local checks (direct quadrature,
-or BP3 applied to 1) fails there; which one is not yet read.
+BoomerAMG cycle is bound by communication and latency, not by work.
+
+The p = 7, 8-GPU run printed FAIL with an error of 1.8e-13: both element-local checks were
+relative to A u, which shrinks like h^2, while the rounding shrinks like h (BP3 applied to 1:
+6.7e-13 at ne 32, 1.33e-12 at ne 64, limit 1e-12; the quadrature check 3e-12 on ranks whose
+first elements sit at the cube centre, where u is near 1 and the element sums cancel). Since
+43cd8396 both are relative to max |A v| for a random v, and the quadrature check runs on v.
+
+Fewer AMG cycles do not help on 8 GPUs (solve ms, iterations, true residual):
+
+| 8 GPUs | x1 | x2 | x3 |
+|---|---|---|---|
+| p = 3, ne 128 | 298, 22, 1.3e-10 | 268, 16, 4.6e-11 | 254, 13, 2.2e-10 |
+| p = 7, ne 64 | 378, 19, 1.4e-10 | 319, 14, 2.7e-10 | 347, 14, 1.2e-10 |
+
+Per decade of true residual x2 and x3 are within 5%. A cycle costs 2.1-2.6 ms on 8 GPUs
+(0.6-0.9 ms on one), plus about 1.2 ms per solve for the two p = 1 DSS and the copies.
