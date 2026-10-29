@@ -438,3 +438,18 @@ At equal accuracy (tol 3e-13: every true residual at or below about 1e-10; p = 7
 With the faster cycle count at each size, the solve keeps 48% (p = 3) and 63% (p = 7) of the
 one-GPU time on 64 GPUs, and 76% / 88% from 8 to 64 GPUs. Iterations grow by at most four. One
 64-GPU setup took 5.6 s (p = 3 x2) against 1.3-1.6 s in the others, a one-off.
+
+BoomerAMG on one rank per group of k (0fbaf43e, reverted): the p = 1 rows of k consecutive ranks
+gathered to the first, BoomerAMG only there. Equal accuracy, solve ms (coarse solve per V-cycle):
+
+| | k = 1 | k = 4 | k = 8 / 16 | k = 64 |
+|---|---|---|---|---|
+| p = 7, 8 GPUs | 362 (5.6) | 708 (3.0) | 569 (2.3) | |
+| p = 3, 8 GPUs | 274 (9.1) | 727 (6.5) | 706 (8.0) | |
+| p = 7, 64 GPUs | 420 (6.4) | 1260 (14.9) | 1054 (15.0) | 1012 (15.3) |
+| p = 3, 64 GPUs | 354 (11.5) | 1290 (71) | 1889 (101) | 3109 (183) |
+
+Iterations do not change with k. On 8 GPUs the coarse solve gets up to 2.4x cheaper, but the
+rest of the iteration slows 2-4x (cause not found; the operator and DSS timed after the solve are
+unchanged, so it happens only inside the V-cycle). On 64 GPUs the coarse solve itself is slower:
+BoomerAMG on fewer GPUs cannot carry the 17M-row p = 3 coarse problem. Not pursued.
