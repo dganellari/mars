@@ -77,7 +77,7 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
-  NVIDIA can be slower. The direct P7 MFMA path uses 32 KiB per two-element block; its measured
+  NVIDIA can be slower. The P7 MFMA plane kernel uses 3 KiB per two-element block; its measured
   improvement is an operator result, not a full-solver speedup. The HIP tensor assembly path
   reduces scratch storage but still spills registers. See `tests/performance/AMD-mfma.md` and
   `tests/performance/AMD-tensor-early.md` for the measured cases and validation scope.

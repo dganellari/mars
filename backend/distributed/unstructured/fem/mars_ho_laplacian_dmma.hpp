@@ -20,7 +20,7 @@
 // shared memory: D, D^T, the input tensor, the three derivative tensors, the
 // output accumulator, and one reusable A/B/C tile triplet for the MMA.
 //
-// The public HIP launchers use the direct 32 KiB MFMA kernel instead.
+// The public HIP launchers use the MFMA plane kernel (mars_ho_laplacian_mfma_direct.hpp) instead.
 // Staged kernel launch contract:
 //   - grid.x = ceil(numElements / WarpsPerBlock), block = BlockSize.
 //   - d_y_dof zeroed before launch (scatter is additive via atomicAdd).
@@ -500,9 +500,9 @@ inline cudaError_t ho_laplacian_dmma_launch_impl(const RealType* d_u_dof,
 }
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-// The direct kernel needs FP64 MFMA, which MARS compiles for gfx90a and gfx942 (mars_gpu_mma.cuh). Any
+// The plane kernel needs FP64 MFMA, which MARS compiles for gfx90a and gfx942 (mars_gpu_mma.cuh). Any
 // other AMD GPU takes the staged kernel, whose contraction then runs on the scalar units.
-inline bool hoDirectMfmaAvailable()
+inline bool hoFp64MfmaAvailable()
 {
     static const bool available = [] {
         int device = 0;
@@ -527,9 +527,9 @@ inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
 {
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
-    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
-    if (hoDirectMfmaAvailable())
-        return ho_laplacian_mfma_direct_launch<0>(d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+    static_assert(BlockSize == 64, "The MFMA kernel uses one 64-lane wavefront per block");
+    if (hoFp64MfmaAvailable())
+        return ho_laplacian_mfma_plane_launch<0>(d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
 #else
@@ -553,9 +553,9 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
 {
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
-    static_assert(BlockSize == 64, "Direct MFMA uses one 64-lane wavefront per block");
-    if (hoDirectMfmaAvailable())
-        return ho_laplacian_mfma_direct_launch<1>(d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+    static_assert(BlockSize == 64, "The MFMA kernel uses one 64-lane wavefront per block");
+    if (hoFp64MfmaAvailable())
+        return ho_laplacian_mfma_plane_launch<1>(d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
 #else
@@ -566,7 +566,7 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
 
 // Matched-structure SCALAR baseline: identical warp-per-element + smem kernel as
 // the affine DMMA path, but the 8x8x8 contraction runs on CUDA cores instead of
-// tensor cores (TileMode=1). This matches the staged kernel, not the direct
+// tensor cores (TileMode=1). This matches the staged kernel, not the plane
 // AMD kernel. Use the staged TileMode=0 launcher to isolate tile arithmetic.
 template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
 inline cudaError_t ho_laplacian_smem_scalar_launch_affine(const RealType* d_u_dof,

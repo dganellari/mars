@@ -118,18 +118,18 @@ bool runBench(int E, int iters)
     };
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    cudaError_t direct_error = cudaSuccess;
-    auto directApply = [&]() {
-        if (direct_error != cudaSuccess) return;
-        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
-        if (direct_error == cudaSuccess)
-            direct_error = ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl);
+    cudaError_t mfma_error = cudaSuccess;
+    auto mfmaApply = [&]() {
+        if (mfma_error != cudaSuccess) return;
+        mfma_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (mfma_error == cudaSuccess)
+            mfma_error = ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl);
     };
-    auto directAffineApply = [&]() {
-        if (direct_error != cudaSuccess) return;
-        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
-        if (direct_error == cudaSuccess)
-            direct_error = ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
+    auto mfmaAffineApply = [&]() {
+        if (mfma_error != cudaSuccess) return;
+        mfma_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (mfma_error == cudaSuccess)
+            mfma_error = ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
     };
 #endif
 
@@ -167,8 +167,8 @@ bool runBench(int E, int iters)
     if (!checkParity(scalarApply, "scalar") || !checkParity(affineApply, "affine") ||
         !checkParity(smemScalarApply, "staged scalar")) return false;
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    if (!checkParity(directApply, "public MFMA") || !checkParity(directAffineApply, "public affine MFMA")) return false;
-    CK(direct_error);
+    if (!checkParity(mfmaApply, "public MFMA") || !checkParity(mfmaAffineApply, "public affine MFMA")) return false;
+    CK(mfma_error);
 #endif
 
 
@@ -188,14 +188,15 @@ bool runBench(int E, int iters)
     if (!timeIt(scalarApply, msScalar) || !timeIt(dmmaApply, msDmma) ||
         !timeIt(affineApply, msAffine) || !timeIt(smemScalarApply, msSmemScalar)) return false;
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    float msDirect, msDirectAffine;
-    if (!timeIt(directApply, msDirect) || !timeIt(directAffineApply, msDirectAffine)) return false;
-    CK(direct_error);
+    float msMfma, msMfmaAffine;
+    if (!timeIt(mfmaApply, msMfma) || !timeIt(mfmaAffineApply, msMfmaAffine)) return false;
+    CK(mfma_error);
     CK(cudaDeviceSynchronize());
-    printf("public MFMA LDS/block=32768 vs staged=35840\n"
-           "  public G/point: %.3f ms/apply; staged/direct %.3fx\n"
-           "  public affine: %.3f ms/apply; staged/direct %.3fx\n",
-           msDirect, msDmma/msDirect, msDirectAffine, msAffine/msDirectAffine);
+    printf("public MFMA LDS/block=%d vs staged=%d\n"
+           "  public G/point: %.3f ms/apply; staged/MFMA %.3fx\n"
+           "  public affine: %.3f ms/apply; staged/MFMA %.3fx\n",
+           int(2 * sizeof(HoMfmaPlaneData)), int(2 * sizeof(HoLaplacianDmmaWarpData)),
+           msMfma, msDmma/msMfma, msMfmaAffine, msAffine/msMfmaAffine);
 #endif
 
     const double flopPerElem = 6.0 * 2.0 * std::pow((double)n, 4) + (double)N3 * 15.0;

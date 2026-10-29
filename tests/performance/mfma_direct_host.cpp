@@ -57,7 +57,7 @@ bool check(int elements, bool constant)
         std::vector<std::thread> threads;
         for(int lane=0;lane<64;++lane) threads.emplace_back([&,lane]{
             threadIdx.x=lane;
-            mars::fem::ho_laplacian_apply_mfma_direct<Mode>(u.data(),y.data(),dof.data(),D.data(),G.data(),weights.data(),elements);
+            mars::fem::ho_laplacian_apply_mfma_plane<Mode>(u.data(),y.data(),dof.data(),D.data(),G.data(),weights.data(),elements);
         });
         for(auto& t:threads) t.join();
     }
@@ -74,7 +74,7 @@ bool check(int elements, bool constant)
 }
 int main() {
     bool ok=true;
-    for(int n:{1,2,3}) for(bool constant:{false,true}) {
+    for(int n:{1,2,3,5}) for(bool constant:{false,true}) {
         ok=check<0>(n,constant)&&ok;
         ok=check<1>(n,constant)&&ok;
     }

@@ -16,6 +16,7 @@ using cudaError_t = int;
 using cudaStream_t = int;
 #ifdef __HIPCC__
 constexpr int hoDmmaBlockSize = 64;
+bool hoFp64MfmaAvailable() { return true; }
 #else
 constexpr int hoDmmaBlockSize = 128;
 #endif
@@ -33,7 +34,7 @@ int record(int mode, const double* u, double* y, const int* dof, const double* d
     return 37; // Check that the API forwards launch errors.
 }
 template<int Mode>
-int ho_laplacian_mfma_direct_launch(const double* u, double* y, const int* dof,
+int ho_laplacian_mfma_plane_launch(const double* u, double* y, const int* dof,
     const double* d, const double* g, const double* w, size_t count, int stream) {
 #ifndef __HIPCC__
     assert(false && "CUDA must keep the staged path");
@@ -44,9 +45,9 @@ template<class T, int P, int Block, int Mode, int Tile>
 int ho_laplacian_dmma_launch_impl(const T* u, T* y, const int* dof,
     const T* d, const T* g, const T* w, size_t count, int stream) {
 #ifdef __HIPCC__
-    assert(false && "HIP must use direct MFMA");
+    assert(false && "HIP must use the MFMA kernel");
 #endif
-    static_assert(P == 7 && Block == 128 && Tile == 0);
+    static_assert(P == 7 && Block == hoDmmaBlockSize && Tile == 0);
     return record(Mode,u,y,dof,d,g,w,count,stream);
 }
 '''
