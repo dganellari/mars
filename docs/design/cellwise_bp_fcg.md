@@ -534,7 +534,7 @@ interval). MFEM's host waits (cudaDeviceSynchronize 134 ms over 34 calls, blocki
 a Hypre setting, not a method difference, and not separated here.
 
 Weak scaling against MFEM, warm (f8b7a644, --solves 3, the last reported; tol 3e-13, true
-residuals 1.1e-11 to 1.05e-10, all PASS; same work per GPU; the 64-GPU MARS p = 3 and MFEM p = 7
+residuals 1.7e-11 to 1.05e-10, all PASS; same work per GPU; the 64-GPU MARS p = 3 and MFEM p = 7
 runs are reruns without nid005679, which segfaulted one task in each first). Solve ms, iterations:
 
 | warm | 1 GPU | 8 GPUs | 64 GPUs | 1 -> 64 / 8 -> 64 kept |
@@ -548,7 +548,7 @@ runs are reruns without nid005679, which segfaulted one task in each first). Sol
 
 The gap grows from 1 to 8 GPUs and holds or grows to 64. From 8 to 64 GPUs both lose about the
 same at p = 3 (73% / 72% kept), consistent with the shared BoomerAMG coarse solve; at p = 7 MFEM
-loses more. MFEM's first solves at 8 / 64 GPUs are 89-146 ms slower than its warm ones.
+loses more. MFEM's first solves at 8 / 64 GPUs are 88-146 ms slower than its warm ones.
 
 The first-solve weak-scaling runs (superseded by the table above): At tol 3e-12
 MFEM's p = 7 true residual is 1.5e-10 on 8 GPUs and 4.7e-10 on 64, above the target, so MFEM runs
