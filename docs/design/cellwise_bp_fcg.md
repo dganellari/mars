@@ -471,4 +471,33 @@ CG with MFEM's Jacobi gives the history of `cellwise_bp_ref.py`'s GPU-comparable
 to every printed digit: p = 1, ne 4: 9 it, 1.899e-11; p = 3, ne 4: 45 it, 9.485e-11; p = 7,
 ne 2: 71 it, 8.464e-11 against 8.434e-11 (it 1-50 equal). The V-cycle passes at p = 1 / 3 / 7
 on 1, 4 and 8 ranks, also with parallel refinement (ne 64). `build_mfem.sh` builds MFEM with the
-compilers and the Hypre of a MARS build directory. GPU runs pending.
+compilers and the Hypre of a MARS build directory (95f59b4c: CMake's CUDA config.mk misses
+-lcudart).
+
+One GH200 (95f59b4c, MFEM 4.8 + uenv Hypre 2.33 CUDA, the MARS build's compilers), 16.8M
+element-local DoFs. MFEM's Jacobi-CG takes exactly MARS's DSS-Jacobi iterations (307 / 770 / 1225),
+true residual 9.2e-11 / 8.5e-11 / 9.1e-11: the same system on the GPU too. At MFEM tol 3e-12 every
+V-cycle run reaches a true residual below MARS's, so these are the equal-accuracy runs (tol 3e-13:
+1-2 more iterations, 6-25 ms more). MARS: the defaults, (2,2) x3, from the tables above (setup
+from the x2 runs, same hierarchy):
+
+| BP3 | MARS: it, true residual, solve, setup | MFEM: it, true residual, solve, setup | MARS solve vs MFEM |
+|---|---|---|---|
+| p = 1 (ne 128) | 13, 1.1e-11, 173 ms, ~0.41 s | 13, 7.5e-12, 111 ms, 3.04 s | 0.64x (MFEM faster) |
+| p = 3 (ne 64) | 13, 8.0e-11, 159 ms, ~0.42 s | 15, 4.8e-11, 339 ms, 1.20 s | 2.1x faster |
+| p = 7 (ne 32) | 14, 4.4e-11, 245 ms, ~0.46 s | 17, 6.1e-11, 480 ms, 0.98 s | 2.0x faster |
+
+| per iteration / operator | p = 1 | p = 3 | p = 7 |
+|---|---|---|---|
+| MARS V-cycle iteration | 13.3 ms | 12.2 ms | 17.5 ms |
+| MFEM V-cycle iteration | 8.5 ms | 22.6 ms | 28.2 ms |
+| MARS Jacobi iteration / solve | 4.44 / 1363 ms | 2.07 / 1586 ms | 2.89 / 3531 ms |
+| MFEM Jacobi iteration / solve | 2.84 / 873 ms | 2.02 / 1557 ms | 2.95 / 3610 ms |
+| MARS operator + DSS (GDoF/s) | 0.56 (generated DSS 0.81) | 5.12 | 5.04 |
+| MFEM operator, PA + P/R (GDoF/s) | 0.79 (assembled SpMV 6.5) | 4.30 | 4.74 |
+
+At p = 3 and 7 the operators are within 1.2x and the Jacobi iterations equal; the 2x is in the
+V-cycle iteration (22.6 / 28.2 ms against 12.2 / 17.5 ms with similar counts), where in MFEM's cycle
+is not measured. At p = 1 MFEM runs CG on the assembled matrix (SpMV 0.33 ms) against MARS's
+matrix-free cell-wise operator + DSS (2.1M DoFs at 0.56 GDoF/s: about 3.8 ms), which accounts for
+most of the 4.8 ms per iteration. MFEM's setup is 2-7x longer.
