@@ -89,6 +89,15 @@ public API may change between minor releases.
   is faster than the hand-written one (53 against 77 ms). Also new: a BoomerAMG coarse level,
   right-preconditioned BiCGStab with an FP32 V-cycle (one rank), and shared-memory layouts chosen
   against bank conflicts. Design notes and results: `docs/design/cellwise_unstructured_dss.md`.
+- MARSIR (same option): the CEED benchmark problems BP1 and BP3 on element-local vectors
+  (`mars_marsir_bp`), with the Galerkin operators generated from their specs (stored geometry, or
+  trilinear geometry computed from the element corners) and communication-free flexible CG. BP3
+  can be preconditioned by a p-multigrid V-cycle (degrees 7 -> 3 -> 1, Chebyshev smoothing,
+  BoomerAMG on p = 1); at equal accuracy on one GH200 it solves 10x (p = 3) and 14x (p = 7) faster
+  than DSS-Jacobi. The solve runs on several ranks (validated with BP3): 4 and 8 ranks reproduce
+  the one-rank history to rounding (within one iteration with BoomerAMG), and with the same work
+  per GPU, 64 GPUs keep 76% (p = 3) and 88% (p = 7) of the 8-GPU speed at equal accuracy. Also a block-structured DSS (one rank), hand-written and
+  generated. Results: `docs/design/cellwise_bp_fcg.md`.
 
 ## [0.1.0] — 2026-10-11
 

@@ -38,6 +38,9 @@ including element numberings that are not aligned with the coordinate axes.
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library. CUDA only: its
   kernels are PTX loaded through the CUDA driver API.
+  The BP1/BP3 example (`mars_marsir_bp`) runs only on its built-in deformed-cube mesh; its
+  block-structured and generated DSS options run on one rank only; at scale the BoomerAMG coarse
+  solve is the largest cost of a multigrid iteration.
 
 ## Not supported yet
 - **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming
