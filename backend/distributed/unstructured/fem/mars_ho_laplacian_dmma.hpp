@@ -20,7 +20,8 @@
 // shared memory: D, D^T, the input tensor, the three derivative tensors, the
 // output accumulator, and one reusable A/B/C tile triplet for the MMA.
 //
-// The public HIP launchers use the MFMA plane kernel (mars_ho_laplacian_mfma_direct.hpp) instead.
+// The public launchers use the plane kernels instead where FP64 matrix instructions exist:
+// mars_ho_laplacian_mfma_direct.hpp (AMD) and mars_ho_laplacian_dmma_plane.hpp (CUDA SM80+).
 // Staged kernel launch contract:
 //   - grid.x = ceil(numElements / WarpsPerBlock), block = BlockSize.
 //   - d_y_dof zeroed before launch (scatter is additive via atomicAdd).
@@ -39,6 +40,7 @@
 #include <string>
 #endif
 #if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
+#include "mars_ho_laplacian_dmma_plane.hpp"
 #include <mma.h>
 #endif
 
@@ -499,21 +501,27 @@ inline cudaError_t ho_laplacian_dmma_launch_impl(const RealType* d_u_dof,
     return cudaGetLastError();
 }
 
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-// The plane kernel needs FP64 MFMA, which MARS compiles for gfx90a and gfx942 (mars_gpu_mma.cuh). Any
-// other AMD GPU takes the staged kernel, whose contraction then runs on the scalar units.
-inline bool hoFp64MfmaAvailable()
+// The plane kernels need FP64 matrix instructions: MFMA, which MARS compiles for gfx90a and gfx942
+// (mars_gpu_mma.cuh), or mma.sync on SM80+. Other GPUs take the staged kernel, whose contraction then runs
+// on the scalar units.
+inline bool hoFp64MatrixAvailable()
 {
     static const bool available = [] {
         int device = 0;
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
         hipDeviceProp_t prop{};
         if (hipGetDevice(&device) != hipSuccess || hipGetDeviceProperties(&prop, device) != hipSuccess) return false;
         const std::string arch = prop.gcnArchName; // e.g. "gfx942:sramecc+:xnack-"
         return arch.rfind("gfx90a", 0) == 0 || arch.rfind("gfx942", 0) == 0;
+#else
+        int major = 0;
+        if (cudaGetDevice(&device) != cudaSuccess ||
+            cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) != cudaSuccess) return false;
+        return major >= 8;
+#endif
     }();
     return available;
 }
-#endif
 
 // Per-quad-point metric (general/curved). d_G is [numElements * N3 * 6].
 template<typename RealType, int P, int BlockSize = hoDmmaBlockSize>
@@ -528,14 +536,15 @@ inline cudaError_t ho_laplacian_dmma_launch(const RealType* d_u_dof,
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
     static_assert(BlockSize == 64, "The MFMA kernel uses one 64-lane wavefront per block");
-    if (hoFp64MfmaAvailable())
+    if (hoFp64MatrixAvailable())
         return ho_laplacian_mfma_plane_launch<0>(d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
-    return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
-        d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
 #else
+    if constexpr (std::is_same_v<RealType, double> && P == 7)
+        if (hoFp64MatrixAvailable())
+            return ho_laplacian_dmma_plane_launch<0>(d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
+#endif
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 0, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_G, nullptr, numElements, stream);
-#endif
 }
 
 // Affine metric (straight-sided hexes). d_Ghat is [numElements * 6] (constant
@@ -554,14 +563,15 @@ inline cudaError_t ho_laplacian_dmma_launch_affine(const RealType* d_u_dof,
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
     static_assert(std::is_same_v<RealType, double> && P == 7, "MFMA requires double and P=7");
     static_assert(BlockSize == 64, "The MFMA kernel uses one 64-lane wavefront per block");
-    if (hoFp64MfmaAvailable())
+    if (hoFp64MatrixAvailable())
         return ho_laplacian_mfma_plane_launch<1>(d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
-    return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
-        d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
 #else
+    if constexpr (std::is_same_v<RealType, double> && P == 7)
+        if (hoFp64MatrixAvailable())
+            return ho_laplacian_dmma_plane_launch<1>(d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
+#endif
     return ho_laplacian_dmma_launch_impl<RealType, P, BlockSize, 1, 0>(
         d_u_dof, d_y_dof, d_elemDof, d_D, d_Ghat, d_w, numElements, stream);
-#endif
 }
 
 // Matched-structure SCALAR baseline: identical warp-per-element + smem kernel as

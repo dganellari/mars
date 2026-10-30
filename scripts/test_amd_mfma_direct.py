@@ -47,6 +47,6 @@ with tempfile.TemporaryDirectory(prefix='mars-mfma-host-') as tmp:
     cpp = Path(tmp) / 'check.cpp'
     exe = Path(tmp) / 'check'
     cpp.write_text(prologue + source + (ROOT / 'tests/performance/mfma_direct_host.cpp').read_text())
-    subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-pthread',
+    subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-pthread', '-I', str(ROOT / 'tests/performance'),
                     '-fsanitize=address,undefined', str(cpp), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

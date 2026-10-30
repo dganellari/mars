@@ -33,11 +33,12 @@ public API may change between minor releases.
   use `buildHost`/`buildDistributedHost`; device builders use `buildDofs`/`buildDistributedDofs`,
   with `FromHost` wrappers for host inputs. Existing callers must update these names;
   the algorithms and execution paths are unchanged.
-- HIP P7 FP64 Laplacian launchers use an MFMA plane schedule: each lane keeps u and the output
-  along one direction in registers, so LDS falls from 32 to 3 KiB per two-element block and a CU
-  runs 11-14 wavefronts instead of 2. On the tested MI300A P7/E32 case a per-point apply takes 0.59 ms and
-  an affine apply 0.35 ms (staged path 3.08 and 2.48 ms; H100 staged path 0.83 and 0.69 ms). These
-  are operator timings, not full-solver speedups.
+- The P7 FP64 Laplacian launchers use a plane schedule on AMD (MFMA) and on NVIDIA SM80+
+  (`mma.sync`): each lane keeps u and the output along one direction in registers, and only the
+  current plane of the element goes through shared memory. On the tested
+  P7/E32 case a per-point and an affine apply take 0.43 and 0.21 ms on H100 (staged path 0.83 and
+  0.69 ms) and 0.58 and 0.34 ms on MI300A (staged path 3.07 and 2.43-2.49 ms). Older NVIDIA GPUs keep the
+  staged path. These are operator timings, not full-solver speedups.
 - HIP `tensor` assembly scatters each row after its last face contribution. On public hex192,
   one MI300A rank, assembly time falls from 30.05 to 25.77 ms (14.2% less time), excluding
   output zeroing. Scratch storage falls from 1912 to 1084 bytes/lane; spills remain.

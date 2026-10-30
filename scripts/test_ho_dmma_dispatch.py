@@ -11,15 +11,17 @@ source = source[source.index('// Per-quad-point metric (general/curved).'):sourc
 prologue = r'''
 #include <cassert>
 #include <cstddef>
+#include <initializer_list>
 #include <type_traits>
 using cudaError_t = int;
 using cudaStream_t = int;
 #ifdef __HIPCC__
 constexpr int hoDmmaBlockSize = 64;
-bool hoFp64MfmaAvailable() { return true; }
 #else
 constexpr int hoDmmaBlockSize = 128;
 #endif
+bool matrix_available = true; // FP64 matrix instructions: then the plane kernel, else the staged one
+bool hoFp64MatrixAvailable() { return matrix_available; }
 const double* expected_u;
 double* expected_y;
 const int* expected_dof;
@@ -33,20 +35,25 @@ int record(int mode, const double* u, double* y, const int* dof, const double* d
     ++calls;
     return 37; // Check that the API forwards launch errors.
 }
+#ifdef __HIPCC__
 template<int Mode>
 int ho_laplacian_mfma_plane_launch(const double* u, double* y, const int* dof,
     const double* d, const double* g, const double* w, size_t count, int stream) {
-#ifndef __HIPCC__
-    assert(false && "CUDA must keep the staged path");
-#endif
+    assert(matrix_available && "the MFMA kernel needs FP64 MFMA");
     return record(Mode,u,y,dof,d,g,w,count,stream);
 }
+#else
+template<int Mode>
+int ho_laplacian_dmma_plane_launch(const double* u, double* y, const int* dof,
+    const double* d, const double* g, const double* w, size_t count, int stream) {
+    assert(matrix_available && "the plane kernel needs SM80+");
+    return record(Mode,u,y,dof,d,g,w,count,stream);
+}
+#endif
 template<class T, int P, int Block, int Mode, int Tile>
 int ho_laplacian_dmma_launch_impl(const T* u, T* y, const int* dof,
     const T* d, const T* g, const T* w, size_t count, int stream) {
-#ifdef __HIPCC__
-    assert(false && "HIP must use the MFMA kernel");
-#endif
+    assert(!matrix_available && "with FP64 matrix instructions the plane kernel runs");
     static_assert(P == 7 && Block == hoDmmaBlockSize && Tile == 0);
     return record(Mode,u,y,dof,d,g,w,count,stream);
 }
@@ -55,9 +62,12 @@ main = r'''
 int main() {
     double u[1],y[1],d[1],g[1],w[1]; int dof[1];
     expected_u=u;expected_y=y;expected_dof=dof;expected_d=d;expected_g=g;expected_w=w;
-    assert((ho_laplacian_dmma_launch<double,7>(u,y,dof,d,g,3,19)==37));
-    assert((ho_laplacian_dmma_launch_affine<double,7>(u,y,dof,d,g,w,3,19)==37));
-    assert(calls==2);
+    for (bool available : {true, false}) {
+        matrix_available = available;
+        assert((ho_laplacian_dmma_launch<double,7>(u,y,dof,d,g,3,19)==37));
+        assert((ho_laplacian_dmma_launch_affine<double,7>(u,y,dof,d,g,w,3,19)==37));
+    }
+    assert(calls==4);
 }
 '''
 with tempfile.TemporaryDirectory(prefix='mars-dmma-dispatch-') as tmp:
