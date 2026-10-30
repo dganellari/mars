@@ -505,8 +505,8 @@ matrix-free cell-wise operator + DSS (2.1M DoFs at 0.56 GDoF/s: about 3.8 ms), w
 most of the 4.8 ms per iteration. MFEM's setup is 2-7x longer.
 
 Warm solves and a profile (f8b7a644, --solves 3, the last reported; tol 3e-13 for both, true
-residuals 8.5e-13 to 1.6e-11, all PASS). The first MFEM solve is 99-124 ms slower than the next
-ones at p = 3 and 7 (355 -> 252, 507 -> 382 ms; p = 1: 2 ms), MARS's first is 12-15 ms slower.
+residuals 8.5e-13 to 1.6e-11, all PASS). The first MFEM solve is 103-124 ms slower than the next
+ones at p = 3 and 7 (355 -> 252, 507 -> 384 ms; p = 1: 2 ms), MARS's first is 10-15 ms slower.
 This replaces the 2x above:
 
 | BP3, one GH200, warm | MARS: it, solve | MFEM: it, solve | MARS solve vs MFEM | per iteration MARS / MFEM |
