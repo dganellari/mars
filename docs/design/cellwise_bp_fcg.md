@@ -479,7 +479,9 @@ element-local DoFs. MFEM's Jacobi-CG takes exactly MARS's DSS-Jacobi iterations 
 true residual 9.2e-11 / 8.5e-11 / 9.1e-11: the same system on the GPU too. At MFEM tol 3e-12 every
 V-cycle run reaches a true residual below MARS's, so these are the equal-accuracy runs (tol 3e-13:
 1-2 more iterations, 6-25 ms more). MARS: the defaults, (2,2) x3, from the tables above (setup
-from the x2 runs, same hierarchy):
+from the x2 runs, same hierarchy). These are FIRST solves: MFEM's includes about 100 ms of
+first-use device allocation, so its solve times here are too long; corrected below ("Warm
+solves").
 
 | BP3 | MARS: it, true residual, solve, setup | MFEM: it, true residual, solve, setup | MARS solve vs MFEM |
 |---|---|---|---|
@@ -502,7 +504,37 @@ is not measured. At p = 1 MFEM runs CG on the assembled matrix (SpMV 0.33 ms) ag
 matrix-free cell-wise operator + DSS (2.1M DoFs at 0.56 GDoF/s: about 3.8 ms), which accounts for
 most of the 4.8 ms per iteration. MFEM's setup is 2-7x longer.
 
-Weak scaling against MFEM (same work per GPU, MARS's 1 / 8 / 64 GPU runs above). At tol 3e-12
+Warm solves and a profile (f8b7a644, --solves 3, the last reported; tol 3e-13 for both, true
+residuals 8.5e-13 to 1.6e-11, all PASS). The first MFEM solve is 99-124 ms slower than the next
+ones at p = 3 and 7 (355 -> 252, 507 -> 382 ms; p = 1: 2 ms), MARS's first is 12-15 ms slower.
+This replaces the 2x above:
+
+| BP3, one GH200, warm | MARS: it, solve | MFEM: it, solve | MARS solve vs MFEM | per iteration MARS / MFEM |
+|---|---|---|---|---|
+| p = 1 (ne 128) | 14, 171 ms | 14, 116 ms | 0.68x (MFEM faster) | 12.2 / 8.3 ms |
+| p = 3 (ne 64) | 14, 157 ms | 16, 252 ms | 1.60x faster | 11.2 / 15.8 ms |
+| p = 7 (ne 32) | 15, 246 ms | 18, 384 ms | 1.56x faster | 16.4 / 21.3 ms |
+
+The solve times repeat within 1.5% after the first. nsys, p = 3, the warm solve alone: MARS 155.9
+ms, 144.8 ms of kernels (93% busy), 14 iterations; MFEM 255.4 ms, 233.4 ms of kernels (91%),
+16 iterations. The 88.6 ms more kernel time in MFEM:
+
+| kernel time, one solve | MARS | MFEM |
+|---|---|---|
+| fine operator (p = 3) | 80.5 ms, 74 x 1.09 ms | 111.8 ms, 85 x 1.32 ms (+ E-vector gather/scatter 29.4 ms) |
+| p 3 <-> 1 transfer | 6.0 ms (prolong 0.31, restrict 0.09 ms) | 47.4 ms (prolong 1.95, restrict 0.84 ms) |
+| Chebyshev (with DSS-Jacobi in MARS) | 29.4 ms | 6.7 ms vector kernels |
+| p = 1 SpMV (BoomerAMG + operator) | Hypre's own kernels | cuSPARSE csrmv, about 24 ms |
+
+So about 41 ms is MFEM's order transfer (6-9x slower per call than MARS's), about 31 ms its
+fine level (1.2x per apply, and 11 more applies from 2 more iterations: MFEM's Chebyshev
+interval). MFEM's host waits (cudaDeviceSynchronize 134 ms over 34 calls, blocking cudaMemcpy
+99 ms over 1157 calls) overlap the kernels; 22 ms of its wall time has no kernel running, MARS
+11 ms. MFEM's Hypre uses cuSPARSE for its SpMV (the uenv default), MARS's Hypre its own kernels:
+a Hypre setting, not a method difference, and not separated here.
+
+Weak scaling against MFEM (same work per GPU, MARS's 1 / 8 / 64 GPU runs above; FIRST solves, so
+MFEM's are too long by its first-use allocations: provisional until a warm rerun). At tol 3e-12
 MFEM's p = 7 true residual is 1.5e-10 on 8 GPUs and 4.7e-10 on 64, above the target, so MFEM runs
 at 3e-13 like MARS (true residuals 9.4e-12 to 6.1e-11, all PASS). Solve ms, iterations:
 
@@ -513,7 +545,8 @@ at 3e-13 like MARS (true residuals 9.4e-12 to 6.1e-11, all PASS). Solve ms, iter
 | p = 7, MARS x3 | 261, 15 | 368, 15 | 409, 15 | 64% / 90% |
 | p = 7, MFEM | 506, 18 | 729, 19 | 879, 19 | 58% / 83% |
 
-MARS stays 2.0-2.1x faster at p = 3 and 1.9-2.1x at p = 7 at every size. MFEM, with the same
+First solves: MARS 2.0-2.1x faster at p = 3 and 1.9-2.1x at p = 7 at every size (warm on one
+GPU: 1.6x). MFEM, with the same
 BoomerAMG on the same p = 1 matrix, loses the same fraction from 1 to 64 GPUs at p = 3, which fits
 the coarse solve (not MARS's fine level) being the scaling limit. MFEM's operator grows 1.66 ->
 1.89 ms (p = 3) and 2.41 -> 2.76 ms (p = 7); its setup 1.2 / 2.0 / 6.4 s (p = 3) and 1.0 / 1.7 /
