@@ -20,10 +20,19 @@
 // The serial mesh is (ne / 2^r)^3, split into a Cartesian rank grid, then refined r times
 // in parallel (each rank holds the serial mesh, so it stays at most 32^3).
 //
+// --solves k runs the solve k times from X = 0 and prints each time; the results reported are
+// those of the last solve (MFEM allocates device memory on first use, so the first solve also
+// pays for that). --profile brackets the last solve with cudaProfilerStart / Stop (nsys
+// --capture-range=cudaProfilerApi).
+//
 // Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
-//               [--amg-cycles 3] [--reps 20] [--device cuda] [--no-gpu-aware-mpi]
+//               [--amg-cycles 3] [--reps 20] [--solves 1] [--profile] [--device cuda]
+//               [--no-gpu-aware-mpi]
 
 #include "mfem.hpp"
+#ifdef MFEM_USE_CUDA
+#include <cuda_profiler_api.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -146,7 +155,8 @@ int main(int argc, char* argv[])
     const bool root = rank == 0;
     Hypre::Init();
 
-    int p = 3, ne = 32, maxit = 2000, cheb_order = 2, amg_cycles = 3, reps = 20;
+    int p = 3, ne = 32, maxit = 2000, cheb_order = 2, amg_cycles = 3, reps = 20, solves = 1;
+    bool profile = false;
     double tol = 1e-10;
     const char* pc = "mg";
     const char* device_config = "cuda";
@@ -161,12 +171,15 @@ int main(int argc, char* argv[])
     args.AddOption(&cheb_order, "-cheb", "--cheb-order", "Chebyshev order on each multigrid level.");
     args.AddOption(&amg_cycles, "-amg", "--amg-cycles", "BoomerAMG V-cycles per coarse solve.");
     args.AddOption(&reps, "-reps", "--reps", "Operator applications to time.");
+    args.AddOption(&solves, "-s", "--solves", "Solves to run; the last is reported.");
+    args.AddOption(&profile, "-prof", "--profile", "-no-prof", "--no-profile",
+                   "cudaProfilerStart / Stop around the last solve.");
     args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
     args.AddOption(&gpu_aware_mpi, "-gam", "--gpu-aware-mpi", "-no-gam", "--no-gpu-aware-mpi",
                    "Pass device buffers to MPI.");
     args.Parse();
     const bool mg = !std::strcmp(pc, "mg");
-    if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi"))) {
+    if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1) {
         if (root) args.PrintUsage(std::cout);
         return 1;
     }
@@ -287,14 +300,26 @@ int main(int argc, char* argv[])
     cg.SetPreconditioner(*M);
     History history;
     cg.SetMonitor(history);
-    MFEM_DEVICE_SYNC;
-    MPI_Barrier(MPI_COMM_WORLD);
-    tic_toc.Clear();
-    tic_toc.Start();
-    cg.Mult(B, X);
-    MFEM_DEVICE_SYNC;
-    tic_toc.Stop();
-    const double solve_ms = all_max(tic_toc.RealTime() * 1e3);
+    std::vector<double> solve_times;
+    for (int k = 0; k < solves; ++k) {
+        const bool last = k + 1 == solves;
+        X = 0.0;
+        MFEM_DEVICE_SYNC;
+        MPI_Barrier(MPI_COMM_WORLD);
+#ifdef MFEM_USE_CUDA
+        if (last && profile) cudaProfilerStart();
+#endif
+        tic_toc.Clear();
+        tic_toc.Start();
+        cg.Mult(B, X);
+        MFEM_DEVICE_SYNC;
+        tic_toc.Stop();
+#ifdef MFEM_USE_CUDA
+        if (last && profile) cudaProfilerStop();
+#endif
+        solve_times.push_back(all_max(tic_toc.RealTime() * 1e3));
+    }
+    const double solve_ms = solve_times.back();
     const int iterations = cg.GetNumIterations();
 
     // True residual over the true DoFs (boundary rows: B = X = 0 there).
@@ -336,6 +361,11 @@ int main(int argc, char* argv[])
         printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
         printf("  operator     %8.3f ms  %6.2f GDoF/s unique  (%s)\n", op_ms, unique / (op_ms * 1e6),
                mg && p == 1 ? "assembled matrix, HypreParMatrix" : "partial assembly, the assembled operator");
+        if (solves > 1) {
+            printf("  solves");
+            for (double t : solve_times) printf(" %.1f", t);
+            printf(" ms (the last is reported)\n");
+        }
         printf("  CG iteration %8.3f ms  (solve %.1f ms, + setup %.0f ms)\n", iterations ? solve_ms / iterations : 0.0,
                solve_ms, setup_ms);
     }

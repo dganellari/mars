@@ -48,6 +48,9 @@
 // BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3; a Hypre build).
 // --amg-theta, --amg-agg and --amg-coarse-size set its hierarchy (cellwise::AmgSettings),
 // --amg-print prints Hypre's setup statistics.
+// --solves k runs the solve k times from x = 0 and prints each time; the results reported are
+// those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
+// Stop (nsys --capture-range=cudaProfilerApi).
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -81,6 +84,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_amg.hpp"
 #endif
 
+#include <cuda_profiler_api.h>
 #include <mpi.h>
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
@@ -541,7 +545,8 @@ struct Options {
     // (2,2) smoothing and 3 AMG cycles: the fastest measured at equal accuracy at p = 3 and 7,
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
-    bool rotate = false, mg = false, amg = false, amg_print = false;
+    int solves = 1;
+    bool rotate = false, mg = false, amg = false, amg_print = false, profile = false;
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
@@ -833,23 +838,30 @@ int run(const Options& o)
         return cellwise::fcg(apply, pc, raw(b), raw(x), N, raw(r), raw(q), raw(z), raw(pdir), red, o.tol, o.maxit,
                              stream);
     };
-    BP_CK(cudaEventRecord(t0, stream));
     cellwise::FcgResult res;
-    if (!o.mg) {
-        res = solve(precond);
-    } else {
-        auto cycle = [&](const double* in, double* out, cudaStream_t) {
-            if (mg) mg->cycle(in, out);
-#ifdef MARS_ENABLE_HYPRE
-            else coarse(in, out);
-#endif
-        };
-        res = solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N});
-    }
-    BP_CK(cudaEventRecord(t1, stream));
-    BP_CK(cudaEventSynchronize(t1));
     float solve_ms = 0.0f;
-    BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
+    std::vector<float> solve_times;
+    auto cycle = [&](const double* in, double* out, cudaStream_t) {
+        if (mg) mg->cycle(in, out);
+#ifdef MARS_ENABLE_HYPRE
+        else coarse(in, out);
+#endif
+    };
+    for (int k = 0; k < o.solves; ++k) {
+        const bool last = k + 1 == o.solves;
+        coarse_s = 0.0;   // of the last solve
+        if (last && o.profile) {
+            BP_CK(cudaDeviceSynchronize());
+            BP_CK(cudaProfilerStart());
+        }
+        BP_CK(cudaEventRecord(t0, stream));
+        res = o.mg ? solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N}) : solve(precond);
+        BP_CK(cudaEventRecord(t1, stream));
+        BP_CK(cudaEventSynchronize(t1));
+        if (last && o.profile) BP_CK(cudaProfilerStop());
+        BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
+        solve_times.push_back((float)all_max(solve_ms));
+    }
     // The true assembled residual over the free nodes, relative to that of b.
     apply(raw(x), raw(y), stream);
     residual_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(b), raw(y), N);
@@ -896,7 +908,7 @@ int run(const Options& o)
     }
     // Bytes per GPU (this rank's), rates over all ranks.
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
-    solve_ms = (float)all_max(solve_ms);
+    solve_ms = solve_times.back();
     setup_ms = (float)all_max(setup_ms);
     coarse_s = all_max(coarse_s);
     amg_setup_ms = all_max(amg_setup_ms);
@@ -942,6 +954,11 @@ int run(const Options& o)
                block_gen ? "block, MARSIR-generated" : !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
         printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
                unique / (both_ms * 1e6));
+        if (o.solves > 1) {
+            printf("  solves");
+            for (float t : solve_times) printf(" %.1f", t);
+            printf(" ms (the last is reported)\n");
+        }
         printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f,
                solve_ms, o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
         if (o.amg)   // one coarse solve per V-cycle: FCG's iterations + the first
@@ -976,8 +993,8 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
-        if (!strcmp(argv[i], "--amg-print")) {
-            o.amg_print = true;
+        if (!strcmp(argv[i], "--amg-print") || !strcmp(argv[i], "--profile")) {
+            (argv[i][2] == 'a' ? o.amg_print : o.profile) = true;
             --i;
             continue;
         }
@@ -995,6 +1012,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--tol")) o.tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
@@ -1018,6 +1036,7 @@ int main(int argc, char** argv)
     if (!error && o.amg && !o.mg) error = "--amg goes with --mg";
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
+    if (!error && o.solves < 1) error = "--solves must be positive";
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
         error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size at least 1";
 #ifndef MARS_ENABLE_HYPRE
@@ -1043,7 +1062,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
