@@ -453,3 +453,22 @@ Iterations do not change with k. On 8 GPUs the coarse solve gets up to 2.4x chea
 rest of the iteration slows 2-4x (cause not found; the operator and DSS timed after the solve are
 unchanged, so it happens only inside the V-cycle). On 64 GPUs the coarse solve itself is slower:
 BoomerAMG on fewer GPUs cannot carry the 17M-row p = 3 coarse problem. Not pursued.
+
+## MFEM baseline
+
+`tests/performance/mfem_bp3/mfem_bp3.cpp`: MFEM v4.8's ex26p (order-refined GeometricMultigrid,
+partial assembly, Chebyshev, BoomerAMG on p = 1) on the same problem: the same deformed trilinear
+cube, GLL basis, q = p + 2 Gauss points on every level, b = A u with u zero on the boundary, the
+same V-cycle shape ((2,2) applies, degrees 7 -> 3 -> 1, BoomerAMG x3 with the same settings) and
+the same true residual. What stays MFEM's own: Chebyshev on [0.3, 1.2] lmax (MARS [1.1/15, 1.1])
+with 10 power iterations, standard PCG (flexible CG gives the same iterates for a fixed
+preconditioner), a matrix-free p = 1 operator replaced by the assembled HypreParMatrix,
+hypre's own coarsest level. MFEM's PA kernels have fixed-size versions for exactly these
+(p, q) pairs: (1, 3), (3, 5), (7, 9).
+
+The two codes solve the same discrete system: on the CPU (Mac, MFEM + Hypre 2.33 MPI builds),
+CG with MFEM's Jacobi gives the history of `cellwise_bp_ref.py`'s GPU-comparable run (b = A u)
+to every printed digit: p = 1, ne 4: 9 it, 1.899e-11; p = 3, ne 4: 45 it, 9.485e-11; p = 7,
+ne 2: 71 it, 8.464e-11 against 8.434e-11 (it 1-50 equal). The V-cycle passes at p = 1 / 3 / 7
+on 1, 4 and 8 ranks, also with parallel refinement (ne 64). `build_mfem.sh` builds MFEM with the
+compilers and the Hypre of a MARS build directory. GPU runs pending.
