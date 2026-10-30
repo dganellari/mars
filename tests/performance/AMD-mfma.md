@@ -54,7 +54,10 @@ Daint, CUDA 12.9, GH200, same case, 4 warps per block (2 and 8 within 2%):
 On H100 the plane kernel is register-limited, not faster by occupancy: its
 per-point apply reaches 62% of DRAM throughput against 30% for the staged one.
 With the same schedule on both GPUs, MI300A is 1.37 (per-point) and 1.58 (affine)
-times slower than H100 on this case.
+times slower than H100 on this case. Bank conflicts do not explain it: padding the
+shared-memory rows from 8 to 10 doubles removes all of them (`SQ_LDS_BANK_CONFLICT`
+1.57e7 to 0 per dispatch), but the per-point apply takes 0.558-0.563 ms against
+0.569-0.572 ms and the affine one 0.340-0.367 ms against 0.329-0.337 ms (3 runs each).
 
 ## Local checks
 
