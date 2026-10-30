@@ -3,6 +3,11 @@
 # binary goes to the current directory.
 SRC_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 include $(MFEM_DIR)/share/mfem/config.mk
+# A CMake-built CUDA MFEM installs a config.mk that links with the host compiler but without
+# the CUDA runtime that libmfem.a needs.
+ifeq ($(MFEM_USE_CUDA),YES)
+MFEM_LIBS += -lcudart
+endif
 
 mfem_bp3: $(SRC_DIR)mfem_bp3.cpp
 	$(MFEM_CXX) $(MFEM_FLAGS) $< -o $@ $(MFEM_LIBS)
