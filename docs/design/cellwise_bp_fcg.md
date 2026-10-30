@@ -533,8 +533,24 @@ interval). MFEM's host waits (cudaDeviceSynchronize 134 ms over 34 calls, blocki
 11 ms. MFEM's Hypre uses cuSPARSE for its SpMV (the uenv default), MARS's Hypre its own kernels:
 a Hypre setting, not a method difference, and not separated here.
 
-Weak scaling against MFEM (same work per GPU, MARS's 1 / 8 / 64 GPU runs above; FIRST solves, so
-MFEM's are too long by its first-use allocations: provisional until a warm rerun). At tol 3e-12
+Weak scaling against MFEM, warm (f8b7a644, --solves 3, the last reported; tol 3e-13, true
+residuals 1.1e-11 to 1.05e-10, all PASS; same work per GPU; the 64-GPU MARS p = 3 and MFEM p = 7
+runs are reruns without nid005679, which segfaulted one task in each first). Solve ms, iterations:
+
+| warm | 1 GPU | 8 GPUs | 64 GPUs | 1 -> 64 / 8 -> 64 kept |
+|---|---|---|---|---|
+| p = 3, MARS | 157, 14 | 244, 14 | 334, 16 | 47% / 73% |
+| p = 3, MFEM | 252, 16 | 464, 16 | 641, 17 | 39% / 72% |
+| MARS faster | 1.60x | 1.90x | 1.92x | |
+| p = 7, MARS | 246, 15 | 341, 15 | 391, 15 | 63% / 87% |
+| p = 7, MFEM | 384, 18 | 613, 19 | 781, 19 | 49% / 78% |
+| MARS faster | 1.56x | 1.80x | 2.00x | |
+
+The gap grows from 1 to 8 GPUs and holds or grows to 64. From 8 to 64 GPUs both lose about the
+same at p = 3 (73% / 72% kept), consistent with the shared BoomerAMG coarse solve; at p = 7 MFEM
+loses more. MFEM's first solves at 8 / 64 GPUs are 89-146 ms slower than its warm ones.
+
+The first-solve weak-scaling runs (superseded by the table above): At tol 3e-12
 MFEM's p = 7 true residual is 1.5e-10 on 8 GPUs and 4.7e-10 on 64, above the target, so MFEM runs
 at 3e-13 like MARS (true residuals 9.4e-12 to 6.1e-11, all PASS). Solve ms, iterations:
 
@@ -545,8 +561,8 @@ at 3e-13 like MARS (true residuals 9.4e-12 to 6.1e-11, all PASS). Solve ms, iter
 | p = 7, MARS x3 | 261, 15 | 368, 15 | 409, 15 | 64% / 90% |
 | p = 7, MFEM | 506, 18 | 729, 19 | 879, 19 | 58% / 83% |
 
-First solves: MARS 2.0-2.1x faster at p = 3 and 1.9-2.1x at p = 7 at every size (warm on one
-GPU: 1.6x). MFEM, with the same
+First solves (MFEM's carry its first-use allocations): MARS 2.0-2.1x faster at p = 3 and
+1.9-2.1x at p = 7. MFEM, with the same
 BoomerAMG on the same p = 1 matrix, loses the same fraction from 1 to 64 GPUs at p = 3, which fits
 the coarse solve (not MARS's fine level) being the scaling limit. MFEM's operator grows 1.66 ->
 1.89 ms (p = 3) and 2.41 -> 2.76 ms (p = 7); its setup 1.2 / 2.0 / 6.4 s (p = 3) and 1.0 / 1.7 /
