@@ -17,6 +17,12 @@
 // CG stops on sqrt(<r,z>/<r0,z0>) like FCG, so compare the printed true residual
 // ||B - A X|| / ||B|| (each free DoF once, the same quantity MARS prints).
 //
+// --amg-settings mars (default): Hypre and BoomerAMG as MARS sets them, so both codes run the
+// same coarse solve: Hypre's own SpMV and SpGEMM kernels (MFEM leaves cuSPARSE's SpMV on CUDA),
+// GPU-aware MPI (this Hypre build defaults to host copies), the device pool of
+// fem::hypreInitializeOnce, and on the coarsest level 4 l1-Jacobi sweeps instead of a direct
+// solve (cellwise::P1Amg). --amg-settings mfem: MFEM's and Hypre's defaults.
+//
 // The serial mesh is (ne / 2^r)^3, split into a Cartesian rank grid, then refined r times
 // in parallel (each rank holds the serial mesh, so it stays at most 32^3).
 //
@@ -26,7 +32,8 @@
 // --capture-range=cudaProfilerApi).
 //
 // Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
-//               [--amg-cycles 3] [--reps 20] [--solves 1] [--profile] [--device cuda]
+//               [--amg-cycles 3] [--amg-settings mars|mfem] [--reps 20] [--solves 1] [--profile]
+//               [--device cuda]
 //               [--no-gpu-aware-mpi]
 
 #include "mfem.hpp"
@@ -65,7 +72,8 @@ const IntegrationRule& rule(int p) { return IntRules.Get(Geometry::CUBE, 2 * (p 
 class Bp3Multigrid : public GeometricMultigrid
 {
 public:
-    Bp3Multigrid(ParFiniteElementSpaceHierarchy& fespaces, Array<int>& ess_bdr, int cheb_order, int amg_cycles)
+    Bp3Multigrid(ParFiniteElementSpaceHierarchy& fespaces, Array<int>& ess_bdr, int cheb_order, int amg_cycles,
+                 bool mars_amg)
         : GeometricMultigrid(fespaces, ess_bdr)
     {
         ParFiniteElementSpace& coarse = fespaces.GetFESpaceAtLevel(0);
@@ -79,6 +87,13 @@ public:
         amg_ = new HypreBoomerAMG(*coarse_matrix_);
         amg_->SetPrintLevel(0);
         amg_->SetMaxIter(amg_cycles);
+        if (mars_amg) {
+            const HYPRE_Solver s = *amg_;
+            HYPRE_BoomerAMGSetRelaxOrder(s, 0);
+            HYPRE_BoomerAMGSetMaxCoarseSize(s, 9);
+            HYPRE_BoomerAMGSetCycleRelaxType(s, 18, 3);
+            HYPRE_BoomerAMGSetCycleNumSweeps(s, 4, 3);
+        }
         // BoomerAMG sets up on its first Mult; do it here so the setup time holds it.
         Vector zero(coarse.GetTrueVSize()), out(coarse.GetTrueVSize());
         zero.UseDevice(true);
@@ -159,6 +174,7 @@ int main(int argc, char* argv[])
     bool profile = false;
     double tol = 1e-10;
     const char* pc = "mg";
+    const char* amg_settings = "mars";
     const char* device_config = "cuda";
     bool gpu_aware_mpi = true;
     OptionsParser args(argc, argv);
@@ -170,6 +186,7 @@ int main(int argc, char* argv[])
     args.AddOption(&pc, "-pc", "--pc", "Preconditioner: mg (V-cycle) or jacobi.");
     args.AddOption(&cheb_order, "-cheb", "--cheb-order", "Chebyshev order on each multigrid level.");
     args.AddOption(&amg_cycles, "-amg", "--amg-cycles", "BoomerAMG V-cycles per coarse solve.");
+    args.AddOption(&amg_settings, "-amgs", "--amg-settings", "Hypre and BoomerAMG settings: mars or mfem.");
     args.AddOption(&reps, "-reps", "--reps", "Operator applications to time.");
     args.AddOption(&solves, "-s", "--solves", "Solves to run; the last is reported.");
     args.AddOption(&profile, "-prof", "--profile", "-no-prof", "--no-profile",
@@ -179,9 +196,21 @@ int main(int argc, char* argv[])
                    "Pass device buffers to MPI.");
     args.Parse();
     const bool mg = !std::strcmp(pc, "mg");
-    if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1) {
+    const bool mars_amg = !std::strcmp(amg_settings, "mars");
+    if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1 ||
+        (!mars_amg && std::strcmp(amg_settings, "mfem"))) {
         if (root) args.PrintUsage(std::cout);
         return 1;
+    }
+
+    if (mars_amg) {
+        // Before Hypre's first device allocation (the pool size).
+        HYPRE_SetSpMVUseVendor(0);
+        HYPRE_SetSpGemmUseVendor(0);
+        HYPRE_SetGpuAwareMPI(1);
+        int max_bin = 0;
+        while ((size_t(2) << max_bin) <= (size_t(128) << 20)) ++max_bin;
+        HYPRE_SetGPUMemoryPoolSize(2, 1, max_bin, size_t(2048) << 20);
     }
 
     // One GPU per rank, by the rank's index on its node.
@@ -252,7 +281,7 @@ int main(int argc, char* argv[])
     Operator* A = nullptr;
     Solver* M = nullptr;
     if (mg) {
-        multigrid.reset(new Bp3Multigrid(fespaces, ess_bdr, cheb_order, amg_cycles));
+        multigrid.reset(new Bp3Multigrid(fespaces, ess_bdr, cheb_order, amg_cycles, mars_amg));
         multigrid->SetCycleType(Multigrid::CycleType::VCYCLE, 1, 1);
         A = multigrid->GetOperatorAtFinestLevel();
         M = multigrid.get();
@@ -354,6 +383,9 @@ int main(int argc, char* argv[])
                    p == 7 ? " -> 3" : "", p > 1 ? " -> 1" : "", cheb_order, amg_cycles, setup_ms);
         else
             printf("  Jacobi; setup %.1f ms\n", setup_ms);
+        printf("  Hypre: %s\n", mars_amg ? "MARS's settings (SpMV and SpGEMM hypre, GPU-aware MPI, pool 128 MiB "
+                                            "blocks / 2 GiB; coarsest level 4 l1-Jacobi sweeps)"
+                                          : "MFEM's and Hypre's defaults");
         printf("  CG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true residual %.3e\n", mg ? "V-cycle" : "Jacobi",
                iterations, cg.GetFinalRelNorm(), true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})

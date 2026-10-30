@@ -322,7 +322,62 @@ public:
         dss<1>(raw(v_), x1, T_, halo_, stream_);
     }
 
+    // MFEM's p = 1 path: CG on the assembled matrix itself, on this rank's rows (its free
+    // vertices). to_rows assembles a raw cell-wise vector onto them, from_rows puts row
+    // values on every copy; apply_rows and solve_rows hand Hypre the caller's vectors.
+    long long rows() const { return rows_; }
+
+    void to_rows(const double* raw_cellwise, double* rows) const
+    {
+        using namespace amg_detail;
+        dss<1>(raw_cellwise, raw(y_), T_, halo_, stream_);
+        if (rows_ > 0) gather_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(y_), raw(copy_), rows_, rows);
+        MARS_CELLWISE_CK(cudaGetLastError());
+    }
+
+    void from_rows(const double* rows, double* cellwise) const
+    {
+        using namespace amg_detail;
+        MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
+        if (rows_ > 0) scatter_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(rows, raw(copy_), rows_, raw(v_));
+        MARS_CELLWISE_CK(cudaGetLastError());
+        dss<1>(raw(v_), cellwise, T_, halo_, stream_);
+    }
+
+    // y = A x.
+    void apply_rows(const double* x, double* y) const
+    {
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
+        wrapped(x, y, [&] { HYPRE_ParCSRMatrixMatvec(1.0, matrix(), u_, 0.0, f_); });
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
+
+    // z = the V-cycles on r, from z = 0.
+    void solve_rows(const double* r, double* z) const
+    {
+        MARS_CELLWISE_CK(cudaMemsetAsync(z, 0, rows_ * sizeof(double), stream_));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
+        wrapped(z, r, [&] { HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_); });
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
+
 private:
+    // Runs f with u_ and f_ pointing at u and f instead of their own data (no copies, as
+    // MFEM wraps its vectors for Hypre).
+    template <class F>
+    void wrapped(const double* u, const double* f, F&& run) const
+    {
+        hypre_Vector* lu = hypre_ParVectorLocalVector(reinterpret_cast<hypre_ParVector*>(u_));
+        hypre_Vector* lf = hypre_ParVectorLocalVector(reinterpret_cast<hypre_ParVector*>(f_));
+        HYPRE_Complex* own_u = hypre_VectorData(lu);
+        HYPRE_Complex* own_f = hypre_VectorData(lf);
+        hypre_VectorData(lu) = const_cast<double*>(u);
+        hypre_VectorData(lf) = const_cast<double*>(f);
+        run();
+        hypre_VectorData(lu) = own_u;
+        hypre_VectorData(lf) = own_f;
+    }
+
     template <typename T>
     static T* raw(thrust::device_vector<T>& v) { return thrust::raw_pointer_cast(v.data()); }
     template <typename T>

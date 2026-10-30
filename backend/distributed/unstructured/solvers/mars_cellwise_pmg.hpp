@@ -113,13 +113,23 @@ inline unsigned blocks(long long n) { return (unsigned)((n + kThreads - 1) / kTh
 
 }  // namespace pmg_detail
 
-// The coefficients of `steps` Chebyshev-Jacobi steps on [hi / 15, hi], hi = 1.1 lmax:
-// step(i, c1, c2) for i = 0 .. steps - 1, c1 = 0 at i = 0. Shared by the FP64 V-cycle
-// and the FP32 one (marsir/mars_marsir_pmg.hpp), so both smooth on the same interval.
+// The smoother's interval [hi / ratio, hi], hi = scale lmax of D^-1 A, and the power steps
+// that estimate lmax. The default is MARS's; mfem() is MFEM's OperatorChebyshevSmoother
+// ([0.3, 1.2] lmax, 10 steps), to compare both codes on the same V-cycle (its order-k
+// polynomial is the same residual polynomial as k steps here).
+struct ChebyshevInterval {
+    double scale = 1.1, ratio = 15.0;
+    int power_steps = 30;
+    static ChebyshevInterval mfem() { return {1.2, 4.0, 10}; }
+};
+
+// The coefficients of `steps` Chebyshev-Jacobi steps on the interval: step(i, c1, c2) for
+// i = 0 .. steps - 1, c1 = 0 at i = 0. Shared by the FP64 V-cycle and the FP32 one
+// (marsir/mars_marsir_pmg.hpp), so both smooth on the same interval.
 template <class Step>
-void chebyshev_steps(double lmax, int steps, Step&& step)
+void chebyshev_steps(double lmax, int steps, Step&& step, const ChebyshevInterval& interval = {})
 {
-    const double hi = 1.1 * lmax, lo = hi / 15.0;
+    const double hi = interval.scale * lmax, lo = hi / interval.ratio;
     const double theta = 0.5 * (hi + lo), delta = 0.5 * (hi - lo), sigma = theta / delta;
     double rho = 1.0 / sigma;
     step(0, 0.0, 1.0 / theta);
@@ -167,11 +177,12 @@ public:
     // D^-1 A). Apply7 must be constructible from a lambda (std::function).
     PMultigrid(int top, LevelApply apply, const std::function<const double*(int)>& elem, const UnstructuredTopology& T,
                std::array<UnstructuredHalo*, 3> halos, const unsigned long long* gid, int pre, int post,
-               int coarse_steps, MPI_Comm comm, cudaStream_t stream)
+               int coarse_steps, MPI_Comm comm, cudaStream_t stream, const ChebyshevInterval& interval = {})
         : apply7_([apply](const double* u, double* y, cudaStream_t s) { apply(7, u, y, s); }), T_(view(T)),
           E_(T.local), diag7_(nullptr), G3_(nullptr), G1_(nullptr), halos_(halos), pre_(pre), post_(post),
           coarse_steps_(coarse_steps), stream_(stream), M3_(cvfem_matrices<3>()), M1_(cvfem_matrices<1>()),
-          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply)), gid_(gid)
+          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply)), gid_(gid),
+          interval_(interval)
     {
         if (top == 7) {
             r7_ = alloc(E_ * 512), d7_ = alloc(E_ * 512), y7_ = alloc(E_ * 512), own7_ = alloc(E_ * 512);
@@ -363,14 +374,17 @@ private:
         double* d = P == 7 ? d7_ : (P == 3 ? d3_ : d1_);
         double* y = P == 7 ? y7_ : (P == 3 ? y3_ : y1_);
         if (!zero_x) apply<P>(x, y);
-        chebyshev_steps(lmax_[P == 7 ? 0 : (P == 3 ? 1 : 2)], steps, [&](int i, double c1, double c2) {
-            if (i == 0) {
-                step<P, true>(b, zero_x ? nullptr : y, d, x, c1, c2);
-                return;
-            }
-            apply<P>(x, y);
-            step<P, false>(b, y, d, x, c1, c2);
-        });
+        chebyshev_steps(
+            lmax_[P == 7 ? 0 : (P == 3 ? 1 : 2)], steps,
+            [&](int i, double c1, double c2) {
+                if (i == 0) {
+                    step<P, true>(b, zero_x ? nullptr : y, d, x, c1, c2);
+                    return;
+                }
+                apply<P>(x, y);
+                step<P, false>(b, y, d, x, c1, c2);
+            },
+            interval_);
     }
 
     template <int P>
@@ -384,7 +398,8 @@ private:
     }
 
     // The largest eigenvalue of the Jacobi-preconditioned operator at level P: 30 power
-    // steps from a hash vector (10 underestimate it, see the structured multigrid). The
+    // steps (interval_.power_steps) from a hash vector (10 underestimate it, see the
+    // structured multigrid). The
     // start depends on the local numbering, so lmax differs in the last digits between
     // rank counts; the smoother's interval has a 10% margin.
     template <int P>
@@ -400,7 +415,7 @@ private:
         MARS_CELLWISE_CK(cudaGetLastError());
         step<P, true>(y, nullptr, d, v, 0.0, 1.0);   // v = Jacobi(DSS(hash))
         double lam = 0.0;
-        for (int i = 0; i < 30; ++i) {
+        for (int i = 0; i < interval_.power_steps; ++i) {
             apply<P>(v, y);
             step<P, true>(y, nullptr, d, w, 0.0, 1.0);   // w = Jacobi(DSS(A v))
             const double nw = norm<P>(red, w), nv = norm<P>(red, v);
@@ -438,6 +453,7 @@ private:
     LevelApply lower_;           // the level-by-level operator (null: CVFEM below p = 7)
     double* own7_ = nullptr;     // the summed p = 7 diagonal, when this class forms it
     const unsigned long long* gid_ = nullptr;   // element ids for the power iteration's start
+    ChebyshevInterval interval_;
 };
 
 }  // namespace cellwise

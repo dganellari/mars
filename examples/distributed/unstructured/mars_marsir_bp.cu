@@ -48,6 +48,12 @@
 // BoomerAMG on the assembled p = 1 matrix (--amg-cycles V-cycles, default 3; a Hypre build).
 // --amg-theta, --amg-agg and --amg-coarse-size set its hierarchy (cellwise::AmgSettings),
 // --amg-print prints Hypre's setup statistics.
+// --cheb-interval mfem smooths on MFEM's interval ([0.3, 1.2] lmax, 10 power steps;
+// cellwise::ChebyshevInterval) instead of MARS's ([1.1 / 15, 1.1] lmax, 30 steps), so this
+// V-cycle is the one of tests/performance/mfem_bp3. --p1-assembled (p = 1, --mg --amg):
+// FCG on the rows of the assembled p = 1 matrix that BoomerAMG uses, MFEM's p = 1 path,
+// instead of the matrix-free cell-wise operator; b is assembled onto the rows before the
+// timing and x put back on every copy after it, for the same checks.
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -546,7 +552,8 @@ struct Options {
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
-    bool rotate = false, mg = false, amg = false, amg_print = false, profile = false;
+    bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_assembled = false;
+    std::string cheb_interval = "mars";
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
@@ -804,7 +811,9 @@ int run(const Options& o)
         if constexpr (P > 1) {
             mg = std::make_unique<Multigrid>(P, level_apply, level_elem, topo,
                                              std::array<cellwise::UnstructuredHalo*, 3>{P == 7 ? h : nullptr, h3, h1},
-                                             d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream);
+                                             d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream,
+                                             o.cheb_interval == "mfem" ? cellwise::ChebyshevInterval::mfem()
+                                                                       : cellwise::ChebyshevInterval{});
             lmax = mg->lambda_max();
         }
 #ifdef MARS_ENABLE_HYPRE
@@ -847,6 +856,22 @@ int run(const Options& o)
         else coarse(in, out);
 #endif
     };
+    long long m = 0;   // --p1-assembled: this rank's rows
+#ifdef MARS_ENABLE_HYPRE
+    if (o.p1_assembled) m = amg->rows();
+    thrust::device_vector<double> rb(m), rx(m), rr(m), rq(m), rz(m), rp(m);
+    if (o.p1_assembled) {
+        amg->to_rows(raw(b), raw(rb));
+        BP_CK(cudaStreamSynchronize(stream));
+    }
+    auto rows_apply = [&](const double* in, double* out, cudaStream_t) { amg->apply_rows(in, out); };
+    auto rows_cycle = [&](const double* in, double* out, cudaStream_t) {
+        BP_CK(cudaStreamSynchronize(stream));
+        const auto c0 = std::chrono::steady_clock::now();
+        amg->solve_rows(in, out);
+        coarse_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
+    };
+#endif
     for (int k = 0; k < o.solves; ++k) {
         const bool last = k + 1 == o.solves;
         coarse_s = 0.0;   // of the last solve
@@ -855,13 +880,22 @@ int run(const Options& o)
             BP_CK(cudaProfilerStart());
         }
         BP_CK(cudaEventRecord(t0, stream));
-        res = o.mg ? solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N}) : solve(precond);
+#ifdef MARS_ENABLE_HYPRE
+        if (o.p1_assembled)
+            res = cellwise::fcg(rows_apply, cellwise::CyclePrecond<decltype(rows_cycle)>{rows_cycle, m}, raw(rb),
+                                raw(rx), m, raw(rr), raw(rq), raw(rz), raw(rp), red, o.tol, o.maxit, stream);
+        else
+#endif
+            res = o.mg ? solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N}) : solve(precond);
         BP_CK(cudaEventRecord(t1, stream));
         BP_CK(cudaEventSynchronize(t1));
         if (last && o.profile) BP_CK(cudaProfilerStop());
         BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
         solve_times.push_back((float)all_max(solve_ms));
     }
+#ifdef MARS_ENABLE_HYPRE
+    if (o.p1_assembled) amg->from_rows(raw(rx), raw(x));
+#endif
     // The true assembled residual over the free nodes, relative to that of b.
     apply(raw(x), raw(y), stream);
     residual_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(b), raw(y), N);
@@ -906,6 +940,10 @@ int run(const Options& o)
         BP_CK(cudaDeviceSynchronize());   // filled on the default stream
         dss1_ms = time_ms([&] { cellwise::dss<1>(raw(a1), raw(b1), topo, h1, stream); });
     }
+    float rows_ms = 0.0f;   // --p1-assembled: the SpMV on the rows
+#ifdef MARS_ENABLE_HYPRE
+    if (o.p1_assembled) rows_ms = time_ms([&] { amg->apply_rows(raw(rx), raw(rq)); });
+#endif
     // Bytes per GPU (this rank's), rates over all ranks.
     const double op_bytes = (2.0 * N + (double)E * (tri ? 24 : K * q3)) * 8.0, dss_bytes = 2.0 * N * 8.0;
     solve_ms = solve_times.back();
@@ -939,9 +977,15 @@ int run(const Options& o)
             printf("  multigrid p=%d%s%s, Chebyshev (%d,%d), coarse %s x%d; lmax %.4f %.4f %.4f; setup %.1f ms\n", P,
                    P == 7 ? " -> 3" : "", P > 1 ? " -> 1" : "", o.pre, o.post, o.amg ? "BoomerAMG" : "Chebyshev",
                    o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
+        if (o.mg && o.cheb_interval == "mfem" && P > 1)
+            printf("  Chebyshev interval MFEM's: [0.3, 1.2] lmax, 10 power steps\n");
         if (o.amg)
             printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
                    o.amg_agg, o.amg_coarse_size);
+        if (o.p1_assembled)
+            printf("  FCG on the %lld rows of the assembled p = 1 matrix (MFEM's p = 1 path); SpMV %.3f ms, %.2f "
+                   "GDoF/s\n",
+                   (long long)all_sum((double)m), rows_ms, all_sum((double)m) / (rows_ms * 1e6));
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})
@@ -993,8 +1037,8 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
-        if (!strcmp(argv[i], "--amg-print") || !strcmp(argv[i], "--profile")) {
-            (argv[i][2] == 'a' ? o.amg_print : o.profile) = true;
+        if (!strcmp(argv[i], "--amg-print") || !strcmp(argv[i], "--profile") || !strcmp(argv[i], "--p1-assembled")) {
+            (argv[i][2] == 'a' ? o.amg_print : argv[i][3] == 'r' ? o.profile : o.p1_assembled) = true;
             --i;
             continue;
         }
@@ -1013,6 +1057,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
@@ -1037,6 +1082,8 @@ int main(int argc, char** argv)
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
+    if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
+    if (!error && o.p1_assembled && !(o.p == 1 && o.amg)) error = "--p1-assembled goes with --p 1 --mg --amg";
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
         error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size at least 1";
 #ifndef MARS_ENABLE_HYPRE
@@ -1062,7 +1109,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-assembled] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

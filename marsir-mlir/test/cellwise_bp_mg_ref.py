@@ -48,6 +48,8 @@ ap.add_argument("--maxit", type=int, default=3000)
 ap.add_argument("--gpu", action="store_true", help="the GPU driver's run (see above)")
 ap.add_argument("--coarse", type=int, default=100, help="--gpu: Chebyshev steps on p = 1")
 ap.add_argument("--tol", type=float, default=1e-10, help="--gpu: FCG tolerance on sqrt(<r,z>/<r0,z0>)")
+ap.add_argument("--cheb-interval", choices=("mars", "mfem"), default="mars",
+                help="mfem: MFEM's [0.3, 1.2] lmax and 10 power steps (cellwise::ChebyshevInterval::mfem)")
 args = ap.parse_args()
 degrees = [int(x) for x in args.levels.split(",")]
 
@@ -147,8 +149,12 @@ class Level:
         return np.linalg.norm(self.scatter(b - self.apply(x))[self.inner])
 
 
+# (scale, ratio, power steps): the interval [hi / ratio, hi], hi = scale lmax.
+INTERVAL = {"mars": (1.1, 15.0, 30), "mfem": (1.2, 4.0, 10)}[args.cheb_interval]
+
+
 def chebyshev_steps(lmax, steps):
-    hi = 1.1 * lmax; lo = hi / 15.0
+    hi = INTERVAL[0] * lmax; lo = hi / INTERVAL[1]
     theta, delta = 0.5 * (hi + lo), 0.5 * (hi - lo); sigma = theta / delta
     rho = 1.0 / sigma; out = [(0.0, 1.0 / theta)]
     for _ in range(1, steps):
@@ -173,12 +179,12 @@ class VCycle:
         np.add.at(A, (c.gidx[:, :, None], c.gidx[:, None, :]), K)
         self.Ac = A[np.ix_(c.inner, c.inner)]
 
-    def power(self, lv):   # 30 steps from the GPU's hash vector (pmg_detail::hash_kernel)
+    def power(self, lv):   # 30 (or 10) steps from the GPU's hash vector (pmg_detail::hash_kernel)
         t = np.arange(lv.E * lv.n3, dtype=np.uint64)
         h = ((t * np.uint64(2654435761)) & np.uint64(0xffffffff)).astype(float) / 4294967296.0 - 0.5
         v = lv.jacobi(h.reshape(lv.E, lv.n3))
         lam = 0.0
-        for _ in range(30):
+        for _ in range(INTERVAL[2]):
             w = lv.jacobi(lv.apply(v))
             nw = np.linalg.norm(lv.nodes(w)); nv = np.linalg.norm(lv.nodes(v))   # as the GPU's counted norm
             lam = nw / nv; v = w / nw
