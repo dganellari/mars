@@ -501,3 +501,22 @@ V-cycle iteration (22.6 / 28.2 ms against 12.2 / 17.5 ms with similar counts), w
 is not measured. At p = 1 MFEM runs CG on the assembled matrix (SpMV 0.33 ms) against MARS's
 matrix-free cell-wise operator + DSS (2.1M DoFs at 0.56 GDoF/s: about 3.8 ms), which accounts for
 most of the 4.8 ms per iteration. MFEM's setup is 2-7x longer.
+
+Weak scaling against MFEM (same work per GPU, MARS's 1 / 8 / 64 GPU runs above). At tol 3e-12
+MFEM's p = 7 true residual is 1.5e-10 on 8 GPUs and 4.7e-10 on 64, above the target, so MFEM runs
+at 3e-13 like MARS (true residuals 9.4e-12 to 6.1e-11, all PASS). Solve ms, iterations:
+
+| | 1 GPU | 8 GPUs | 64 GPUs | 1 -> 64 / 8 -> 64 kept |
+|---|---|---|---|---|
+| p = 3, MARS x3 | 170, 14 | 268, 14 | 355, 16 | 48% / 76% |
+| p = 3, MFEM | 351, 16 | 542, 16 | 710, 17 | 49% / 76% |
+| p = 7, MARS x3 | 261, 15 | 368, 15 | 409, 15 | 64% / 90% |
+| p = 7, MFEM | 506, 18 | 729, 19 | 879, 19 | 58% / 83% |
+
+MARS stays 2.0-2.1x faster at p = 3 and 1.9-2.1x at p = 7 at every size. MFEM, with the same
+BoomerAMG on the same p = 1 matrix, loses the same fraction from 1 to 64 GPUs at p = 3, which fits
+the coarse solve (not MARS's fine level) being the scaling limit. MFEM's operator grows 1.66 ->
+1.89 ms (p = 3) and 2.41 -> 2.76 ms (p = 7); its setup 1.2 / 2.0 / 6.4 s (p = 3) and 1.0 / 1.7 /
+2.1 s (p = 7). Two MFEM tol 3e-12 runs at p = 3 (8 and 64 GPUs) died with a segfault (exit 139)
+of the first task on nid005820, the only node in both failures; the same configurations at 3e-13
+passed on other nodes.
