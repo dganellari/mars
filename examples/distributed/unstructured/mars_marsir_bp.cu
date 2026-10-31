@@ -86,7 +86,7 @@
 // little. --block, --rotate, --block-dss and --dss-ptx are for one rank.
 //
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
-//                     [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
+//                     [--deform 0.05] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
 //                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t]
 //                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
@@ -799,6 +799,9 @@ struct Options {
     bool p1_assembled = false;   // set from the others after parsing
     std::string cheb_interval = "mars", rhs = "discrete", mesh;
     double deform = 0.05, tol = 1e-10;
+    // PASS needs the true assembled residual at or below this. FCG stops on sqrt(<r,z>/<r0,z0>):
+    // with the V-cycle at tol 1e-10 that left true residuals of 6.5e-10 to 1.9e-9.
+    double true_tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
     int amg_agg = 0, amg_coarse_size = 9;
@@ -1246,7 +1249,9 @@ int run(const Options& o)
     setup_ms = (float)all_max(setup_ms);
     coarse_s = all_max(coarse_s);
     amg_setup_ms = all_max(amg_setup_ms);
-    const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
+    const bool converged = res.relative <= o.tol;
+    const bool accurate = std::isfinite(true_rel) && true_rel <= o.true_tol;
+    const bool pass = converged && accurate && std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
                       (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 - 1.0) <= 1e-12) && (pde || err <= 1e-8 * umax) &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
@@ -1294,6 +1299,8 @@ int run(const Options& o)
                    (long long)all_sum((double)m), rows_ms, all_sum((double)m) / (rows_ms * 1e6));
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
+        if (!converged) printf("  FCG did not reach tol %.1e in %d iterations\n", o.tol, o.maxit);
+        if (!accurate) printf("  true assembled residual above --true-tol %.1e\n", o.true_tol);
         for (int k : {1, 5, 10, 20, 50, 100})
             if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
         if (pde)
@@ -1365,6 +1372,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--ne")) o.ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--deform")) o.deform = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--tol")) o.tol = atof(argv[i + 1]);
+        else if (!strcmp(argv[i], "--true-tol")) o.true_tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
@@ -1427,7 +1435,7 @@ int main(int argc, char** argv)
     }
     if (error) {
         if (rank == 0)
-            fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
+            fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] [--true-tol t] "
                             "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;

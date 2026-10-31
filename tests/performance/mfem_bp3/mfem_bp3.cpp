@@ -36,7 +36,7 @@
 // pays for that). --profile brackets the last solve with cudaProfilerStart / Stop (nsys
 // --capture-range=cudaProfilerApi).
 //
-// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
+// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
 //               [--amg-cycles 3] [--amg-settings mars|mfem] [--rhs discrete|pde] [--reps 20] [--solves 1] [--profile]
 //               [--device cuda]
 //               [--no-gpu-aware-mpi]
@@ -177,7 +177,7 @@ int main(int argc, char* argv[])
 
     int p = 3, ne = 32, maxit = 2000, cheb_order = 2, amg_cycles = 3, reps = 20, solves = 1;
     bool profile = false;
-    double tol = 1e-10;
+    double tol = 1e-10, true_tol = 1e-10;
     const char* pc = "mg";
     const char* amg_settings = "mars";
     const char* rhs = "discrete";
@@ -188,6 +188,7 @@ int main(int argc, char* argv[])
     args.AddOption(&ne, "-ne", "--ne", "Elements per axis.");
     args.AddOption(&g_deform, "-a", "--deform", "Amplitude of the vertex deformation.");
     args.AddOption(&tol, "-t", "--tol", "CG relative tolerance on sqrt(<r,z>).");
+    args.AddOption(&true_tol, "-tt", "--true-tol", "PASS needs the true relative residual at or below this.");
     args.AddOption(&maxit, "-it", "--maxit", "CG iteration limit.");
     args.AddOption(&pc, "-pc", "--pc", "Preconditioner: mg (V-cycle) or jacobi.");
     args.AddOption(&cheb_order, "-cheb", "--cheb-order", "Chebyshev order on each multigrid level.");
@@ -406,7 +407,8 @@ int main(int argc, char* argv[])
     tic_toc.Stop();
     const double op_ms = all_max(tic_toc.RealTime() * 1e3 / reps);
 
-    const bool pass = cg.GetConverged() && (pde || err <= 1e-8 * umax);
+    const bool accurate = std::isfinite(true_rel) && true_rel <= true_tol;
+    const bool pass = cg.GetConverged() && accurate && (pde || err <= 1e-8 * umax);
     if (root) {
         printf("MFEM %s BP3, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f\n", MFEM_VERSION_STRING,
                p, p + 2, ne, (long long)ne * ne * ne, (long long)unique, g_deform);
@@ -422,6 +424,8 @@ int main(int argc, char* argv[])
                                           : "MFEM's and Hypre's defaults");
         printf("  CG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true residual %.3e\n", mg ? "V-cycle" : "Jacobi",
                iterations, cg.GetFinalRelNorm(), true_rel);
+        if (!cg.GetConverged()) printf("  CG did not reach tol %.1e in %d iterations\n", tol, maxit);
+        if (!accurate) printf("  true residual above --true-tol %.1e\n", true_tol);
         for (int k : {1, 5, 10, 20, 50, 100})
             if (k <= (int)history.rel.size()) printf("  it %3d  %.6e\n", k, history.rel[k - 1]);
         if (pde)
