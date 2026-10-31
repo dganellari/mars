@@ -456,6 +456,9 @@ BoomerAMG on fewer GPUs cannot carry the 17M-row p = 3 coarse problem. Not pursu
 
 ## MFEM baseline
 
+The comparison to use is the last subsection, "Same algorithm in both codes"; the ones before it
+record how it was reached (first solves, then warm solves, then the remaining differences removed).
+
 `tests/performance/mfem_bp3/mfem_bp3.cpp`: MFEM v4.8's ex26p (order-refined GeometricMultigrid,
 partial assembly, Chebyshev, BoomerAMG on p = 1) on the same problem: the same deformed trilinear
 cube, GLL basis, q = p + 2 Gauss points on every level, b = A u with u zero on the boundary, the
@@ -569,3 +572,43 @@ the coarse solve (not MARS's fine level) being the scaling limit. MFEM's operato
 2.1 s (p = 7). Two MFEM tol 3e-12 runs at p = 3 (8 and 64 GPUs) died with a segfault (exit 139)
 of the first task on nid005820, the only node in both failures; the same configurations at 3e-13
 passed on other nodes.
+
+### Same algorithm in both codes (d5a507d1)
+
+The remaining differences, removed instead of listed: MARS with MFEM's Chebyshev interval
+(`--cheb-interval mfem`: [0.3, 1.2] lmax, 10 power steps; MFEM's order-2 smoother is the same
+residual polynomial as two Chebyshev steps), MARS's p = 1 solve on the assembled matrix as MFEM
+does it (`--p1-assembled`), and MFEM with MARS's Hypre settings (`--amg-settings mars`: Hypre's own
+SpMV and SpGEMM, GPU-aware MPI, the same device pool, 4 l1-Jacobi sweeps on the coarsest level).
+GPU-aware MPI matters: this Hypre build defaults to host copies, which the MFEM runs above had, so
+their multi-GPU times were too long (p = 3 on 64 GPUs 641 -> 418 ms with MARS's settings).
+
+Warm solves (--solves 3), tol 3e-13, true residuals 8.6e-13 to 1.06e-10, all PASS. The iteration
+counts now agree (at most one apart), as the same algorithm should. Solve ms, iterations:
+
+| same algorithm | 1 GPU | 8 GPUs | 64 GPUs |
+|---|---|---|---|
+| p = 1, MARS (assembled) | 84, 14 | | |
+| p = 1, MFEM | 110, 14 | | |
+| MARS faster | 1.31x | | |
+| p = 3, MARS | 176, 16 | 276, 16 | 355, 17 |
+| p = 3, MFEM | 244, 16 | 357, 16 | 418, 17 |
+| MARS faster | 1.38x | 1.30x | 1.18x |
+| p = 7, MARS | 292, 18 | 408, 18 | 474, 18 |
+| p = 7, MFEM | 374, 18 | 531, 19 | 585, 19 |
+| MARS faster | 1.28x | 1.30x | 1.24x |
+
+Per iteration, MARS is 4.2 / 5.1 / 3.7 ms faster at p = 3 (11.0 / 17.2 / 20.9 against 15.2 /
+22.3 / 24.6 ms) and 4.6 / 5.3 / 4.5 ms at p = 7 (16.2 / 22.7 / 26.3 against 20.8 / 27.9 / 30.8
+ms) on 1 / 8 / 64 GPUs. From 1 to 64 GPUs both codes add the same time per iteration, about 10 ms
+(MARS 9.9 / 10.1, MFEM 9.3 / 10.0 at p = 3 / 7): the cost that scale adds is shared (the
+BoomerAMG coarse solve with the same settings, measured as the largest cost in MARS's runs
+above), and MARS's lead is the fine level and the transfers, which it keeps at every size. The
+ratio falls at 64 GPUs because the shared part grows, not because MARS's part does.
+
+Each code at its own best, for reference: MARS's own interval is faster than MFEM's at every
+size (p = 3: 157 / 244 / 334 ms, p = 7: 246 / 341 / 391 ms, the warm runs above, an earlier
+batch of the same build), so against MFEM with MARS's Hypre settings MARS is 1.55x / 1.46x /
+1.25x faster at p = 3 and 1.52x / 1.56x / 1.50x at p = 7. At p = 1 MARS's assembled path is
+2.0x faster than its matrix-free one (84 against 171 ms) and the better choice there.
+
