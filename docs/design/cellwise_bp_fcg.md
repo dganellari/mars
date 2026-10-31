@@ -608,7 +608,7 @@ ratio falls at 64 GPUs because the shared part grows, not because MARS's part do
 
 Each code at its own best, for reference: MARS's own interval is faster than MFEM's at every
 size (p = 3: 157 / 244 / 334 ms, p = 7: 246 / 341 / 391 ms, the warm runs above, an earlier
-batch of the same build), so against MFEM with MARS's Hypre settings MARS is 1.55x / 1.46x /
+batch of the same build), so against MFEM with MARS's Hypre settings MARS is 1.55x / 1.47x /
 1.25x faster at p = 3 and 1.52x / 1.56x / 1.50x at p = 7. At p = 1 MARS's assembled path is
 2.0x faster than its matrix-free one (84 against 171 ms) and the better choice there.
 
