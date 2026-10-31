@@ -125,7 +125,8 @@ inline ExodusRawHex8 readExodusHex8Raw(const std::string& path) {
         int id=-1;
         ~File() { if (id>=0) nc_close(id); }
     } file;
-    check(nc_open(path.c_str(),NC_NOWRITE,&file.id));
+    if (const int result=nc_open(path.c_str(),NC_NOWRITE,&file.id); result!=NC_NOERR)
+        throw std::runtime_error(std::string("NetCDF: ")+nc_strerror(result)+": "+path);
     auto dim=[&](const std::string& name) {
         int id; size_t size;
         check(nc_inq_dimid(file.id,name.c_str(),&id)); check(nc_inq_dimlen(file.id,id,&size));
