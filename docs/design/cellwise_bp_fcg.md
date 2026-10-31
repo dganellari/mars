@@ -616,5 +616,7 @@ Default since then, the rule MFEM follows (ex26p assembles the p = 1 level and r
 assembly above; ex1p assembles unless `-pa`): with `--mg --amg`, p = 1 runs FCG on the assembled
 p = 1 matrix that BoomerAMG already has, and p = 3 and 7 stay matrix-free. `--p1-matrix-free`
 keeps the cell-wise p = 1 operator (both forms kept). Without `--mg`, p = 1 stays matrix-free:
-DSS-Jacobi needs no matrix, and the matrix exists only with BoomerAMG.
+DSS-Jacobi needs no matrix, and the matrix exists only with BoomerAMG. GPU check of the default (e1b9304f,
+p = 1, ne 128, warm): 85.9 ms against 169.2 ms with `--p1-matrix-free`, both 14 iterations,
+PASS; the SpMV takes 0.26 ms (7.9 GDoF/s; MFEM's 0.33 ms).
 
