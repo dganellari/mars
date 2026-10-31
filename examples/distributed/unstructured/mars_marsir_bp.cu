@@ -57,6 +57,12 @@
 // x put back on every copy after it, for the same checks. --p1-matrix-free keeps the
 // matrix-free cell-wise operator. Without --mg, p = 1 is matrix-free (DSS-Jacobi needs no
 // matrix).
+// --rhs pde (BP3): b = M f_h instead of A u, f = -lap u = 3 pi^2 u (u vanishes on the cube's
+// boundary, which the deformation keeps), M the BP1 mass operator generated for the same
+// degree and rule (<ptx-dir>/bp1_p{p}_sm90.ptx). The solve then returns the discrete
+// solution, and its L2 error (at the Gauss points) and max error at the nodes measure the
+// discretization, for the convergence study; tests/performance/mfem_bp3 --rhs pde builds the
+// same b.
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -315,6 +321,55 @@ __global__ void exact_kernel(double* __restrict__ u, long long E, int ne, double
     u[t] = sin(kPi * x[0]) * sin(kPi * x[1]) * sin(kPi * x[2]);
 }
 
+// The GLL Lagrange basis of degree P at xi.
+template <int P>
+__device__ void gll_lagrange(double xi, double (&l)[P + 1])
+{
+    for (int i = 0; i <= P; ++i) {
+        double v = 1.0;
+        for (int j = 0; j <= P; ++j)
+            if (j != i) v *= (xi - c_gll[j]) / (c_gll[i] - c_gll[j]);
+        l[i] = v;
+    }
+}
+
+// --rhs pde: (x_h - u)^2 w det J and u^2 w det J at each Gauss point (one thread each), for the
+// L2 error of the discrete solution: x_h from the element's GLL values, u at the point's
+// physical position. The error at the nodes alone converges one order faster.
+template <int P>
+__global__ void l2_kernel(const double* __restrict__ x, long long E, int ne, double deform, Rule rule,
+                          double* __restrict__ e2, double* __restrict__ u2)
+{
+    constexpr int n = P + 1, Q = P + 2, q3 = Q * Q * Q;
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= E * q3) return;
+    const long long e = t / q3;
+    const int pt = (int)(t % q3), a = pt / (Q * Q), b = (pt / Q) % Q, c = pt % Q;
+    double corners[8][3], xp[3], J[3][3];
+    element_corners(e, ne, deform, corners);
+    const double r[3] = {rule.x[a], rule.x[b], rule.x[c]};
+    trilinear(corners, r, xp, J);
+    const double det = J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1]) -
+                       J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0]) +
+                       J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
+    const double w = det * rule.w[a] * rule.w[b] * rule.w[c];
+    double la[n], lb[n], lc[n];
+    gll_lagrange<P>(r[0], la);
+    gll_lagrange<P>(r[1], lb);
+    gll_lagrange<P>(r[2], lc);
+    const double* xe = x + e * n * n * n;
+    double xh = 0.0;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            double sum = 0.0;
+            for (int k = 0; k < n; ++k) sum += lc[k] * xe[(i * n + j) * n + k];
+            xh += la[i] * lb[j] * sum;
+        }
+    const double u = sin(kPi * xp[0]) * sin(kPi * xp[1]) * sin(kPi * xp[2]);
+    e2[t] = (xh - u) * (xh - u) * w;
+    u2[t] = u * u * w;
+}
+
 // The element operator's diagonal, closed form (as cellwise_bp_ref.diagonal): BP1
 // sum_q g0 phi^2, BP3 sum_q sum_rs M_rs d_r phi d_s phi, phi_ijk = B_ai B_bj B_ck, DB =
 // D B the basis' derivative at the Gauss points.
@@ -516,6 +571,12 @@ std::unique_ptr<Bp3Level> bp3_level(const std::string& ptx_dir, long long E, int
     return L;
 }
 
+__global__ void scale_kernel(double* __restrict__ v, long long n, double s)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < n) v[t] *= s;
+}
+
 // out = b - y.
 __global__ void residual_kernel(double* __restrict__ out, const double* __restrict__ b, const double* __restrict__ y,
                                 long long n)
@@ -557,7 +618,7 @@ struct Options {
     int solves = 1;
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
-    std::string cheb_interval = "mars";
+    std::string cheb_interval = "mars", rhs = "discrete";
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
@@ -694,6 +755,23 @@ int run(const Options& o)
     exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3);
     BP_CK(cudaGetLastError());
     apply(raw(u), raw(b), stream);   // b = A u
+    const bool pde = o.rhs == "pde";
+    std::unique_ptr<marsir::GalerkinPtx> mass;
+    thrust::device_vector<double> G1;
+    auto apply_mass = [&](const double* in, double* out) {
+        mass->apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G1), out, E, stream);
+    };
+    if (pde) {
+        G1.resize(E * q3);
+        geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(G1), E, Q, 1, o.ne, o.deform,
+                                                                              rule_of(fine));
+        BP_CK(cudaGetLastError());
+        mass.reset(new marsir::GalerkinPtx(o.ptx_dir + "/bp1_p" + std::to_string(P) + "_sm90.ptx",
+                                           "bp1_apply_p" + std::to_string(P), P, Q, false, 1));
+        apply_mass(raw(u), raw(b));
+        scale_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(b), N, 3.0 * kPi * kPi);
+        BP_CK(cudaGetLastError());
+    }
     BP_CK(cudaStreamSynchronize(stream));
     double max1 = 0.0, maxv = 0.0;
     {
@@ -920,6 +998,17 @@ int run(const Options& o)
         for (double v : hu) umax = std::fmax(umax, std::fabs(v));
         umax = all_max(umax);
     }
+    // --rhs pde: ||x_h - u||_L2 / ||u||_L2 with the q = p + 2 rule.
+    double l2_err = 0.0;
+    if (pde) {
+        thrust::device_vector<double> e2(E * q3), u2(E * q3);
+        l2_kernel<P><<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(x), E, o.ne, o.deform,
+                                                                           rule_of(fine), raw(e2), raw(u2));
+        BP_CK(cudaGetLastError());
+        BP_CK(cudaStreamSynchronize(stream));
+        l2_err = std::sqrt(all_sum(thrust::reduce(e2.begin(), e2.end(), 0.0)) /
+                           all_sum(thrust::reduce(u2.begin(), u2.end(), 0.0)));
+    }
 
     auto time_ms = [&](auto&& f) {
         f();
@@ -955,7 +1044,7 @@ int run(const Options& o)
     coarse_s = all_max(coarse_s);
     amg_setup_ms = all_max(amg_setup_ms);
     const bool pass = std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
-                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 - 1.0) <= 1e-12) && err <= 1e-8 * umax &&
+                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 - 1.0) <= 1e-12) && (pde || err <= 1e-8 * umax) &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
     if (root) {
@@ -993,7 +1082,12 @@ int run(const Options& o)
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})
             if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
-        printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
+        if (pde)
+            printf("  right-hand side M f_h, f = 3 pi^2 u: L2 error %.3e (relative), at the nodes max |x - u| / "
+                   "max |u| = %.3e  %s\n",
+                   l2_err, err / umax, pass ? "PASS" : "FAIL");
+        else
+            printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
         printf("  operator     %8.3f ms  %6.2f GDoF/s unique  %6.2f cell-wise  %6.0f GB/s per GPU (u, y, geometry)\n",
                op_ms, unique / (op_ms * 1e6), N_all / (op_ms * 1e6), op_bytes / (op_ms * 1e6));
         printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s per GPU  (%s)\n", dss_ms,
@@ -1061,6 +1155,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
+        else if (!strcmp(argv[i], "--rhs")) o.rhs = argv[i + 1];
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
@@ -1086,6 +1181,8 @@ int main(int argc, char** argv)
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
+    if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
+        error = "--rhs is discrete, or pde for bp3 and bp3_tri";
     if (!error && o.p1_matrix_free && !(o.p == 1 && o.amg)) error = "--p1-matrix-free goes with --p 1 --mg --amg";
     o.p1_assembled = o.p == 1 && o.amg && !o.p1_matrix_free;
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
@@ -1113,7 +1210,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

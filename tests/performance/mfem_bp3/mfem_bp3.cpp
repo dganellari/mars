@@ -17,6 +17,11 @@
 // CG stops on sqrt(<r,z>/<r0,z0>) like FCG, so compare the printed true residual
 // ||B - A X|| / ||B|| (each free DoF once, the same quantity MARS prints).
 //
+// --rhs pde: B = M f_h instead of A u, f = -lap u = 3 pi^2 u, M the mass matrix with the same
+// rule: the right-hand side of mars_marsir_bp --rhs pde, so both codes solve the same system and
+// the errors (L2 at the Gauss points of the same rule, max at the nodes) measure the
+// discretization.
+//
 // --amg-settings mars (default): Hypre and BoomerAMG as MARS sets them, so both codes run the
 // same coarse solve: Hypre's own SpMV and SpGEMM kernels (MFEM leaves cuSPARSE's SpMV on CUDA),
 // GPU-aware MPI (this Hypre build defaults to host copies), the device pool of
@@ -32,7 +37,7 @@
 // --capture-range=cudaProfilerApi).
 //
 // Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
-//               [--amg-cycles 3] [--amg-settings mars|mfem] [--reps 20] [--solves 1] [--profile]
+//               [--amg-cycles 3] [--amg-settings mars|mfem] [--rhs discrete|pde] [--reps 20] [--solves 1] [--profile]
 //               [--device cuda]
 //               [--no-gpu-aware-mpi]
 
@@ -175,6 +180,7 @@ int main(int argc, char* argv[])
     double tol = 1e-10;
     const char* pc = "mg";
     const char* amg_settings = "mars";
+    const char* rhs = "discrete";
     const char* device_config = "cuda";
     bool gpu_aware_mpi = true;
     OptionsParser args(argc, argv);
@@ -187,6 +193,7 @@ int main(int argc, char* argv[])
     args.AddOption(&cheb_order, "-cheb", "--cheb-order", "Chebyshev order on each multigrid level.");
     args.AddOption(&amg_cycles, "-amg", "--amg-cycles", "BoomerAMG V-cycles per coarse solve.");
     args.AddOption(&amg_settings, "-amgs", "--amg-settings", "Hypre and BoomerAMG settings: mars or mfem.");
+    args.AddOption(&rhs, "-rhs", "--rhs", "Right-hand side: discrete (A u) or pde (M f_h).");
     args.AddOption(&reps, "-reps", "--reps", "Operator applications to time.");
     args.AddOption(&solves, "-s", "--solves", "Solves to run; the last is reported.");
     args.AddOption(&profile, "-prof", "--profile", "-no-prof", "--no-profile",
@@ -197,8 +204,9 @@ int main(int argc, char* argv[])
     args.Parse();
     const bool mg = !std::strcmp(pc, "mg");
     const bool mars_amg = !std::strcmp(amg_settings, "mars");
+    const bool pde = !std::strcmp(rhs, "pde");
     if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1 ||
-        (!mars_amg && std::strcmp(amg_settings, "mfem"))) {
+        (!mars_amg && std::strcmp(amg_settings, "mfem")) || (!pde && std::strcmp(rhs, "discrete"))) {
         if (root) args.PrintUsage(std::cout);
         return 1;
     }
@@ -318,6 +326,23 @@ int main(int argc, char* argv[])
     ugf.GetTrueDofs(U);
     U.SetSubVector(ess, 0.0);
     A->Mult(U, B);
+    std::unique_ptr<ParBilinearForm> mass_form;
+    OperatorPtr mass;
+    if (pde) {
+        mass_form.reset(new ParBilinearForm(&fes));
+        mass_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+        auto* integ = new MassIntegrator(one);
+        integ->SetIntRule(&rule(p));
+        mass_form->AddDomainIntegrator(integ);
+        mass_form->Assemble();
+        Array<int> none;
+        mass.SetType(Operator::ANY_TYPE);
+        mass_form->FormSystemMatrix(none, mass);
+        Y = U;
+        Y *= 3.0 * M_PI * M_PI;
+        mass->Mult(Y, B);
+        B.SetSubVector(ess, 0.0);   // the constrained rows return X = B there
+    }
     X = 0.0;
 
     CGSolver cg(MPI_COMM_WORLD);
@@ -360,6 +385,15 @@ int main(int argc, char* argv[])
     Y -= U;
     const double err = GlobalLpNorm(infinity(), Y.Normlinf(), MPI_COMM_WORLD);
     const double umax = GlobalLpNorm(infinity(), U.Normlinf(), MPI_COMM_WORLD);
+    double l2_err = 0.0;
+    if (pde) {
+        const IntegrationRule* irs[Geometry::NumGeom] = {};
+        irs[Geometry::CUBE] = &rule(p);
+        ParGridFunction xgf(&fes), zero(&fes);
+        xgf.SetFromTrueDofs(X);
+        zero = 0.0;
+        l2_err = xgf.ComputeL2Error(u_coef, irs) / zero.ComputeL2Error(u_coef, irs);
+    }
 
     // The assembled operator: E-vector gather, element kernel, scatter, the shared-DoF exchange.
     A->Mult(U, Y);
@@ -372,7 +406,7 @@ int main(int argc, char* argv[])
     tic_toc.Stop();
     const double op_ms = all_max(tic_toc.RealTime() * 1e3 / reps);
 
-    const bool pass = cg.GetConverged() && err <= 1e-8 * umax;
+    const bool pass = cg.GetConverged() && (pde || err <= 1e-8 * umax);
     if (root) {
         printf("MFEM %s BP3, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f\n", MFEM_VERSION_STRING,
                p, p + 2, ne, (long long)ne * ne * ne, (long long)unique, g_deform);
@@ -390,7 +424,12 @@ int main(int argc, char* argv[])
                iterations, cg.GetFinalRelNorm(), true_rel);
         for (int k : {1, 5, 10, 20, 50, 100})
             if (k <= (int)history.rel.size()) printf("  it %3d  %.6e\n", k, history.rel[k - 1]);
-        printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
+        if (pde)
+            printf("  right-hand side M f_h, f = 3 pi^2 u: L2 error %.3e (relative), at the nodes max |x - u| / "
+                   "max |u| = %.3e  %s\n",
+                   l2_err, err / umax, pass ? "PASS" : "FAIL");
+        else
+            printf("  max |x - u| / max |u| = %.3e  %s\n", err / umax, pass ? "PASS" : "FAIL");
         printf("  operator     %8.3f ms  %6.2f GDoF/s unique  (%s)\n", op_ms, unique / (op_ms * 1e6),
                mg && p == 1 ? "assembled matrix, HypreParMatrix" : "partial assembly, the assembled operator");
         if (solves > 1) {
