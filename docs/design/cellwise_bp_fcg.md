@@ -677,3 +677,28 @@ permuted). V-cycle: the same iteration count, a different history (it 1: 5.62e-2
 like on different rank counts. The Morton chunks are not exact octants: rank 0 has 953 ghosts and
 6 peers against 817 and 7 for the box (probably the deformation, largest at the centre, moving
 centroids across the octant boundaries; not checked).
+
+## NASA wing tip: 15.1M hexahedra
+
+`large_hex_only.e`: 15,114,920 Hex8 in one Exodus file, all right-handed (0 mirrored). Read and
+partitioned in 3.2 s. 64 GH200 (16 nodes), Morton chunks: rank 0 has 236,171 elements, 16,678
+ghosts and 3 peers. Defaults ((2,2), BoomerAMG x3, strong threshold 0.25), tol 3e-13, three
+solves, the last reported. Binary at or after 339e6552 (it prints the PASS gate's reasons); no
+solver change since.
+
+| | unique DoFs (per GPU) | it | true residual | max error | solve / setup | FCG iteration | coarse per V-cycle |
+|---|---|---|---|---|---|---|---|
+| p = 3, V-cycle | 410M (6.4M) | 541 | 9.0e-14 | 1.2e-9 | 13.5 s / 2.0 s | 24.93 ms | 13.75 ms (55%) |
+| p = 7, V-cycle | 5.19G (81M) | 904 | 7.8e-14 | 3.1e-9 | 123.1 s / 2.7 s | 136.2 ms | 16.50 ms (12%) |
+| p = 3, DSS-Jacobi, tol 1e-10 | 410M (6.4M) | 5000, not converged (2.9e-10) | 8.1e-11 | 1.9e-6 | | | |
+
+Both V-cycle runs PASS; the three solves differ by at most 1.2%. Jacobi stops at the iteration
+limit, and its error is 2 x 10^4 times its true residual (the Exodus cube with Jacobi: 0.06-0.1x),
+a sign that this system is far worse conditioned than the cube.
+
+An iteration costs close to the cube's: p = 3 here is 24.93 ms with 13.75 ms coarse, on the cube
+with 64^3 elements per GPU (7.1M DoFs, 10% more) 22.47 ms and 11.64 ms on 64 GPUs; per DoF about
+20% dearer. The iterations are the problem: 541 and 904 against 14-16 on the cube at the same tol
+3e-13. Not yet known whether the smoother or BoomerAMG loses them. p = 1 with `--mg --amg` on 4
+GPUs hit its 20 min limit with no output (the driver prints only at the end); a bounded rerun is
+pending.
