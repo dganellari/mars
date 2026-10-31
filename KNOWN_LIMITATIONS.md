@@ -81,11 +81,15 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
   NVIDIA can be slower. With the same P7 plane schedule on both, the high-order operator is
-  1.4-1.6 times slower on MI300A than on H100; its measured timings are operator results, not
-  full-solver speedups. The HIP `tensor` graph assembly takes 8.13-8.28 ms on public hex192 against
-  6.60-7.37 ms on H100: on MI300A every FP64 atomic goes past the L2, and without them the same
-  kernel runs within the H100 range. See `tests/performance/AMD-mfma.md` and
-  `tests/performance/AMD-assembly.md` for the measured cases and validation scope.
+  1.3-1.6 times slower on MI300A than on H100, and 1.15-1.18 times without its atomic scatter
+  (timing-only ablation): on MI300A every FP64 atomic goes past the L2. Its measured timings are
+  operator results, not full-solver speedups. The `tensor` graph assembly with its row map takes
+  4.56-4.59 ms on public hex192 on MI300A and 4.87-4.92 ms on H100 (8.25-8.29 and 6.97-7.61 ms
+  without it). Building the map stops with a message when a CSR row has more than 8 entries (a node
+  and its edge neighbours) or a block of 32 elements touches more than 255 rows; `--no-row-map` runs
+  the kernels without it. Only `mars_cvfem_graph` and `mars_cvfem_scale` build the map so far. See
+  `tests/performance/AMD-mfma.md` and `tests/performance/AMD-assembly.md` for the measured cases
+  and validation scope.
   With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
   `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).

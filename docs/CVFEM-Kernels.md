@@ -113,6 +113,16 @@ Every kernel below is a different point on these trade-offs:
   the local matrix gone, forcing that occupancy costs almost nothing. Same tradeoff as
   `Shmem` (more, smaller atomics). `SmemCache` is essentially "Perip + a shared-memory
   node/row cache."
+- **The row map** (`mars_cvfem_row_map.hpp`) resolves the CSR positions once per mesh
+  and pattern instead of in every assembly: for each element row, the CSR offset of each
+  of its 8 columns (4 bits each), and for each block of 32 elements, its sorted rows.
+  `TensorMap` is `Tensor` reading those offsets, with no search in the CSR row.
+  `TensorRows` lets each block add up its rows in shared memory and then add each row to
+  the matrix with consecutive threads on consecutive entries: on MI300A (hex192), 4 times
+  fewer global atomic requests than the HIP kernel without the map. `Tensor` uses the map
+  when `Config::rowMap` is set: `TensorMap` on NVIDIA, `TensorRows` on AMD (see
+  `tests/performance/AMD-assembly.md`). The map needs at most 8 entries per CSR row and at
+  most 255 rows per block.
 
 ## 6. Tensor cores (experimental)
 
@@ -177,6 +187,7 @@ level; the kernel variants above are **how fast** you assemble whichever you cho
 |---|---|
 | Correctness reference | `Original` (hex), `Full` (tet) |
 | A starting point | `Tensor` (hex), `FullPerip` (tet) |
+| CSR positions resolved once per mesh | `Tensor` with the row map (`TensorMap`, `TensorRows`) |
 | Fewer registers, higher occupancy | `TensorPerip` / `TensorPeripLb2` |
 | Less node-gather traffic | `TensorAoS` |
 | A shared-memory node cache | `SmemCache` (fragile; needs spatial ordering) |

@@ -9,6 +9,7 @@
 #include "mars_cvfem_hex_kernel_tensor_early.hpp"
 #endif
 #include "mars_cvfem_hex_kernel_tensor_faces.hpp"
+#include "mars_cvfem_hex_kernel_tensor_rows.hpp"
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
@@ -16,6 +17,7 @@
 #include "mars_cvfem_hex_kernel_smem_cache.hpp"
 #include "mars_cvfem_node_data.hpp"
 #include "mars_cvfem_coloring.hpp"
+#include "mars_cvfem_row_map.hpp"
 #include "../utils/mars_gpu_runtime.hpp"
 #include <stdexcept>
 
@@ -38,7 +40,9 @@ enum class CvfemKernelVariant {
     WgmmaTensor,   // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
     TensorFaces,   // Tensor's element matrix with 16 threads per element: each face once, then the rows
     TensorFacesAgg, // TensorFaces adding up shared rows per block before the global atomics, 16 elements per block
-    TensorFacesAgg512, // The same with 32 elements per block (the HIP Tensor)
+    TensorFacesAgg512, // The same with 32 elements per block (the HIP Tensor without a row map)
+    TensorMap,  // Tensor's one-thread kernel with the row map's column offsets (the NVIDIA Tensor with a row map)
+    TensorRows, // 32 elements per block add up their CSR rows in shared memory (the HIP Tensor with a row map)
     TensorEarly    // HIP only: one thread per element, rows released after their last face (the former HIP Tensor)
 };
 
@@ -56,6 +60,8 @@ public:
         // SmemCache node cache per block: 512, or 64, which sends most nodes of a block down the path for
         // nodes that do not fit (read from global memory); the kernel check uses it to test that path
         int smemCacheNodes = 512;
+        // buildCvfemRowMap: required for TensorMap and TensorRows, and Tensor uses it when given
+        const CvfemRowMap* rowMap = nullptr;
     };
 
     // Assemble CVFEM system with graph-based sparsity and diagonal lumping
@@ -97,6 +103,40 @@ public:
     {
         int blockSize = config.blockSize;
         int numBlocks = (numElements + blockSize - 1) / blockSize;
+
+        // the two kernels that read the row map; the one-thread kernel declares 256 threads on AMD
+        const CvfemRowMap* map = config.rowMap;
+        if (map && map->numElements != numElements)
+            throw std::runtime_error("Config::rowMap was built for other elements");
+        auto needMap = [&] {
+            if (!map) throw std::runtime_error("tensor_map and tensor_rows need Config::rowMap (buildCvfemRowMap)");
+        };
+        auto launchTensorMap = [&] {
+            cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true, true>
+                <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs, map->view.elemCols
+                );
+        };
+        auto launchRows = [&] {
+            cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType><<<unsigned(map->numBlocks), 512, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_matrix, d_rhs, map->view
+                );
+        };
 
         switch (config.variant) {
             case CvfemKernelVariant::Original:
@@ -161,14 +201,29 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // On HIP, 16 threads per element, 32 elements per block, the atomics added up per block first:
-                // on MI300A (hex192) 8.2 ms against 14.0 ms for tensor_early and 8.4 ms with 16 elements per
-                // block. On H100 the one-thread kernel stays faster.
-#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                // With a row map, hex192 on one rank: on AMD the rows kernel, 4.5 ms on MI300A against 8.2 ms for
+                // the aggregated tensor_faces kernel and 9.2 ms for the one-thread kernel with the map; on NVIDIA
+                // the one-thread kernel with the map, 4.8-4.9 ms on H100 against 6.6-7.6 ms with its CSR search
+                // and 10.8 ms for the rows kernel. Without one, AMD runs the aggregated tensor_faces kernel
+                // (8.2 ms against 14.0 ms for tensor_early) and NVIDIA the one-thread kernel.
                 if (numElements == 0) break;
+#if defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                // the previous HIP kernel, for comparisons: one thread per element, no row map
+                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
+#elif defined(__HIPCC__)
+                if (map)
+                {
+                    launchRows();
+                    break;
+                }
                 cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 512, true, true>
                     <<<unsigned((numElements + 31) / 32), 512, 0, config.stream>>>(
 #else
+                if (map)
+                {
+                    launchTensorMap();
+                    break;
+                }
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
@@ -229,6 +284,16 @@ public:
                     d_node_to_dof, d_ownership,
                     d_matrix, d_rhs
                 );
+                break;
+
+            case CvfemKernelVariant::TensorMap:
+                needMap();
+                if (numElements > 0) launchTensorMap();
+                break;
+
+            case CvfemKernelVariant::TensorRows:
+                needMap();
+                if (numElements > 0) launchRows();
                 break;
 
             case CvfemKernelVariant::TensorEarly:
@@ -619,6 +684,8 @@ public:
             case CvfemKernelVariant::TensorFaces: return "tensor_faces";
             case CvfemKernelVariant::TensorFacesAgg: return "tensor_faces_agg";
             case CvfemKernelVariant::TensorFacesAgg512: return "tensor_faces_agg512";
+            case CvfemKernelVariant::TensorMap: return "tensor_map";
+            case CvfemKernelVariant::TensorRows: return "tensor_rows";
             case CvfemKernelVariant::TensorEarly: return "tensor_early";
             default: return "unknown";
         }

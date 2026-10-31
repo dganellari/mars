@@ -8,6 +8,7 @@
 //
 //   --ncells=N   global cube is N^3 hex elements (N^3 elements, (N+1)^3 nodes)
 //   --iters=K    timed assembly iterations (default 20)
+//   --no-row-map tensor without the row map (fem/mars_cvfem_row_map.hpp), as before it
 //
 // Cross-check: procedural --ncells=256 should match file cube256 (same nnz,
 // same assembly time/node) -- proves the generator before extrapolating.
@@ -39,12 +40,13 @@ int main(int argc, char** argv)
     using Assembler = CvfemHexAssembler<KeyType, RealType>;
     using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
-    size_t ncells = 256; int iters = 20; int blockSize = 256; bool buildOnly = false;
+    size_t ncells = 256; int iters = 20; int blockSize = 256; bool buildOnly = false, rowMapAllowed = true;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.rfind("--ncells=",0)==0) ncells = std::stoull(a.substr(9));
         else if (a.rfind("--iters=",0)==0) iters = std::stoi(a.substr(8));
         else if (a.rfind("--blockSize=",0)==0) blockSize = std::stoi(a.substr(12));
-        else if (a=="--build-only") buildOnly = true; }
+        else if (a=="--build-only") buildOnly = true;
+        else if (a=="--no-row-map") rowMapAllowed = false; }
 
     if (rank == 0) printf("Procedural cube: %zu^3 = %zu elements, %d ranks\n",
                           ncells, ncells*ncells*ncells, numRanks);
@@ -129,7 +131,21 @@ int main(int argc, char** argv)
                         numTotalDofs, nnz, numDofs};
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
+    // the row map, as in mars_cvfem_graph: built once, outside the timed assemblies
+    CvfemRowMap rowMap;
+    if (rowMapAllowed) {
+        cudaEvent_t m0, m1; cudaEventCreate(&m0); cudaEventCreate(&m1);
+        cudaEventRecord(m0);
+        buildCvfemRowMap<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
+                                            d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix, rowMap);
+        cudaEventRecord(m1); cudaEventSynchronize(m1);
+        float mapMs = 0; cudaEventElapsedTime(&mapMs, m0, m1);
+        cudaEventDestroy(m0); cudaEventDestroy(m1);
+        if (rank == 0) printf("row map (rank 0): %.1f ms (run time), %.1f MB\n", mapMs, rowMap.bytes() / 1048576.0);
+    }
+
     Assembler::Config cfg; cfg.blockSize = blockSize; cfg.variant = CvfemKernelVariant::Tensor;
+    if (rowMapAllowed) cfg.rowMap = &rowMap;
     auto assemble = [&]() {
         thrust::fill(thrust::device_pointer_cast(d_values.data()),
                      thrust::device_pointer_cast(d_values.data() + nnz), 0.0);

@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     int bucketSize = 64;  // Cornerstone octree bucket size (smaller = finer partitioning)
     int bucketSizeFocus = 8;  // Focus tree bucket size (per-rank refined view; smaller = finer halo)
     bool quiet = false;
+    bool rowMapAllowed = true;
     bool check = false, checkWarp = false, checkMdot = false, checkGamma = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
@@ -92,6 +93,8 @@ int main(int argc, char** argv) {
             else if (v == "tensor_faces")   kernelVariant = CvfemKernelVariant::TensorFaces;
             else if (v == "tensor_faces_agg") kernelVariant = CvfemKernelVariant::TensorFacesAgg;
             else if (v == "tensor_faces_agg512") kernelVariant = CvfemKernelVariant::TensorFacesAgg512;
+            else if (v == "tensor_map")     kernelVariant = CvfemKernelVariant::TensorMap;
+            else if (v == "tensor_rows")    kernelVariant = CvfemKernelVariant::TensorRows;
             else if (v == "tensor_early")   kernelVariant = CvfemKernelVariant::TensorEarly;
             else {
                 if (rank == 0) {
@@ -109,6 +112,8 @@ int main(int argc, char** argv) {
             checkGamma = what.find("gamma") != std::string::npos;
         } else if (arg == "--quiet") {
             quiet = true;
+        } else if (arg == "--no-row-map") {
+            rowMapAllowed = false;
         } else if (arg[0] != '-' && meshFile.empty()) {
             // Positional argument (backward compatibility)
             meshFile = arg;
@@ -127,6 +132,7 @@ int main(int argc, char** argv) {
             std::cout << "  --bucket-size-focus=N  Focus tree bucket size (default: 8, lower = finer halo at cost of memory)\n";
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
             std::cout << "  --quiet             Suppress detailed output\n";
+            std::cout << "  --no-row-map        tensor without the row map, as before it (tensor_map, tensor_rows need it)\n";
             std::cout << "  --check[=warp,mdot,gamma]  Warped mesh, signed mass flux, varying gamma (default all three);\n"
                          "                      compare every matrix and RHS entry with the original kernel, exit 1 if\n"
                          "                      they differ (unit-cube meshes)\n";
@@ -377,6 +383,26 @@ int main(int argc, char** argv) {
                       << coloringData.numColors << " colors)" << std::endl;
     }
 
+    // Row map (one-time setup for tensor, tensor_map and tensor_rows)
+    CvfemRowMap rowMap;
+    const bool rowsVariant = rowMapAllowed && (kernelVariant == CvfemKernelVariant::Tensor ||
+                                               kernelVariant == CvfemKernelVariant::TensorMap ||
+                                               kernelVariant == CvfemKernelVariant::TensorRows);
+    if (rowsVariant) {
+        auto mapStart = std::chrono::high_resolution_clock::now();
+        buildCvfemRowMap<KeyType, RealType>(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+            elementCount, d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix, rowMap);
+        auto mapEnd = std::chrono::high_resolution_clock::now();
+        if (rank == 0)
+            std::cout << "Row map built in " << std::chrono::duration<float, std::milli>(mapEnd - mapStart).count()
+                      << " ms (run time): " << rowMap.bytes() / 1048576.0 << " MB, " << rowMap.numBlockRows
+                      << " block rows" << std::endl;
+    }
+
     // Pack AoS node data (one-time, for TensorAoS variant)
     NodeData* d_nodeData = nullptr;
     if (kernelVariant == CvfemKernelVariant::TensorAoS) {
@@ -401,6 +427,8 @@ int main(int argc, char** argv) {
         config.coloring = &coloringData;
     if (kernelVariant == CvfemKernelVariant::TensorAoS)
         config.nodeData = d_nodeData;
+    if (rowsVariant)
+        config.rowMap = &rowMap;
 
     auto runAssembly = [&]() {
         Assembler::assembleGraphLump(

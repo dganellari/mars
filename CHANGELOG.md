@@ -39,11 +39,17 @@ public API may change between minor releases.
   P7/E32 case a per-point and an affine apply take 0.43 and 0.21 ms on H100 (staged path 0.83 and
   0.69 ms) and 0.58 and 0.34 ms on MI300A (staged path 3.07 and 2.43-2.49 ms). Older NVIDIA GPUs keep the
   staged path. These are operator timings, not full-solver speedups.
-- HIP `tensor` assembly uses 16 threads per element and 32 elements per block, and adds up each
-  block's contributions to shared rows in shared memory before the global atomics (1.35e8 instead
-  of 2.34e8 on hex192). On public hex192, one rank, it takes 8.13-8.28 ms on MI300A, with no
-  register spills, and 6.60-7.37 ms on H100, which keeps its kernel. The remaining gap is the global
-  atomics: on MI300A each one goes past the L2. See `tests/performance/AMD-*.md` for scope.
+- The `tensor` graph assembly takes a row map (`fem/mars_cvfem_row_map.hpp`), built once on the GPU:
+  the sorted CSR rows of each block of 32 elements, and for each element row the CSR offsets of its 8
+  columns (40 bytes per element and 4 per block row). On AMD the new `tensor_rows` kernel adds up each
+  block's rows in shared memory and adds them to the matrix row by row, with 3.3e7 global atomics
+  instead of 1.35e8 on hex192; on NVIDIA `tensor_map` reads the offsets instead of searching each CSR
+  row. On public hex192, one rank, `tensor` takes 4.56-4.59 ms on MI300A and 4.87-4.92 ms on H100,
+  against 8.25-8.29 and 6.97-7.61 ms without the map; building the map takes 31 and 7 ms.
+  `mars_cvfem_graph` and `mars_cvfem_scale` build it (`--no-row-map` to skip). Other callers keep the
+  kernels without it until they set `Config::rowMap`: on AMD the aggregated `tensor_faces` kernel
+  (16 threads per element, shared rows added up per block before the global atomics), on NVIDIA the
+  one-thread kernel. See `tests/performance/AMD-*.md` for scope.
 - On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
   each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds

@@ -54,10 +54,43 @@ Daint, CUDA 12.9, GH200, same case, 4 warps per block (2 and 8 within 2%):
 On H100 the plane kernel is register-limited, not faster by occupancy: its
 per-point apply reaches 62% of DRAM throughput against 30% for the staged one.
 With the same schedule on both GPUs, MI300A is 1.37 (per-point) and 1.58 (affine)
-times slower than H100 on this case. Bank conflicts do not explain it: padding the
-shared-memory rows from 8 to 10 doubles removes all of them (`SQ_LDS_BANK_CONFLICT`
-1.57e7 to 0 per dispatch), but the per-point apply takes 0.558-0.563 ms against
-0.569-0.572 ms and the affine one 0.340-0.367 ms against 0.329-0.337 ms (3 runs each).
+times slower than H100 on this case, and 1.28 and 1.60 in the round below. Bank
+conflicts do not explain it: padding the shared-memory rows from 8 to 10 doubles
+removes all of them (`SQ_LDS_BANK_CONFLICT` 1.57e7 to 0 per dispatch), but the
+per-point apply takes 0.558-0.563 ms against 0.569-0.572 ms and the affine one
+0.340-0.367 ms against 0.329-0.337 ms (3 runs each).
+
+## Where the MI300A time goes
+
+A timing-only ablation (not kept in the tree) replaced the scatter of the plane
+kernels on both GPUs: same case, 3 runs each, ms per apply, run time (2026-10-31).
+The plain `+=` on interior points matches the staged result (5.2e-16 on H100,
+6.2e-16 on MI300A); store and none give wrong results.
+
+| Scatter | H100 per-point | MI300A per-point | H100 affine | MI300A affine |
+| --- | ---: | ---: | ---: | ---: |
+| atomic (shipped) | 0.430-0.431 | 0.549-0.552 | 0.213-0.214 | 0.341-0.343 |
+| plain `+=` on interior points | 0.479-0.482 | 0.564-0.570 | 0.265-0.271 | 0.338-0.341 |
+| plain store | 0.400-0.402 | 0.470-0.478 | 0.178-0.183 | 0.209-0.212 |
+| none (all work, no writes) | 0.336-0.338 | 0.388-0.392 | 0.150-0.155 | 0.173-0.176 |
+
+- Without the atomics, MI300A is 1.17-1.18 times slower than H100 with plain stores
+  and 1.15-1.16 times without writes, on both paths.
+- The atomics take 0.077 ms (per-point) and 0.132 ms (affine) more than plain stores
+  on MI300A, and 0.029 and 0.034 ms on H100. That is 40% of the per-point gap and
+  76% of the affine one. The work without writes is 44% and 18% of it.
+- On MI300A every atomic goes past the L2 (`TCC_EA0_ATOMIC` = `TCC_ATOMIC` = 6.50e6
+  per apply), as in the graph assembly (`AMD-assembly.md`). On H100 they are L2
+  reductions, and the L2 serves 89% of their 1.14e7 sectors (ncu `lts`).
+- No other element shares an element's interior points (216 of its 512), so they need
+  no atomic. Adding them with a plain `+=` is slower on H100 (12% per-point, 25%
+  affine). On MI300A it is 3% slower per-point and the same affine: the atomic requests
+  fall only 17% (to 5.42e6), and the reads past the L2 rise 6% (8.56e6 to 9.03e6).
+
+Open: an atomic-free scatter, as the row map is for the graph assembly. On MI300A its
+saving is bounded by the gap between the atomic scatter and plain stores (0.08 ms
+per-point, 0.13 ms affine), before its own cost. These runs do not explain the
+remaining 1.15-1.18 times.
 
 ## Local checks
 

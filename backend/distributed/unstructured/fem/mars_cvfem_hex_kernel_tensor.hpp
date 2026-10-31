@@ -26,8 +26,17 @@ namespace fem {
 // Best for: Architectures with abundant registers and fast atomics (GH200)
 // =============================================================================
 
-template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
-__global__ void cvfem_hex_assembly_kernel_tensor(
+// ColumnMap (graph mode): d_elemCols, the row map's (mars_cvfem_row_map.hpp), gives each element row the CSR
+// offset of every column, and ~0u for a row not assembled here: the scatter needs no ownership test, no
+// diagonal pointer and no binary search, and sends the same atomics. It is launched with BlockSize threads,
+// and on AMD says so: without a bound the compiler assumes 1024 threads per block and caps a thread at 128
+// VGPRs, and this kernel then spills. CUDA allows 255 registers per thread either way.
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool ColumnMap = false>
+__global__ void
+#if defined(__HIPCC__)
+__attribute__((amdgpu_flat_work_group_size(1, ColumnMap ? BlockSize : 1024)))
+#endif
+cvfem_hex_assembly_kernel_tensor(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
     const KeyType* __restrict__ d_conn2,
@@ -53,7 +62,8 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
     const int* __restrict__ d_node_to_dof,
     const uint8_t* __restrict__ d_ownership,
     CSRMatrix<RealType>* matrix,
-    RealType* __restrict__ d_rhs)
+    RealType* __restrict__ d_rhs,
+    const unsigned* __restrict__ d_elemCols = nullptr)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
@@ -75,7 +85,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
     RealType phi[8], gamma[8], beta[8];
     RealType grad_phi[8][3];
     int dofs[8];
-    uint8_t own[8];
+    [[maybe_unused]] uint8_t own[8];
 
     // ==========================================================================
     // Optimized memory access: Software prefetching + loop unrolling
@@ -107,8 +117,10 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
         // Metadata
         dofs[0] = d_node_to_dof[n0]; dofs[1] = d_node_to_dof[n1];
         dofs[2] = d_node_to_dof[n2]; dofs[3] = d_node_to_dof[n3];
-        own[0] = d_ownership[n0]; own[1] = d_ownership[n1];
-        own[2] = d_ownership[n2]; own[3] = d_ownership[n3];
+        if constexpr (!ColumnMap) {
+            own[0] = d_ownership[n0]; own[1] = d_ownership[n1];
+            own[2] = d_ownership[n2]; own[3] = d_ownership[n3];
+        }
     }
 
     // Process nodes 4-7
@@ -131,8 +143,10 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
 
         dofs[4] = d_node_to_dof[n4]; dofs[5] = d_node_to_dof[n5];
         dofs[6] = d_node_to_dof[n6]; dofs[7] = d_node_to_dof[n7];
-        own[4] = d_ownership[n4]; own[5] = d_ownership[n5];
-        own[6] = d_ownership[n6]; own[7] = d_ownership[n7];
+        if constexpr (!ColumnMap) {
+            own[4] = d_ownership[n4]; own[5] = d_ownership[n5];
+            own[6] = d_ownership[n6]; own[7] = d_ownership[n7];
+        }
     }
 
     // ==========================================================================
@@ -240,6 +254,34 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
     // ==========================================================================
     // Assemble into global CSR matrix
     // ==========================================================================
+    if constexpr (ColumnMap) {
+        static_assert(LumpMissing, "the row map lumps the columns outside the graph pattern");
+        // the element's 8 column words are 32 contiguous bytes: two 16-byte loads
+        const uint4* words = reinterpret_cast<const uint4*>(d_elemCols + size_t(elemIdx) * 8);
+        const uint4 w0 = words[0], w1 = words[1];
+        const unsigned rowCols[8] = {w0.x, w0.y, w0.z, w0.w, w1.x, w1.y, w1.z, w1.w};
+        #pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            const unsigned cols = rowCols[i];
+            if (cols == ~0u) continue;
+            const int row_dof = dofs[i];
+            atomicAdd(&d_rhs[row_dof], rhs[i]);
+            RealType* row = matrix->values + matrix->rowPtr[row_dof];
+            // column i is the row's own DOF, so its offset is the diagonal's
+            const unsigned diag = (cols >> (4 * i)) & 0xF;
+            RealType diagonal = 0.0;
+            #pragma unroll
+            for (int j = 0; j < 8; ++j) {
+                const unsigned offset = (cols >> (4 * j)) & 0xF;
+                const RealType value  = lhs[i * 8 + j];
+                if (offset == 0xF || value == 0.0) continue;
+                if (offset == diag) diagonal += value;
+                else atomicAdd(&row[offset], value);
+            }
+            if (diagonal != 0.0) atomicAdd(&row[diag], diagonal);
+        }
+        return;
+    }
     const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
     #pragma unroll
     for (int i = 0; i < 8; ++i) {

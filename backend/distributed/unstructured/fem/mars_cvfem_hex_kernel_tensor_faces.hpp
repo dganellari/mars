@@ -121,14 +121,13 @@ struct TensorFacesElement
     uint8_t own[8];
 };
 
-// Aggregate (graph mode only): the block adds up the contributions of its elements to shared rows in a
-// shared-memory table first, then sends one global atomic per destination. On MI300A every global atomic
-// is forwarded past the L2 to the fabric; with 16 elements per block this cuts them 234 to 156 million
-// and the assembly 12.3 to 10.1 ms (hex192). On H100, where atomics stay in the L2, it doubles the time.
-// This path also loads a short CSR row whole, with independent loads, and matches the columns in
-// registers instead of a binary search of dependent loads per column: 10.1 to 8.6 ms on MI300A.
-template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool Aggregate = false>
-__global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_faces(
+// Phases 1-3 of one element on its 16 lanes: each lane gets columns (lane / 8) * 4 to + 3 of row lane % 8,
+// and the row's right-hand side. The kernels that look up the CSR rows themselves need LoadDofs.
+template<typename KeyType, typename RealType, bool LoadDofs>
+__device__ __forceinline__ void tensorFacesRow(TensorFacesElement<RealType>& s,
+    int lane,
+    size_t elemIdx,
+    bool active,
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
     const KeyType* __restrict__ d_conn2,
@@ -137,7 +136,6 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
     const KeyType* __restrict__ d_conn5,
     const KeyType* __restrict__ d_conn6,
     const KeyType* __restrict__ d_conn7,
-    size_t numElements,
     const RealType* __restrict__ d_x,
     const RealType* __restrict__ d_y,
     const RealType* __restrict__ d_z,
@@ -153,20 +151,11 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
     const RealType* __restrict__ d_areaVec_z,
     const int* __restrict__ d_node_to_dof,
     const uint8_t* __restrict__ d_ownership,
-    CSRMatrix<RealType>* matrix,
-    RealType* __restrict__ d_rhs)
+    RealType (&lhs)[4],
+    RealType& rhs)
 {
-    static_assert(BlockSize % 16 == 0, "16 threads per element");
-    constexpr int ElemsPerBlock = BlockSize / 16;
-    __shared__ TensorFacesElement<RealType> shared[ElemsPerBlock];
-
-    const int lane        = threadIdx.x % 16;
-    const size_t elemIdx  = size_t(blockIdx.x) * ElemsPerBlock + threadIdx.x / 16;
-    const bool active     = elemIdx < numElements;
-    TensorFacesElement<RealType>& s = shared[threadIdx.x / 16];
-
-    // Phase 1: lane i loads coordinates and phi, gamma of node i; lane 8 + i its beta, gradient, DOF.
-    // Inactive tail elements skip the work but take part in every barrier.
+    // Phase 1: lane i loads coordinates and phi, gamma of node i; lane 8 + i its beta, gradient and, with
+    // LoadDofs, DOF and ownership. Inactive tail elements skip the work but take part in every barrier.
     if (active)
     {
         const int i      = lane & 7;
@@ -193,8 +182,11 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
             s.node.grad[0][i] = d_grad_phi_x[n];
             s.node.grad[1][i] = d_grad_phi_y[n];
             s.node.grad[2][i] = d_grad_phi_z[n];
-            s.dof[i]          = d_node_to_dof[n];
-            s.own[i]          = d_ownership[n];
+            if constexpr (LoadDofs)
+            {
+                s.dof[i] = d_node_to_dof[n];
+                s.own[i] = d_ownership[n];
+            }
         }
     }
     // An element's 16 lanes share memory only among themselves and always sit in one warp or wavefront,
@@ -286,7 +278,10 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
     // Phase 3: lanes i and 8 + i gather row i, columns 0-3 and 4-7, from the 3 faces of node i
     const int i    = lane & 7;
     const int col0 = (lane >> 3) * 4;
-    RealType lhs[4] = {0, 0, 0, 0}, rhs = 0;
+#pragma unroll
+    for (int j = 0; j < 4; ++j)
+        lhs[j] = 0;
+    rhs = 0;
     if (active)
     {
 #pragma unroll
@@ -300,6 +295,59 @@ __global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_fa
             rhs -= sg * s.face.q[face];
         }
     }
+}
+
+// Aggregate (graph mode only): the block adds up the contributions of its elements to shared rows in a
+// shared-memory table first, then sends one global atomic per destination. On MI300A every global atomic
+// is forwarded past the L2 to the fabric; with 16 elements per block this cuts them 234 to 156 million
+// and the assembly 12.3 to 10.1 ms (hex192). On H100, where atomics stay in the L2, it doubles the time.
+// This path also loads a short CSR row whole, with independent loads, and matches the columns in
+// registers instead of a binary search of dependent loads per column: 10.1 to 8.6 ms on MI300A.
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool Aggregate = false>
+__global__ void __launch_bounds__(BlockSize) cvfem_hex_assembly_kernel_tensor_faces(
+    const KeyType* __restrict__ d_conn0,
+    const KeyType* __restrict__ d_conn1,
+    const KeyType* __restrict__ d_conn2,
+    const KeyType* __restrict__ d_conn3,
+    const KeyType* __restrict__ d_conn4,
+    const KeyType* __restrict__ d_conn5,
+    const KeyType* __restrict__ d_conn6,
+    const KeyType* __restrict__ d_conn7,
+    size_t numElements,
+    const RealType* __restrict__ d_x,
+    const RealType* __restrict__ d_y,
+    const RealType* __restrict__ d_z,
+    const RealType* __restrict__ d_gamma,
+    const RealType* __restrict__ d_phi,
+    const RealType* __restrict__ d_beta,
+    const RealType* __restrict__ d_grad_phi_x,
+    const RealType* __restrict__ d_grad_phi_y,
+    const RealType* __restrict__ d_grad_phi_z,
+    const RealType* __restrict__ d_mdot,
+    const RealType* __restrict__ d_areaVec_x,
+    const RealType* __restrict__ d_areaVec_y,
+    const RealType* __restrict__ d_areaVec_z,
+    const int* __restrict__ d_node_to_dof,
+    const uint8_t* __restrict__ d_ownership,
+    CSRMatrix<RealType>* matrix,
+    RealType* __restrict__ d_rhs)
+{
+    static_assert(BlockSize % 16 == 0, "16 threads per element");
+    constexpr int ElemsPerBlock = BlockSize / 16;
+    __shared__ TensorFacesElement<RealType> shared[ElemsPerBlock];
+
+    const int lane        = threadIdx.x % 16;
+    const size_t elemIdx  = size_t(blockIdx.x) * ElemsPerBlock + threadIdx.x / 16;
+    const bool active     = elemIdx < numElements;
+    TensorFacesElement<RealType>& s = shared[threadIdx.x / 16];
+
+    RealType lhs[4], rhs;
+    tensorFacesRow<KeyType, RealType, true>(s, lane, elemIdx, active, d_conn0, d_conn1, d_conn2, d_conn3, d_conn4,
+                                            d_conn5, d_conn6, d_conn7, d_x, d_y, d_z, d_gamma, d_phi, d_beta,
+                                            d_grad_phi_x, d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x,
+                                            d_areaVec_y, d_areaVec_z, d_node_to_dof, d_ownership, lhs, rhs);
+    const int i    = lane & 7;
+    const int col0 = (lane >> 3) * 4;
 
     const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
     const int row_dof      = active ? s.dof[i] : -1;
