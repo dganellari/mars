@@ -699,6 +699,10 @@ a sign that this system is far worse conditioned than the cube.
 An iteration costs close to the cube's: p = 3 here is 24.93 ms with 13.75 ms coarse, on the cube
 with 64^3 elements per GPU (7.1M DoFs, 10% more) 22.47 ms and 11.64 ms on 64 GPUs; per DoF about
 20% dearer. The iterations are the problem: 541 and 904 against 14-16 on the cube at the same tol
-3e-13. Not yet known whether the smoother or BoomerAMG loses them. p = 1 with `--mg --amg` on 4
-GPUs hit its 20 min limit with no output (the driver prints only at the end); a bounded rerun is
-pending.
+3e-13. Not yet known whether the smoother or BoomerAMG loses them.
+
+p = 1 with `--mg --amg` on 4 GPUs hung until its 20 min limit: the solve finished, then rank 0
+called an `MPI_Allreduce` (the row count) inside its printing, which the other ranks never join.
+Every earlier p = 1 run of the assembled path was on one GPU, where that does not block. Fixed in
+b7223754. BoomerAMG on the wing's p = 1 matrix (14.9M rows, theta 0.25): 8 levels, grid complexity
+1.40, operator complexity 2.14.
