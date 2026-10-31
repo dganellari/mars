@@ -108,4 +108,55 @@ inline ExodusRawTet4 readExodusTet4Raw(const std::string& path) {
     return out;
 #endif
 }
+// Hex8 elements of every block (flattened in block order) and the coordinates; no side sets.
+struct ExodusRawHex8 {
+    std::array<std::vector<double>,3> coordinates;
+    std::vector<long long> connectivity; // element-major, one-based file indices, Exodus = VTK corner order
+};
+inline ExodusRawHex8 readExodusHex8Raw(const std::string& path) {
+#ifndef MARS_HAVE_NETCDF
+    (void)path;
+    throw std::runtime_error("Exodus input requires netCDF support");
+#else
+    auto check=[](int result) {
+        if (result!=NC_NOERR) throw std::runtime_error(std::string("NetCDF: ")+nc_strerror(result));
+    };
+    struct File {
+        int id=-1;
+        ~File() { if (id>=0) nc_close(id); }
+    } file;
+    check(nc_open(path.c_str(),NC_NOWRITE,&file.id));
+    auto dim=[&](const std::string& name) {
+        int id; size_t size;
+        check(nc_inq_dimid(file.id,name.c_str(),&id)); check(nc_inq_dimlen(file.id,id,&size));
+        return size;
+    };
+    const size_t n=dim("num_nodes"),blocks=dim("num_el_blk");
+    if (dim("num_dim")!=3) throw std::runtime_error("Exodus mesh is not three-dimensional");
+    ExodusRawHex8 out;
+    for (size_t b=1;b<=blocks;++b) {
+        const std::string index=std::to_string(b);
+        if (dim("num_nod_per_el"+index)!=8) throw std::runtime_error("Exodus block "+index+" is not Hex8");
+        const size_t count=dim("num_el_in_blk"+index);
+        int conn; check(nc_inq_varid(file.id,("connect"+index).c_str(),&conn));
+        const size_t start=out.connectivity.size();
+        out.connectivity.resize(start+8*count);
+        check(nc_get_var_longlong(file.id,conn,out.connectivity.data()+start));
+    }
+    int split;
+    if (nc_inq_varid(file.id,"coordx",&split)==NC_NOERR) {
+        const char* names[]={"coordx","coordy","coordz"};
+        for (int j=0;j<3;++j) { int id; out.coordinates[j].resize(n);
+            check(nc_inq_varid(file.id,names[j],&id)); check(nc_get_var_double(file.id,id,out.coordinates[j].data()));
+        }
+    } else {
+        int coord; check(nc_inq_varid(file.id,"coord",&coord)); const size_t count[]={1,n};
+        for (int j=0;j<3;++j) { out.coordinates[j].resize(n); const size_t start[]={size_t(j),0};
+            check(nc_get_vara_double(file.id,coord,start,count,out.coordinates[j].data()));
+        }
+    }
+    for (long long v:out.connectivity) if (v<1 || size_t(v)>n) throw std::runtime_error("Exodus node index out of range");
+    return out;
+#endif
+}
 } // namespace mars

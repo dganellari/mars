@@ -63,6 +63,12 @@
 // solution, and its L2 error (at the Gauss points) and max error at the nodes measure the
 // discretization, for the convergence study; tests/performance/mfem_bp3 --rhs pde builds the
 // same b.
+// --mesh <file.e> (BP3): an Exodus Hex8 mesh instead of the cube (trilinear elements from
+// their 8 corners, homogeneous Dirichlet on the whole boundary). Rank 0 reads it and
+// broadcasts it; every rank cuts the same partition (elements in Morton order of their
+// centroids, equal chunks) and keeps the elements that share a vertex with its chunk as
+// ghosts, the closure the DSS needs. u is the same sin product at the nodes, zero on the
+// boundary copies, b = A u.
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -94,6 +100,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
+#include "backend/distributed/unstructured/utils/mars_read_exodus_raw.hpp"
 
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_cellwise_amg.hpp"
@@ -148,6 +155,7 @@ struct Layout {
     int n[3], o[3];
 };
 __constant__ Layout c_layout;
+__constant__ const double* c_mesh_X;   // --mesh: this rank's corners, corners_kernel's layout
 __constant__ int c_rotation[24][6];   // perm[3], flip[3]
 
 std::vector<int> proper_rotations()
@@ -208,6 +216,10 @@ __device__ void element_corners(long long e, int ne, double deform, double c[8][
         int b[3];
         long long g[3];
         cellwise::corner_bits(k, b[0], b[1], b[2]);
+        if (c_mesh_X) {
+            for (int a = 0; a < 3; ++a) c[k][a] = c_mesh_X[e * 24 + a * 8 + b[0] * 4 + b[1] * 2 + b[2]];
+            continue;
+        }
         element_point(e, 1, b, g);
         lattice_vertex((int)g[0], (int)g[1], (int)g[2], ne, deform, c[k]);
     }
@@ -492,6 +504,173 @@ cellwise::UnstructuredTopology mesh_topology(long long count, long long local, b
                                     count, local);
 }
 
+// --mesh: one rank's tables of an Exodus Hex8 mesh (see the header). key[e * 8 + c]: the
+// file's (0-based) vertex of corner c of table element e; gid: the file's element index.
+struct MeshTables {
+    long long local = 0, global = 0, mirrored = 0;
+    std::vector<unsigned long long> gid, key;
+    std::vector<int> owner;
+    std::vector<double> X;   // this rank's elements' corners, corners_kernel's layout
+};
+
+template <typename T>
+void bcast(std::vector<T>& v, MPI_Comm comm)
+{
+    long long size = (long long)v.size();
+    MARS_CELLWISE_MPI(MPI_Bcast(&size, 1, MPI_LONG_LONG, 0, comm));
+    v.resize(size);
+    constexpr long long chunk = 1LL << 27;   // MPI counts are int
+    for (long long i = 0; i < size; i += chunk)
+        MARS_CELLWISE_MPI(
+            MPI_Bcast(v.data() + i, (int)(std::min(chunk, size - i) * (long long)sizeof(T)), MPI_BYTE, 0, comm));
+}
+
+unsigned long long morton_spread(unsigned long long v)   // 21 bits, two zeros between
+{
+    v &= 0x1fffffULL;
+    v = (v | v << 32) & 0x1f00000000ffffULL;
+    v = (v | v << 16) & 0x1f0000ff0000ffULL;
+    v = (v | v << 8) & 0x100f00f00f00f00fULL;
+    v = (v | v << 4) & 0x10c30c30c30c30c3ULL;
+    v = (v | v << 2) & 0x1249249249249249ULL;
+    return v;
+}
+
+MeshTables mesh_tables(const std::string& path, MPI_Comm comm)
+{
+    int rank = 0, size = 1;
+    MARS_CELLWISE_MPI(MPI_Comm_rank(comm, &rank));
+    MARS_CELLWISE_MPI(MPI_Comm_size(comm, &size));
+    mars::ExodusRawHex8 m;
+    if (rank == 0) m = mars::readExodusHex8Raw(path);
+    for (auto& c : m.coordinates) bcast(c, comm);
+    bcast(m.connectivity, comm);
+    const auto& X = m.coordinates;
+    auto& C = m.connectivity;
+    const long long ne = (long long)C.size() / 8, nv = (long long)X[0].size();
+    if (nv > 0x7fffffffLL || ne > 0x7fffffffLL) {   // int vertex and element ids below
+        if (rank == 0) fprintf(stderr, "--mesh: %lld vertices, %lld elements: more than an int holds\n", nv, ne);
+        MPI_Abort(comm, 1);
+    }
+    MeshTables t;
+    t.global = ne;
+    auto corner = [&](long long e, int k, int a) { return X[a][C[e * 8 + k] - 1]; };
+
+    // A negative Jacobian at the center (left-handed corner order): mirror the element by
+    // swapping corners 1 <-> 3 and 5 <-> 7 (exchanges the first two reference axes).
+    for (long long e = 0; e < ne; ++e) {
+        double d[3][3];
+        for (int a = 0; a < 3; ++a) {
+            d[0][a] = corner(e, 1, a) + corner(e, 2, a) + corner(e, 5, a) + corner(e, 6, a) - corner(e, 0, a) -
+                      corner(e, 3, a) - corner(e, 4, a) - corner(e, 7, a);
+            d[1][a] = corner(e, 2, a) + corner(e, 3, a) + corner(e, 6, a) + corner(e, 7, a) - corner(e, 0, a) -
+                      corner(e, 1, a) - corner(e, 4, a) - corner(e, 5, a);
+            d[2][a] = corner(e, 4, a) + corner(e, 5, a) + corner(e, 6, a) + corner(e, 7, a) - corner(e, 0, a) -
+                      corner(e, 1, a) - corner(e, 2, a) - corner(e, 3, a);
+        }
+        const double det = d[0][0] * (d[1][1] * d[2][2] - d[1][2] * d[2][1]) -
+                           d[0][1] * (d[1][0] * d[2][2] - d[1][2] * d[2][0]) +
+                           d[0][2] * (d[1][0] * d[2][1] - d[1][1] * d[2][0]);
+        if (det < 0.0) {
+            std::swap(C[e * 8 + 1], C[e * 8 + 3]);
+            std::swap(C[e * 8 + 5], C[e * 8 + 7]);
+            ++t.mirrored;
+        }
+    }
+
+    // The partition: Morton order of the centroids in the bounding box, equal chunks.
+    double lo[3], hi[3];
+    for (int a = 0; a < 3; ++a) {
+        lo[a] = *std::min_element(X[a].begin(), X[a].end());
+        hi[a] = *std::max_element(X[a].begin(), X[a].end());
+    }
+    std::vector<std::pair<unsigned long long, long long>> order(ne);
+    for (long long e = 0; e < ne; ++e) {
+        unsigned long long key = 0;
+        for (int a = 0; a < 3; ++a) {
+            double c = 0.0;
+            for (int k = 0; k < 8; ++k) c += corner(e, k, a);
+            const double f = (c / 8.0 - lo[a]) / (hi[a] - lo[a]);
+            key |= morton_spread((unsigned long long)std::min(2097151.0, std::max(0.0, f * 2097152.0))) << (2 - a);
+        }
+        order[e] = {key, e};
+    }
+    std::sort(order.begin(), order.end());
+    auto first = [&](int r) { return ne / size * r + std::min<long long>(r, ne % size); };
+    std::vector<int> owner(ne);
+    for (int r = 0; r < size; ++r)
+        for (long long i = first(r); i < first(r + 1); ++i) owner[order[i].second] = r;
+
+    // Ghosts: the elements sharing a vertex with this rank's.
+    std::vector<long long> voff(nv + 1, 0);
+    for (long long v : C) ++voff[v];
+    for (long long v = 0; v < nv; ++v) voff[v + 1] += voff[v];
+    std::vector<int> vel(C.size());
+    {
+        std::vector<long long> fill(voff.begin(), voff.end() - 1);
+        for (long long e = 0; e < ne; ++e)
+            for (int k = 0; k < 8; ++k) vel[fill[C[e * 8 + k] - 1]++] = (int)e;
+    }
+    std::vector<long long> table;
+    for (long long i = first(rank); i < first(rank + 1); ++i) table.push_back(order[i].second);
+    t.local = (long long)table.size();
+    std::vector<char> seen(ne, 0);
+    std::vector<long long> ghosts;
+    for (long long i = 0; i < t.local; ++i)
+        for (int k = 0; k < 8; ++k) {
+            const long long v = C[table[i] * 8 + k] - 1;
+            for (long long j = voff[v]; j < voff[v + 1]; ++j) {
+                const int g = vel[j];
+                if (owner[g] != rank && !seen[g]) {
+                    seen[g] = 1;
+                    ghosts.push_back(g);
+                }
+            }
+        }
+    std::sort(ghosts.begin(), ghosts.end());
+    table.insert(table.end(), ghosts.begin(), ghosts.end());
+
+    for (long long e : table) {
+        t.gid.push_back((unsigned long long)e);
+        t.owner.push_back(owner[e]);
+        for (int k = 0; k < 8; ++k) t.key.push_back((unsigned long long)(C[e * 8 + k] - 1));
+    }
+    t.X.resize(t.local * 24);
+    for (long long i = 0; i < t.local; ++i)
+        for (int k = 0; k < 8; ++k) {
+            int b[3];
+            cellwise::corner_bits(k, b[0], b[1], b[2]);
+            for (int a = 0; a < 3; ++a) t.X[i * 24 + a * 8 + b[0] * 4 + b[1] * 2 + b[2]] = corner(table[i], k, a);
+        }
+    return t;
+}
+
+// The unstructured tables of a MeshTables (local elements first).
+cellwise::UnstructuredTopology mesh_file_topology(const MeshTables& t)
+{
+    const long long count = (long long)t.gid.size();
+    thrust::device_vector<unsigned long long> key[8];
+    thrust::device_vector<int> lid[8];
+    std::vector<const unsigned long long*> kp(8);
+    std::vector<const int*> lp(8);
+    std::vector<unsigned long long> hk(count);
+    std::vector<int> hl(count);
+    for (int c = 0; c < 8; ++c) {
+        for (long long e = 0; e < count; ++e) {
+            hk[e] = t.key[e * 8 + c];
+            hl[e] = (int)hk[e];   // vertex ids fit an int (checked by the caller)
+        }
+        key[c] = hk;
+        lid[c] = hl;
+        kp[c] = thrust::raw_pointer_cast(key[c].data());
+        lp[c] = thrust::raw_pointer_cast(lid[c].data());
+    }
+    thrust::device_vector<const unsigned long long*> d_kp(kp.begin(), kp.end());
+    thrust::device_vector<const int*> d_lp(lp.begin(), lp.end());
+    return cellwise::build_topology(thrust::raw_pointer_cast(d_kp.data()), thrust::raw_pointer_cast(d_lp.data()),
+                                    count, t.local);
+}
+
 template <int P>
 void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, bool nodes, cudaStream_t st)
 {
@@ -618,7 +797,7 @@ struct Options {
     int solves = 1;
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
-    std::string cheb_interval = "mars", rhs = "discrete";
+    std::string cheb_interval = "mars", rhs = "discrete", mesh;
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
     double amg_theta = 0.25;
@@ -634,10 +813,18 @@ int run(const Options& o)
     const cellwise::Decomposition dec(MPI_COMM_WORLD, o.ne, o.ne, o.ne);
     const bool root = dec.rank == 0;
     const cellwise::Block& box = dec.local;
-    const long long E = box.elements(), N = E * n3;   // this rank's elements and copies
+    const bool meshed = !o.mesh.empty();
+    MeshTables mt;
+    double read_s = 0.0;
+    if (meshed) {
+        const auto m0 = std::chrono::steady_clock::now();
+        mt = mesh_tables(o.mesh, MPI_COMM_WORLD);
+        read_s = all_max(std::chrono::duration<double>(std::chrono::steady_clock::now() - m0).count());
+    }
+    const long long E = meshed ? mt.local : box.elements(), N = E * n3;   // this rank's elements and copies
     long long N_all = N;
     MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &N_all, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD));
-    const long long unique = (long long)(o.ne * P + 1) * (o.ne * P + 1) * (o.ne * P + 1);
+    long long unique = (long long)(o.ne * P + 1) * (o.ne * P + 1) * (o.ne * P + 1);   // --mesh: from the tables
 
     const Basis fine = basis(P);
     const std::vector<double>&B = fine.B, &Bt = fine.Bt, &D = fine.D, &Dt = fine.Dt, &DB = fine.DB, &gq = fine.gq,
@@ -652,6 +839,11 @@ int run(const Options& o)
     BP_CK(cudaMemcpyToSymbol(c_rotation, rotations.data(), rotations.size() * sizeof(int)));
     thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB), dgq(gq), dwq(wq);
     auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
+    thrust::device_vector<double> mesh_X(mt.X.begin(), mt.X.end());
+    {
+        const double* p = meshed ? raw(mesh_X) : nullptr;
+        BP_CK(cudaMemcpyToSymbol(c_mesh_X, &p, sizeof(p)));
+    }
 
     cudaStream_t stream;
     BP_CK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
@@ -678,10 +870,19 @@ int run(const Options& o)
     // layout of its elements; with --block-dss also of the blocks.
     thrust::device_vector<unsigned long long> gid;
     thrust::device_vector<int> owner;
-    if (!blocked) cellwise::block_elements(dec, gid, owner);
+    if (meshed) {
+        gid.assign(mt.gid.begin(), mt.gid.end());
+        owner.assign(mt.owner.begin(), mt.owner.end());
+    } else if (!blocked) {
+        cellwise::block_elements(dec, gid, owner);
+    }
     const unsigned long long* d_gid = blocked ? nullptr : thrust::raw_pointer_cast(gid.data());
     const cellwise::UnstructuredTopology topo =
-        mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
+        meshed ? mesh_file_topology(mt) : mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
+    if (meshed) {   // every node once (its counting copy), Dirichlet ones included
+        const double c = counted_norm<P>(raw(ones), topo, stream);
+        unique = std::llround(c * c);
+    }
     const long long nblocks = (long long)layout.M * layout.M * layout.M;
     const cellwise::UnstructuredTopology skeleton_topo =
         !o.block_dss.empty() ? mesh_topology(nblocks, nblocks, true, nullptr, stream) : cellwise::UnstructuredTopology{};
@@ -752,8 +953,9 @@ int run(const Options& o)
     apply(raw(x), raw(z), stream);
     BP_CK(cudaStreamSynchronize(stream));
     const double sum1 = all_sum(thrust::reduce(y.begin(), y.end(), 0.0));
-    exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3);
+    exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3 && !meshed);
     BP_CK(cudaGetLastError());
+    if (meshed) cellwise::zero_dirichlet<P>(raw(u), topo, stream);   // the boundary from the tables
     apply(raw(u), raw(b), stream);   // b = A u
     const bool pde = o.rhs == "pde";
     std::unique_ptr<marsir::GalerkinPtx> mass;
@@ -846,7 +1048,8 @@ int run(const Options& o)
     diagonal_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(G), raw(dB), raw(dDB), raw(s), E, K);
     BP_CK(cudaGetLastError());
     dss(raw(s), raw(diag), stream);
-    inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, bp3);
+    inverse_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(diag), raw(inv), E, bp3 && !meshed);
+    if (meshed) cellwise::zero_dirichlet<P>(raw(inv), topo, stream);
     BP_CK(cudaGetLastError());
     const cellwise::DssJacobi<decltype(dss)> precond{dss, raw(inv), raw(s), N};
     cudaEvent_t t0, t1;
@@ -1048,12 +1251,23 @@ int run(const Options& o)
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
     if (root) {
-        printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
-               o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
-               tri ? "trilinear (corners)" : "stored");
-        if (dec.size > 1)
-            printf("  %d ranks (%d x %d x %d); rank 0: %d x %d x %d elements, %lld ghosts, %d peers\n", dec.size,
-                   dec.P[0], dec.P[1], dec.P[2], box.nx, box.ny, box.nz, topo.elements - topo.local, h->peers());
+        if (meshed) {
+            printf("%s, p=%d, q=%d, mesh %s: %lld elements, %lld unique DoFs, %lld cell-wise, %s geometry\n",
+                   o.spec.c_str(), P, Q, o.mesh.c_str(), mt.global, unique, N_all,
+                   tri ? "trilinear (corners)" : "stored");
+            printf("  read and partitioned in %.1f s; %lld elements mirrored to a right-handed corner order\n",
+                   read_s, mt.mirrored);
+            if (dec.size > 1)
+                printf("  %d ranks (Morton chunks); rank 0: %lld elements, %lld ghosts, %d peers\n", dec.size, E,
+                       topo.elements - topo.local, h->peers());
+        } else {
+            printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
+                   o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
+                   tri ? "trilinear (corners)" : "stored");
+            if (dec.size > 1)
+                printf("  %d ranks (%d x %d x %d); rank 0: %d x %d x %d elements, %lld ghosts, %d peers\n", dec.size,
+                       dec.P[0], dec.P[1], dec.P[2], box.nx, box.ny, box.nz, topo.elements - topo.local, h->peers());
+        }
         if (Bk != o.ne || o.rotate)
             printf("  blocks of %d^3 elements (%lld)%s\n", Bk, nblocks, o.rotate ? ", rotated" : "");
         if (!o.block_dss.empty())
@@ -1156,6 +1370,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
         else if (!strcmp(argv[i], "--rhs")) o.rhs = argv[i + 1];
+        else if (!strcmp(argv[i], "--mesh")) o.mesh = argv[i + 1];
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
         else if (!strcmp(argv[i], "--block")) o.block = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--block-dss")) o.block_dss = argv[i + 1];
@@ -1183,6 +1398,9 @@ int main(int argc, char** argv)
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
     if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
         error = "--rhs is discrete, or pde for bp3 and bp3_tri";
+    if (!error && !o.mesh.empty() &&
+        (o.spec.rfind("bp3", 0) != 0 || o.rhs == "pde" || o.block || o.rotate || !o.block_dss.empty()))
+        error = "--mesh is for bp3 and bp3_tri, without --rhs pde, --block, --rotate or --block-dss";
     if (!error && o.p1_matrix_free && !(o.p == 1 && o.amg)) error = "--p1-matrix-free goes with --p 1 --mg --amg";
     o.p1_assembled = o.p == 1 && o.amg && !o.p1_matrix_free;
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
@@ -1210,7 +1428,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
