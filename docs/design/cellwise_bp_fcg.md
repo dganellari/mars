@@ -706,3 +706,23 @@ called an `MPI_Allreduce` (the row count) inside its printing, which the other r
 Every earlier p = 1 run of the assembled path was on one GPU, where that does not block. Fixed in
 b7223754. BoomerAMG on the wing's p = 1 matrix (14.9M rows, theta 0.25): 8 levels, grid complexity
 1.40, operator complexity 2.14.
+
+### Where the p = 3 iterations go
+
+One setting changed at a time, 64 GH200, tol 3e-13, first solve (the default run's first solve:
+13.64 s), all PASS with true residuals 6.5e-14 to 9.0e-14:
+
+| p = 3 | it | FCG iteration | coarse per V-cycle | solve | it 10 / 50 / 100 |
+|---|---|---|---|---|---|
+| default: (2,2), AMG x3, theta 0.25 | 541 | 24.93 ms | 13.75 ms | 13.64 s | |
+| AMG x10 | 533 | 50.91 | 40.00 | 27.14 | 1.0e-4 / 5.4e-7 / 1.4e-7 |
+| theta 0.5 | 533 | 29.90 | 18.73 | 15.94 | 1.1e-4 / 5.6e-7 / 1.4e-7 |
+| Chebyshev (4,4) | 366 | 35.41 | 15.00 | 12.96 | 8.9e-5 / 3.0e-7 / 1.9e-8 |
+
+A more exact coarse solve (10 BoomerAMG cycles instead of 3) or a different coarsening (theta
+0.5) saves 8 of 541 iterations: the p = 1 solve does not lose them. Twice the smoothing saves a
+third of them and is the only faster run (5%). So the p = 3 smoother, or what neither it nor the
+p = 1 level reaches, is where the iterations go; on the cube the same cycle needs 14. The
+histories fall fast for about 10 iterations, then slowly: from it 100 on, x10 gains 0.013 decades
+per iteration. Not checked: whether the wing's stretched elements are the cause (their aspect
+ratios have not been measured).
