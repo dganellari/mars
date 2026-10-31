@@ -578,7 +578,7 @@ passed on other nodes.
 The remaining differences, removed instead of listed: MARS with MFEM's Chebyshev interval
 (`--cheb-interval mfem`: [0.3, 1.2] lmax, 10 power steps; MFEM's order-2 smoother is the same
 residual polynomial as two Chebyshev steps), MARS's p = 1 solve on the assembled matrix as MFEM
-does it (`--p1-assembled`), and MFEM with MARS's Hypre settings (`--amg-settings mars`: Hypre's own
+does it (then `--p1-assembled`, now the default), and MFEM with MARS's Hypre settings (`--amg-settings mars`: Hypre's own
 SpMV and SpGEMM, GPU-aware MPI, the same device pool, 4 l1-Jacobi sweeps on the coarsest level).
 GPU-aware MPI matters: this Hypre build defaults to host copies, which the MFEM runs above had, so
 their multi-GPU times were too long (p = 3 on 64 GPUs 641 -> 418 ms with MARS's settings).
@@ -611,4 +611,10 @@ size (p = 3: 157 / 244 / 334 ms, p = 7: 246 / 341 / 391 ms, the warm runs above,
 batch of the same build), so against MFEM with MARS's Hypre settings MARS is 1.55x / 1.47x /
 1.25x faster at p = 3 and 1.52x / 1.56x / 1.50x at p = 7. At p = 1 MARS's assembled path is
 2.0x faster than its matrix-free one (84 against 171 ms) and the better choice there.
+
+Default since then, the rule MFEM follows (ex26p assembles the p = 1 level and runs partial
+assembly above; ex1p assembles unless `-pa`): with `--mg --amg`, p = 1 runs FCG on the assembled
+p = 1 matrix that BoomerAMG already has, and p = 3 and 7 stay matrix-free. `--p1-matrix-free`
+keeps the cell-wise p = 1 operator (both forms kept). Without `--mg`, p = 1 stays matrix-free:
+DSS-Jacobi needs no matrix, and the matrix exists only with BoomerAMG.
 

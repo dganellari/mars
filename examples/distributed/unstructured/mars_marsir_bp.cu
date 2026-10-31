@@ -50,10 +50,13 @@
 // --amg-print prints Hypre's setup statistics.
 // --cheb-interval mfem smooths on MFEM's interval ([0.3, 1.2] lmax, 10 power steps;
 // cellwise::ChebyshevInterval) instead of MARS's ([1.1 / 15, 1.1] lmax, 30 steps), so this
-// V-cycle is the one of tests/performance/mfem_bp3. --p1-assembled (p = 1, --mg --amg):
-// FCG on the rows of the assembled p = 1 matrix that BoomerAMG uses, MFEM's p = 1 path,
-// instead of the matrix-free cell-wise operator; b is assembled onto the rows before the
-// timing and x put back on every copy after it, for the same checks.
+// V-cycle is the one of tests/performance/mfem_bp3.
+// p = 1 with --mg --amg: FCG on the rows of the assembled p = 1 matrix that BoomerAMG uses,
+// as MFEM does (assembled at p = 1, matrix-free above: 2x faster than the cell-wise operator
+// here, docs/design/cellwise_bp_fcg.md); b is assembled onto the rows before the timing and
+// x put back on every copy after it, for the same checks. --p1-matrix-free keeps the
+// matrix-free cell-wise operator. Without --mg, p = 1 is matrix-free (DSS-Jacobi needs no
+// matrix).
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -552,7 +555,8 @@ struct Options {
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
-    bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_assembled = false;
+    bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
+    bool p1_assembled = false;   // set from the others after parsing
     std::string cheb_interval = "mars";
     double deform = 0.05, tol = 1e-10;
     // BoomerAMG's hierarchy (cellwise::AmgSettings; these defaults are its own).
@@ -856,7 +860,7 @@ int run(const Options& o)
         else coarse(in, out);
 #endif
     };
-    long long m = 0;   // --p1-assembled: this rank's rows
+    long long m = 0;   // p1_assembled: this rank's rows
 #ifdef MARS_ENABLE_HYPRE
     if (o.p1_assembled) m = amg->rows();
     thrust::device_vector<double> rb(m), rx(m), rr(m), rq(m), rz(m), rp(m);
@@ -940,7 +944,7 @@ int run(const Options& o)
         BP_CK(cudaDeviceSynchronize());   // filled on the default stream
         dss1_ms = time_ms([&] { cellwise::dss<1>(raw(a1), raw(b1), topo, h1, stream); });
     }
-    float rows_ms = 0.0f;   // --p1-assembled: the SpMV on the rows
+    float rows_ms = 0.0f;   // p1_assembled: the SpMV on the rows
 #ifdef MARS_ENABLE_HYPRE
     if (o.p1_assembled) rows_ms = time_ms([&] { amg->apply_rows(raw(rx), raw(rq)); });
 #endif
@@ -983,8 +987,7 @@ int run(const Options& o)
             printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
                    o.amg_agg, o.amg_coarse_size);
         if (o.p1_assembled)
-            printf("  FCG on the %lld rows of the assembled p = 1 matrix (MFEM's p = 1 path); SpMV %.3f ms, %.2f "
-                   "GDoF/s\n",
+            printf("  FCG on the %lld rows of the assembled p = 1 matrix; SpMV %.3f ms, %.2f GDoF/s\n",
                    (long long)all_sum((double)m), rows_ms, all_sum((double)m) / (rows_ms * 1e6));
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
@@ -1037,8 +1040,8 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
-        if (!strcmp(argv[i], "--amg-print") || !strcmp(argv[i], "--profile") || !strcmp(argv[i], "--p1-assembled")) {
-            (argv[i][2] == 'a' ? o.amg_print : argv[i][3] == 'r' ? o.profile : o.p1_assembled) = true;
+        if (!strcmp(argv[i], "--amg-print") || !strcmp(argv[i], "--profile") || !strcmp(argv[i], "--p1-matrix-free")) {
+            (argv[i][2] == 'a' ? o.amg_print : argv[i][3] == 'r' ? o.profile : o.p1_matrix_free) = true;
             --i;
             continue;
         }
@@ -1083,7 +1086,8 @@ int main(int argc, char** argv)
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
-    if (!error && o.p1_assembled && !(o.p == 1 && o.amg)) error = "--p1-assembled goes with --p 1 --mg --amg";
+    if (!error && o.p1_matrix_free && !(o.p == 1 && o.amg)) error = "--p1-matrix-free goes with --p 1 --mg --amg";
+    o.p1_assembled = o.p == 1 && o.amg && !o.p1_matrix_free;
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
         error = "--amg-theta is in (0, 1), --amg-agg at least 0, --amg-coarse-size at least 1";
 #ifndef MARS_ENABLE_HYPRE
@@ -1109,7 +1113,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-assembled] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
