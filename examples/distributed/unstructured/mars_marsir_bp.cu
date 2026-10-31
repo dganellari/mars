@@ -1249,6 +1249,8 @@ int run(const Options& o)
     setup_ms = (float)all_max(setup_ms);
     coarse_s = all_max(coarse_s);
     amg_setup_ms = all_max(amg_setup_ms);
+    // A collective, so every rank calls it here: inside the root-only printing it hung on several ranks.
+    const double rows = o.p1_assembled ? all_sum((double)m) : 0.0;
     const bool converged = res.relative <= o.tol;
     const bool accurate = std::isfinite(true_rel) && true_rel <= o.true_tol;
     const bool pass = converged && accurate && std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
@@ -1296,7 +1298,7 @@ int run(const Options& o)
                    o.amg_agg, o.amg_coarse_size);
         if (o.p1_assembled)
             printf("  FCG on the %lld rows of the assembled p = 1 matrix; SpMV %.3f ms, %.2f GDoF/s\n",
-                   (long long)all_sum((double)m), rows_ms, all_sum((double)m) / (rows_ms * 1e6));
+                   (long long)rows, rows_ms, rows / (rows_ms * 1e6));
         printf("  FCG + %s: %d iterations, sqrt(<r,z>/<r0,z0>) = %.3e, true assembled residual %.3e\n",
                o.mg ? "V-cycle" : "DSS-Jacobi", res.iterations, res.relative, true_rel);
         if (!converged) printf("  FCG did not reach tol %.1e in %d iterations\n", o.tol, o.maxit);
