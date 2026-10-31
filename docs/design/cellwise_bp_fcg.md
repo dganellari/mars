@@ -709,8 +709,9 @@ b7223754. BoomerAMG on the wing's p = 1 matrix (14.9M rows, theta 0.25): 8 level
 
 ### Where the p = 3 iterations go
 
-One setting changed at a time, 64 GH200, tol 3e-13, first solve (the default run's first solve:
-13.64 s), all PASS with true residuals 6.5e-14 to 9.0e-14:
+One setting changed at a time, 64 GH200, tol 3e-13, one solve each, all PASS with true residuals
+6.5e-14 to 9.0e-14. The default row is the run above: its first solve, with the per-iteration and
+coarse times of its third (warm) solve:
 
 | p = 3 | it | FCG iteration | coarse per V-cycle | solve | it 10 / 50 / 100 |
 |---|---|---|---|---|---|
