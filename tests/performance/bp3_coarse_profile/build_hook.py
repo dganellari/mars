@@ -11,7 +11,7 @@ import subprocess
 
 
 def output(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output(args, universal_newlines=True, stderr=subprocess.STDOUT)
 
 
 def main():

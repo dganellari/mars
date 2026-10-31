@@ -7,7 +7,7 @@ import sys
 
 root = Path(sys.argv[1])
 for trace in sorted(root.glob('p*_r*_trace/summary.json')):
-    case = trace.parent.name.removesuffix('_trace')
+    case = trace.parent.name[:-len('_trace')]
     print(case)
     for mode in ('stock', 'hook'):
         times = [json.loads(p.read_text())['solve']['solve_ms'] for p in sorted(root.glob(f'{case}_{mode}*/summary.json'))]

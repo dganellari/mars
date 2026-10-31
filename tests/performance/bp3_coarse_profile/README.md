@@ -128,7 +128,13 @@ probe compiled with NVIDIA NVTX 3.1.1 headers and the real Hypre 2.33 CPU librar
 nine cycles visited four levels, with 747 balanced pushes/pops and no audit errors.
 That check used static linking to substitute the hook on macOS. It does not
 validate Linux preload behavior, CUDA execution or Nsight export schemas on Daint.
-Those remain explicit gates in the job. No cluster run is claimed.
+Those remain explicit gates in the job. GPU validation remains pending.
+
+Job 5222444 built MARS successfully but stopped before the first case: the batch
+environment selected Python 3.6, which does not accept `subprocess`'s `text=True`.
+The helpers now use Python 3.6-compatible APIs (`universal_newlines`, explicit
+output pipes and suffix slicing), and the job prints its Python version. This
+was a tooling failure; no GPU solve or profiling result was produced by that job.
 
 ## Source references
 

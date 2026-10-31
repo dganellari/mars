@@ -105,7 +105,8 @@ print('preload preserved')
 ''')
         nsys.chmod(0o755); binary.chmod(0o755)
         run = subprocess.run(['bash', str(Path(__file__).with_name('rank.sh')), 'trace', str(self.root),
-                              'probe.so', str(binary), '--solves', '3'], text=True, capture_output=True,
+                              'probe.so', str(binary), '--solves', '3'], universal_newlines=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              env={**os.environ, 'PATH':str(self.root)+os.pathsep+os.environ['PATH'],
                                   'SLURM_PROCID':'0', 'SLURM_NTASKS':'1'})
         self.assertEqual(run.returncode, 0, run.stderr)

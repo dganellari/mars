@@ -21,6 +21,7 @@ results=${BP3_PROFILE_RESULTS:-/capstor/scratch/cscs/gandanie/bp3-coarse-profile
 mkdir -p "$results"
 exec > >(tee "$results/job.log") 2>&1
 trap 'status=$?; printf "%s\n" "$status" > "$results/job.exit"' EXIT
+python3 --version
 export MPICH_GPU_SUPPORT_ENABLED=1
 exclude=nid005323,nid005617,nid005669,nid005679,nid005742,nid005820,nid005854
 git -C "$source_dir" merge-base --is-ancestor 339e6552 HEAD
