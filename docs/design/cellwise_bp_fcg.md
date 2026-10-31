@@ -630,3 +630,50 @@ DSS-Jacobi needs no matrix, and the matrix exists only with BoomerAMG. GPU check
 p = 1, ne 128, warm): 85.9 ms against 169.2 ms with `--p1-matrix-free`, both 14 iterations,
 PASS; the SpMV takes 0.26 ms (7.9 GDoF/s; MFEM's 0.33 ms).
 
+
+## Convergence: -lap u = f on the deformed cube (c6d6d88e)
+
+`--rhs pde`: b = M f_h with f = 3 pi^2 u, u = sin(pi x) sin(pi y) sin(pi z), M the generated BP1
+mass operator; the error is ||x_h - u||_L2 / ||u||_L2 at the q = p + 2 Gauss points.
+`mfem_bp3 --rhs pde` builds the same b. One GH200, `--mg --amg`, tol 1e-12, all PASS, true
+residuals 6.9e-13 to 4.4e-11 (the runs predate the true-residual gate but pass it). Times are first
+solves and not used. L2 error, rate log2(e_{ne/2} / e_ne), iterations MARS / MFEM:
+
+| refinement | p = 1 | p = 3 | p = 7 |
+|---|---|---|---|
+| 0 | ne 8: 5.343e-2, it 7 / 7 | ne 4: 2.536e-4, it 13 / 12 | ne 2: 6.838e-8, it 14 / 15 |
+| 1 | ne 16: 1.365e-2, 1.97, it 9 / 9 | ne 8: 1.638e-5, 3.95, it 13 / 14 | ne 4: 3.246e-10, 7.72, it 14 / 17 |
+| 2 | ne 32: 3.432e-3, 1.99, it 10 / 10 | ne 16: 1.033e-6, 3.99, it 13 / 15 | ne 8: 1.432e-12, 7.82, it 14 / 17 |
+| 3 | ne 64: 8.592e-4, 2.00, it 11 / 11 | ne 32: 6.475e-8, 4.00, it 13 / 15 | ne 16: 3.1e-14 (rounding), it 14 / 17 |
+| 4 | ne 128: 2.149e-4, 2.00, it 13 / 13 | ne 64: 4.049e-9, 4.00, it 14 / 16 | ne 32: 2.5e-14 (rounding), it 14 / 18 |
+
+The rates are the optimal p + 1. MARS and MFEM give the same L2 error to all four printed digits
+in every run down to p = 7, ne 4; at p = 7, ne 8 they differ in the third digit (1.432e-12 against
+1.437e-12), and at ne 16 and 32 both are at the rounding floor (MFEM 8.8e-14 and 1.6e-14), where
+the error no longer measures the discretization. Iterations stay almost constant under refinement
+in both codes (MFEM with its own Chebyshev interval).
+
+## Exodus meshes: the gate (c6d6d88e)
+
+`--mesh file.e`: rank 0 reads an Exodus Hex8 mesh (`mars::readExodusHex8Raw`) and broadcasts it;
+each rank takes a Morton-order chunk of the element centroids, its ghosts are the elements sharing
+a vertex with it, and left-handed elements are mirrored to a right-handed corner order.
+`scripts/write_bp_cube_exodus.py` writes the deformed cube with random node and element numbering,
+every element's corners in a random one of the 24 rotations and 10% of them left-handed; read
+through `--mesh`, it must give the built-in cube's solve. GH200, tol 1e-10, all PASS (iterations,
+true residual, max |x - u| / max |u|):
+
+| run | built-in cube | Exodus cube |
+|---|---|---|
+| p = 3, ne 16, 1 rank, DSS-Jacobi | 189, 8.221e-11, 7.958e-12 | 189, 8.219e-11, 7.956e-12 (411 mirrored) |
+| p = 3, ne 32, 8 ranks, DSS-Jacobi | 381, 8.250e-11, 5.161e-12 | 381, 8.244e-11, 5.159e-12 (3289 mirrored) |
+| p = 7, ne 8, 1 rank, DSS-Jacobi | 308, 8.398e-11, 5.519e-12 | 308, 8.446e-11, 5.552e-12 (51 mirrored) |
+| p = 3, ne 32, 8 ranks, V-cycle + BoomerAMG | 11, 1.398e-9, 1.114e-11 | 11, 1.508e-9, 1.041e-11 |
+
+DSS-Jacobi: the same iterations and the same history at it 1, 5, 10 and 50 to all seven printed
+digits; the last digits of the final residual differ by summation order (the elements are
+permuted). V-cycle: the same iteration count, a different history (it 1: 5.62e-2 against
+6.33e-2), as BoomerAMG coarsens each partition differently (box 2 x 2 x 2 against Morton chunks),
+like on different rank counts. The Morton chunks are not exact octants: rank 0 has 953 ghosts and
+6 peers against 817 and 7 for the box (probably the deformation, largest at the centre, moving
+centroids across the octant boundaries; not checked).
