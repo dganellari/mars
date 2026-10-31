@@ -719,11 +719,16 @@ coarse times of its third (warm) solve:
 | AMG x10 | 533 | 50.91 | 40.00 | 27.14 | 1.0e-4 / 5.4e-7 / 1.4e-7 |
 | theta 0.5 | 533 | 29.90 | 18.73 | 15.94 | 1.1e-4 / 5.6e-7 / 1.4e-7 |
 | Chebyshev (4,4) | 366 | 35.41 | 15.00 | 12.96 | 8.9e-5 / 3.0e-7 / 1.9e-8 |
+| Chebyshev (6,6) | 300 | 46.37 | 15.65 | 13.91 | 6.9e-5 / 2.2e-7 / 6.4e-9 |
+| Chebyshev (8,8) | 263 | 57.03 | 16.17 | 15.00 | 5.7e-5 / 1.5e-7 / 3.9e-9 |
 
 A more exact coarse solve (10 BoomerAMG cycles instead of 3) or a different coarsening (theta
-0.5) saves 8 of 541 iterations: the p = 1 solve does not lose them. Twice the smoothing saves a
-third of them and is the only faster run (5%). So the p = 3 smoother, or what neither it nor the
-p = 1 level reaches, is where the iterations go; on the cube the same cycle needs 14. The
+0.5) saves 8 of 541 iterations: the p = 1 solve does not lose them. More smoothing does save
+iterations, but only roughly as 1 / sqrt(k) for Chebyshev (k,k): 541 / 366 / 300 / 263 for k = 2
+/ 4 / 6 / 8, still 19x the cube's 14 at k = 8. So the p = 3 smoother, or what neither it nor the
+p = 1 level reaches, is where the iterations go. The solve time is flat in k: (4,4) is the only
+faster run (5%), (8,8) is 10% slower. At p = 7, (4,4) cuts 904 iterations to 584 but the solve
+is 15% slower (141.8 s against 123.3 s, first solves; 242.8 ms per iteration). The
 histories fall fast for about 10 iterations, then slowly: from it 100 on, x10 gains 0.013 decades
 per iteration. Not checked: whether the wing's stretched elements are the cause (their aspect
 ratios have not been measured).
