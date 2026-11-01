@@ -1023,3 +1023,127 @@ def emit_pmg(real="f64"):
         out += [_convert(p, a, b) for p in (7, 1) for a, b in (("f64", real), (real, "f64"))]
         out += [_interpolate(8, 4, False, real, counted=True), emit_dss(7, real)]
     return "".join(out)
+
+
+# ---- node-line smoother (NodeLines of mars_cellwise_lines.hpp) ------------------
+def _lines_residual(p, minus):
+    """s = DSS(b - y), or DSS(b) at the first step from x = 0, on every listed element's
+    copies. NodeLines' residual_kernel writes only the counting copies of free nodes, the
+    only ones the block solves read; there both give the same bits."""
+    args = [("b", "f64"), ("ghost", "f64")] + ([("y", "f64")] if minus else []) + [("elements", "i32")] + \
+        _TABLES + [("s", "f64")]
+    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args)
+    types = ", ".join(f"memref<?x{t}>" for _, t in args)
+    name = f"lines_residual{'' if minus else '0'}_p{p}"
+    return "\n".join([
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"  mir.dss ins(%b, %ghost){' minus(%y)' if minus else ''} elements(%elements) faces(%face_nbr, %face_code)",
+        "          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
+        f"          outs(%s) {{degree = {p} : i64}} : {types}",
+        "  return", "}", ""])
+
+
+def _lines_update(p, kind):
+    """The Chebyshev step from the block solution z, which holds each node's value on its
+    counting copy and 0 on the others: z_t = DSS(z) (0 on Dirichlet copies); first0: d = x
+    = c2 z_t; first: d = c2 z_t, x += d; next: d = c1 d + c2 z_t, x += d. NodeLines'
+    update_kernel reads z_t at the counting copy instead of summing (the same bits)."""
+    args = [("z", "f64"), ("ghost", "f64"), ("elements", "i32")] + _TABLES + _FLAGS + [("d", "f64"), ("x", "f64")]
+    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args) + ", %c1: f64, %c2: f64"
+    copies = {"first0": [], "first": ["x"], "next": ["d", "x"]}[kind]
+    opnd = ["memref<?xf64>", "memref<?xf64>", "memref<?xi32>"] + [f"memref<?x{t}>" for _, t in _TABLES + _FLAGS] + \
+        ["memref<?xf64>"] * (len(copies) + 2)
+    body = ["  %zero = arith.constant 0.0 : f64",
+            "  %zt = arith.select %dir, %zero, %sum : f64",
+            "  %cz = arith.mulf %c2, %zt : f64"]
+    if kind == "first0":
+        ys = ["%cz", "%cz"]
+    elif kind == "first":
+        body += ["  %xn = arith.addf %x_t, %cz : f64"]
+        ys = ["%cz", "%xn"]
+    else:
+        body += ["  %cd = arith.mulf %c1, %d_t : f64", "  %dn = arith.addf %cd, %cz : f64",
+                 "  %xn = arith.addf %x_t, %dn : f64"]
+        ys = ["%dn", "%xn"]
+    bargs = "%sum: f64, %dir: i1, %cnt: i1" + "".join(f", %{c}_t: f64" for c in copies)
+    cp = f" copies({', '.join('%' + c for c in copies)})" if copies else ""
+    return "\n".join([
+        f"func.func @lines_update_{kind}_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        "  mir.dss ins(%z, %ghost) elements(%elements) faces(%face_nbr, %face_code)",
+        "          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
+        f"          flags(%counting, %edge_dirichlet, %vert_dirichlet){cp} outs(%d, %x)",
+        f"          {{degree = {p} : i64, reductions = 0 : i64}} : {', '.join(opnd)} epilogue {{",
+        f"  ^bb0({bargs}):", *["  " + l for l in body],
+        f"    mir.yield {', '.join(ys)} : f64, f64", "  }", "  return", "}", ""])
+
+
+def _lines_solve(p):
+    """The block solves z = L^-T L^-1 s of NodeLines (solve_kernel), one lane per block:
+    block q of a warp's 32 (sorted by length) is lane q % 32, its row r stored lane-
+    interleaved at slot warp_off[q / 32] + r: L(r, r - d) at ((slot) (p + 1) + d) 32 + lane,
+    its counting copy at slot 32 + lane. Forward y_r = (s_r - sum_d L(r, r-d) y_(r-d)) /
+    L(r, r) with the last p values carried; backward from the last row, each z_r pushing
+    L(r, r-d) z_r into the next p rows' sums. The hand kernel's operation order.
+    Contract: len and warp_off cover a multiple of 128 blocks (the kernel's elements per
+    thread block; padding blocks have length 0), so no group runs past the last block. A
+    group past it would solve the last block again (--mir-warp-per-element clamps it there),
+    reading z while that block's lane writes it."""
+    ys = [f"%y{d}" for d in range(1, p + 1)]
+    ps = [f"%p{d}" for d in range(1, p + 1)]
+    f64s = ", ".join(["f64"] * p)
+    zeros = ", ".join(f"{y} = %zero" for y in ys)
+    pzeros = ", ".join(f"{q} = %zero" for q in ps)
+
+    def row_index(r):
+        return [f"      %row = arith.addi %base, {r} : index",
+                "      %rl = arith.muli %row, %c32 : index", "      %ci = arith.addi %rl, %lane : index",
+                "      %ti = memref.load %copy[%ci] : memref<?xi64>", "      %t = arith.index_cast %ti : i64 to index",
+                "      %lb = arith.muli %row, %cn : index", "      %lb32 = arith.muli %lb, %c32 : index",
+                "      %l0 = arith.addi %lb32, %lane : index",
+                "      %L0 = memref.load %L[%l0] : memref<?xf64>"]
+    fwd = row_index("%r") + ["      %acc0 = memref.load %s[%t] : memref<?xf64>"]
+    for d in range(1, p + 1):
+        fwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
+                f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
+                f"      %pr{d} = arith.mulf %L{d}, %y{d} : f64",
+                f"      %acc{d} = arith.subf %acc{d - 1}, %pr{d} : f64"]
+    fwd += [f"      %v = arith.divf %acc{p}, %L0 : f64", "      memref.store %v, %z[%t] : memref<?xf64>",
+            f"      scf.yield %v{''.join(', ' + y for y in ys[:-1])} : {f64s}"]
+    bwd = ["      %r = arith.subi %last, %k : index"] + row_index("%r") + [
+        "      %zt = memref.load %z[%t] : memref<?xf64>",
+        "      %num = arith.subf %zt, %p1 : f64",
+        "      %v = arith.divf %num, %L0 : f64",
+        "      memref.store %v, %z[%t] : memref<?xf64>"]
+    nexts = []
+    for d in range(1, p + 1):
+        nxt = f"%p{d + 1}" if d < p else "%zero"
+        bwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
+                f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
+                f"      %u{d} = arith.mulf %L{d}, %v : f64",
+                f"      %n{d} = arith.addf {nxt}, %u{d} : f64"]
+        nexts.append(f"%n{d}")
+    bwd += [f"      scf.yield {', '.join(nexts)} : {f64s}"]
+    return "\n".join(
+        [f"func.func @lines_solve_p{p}(%L: memref<?xf64>, %copy: memref<?xi64>, %len: memref<?xi32>, "
+         "%warp_off: memref<?xi64>, %s: memref<?xf64>, %z: memref<?xf64>) attributes {mir.kernel, mir.noalias} {",
+         "  %c0 = arith.constant 0 : index", "  %c1 = arith.constant 1 : index",
+         "  %c32 = arith.constant 32 : index", f"  %cn = arith.constant {p + 1} : index",
+         "  %zero = arith.constant 0.0 : f64"] +
+        [f"  %c32x{d} = arith.constant {32 * d} : index" for d in range(1, p + 1)] +
+        ["  %nb = memref.dim %len, %c0 : memref<?xi32>",
+         "  scf.parallel (%q) = (%c0) to (%nb) step (%c1) {",
+         "    %mi = memref.load %len[%q] : memref<?xi32>", "    %m = arith.index_cast %mi : i32 to index",
+         "    %last = arith.subi %m, %c1 : index",
+         "    %wq = arith.divui %q, %c32 : index", "    %lane = arith.remui %q, %c32 : index",
+         "    %bi = memref.load %warp_off[%wq] : memref<?xi64>", "    %base = arith.index_cast %bi : i64 to index",
+         f"    %f:{p} = scf.for %r = %c0 to %m step %c1 iter_args({zeros}) -> ({f64s}) {{"] + fwd +
+        ["    }", f"    %g:{p} = scf.for %k = %c0 to %m step %c1 iter_args({pzeros}) -> ({f64s}) {{"] + bwd +
+        ["    }", "    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.warps_per_block = 4 : i64}",
+         "  return", "}", ""])
+
+
+def emit_lines(p=3):
+    """The per-iteration kernels of the node-line smoother at degree p (NodeLines::step):
+    lines_residual0 / lines_residual, lines_update_first0 / first / next, lines_solve."""
+    return "".join([_lines_residual(p, False), _lines_residual(p, True)] +
+                   [_lines_update(p, k) for k in ("first0", "first", "next")] + [_lines_solve(p)])
