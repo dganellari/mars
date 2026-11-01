@@ -938,3 +938,21 @@ small eigenvalues of the preconditioned operator; with identical elements they c
 removes them in a few iterations, with varying elements they spread. These host runs solve the
 coarse level exactly; on the GPU, BoomerAMG on the p = 1 matrix may become the next limit once
 the smoother is fixed (BoomerAMG alone needs 128 iterations on the wing's p = 1 matrix).
+
+### Element lines of the whole wing mesh
+
+`scripts/hex_mesh_lines.py` builds the node-line smoother's element lines for the whole mesh
+(thin axis per element, chained through faces across the thin axis of both elements) and cuts
+them with the driver's partition (Morton order of the centroids, equal chunks). 14.6M chain links;
+99.9% of the elements are in a line of at least 2; 507,707 lines, the longest 220 elements,
+element-weighted mean length 65 (65.8% of the elements in lines of 10-99, 30.8% in 100-999). Every
+aspect-ratio class is covered (99.7-99.9% in lines). Cut by the partition:
+
+| ranks | links cut | element-weighted mean piece | elements in pieces of 2-9 / 10-99 / 100+ |
+|---|---|---|---|
+| 64 | 1.3% | 37 | 5.3% / 90.2% / 4.4% |
+| 512 | 2.8% | 28 | 9.3% / 88.5% / 1.8% |
+| 4096 | 5.9% | 20 | 22.2% / 76.5% / 0.6% |
+
+So a GPU smoother can keep the present partition and cut lines at rank boundaries; a partition
+that keeps lines whole would matter from a few thousand ranks on.
