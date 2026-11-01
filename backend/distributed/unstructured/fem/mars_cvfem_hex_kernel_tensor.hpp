@@ -2,6 +2,7 @@
 
 #include "mars_cvfem_hex_kernel.hpp"
 #include "mars_cvfem_hex_kernel_common.hpp"
+#include "mars_cvfem_row_map_format.hpp"
 
 namespace mars {
 namespace fem {
@@ -26,12 +27,19 @@ namespace fem {
 // Best for: Architectures with abundant registers and fast atomics (GH200)
 // =============================================================================
 
-// ColumnMap (graph mode): d_elemCols, the row map's (mars_cvfem_row_map.hpp), gives each element row the CSR
-// offset of every column, and ~0u for a row not assembled here: the scatter needs no ownership test, no
-// diagonal pointer and no binary search, and sends the same atomics. It is launched with BlockSize threads,
+// ColumnMap: d_elemCols, the row map's (mars_cvfem_row_map.hpp), gives each element row the CSR offset of
+// every column, a byte each: the scatter needs no ownership test, no diagonal pointer and no binary search,
+// and sends the same atomics. A row longer than the map encodes takes the search of the kernel without the
+// map, so LumpMissing must be the map's. CompactMap must be the map's too (CvfemRowMap::compact): 4 bits per
+// column and no searched rows. It is launched with BlockSize threads,
 // and on AMD says so: without a bound the compiler assumes 1024 threads per block and caps a thread at 128
 // VGPRs, and this kernel then spills. CUDA allows 255 registers per thread either way.
-template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false, bool ColumnMap = false>
+template<typename KeyType,
+         typename RealType,
+         int BlockSize    = 256,
+         bool LumpMissing = false,
+         bool ColumnMap   = false,
+         bool CompactMap  = false>
 __global__ void
 #if defined(__HIPCC__)
 __attribute__((amdgpu_flat_work_group_size(1, ColumnMap ? BlockSize : 1024)))
@@ -63,7 +71,7 @@ cvfem_hex_assembly_kernel_tensor(
     const uint8_t* __restrict__ d_ownership,
     CSRMatrix<RealType>* matrix,
     RealType* __restrict__ d_rhs,
-    const unsigned* __restrict__ d_elemCols = nullptr)
+    const uint8_t* __restrict__ d_elemCols = nullptr)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
@@ -254,47 +262,57 @@ cvfem_hex_assembly_kernel_tensor(
     // ==========================================================================
     // Assemble into global CSR matrix
     // ==========================================================================
+    // ColumnMap: the element's 64 column bytes, or 32 if compact, in 16-byte loads
+    constexpr int ColWords = CompactMap ? 8 : 16;
+    [[maybe_unused]] unsigned rowCols[ColWords];
     if constexpr (ColumnMap) {
-        static_assert(LumpMissing, "the row map lumps the columns outside the graph pattern");
-        // the element's 8 column words are 32 contiguous bytes: two 16-byte loads
-        const uint4* words = reinterpret_cast<const uint4*>(d_elemCols + size_t(elemIdx) * 8);
-        const uint4 w0 = words[0], w1 = words[1];
-        const unsigned rowCols[8] = {w0.x, w0.y, w0.z, w0.w, w1.x, w1.y, w1.z, w1.w};
+        const uint4* words = reinterpret_cast<const uint4*>(d_elemCols + size_t(elemIdx) * ColWords * 4);
         #pragma unroll
-        for (int i = 0; i < 8; ++i) {
-            const unsigned cols = rowCols[i];
-            if (cols == ~0u) continue;
-            const int row_dof = dofs[i];
-            atomicAdd(&d_rhs[row_dof], rhs[i]);
-            RealType* row = matrix->values + matrix->rowPtr[row_dof];
-            // column i is the row's own DOF, so its offset is the diagonal's
-            const unsigned diag = (cols >> (4 * i)) & 0xF;
-            RealType diagonal = 0.0;
-            #pragma unroll
-            for (int j = 0; j < 8; ++j) {
-                const unsigned offset = (cols >> (4 * j)) & 0xF;
-                const RealType value  = lhs[i * 8 + j];
-                if (offset == 0xF || value == 0.0) continue;
-                if (offset == diag) diagonal += value;
-                else atomicAdd(&row[offset], value);
-            }
-            if (diagonal != 0.0) atomicAdd(&row[diag], diagonal);
+        for (int k = 0; k < ColWords / 4; ++k) {
+            const uint4 w = words[k];
+            rowCols[4 * k] = w.x, rowCols[4 * k + 1] = w.y, rowCols[4 * k + 2] = w.z, rowCols[4 * k + 3] = w.w;
         }
-        return;
     }
-    const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
+    [[maybe_unused]] const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
-        KeyType row_node = nodes[i];
         int row_dof = dofs[i];
-        uint8_t ownership = own[i];
 
-        // See cvfem_hex_assembly_kernel for the row_dof >= numOwnedRows
-        // rationale: periodic DOF collapse can redirect an owned slave to a
-        // master ghost row that exists in CSR for addressability but is never
-        // solved/exchanged. The master rank assembles that stencil itself
-        // from its periodic-image halo elements.
-        if (ownership == 0 || row_dof < 0 || row_dof >= numOwnedRows) continue;
+        if constexpr (ColumnMap) {
+            auto offset = [&](int j) -> unsigned {
+                if constexpr (CompactMap) return (rowCols[i] >> (4 * j)) & 0xF;
+                else return (rowCols[2 * i + (j >> 2)] >> (8 * (j & 3))) & 0xFF;
+            };
+            constexpr unsigned none = CompactMap ? rowMapCompactNone : rowMapNone;
+            // column i is the row's own DOF: its offset is the diagonal's, or marks a row to skip or to search
+            const unsigned diag = offset(i);
+            if (diag == none) continue;
+            if (CompactMap || diag != rowMapSearch) {
+                atomicAdd(&d_rhs[row_dof], rhs[i]);
+                RealType* row = matrix->values + matrix->rowPtr[row_dof];
+                RealType diagonal = 0.0;
+                #pragma unroll
+                for (int j = 0; j < 8; ++j) {
+                    const unsigned o     = offset(j);
+                    const RealType value = lhs[i * 8 + j];
+                    if (o == none || value == 0.0) continue;
+                    if (o == diag) diagonal += value;
+                    else atomicAdd(&row[o], value);
+                }
+                if (diagonal != 0.0) atomicAdd(&row[diag], diagonal);
+                continue;
+            }
+            // a row longer than the map encodes: the search below
+        } else {
+            uint8_t ownership = own[i];
+
+            // See cvfem_hex_assembly_kernel for the row_dof >= numOwnedRows
+            // rationale: periodic DOF collapse can redirect an owned slave to a
+            // master ghost row that exists in CSR for addressability but is never
+            // solved/exchanged. The master rank assembles that stencil itself
+            // from its periodic-image halo elements.
+            if (ownership == 0 || row_dof < 0 || row_dof >= numOwnedRows) continue;
+        }
 
         // Assemble RHS
         atomicAdd(&d_rhs[row_dof], rhs[i]);

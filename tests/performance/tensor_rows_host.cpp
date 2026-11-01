@@ -1,7 +1,8 @@
 // Included after the kernels by test_cvfem_tensor_rows.py. Hex meshes with scrambled element order, DOF
-// numbers and ownership, ghost rows, a node without a DOF and a periodic pair of corners sharing a DOF: the
-// rows kernel and the one-thread tensor kernel, with and without the row map, must match tensor_faces
-// (direct and aggregated) entry by entry.
+// numbers and ownership, ghost rows, a node without a DOF and a periodic pair of corners sharing a DOF, and
+// unstructured ones: hexes swept from a fan of quads around one node. The rows kernel and the one-thread
+// tensor kernel, with and without the row map, must match tensor_faces entry by entry, in the graph and the
+// full assembly, including the blocks and rows the map sends straight to the matrix.
 using namespace mars::fem;
 using Key = uint64_t;
 
@@ -22,18 +23,23 @@ void shuffle(std::vector<T>& v, unsigned seed)
     for (size_t i = v.size(); i > 1; --i) std::swap(v[i - 1], v[next(seed) % i]);
 }
 
-// the graph pattern: hex edges and the diagonal, as buildGraphSparsity
-void buildPattern(Mesh& m, const std::vector<std::pair<int, int>>& extra)
+// the graph pattern (hex edges and the diagonal, as buildGraphSparsity) or the full one (every pair of an
+// element's nodes, as buildFullSparsity), plus extra entries
+void buildPattern(Mesh& m, bool full, const std::vector<std::pair<int, int>>& extra = {})
 {
     static const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     std::vector<std::vector<int>> rows(m.numTotal);
     for (int r = 0; r < m.numTotal; ++r) rows[r].push_back(r);
     for (size_t e = 0; e < m.numElements; ++e)
-        for (auto& ed : edges)
-        {
-            const int a = m.nodeToDof[m.conn[ed[0]][e]], b = m.nodeToDof[m.conn[ed[1]][e]];
-            if (a >= 0 && b >= 0) rows[a].push_back(b), rows[b].push_back(a);
-        }
+        for (int a = 0; a < 8; ++a)
+            for (int b = 0; b < 8; ++b)
+            {
+                const bool edge = std::any_of(std::begin(edges), std::end(edges), [&](const int* ed) {
+                    return (ed[0] == a && ed[1] == b) || (ed[0] == b && ed[1] == a);
+                });
+                const int da = m.nodeToDof[m.conn[a][e]], db = m.nodeToDof[m.conn[b][e]];
+                if (da >= 0 && db >= 0 && (full || edge)) rows[da].push_back(db);
+            }
     for (auto [r, c] : extra) rows[r].push_back(c);
     m.rowPtr = {0}, m.colInd.clear(), m.diagPtr.assign(m.numTotal, -1);
     for (int r = 0; r < m.numTotal; ++r)
@@ -64,6 +70,27 @@ void fields(Mesh& m, int nodes)
     }
 }
 
+// Scrambled DOF numbers, owned rows first, about one node in 5 a ghost; slave takes master's DOF (periodic)
+// and noDof gets none (-1: no such node)
+void numberDofs(Mesh& m, int nodes, unsigned seed, int master, int slave, int noDof)
+{
+    std::vector<int> owned, ghost;
+    m.own.assign(nodes, 0);
+    for (int n = 0; n < nodes; ++n)
+    {
+        if (n == slave || n == noDof) continue;
+        if (n == master || (n * 7919u) % 5 != 0) owned.push_back(n), m.own[n] = 1;
+        else ghost.push_back(n);
+    }
+    shuffle(owned, seed + 1), shuffle(ghost, seed + 2);
+    m.nodeToDof.assign(nodes, -1);
+    int dof = 0;
+    for (int n : owned) m.nodeToDof[n] = dof++;
+    for (int n : ghost) m.nodeToDof[n] = dof++;
+    if (slave >= 0) m.nodeToDof[slave] = m.nodeToDof[master], m.own[slave] = 1;
+    m.numTotal = dof;
+}
+
 // nx x ny x nz hexes, elements in scrambled order; corners (0,0,0) and (nx,0,0) share a DOF (periodic)
 Mesh structured(int nx, int ny, int nz, unsigned seed)
 {
@@ -90,37 +117,61 @@ Mesh structured(int nx, int ny, int nz, unsigned seed)
             }
     fields(m, nodes);
 
-    const int master = node(0, 0, 0), slave = node(nx, 0, 0), noDof = node(nx / 2, ny / 2, nz / 2);
-    std::vector<int> owned, ghost;
-    m.own.assign(nodes, 0);
-    for (int n = 0; n < nodes; ++n)
-    {
-        if (n == slave || n == noDof) continue;
-        if (n == master || (n * 7919u) % 5 != 0) owned.push_back(n), m.own[n] = 1;
-        else ghost.push_back(n);
-    }
-    shuffle(owned, seed + 1), shuffle(ghost, seed + 2);
-    m.nodeToDof.assign(nodes, -1);
-    int dof = 0;
-    for (int n : owned) m.nodeToDof[n] = dof++;
-    for (int n : ghost) m.nodeToDof[n] = dof++;
-    m.nodeToDof[slave] = m.nodeToDof[master], m.own[slave] = 1;
-    m.numTotal = dof;
-    buildPattern(m, {});
+    numberDofs(m, nodes, seed, node(0, 0, 0), node(nx, 0, 0), node(nx / 2, ny / 2, nz / 2));
     return m;
 }
 
-// 32 elements without a shared node: 256 rows in one block, one more than the rows kernels take
+// Hexes swept nz layers up from a fan of k quads around the node at the origin (centre, a_i, b_i, a_i+1):
+// the swept centre nodes have k + 2 edge neighbours and up to 6k + 8 full-pattern neighbours.
+Mesh fan(int k, int nz, unsigned seed)
+{
+    Mesh m;
+    const int perLayer = 1 + 2 * k;
+    auto a = [&](int i, int l) { return l * perLayer + 1 + (i % k); };
+    auto b = [&](int i, int l) { return l * perLayer + 1 + k + i; };
+    std::vector<int> order(k * nz);
+    std::iota(order.begin(), order.end(), 0);
+    shuffle(order, seed);
+    m.numElements = order.size();
+    for (int cell : order)
+    {
+        const int i = cell % k, l = cell / k;
+        const int quad[2][4] = {{l * perLayer, a(i, l), b(i, l), a(i + 1, l)},
+                                {(l + 1) * perLayer, a(i, l + 1), b(i, l + 1), a(i + 1, l + 1)}};
+        for (int c = 0; c < 8; ++c) m.conn[c].push_back(Key(quad[c / 4][c % 4]));
+    }
+    const int nodes = perLayer * (nz + 1);
+    const double pi = 3.14159265358979;
+    for (int l = 0; l <= nz; ++l)
+    {
+        m.x.push_back(.05 * l), m.y.push_back(0), m.z.push_back(l);
+        for (int i = 0; i < k; ++i)
+            m.x.push_back(std::cos(2 * pi * i / k)), m.y.push_back(std::sin(2 * pi * i / k)), m.z.push_back(l + .1 * std::sin(i));
+        for (int i = 0; i < k; ++i)
+            m.x.push_back(1.6 * std::cos(2 * pi * (i + .5) / k)), m.y.push_back(1.6 * std::sin(2 * pi * (i + .5) / k)),
+                m.z.push_back(l + .1 * std::cos(i));
+    }
+    fields(m, nodes);
+    numberDofs(m, nodes, seed, -1, -1, -1);
+    return m;
+}
+
+// 32 elements without a shared node: 256 rows in one block, more than the rows kernel takes
 Mesh disjoint()
 {
     Mesh m;
     m.numElements = 32;
     for (int e = 0; e < 32; ++e)
         for (int c = 0; c < 8; ++c) m.conn[c].push_back(Key(e * 8 + c));
-    for (int n = 0; n < 256; ++n) m.x.push_back(n), m.y.push_back(n % 7), m.z.push_back(n % 3), m.nodeToDof.push_back(n);
+    static const int corner[8][3] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}};
+    for (int n = 0; n < 256; ++n)
+    {
+        const int e = n / 8, c = n % 8;
+        m.x.push_back(2 * e + corner[c][0] + .1 * std::sin(n)), m.y.push_back(corner[c][1] + .1 * std::cos(n));
+        m.z.push_back(corner[c][2] + .05 * std::sin(.7 * n)), m.nodeToDof.push_back(n);
+    }
     m.own.assign(256, 1), m.numTotal = 256;
     fields(m, 256);
-    buildPattern(m, {});
     return m;
 }
 
@@ -144,7 +195,7 @@ System faces(Mesh& m, Kernel kernel, int block)
 
 // the one-thread tensor kernel; elemCols selects the row map scatter
 template<class Kernel>
-System tensor(Mesh& m, Kernel kernel, const unsigned* elemCols)
+System tensor(Mesh& m, Kernel kernel, const uint8_t* elemCols)
 {
     System s{std::vector<double>(m.colInd.size(), 0), std::vector<double>(m.numTotal, 0)};
     CSRMatrix<double> A{m.rowPtr.data(), m.colInd.data(), s.values.data(), m.diagPtr.data(), m.numTotal, int(m.colInd.size())};
@@ -156,24 +207,26 @@ System tensor(Mesh& m, Kernel kernel, const unsigned* elemCols)
     return s;
 }
 
-System rows(Mesh& m, CvfemRowMap& map)
+template<class Kernel>
+System rows(Mesh& m, Kernel kernel, CvfemRowMap& map)
 {
     System s{std::vector<double>(m.colInd.size(), 0), std::vector<double>(m.numTotal, 0)};
     CSRMatrix<double> A{m.rowPtr.data(), m.colInd.data(), s.values.data(), m.diagPtr.data(), m.numTotal, int(m.colInd.size())};
-    hostLaunch(size_t(map.numBlocks), 512, cvfem_hex_assembly_kernel_tensor_rows<Key, double>, m.conn[0].data(),
+    hostLaunch(size_t(map.numBlocks), 512, kernel, m.conn[0].data(),
                m.conn[1].data(), m.conn[2].data(), m.conn[3].data(), m.conn[4].data(), m.conn[5].data(), m.conn[6].data(),
                m.conn[7].data(), m.numElements, m.x.data(), m.y.data(), m.z.data(), m.gamma.data(), m.phi.data(),
                m.beta.data(), m.gx.data(), m.gy.data(), m.gz.data(), m.mdot.data(), m.ax.data(), m.ay.data(), m.az.data(),
-               &A, s.rhs.data(), map.view);
+               (const int*)m.nodeToDof.data(), &A, s.rhs.data(), map.view);
     return s;
 }
 
-CvfemRowMap& build(Mesh& m, CvfemRowMap& map)
+CvfemRowMap& build(Mesh& m, bool full, CvfemRowMap& map)
 {
     CSRMatrix<double> A{m.rowPtr.data(), m.colInd.data(), nullptr, m.diagPtr.data(), m.numTotal, int(m.colInd.size())};
     buildCvfemRowMap<Key, double>(m.conn[0].data(), m.conn[1].data(), m.conn[2].data(), m.conn[3].data(),
                                   m.conn[4].data(), m.conn[5].data(), m.conn[6].data(), m.conn[7].data(), m.numElements,
-                                  m.nodeToDof.data(), m.own.data(), A, map);
+                                  m.nodeToDof.data(), m.own.data(), A,
+                                  full ? CvfemRowMapPattern::Full : CvfemRowMapPattern::Graph, map);
     return map;
 }
 
@@ -186,49 +239,101 @@ bool same(const char* name, const System& a, const System& ref)
         nonzero += ref.values[k] != 0;
     for (size_t k = 0; k < ref.rhs.size(); ++k)
         diff = std::max(diff, std::abs(a.rhs[k] - ref.rhs[k])), scale = std::max(scale, std::abs(ref.rhs[k]));
-    const bool ok = nonzero > 0 && diff <= 1e-12 * scale;
+    const bool ok = nonzero > 0 && std::isfinite(scale) && diff <= 1e-12 * scale;
     std::printf("  %-36s max |diff| %.3e of %.3e (%zu nonzero entries): %s\n", name, diff, scale, nonzero, ok ? "PASS" : "FAIL");
     return ok;
 }
 
-template<class F>
-bool throws(const char* name, F f)
+// the map paths a check took: blocks sent straight to the matrix for too many rows or too many doubles, rows
+// searched, shared-memory rows longer than the 8 doubles of a structured graph row
+struct Paths
 {
-    try { f(); }
-    catch (const std::runtime_error& e)
+    bool direct = false, tooBig = false, search = false, wide = false, compact = false, bytes = false;
+};
+
+// every kernel against tensor_faces on one mesh and pattern; extraPerRow more columns in each row, which no
+// element adds to, lengthen the rows
+bool check(const char* name, Mesh& m, bool full, Paths& paths, int extraPerRow = 0)
+{
+    std::vector<std::pair<int, int>> extra;
+    for (int r = 0; r < m.numTotal; ++r)
+        for (int j = 0; j < extraPerRow; ++j) extra.push_back({r, (r + 1 + 3 * j) % m.numTotal});
+    buildPattern(m, full, extra);
+    int longest = 0;
+    for (int r = 0; r < m.numTotal; ++r) longest = std::max(longest, m.rowPtr[r + 1] - m.rowPtr[r]);
+    std::printf("%s, %s pattern (%zu elements, %d DOFs, longest row %d)\n", name, full ? "full" : "graph",
+                m.numElements, m.numTotal, longest);
+    bool ok = true;
+    System ref;
+    if (full)
     {
-        std::printf("  %-36s throws \"%s\": PASS\n", name, e.what());
-        return true;
+        ref = faces(m, cvfem_hex_assembly_kernel_tensor_faces<Key, double, 256, false, false>, 256);
+        ok  = same("tensor", tensor(m, cvfem_hex_assembly_kernel_tensor<Key, double, 256, false>, nullptr), ref) && ok;
     }
-    std::printf("  %-36s does not throw: FAIL\n", name);
-    return false;
+    else
+    {
+        ref = faces(m, cvfem_hex_assembly_kernel_tensor_faces<Key, double, 256, true, false>, 256);
+        ok  = same("tensor_faces aggregated",
+                   faces(m, cvfem_hex_assembly_kernel_tensor_faces<Key, double, 512, true, true>, 512), ref) && ok;
+        ok  = same("tensor", tensor(m, cvfem_hex_assembly_kernel_tensor<Key, double, 256, true>, nullptr), ref) && ok;
+    }
+    CvfemRowMap map;
+    build(m, full, map);
+    int widest = 0;
+    for (int b = 0; b < map.numBlocks; ++b)
+        for (int k = map.view.blockRowStart[b]; k < map.view.blockRowStart[b + 1]; ++k)
+        {
+            const int end = k + 1 < map.view.blockRowStart[b + 1] ? map.view.rowBase[k + 1] : map.view.blockSize[b];
+            widest = std::max(widest, end - int(map.view.rowBase[k]));
+        }
+    std::printf("  row map: %d blocks (%d direct), %d block rows, widest %d doubles, %d searched rows, %s columns\n",
+                map.numBlocks, map.numDirectBlocks, map.numBlockRows, widest, map.numSearchRows,
+                map.compact ? "4-bit" : "byte");
+    paths.direct |= map.numDirectBlocks > 0, paths.search |= map.numSearchRows > 0, paths.wide |= widest > 8;
+    paths.tooBig |= extraPerRow > 0 && map.numDirectBlocks > 0;
+    paths.compact |= map.compact, paths.bytes |= !map.compact;
+    // the kernels must match the map's format, as the assembler picks them
+    const auto mapKernel = full ? (map.compact ? cvfem_hex_assembly_kernel_tensor<Key, double, 256, false, true, true>
+                                               : cvfem_hex_assembly_kernel_tensor<Key, double, 256, false, true, false>)
+                                : (map.compact ? cvfem_hex_assembly_kernel_tensor<Key, double, 256, true, true, true>
+                                               : cvfem_hex_assembly_kernel_tensor<Key, double, 256, true, true, false>);
+    const System mapped  = tensor(m, mapKernel, map.view.elemCols);
+    ok = same("tensor_map", mapped, ref) && ok;
+    const auto rowsKernel = map.compact ? cvfem_hex_assembly_kernel_tensor_rows<Key, double, true>
+                                        : cvfem_hex_assembly_kernel_tensor_rows<Key, double, false>;
+    ok = same("tensor_rows", rows(m, rowsKernel, map), ref) && ok;
+    return ok;
 }
 
 int main()
 {
     bool ok = true;
-    for (auto [nx, ny, nz] : {std::array<int, 3>{7, 5, 3}, std::array<int, 3>{4, 4, 4}})
+    Paths paths;
+    for (bool full : {false, true})
     {
-        Mesh m = structured(nx, ny, nz, 12345u + nx);
-        std::printf("%dx%dx%d hexes (%zu elements, %d DOFs)\n", nx, ny, nz, m.numElements, m.numTotal);
-        const System ref = faces(m, cvfem_hex_assembly_kernel_tensor_faces<Key, double, 256, true, false>, 256);
-        ok = same("tensor_faces aggregated", faces(m, cvfem_hex_assembly_kernel_tensor_faces<Key, double, 512, true, true>, 512), ref) && ok;
-        CvfemRowMap map;
-        build(m, map);
-        std::printf("  row map: %d blocks, %d block rows\n", map.numBlocks, map.numBlockRows);
-        ok = same("tensor", tensor(m, cvfem_hex_assembly_kernel_tensor<Key, double, 256, true>, nullptr), ref) && ok;
-        ok = same("tensor_map", tensor(m, cvfem_hex_assembly_kernel_tensor<Key, double, 256, true, true>, map.view.elemCols), ref) && ok;
-        ok = same("tensor_rows", rows(m, map), ref) && ok;
+        Mesh a = structured(7, 5, 3, 12345u + 7), b = structured(4, 4, 4, 12345u + 4);
+        ok = check("7x5x3 hexes", a, full, paths) && ok;
+        ok = check("4x4x4 hexes", b, full, paths) && ok;
+        // valence 8, as at the irregular nodes of unstructured hex meshes: graph rows of 11 entries
+        Mesh f8 = fan(8, 3, 99u);
+        ok = check("fan of 8 quads, 3 layers", f8, full, paths) && ok;
+        // valence 48: graph rows of 51 entries, full rows of up to 3 * 97
+        Mesh f48 = fan(48, 3, 7u);
+        ok = check("fan of 48 quads, 3 layers", f48, full, paths) && ok;
+        // valence 253, one layer: graph rows of 256 entries, so the lumped graph rows are searched too
+        Mesh f253 = fan(253, 1, 5u);
+        ok = check("fan of 253 quads, 1 layer", f253, full, paths) && ok;
+        Mesh d = disjoint();
+        ok = check("32 disjoint hexes", d, full, paths) && ok;
+        // about 88 rows per block of 48 doubles or more: more than the shared memory holds
+        Mesh w = structured(4, 4, 4, 12345u + 40);
+        ok = check("4x4x4 hexes, 40 more columns per row", w, full, paths, 40) && ok;
     }
-    std::printf("limits\n");
-    Mesh d = disjoint();
-    ok = throws("256 rows in a block", [&] { CvfemRowMap map; build(d, map); }) && ok;
-    // the periodic corner's row (owned, 7 entries) gains 3 columns of the far corner: 10 entries
-    Mesh m = structured(3, 3, 2, 7u);
-    auto dofAt = [&](int i, int j, int k) { return m.nodeToDof[i + 4 * (j + 4 * k)]; };
-    const int row = dofAt(0, 0, 0);
-    buildPattern(m, {{row, dofAt(3, 3, 2)}, {row, dofAt(2, 3, 2)}, {row, dofAt(3, 2, 2)}});
-    ok = throws("a CSR row of more than 8 entries", [&] { CvfemRowMap map; build(m, map); }) && ok;
+    std::printf("paths taken: direct blocks %s, blocks too big for shared memory %s, searched rows %s, wide "
+                "shared-memory rows %s, 4-bit maps %s, byte maps %s\n",
+                paths.direct ? "yes" : "NO", paths.tooBig ? "yes" : "NO", paths.search ? "yes" : "NO",
+                paths.wide ? "yes" : "NO", paths.compact ? "yes" : "NO", paths.bytes ? "yes" : "NO");
+    ok = ok && paths.direct && paths.tooBig && paths.search && paths.wide && paths.compact && paths.bytes;
     std::printf("%s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

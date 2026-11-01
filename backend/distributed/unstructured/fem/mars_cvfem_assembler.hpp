@@ -104,38 +104,15 @@ public:
         int blockSize = config.blockSize;
         int numBlocks = (numElements + blockSize - 1) / blockSize;
 
-        // the two kernels that read the row map; the one-thread kernel declares 256 threads on AMD
-        const CvfemRowMap* map = config.rowMap;
-        if (map && map->numElements != numElements)
-            throw std::runtime_error("Config::rowMap was built for other elements");
+        const CvfemRowMap* map = rowMapFor(config, numElements, CvfemRowMapPattern::Graph);
         auto needMap = [&] {
             if (!map) throw std::runtime_error("tensor_map and tensor_rows need Config::rowMap (buildCvfemRowMap)");
         };
-        auto launchTensorMap = [&] {
-            cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true, true>
-                <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
-                    d_conn0, d_conn1, d_conn2, d_conn3,
-                    d_conn4, d_conn5, d_conn6, d_conn7,
-                    numElements,
-                    d_x, d_y, d_z,
-                    d_gamma, d_phi, d_beta,
-                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
-                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
-                    d_node_to_dof, d_ownership,
-                    d_matrix, d_rhs, map->view.elemCols
-                );
-        };
-        auto launchRows = [&] {
-            cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType><<<unsigned(map->numBlocks), 512, 0, config.stream>>>(
-                    d_conn0, d_conn1, d_conn2, d_conn3,
-                    d_conn4, d_conn5, d_conn6, d_conn7,
-                    numElements,
-                    d_x, d_y, d_z,
-                    d_gamma, d_phi, d_beta,
-                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
-                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
-                    d_matrix, d_rhs, map->view
-                );
+        auto launchMapped = [&](bool rows) {
+            launchRowMap<true>(rows, d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7,
+                               numElements, d_x, d_y, d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y,
+                               d_grad_phi_z, d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z, d_node_to_dof,
+                               d_ownership, d_matrix, d_rhs, *map, config.stream);
         };
 
         switch (config.variant) {
@@ -213,7 +190,7 @@ public:
 #elif defined(__HIPCC__)
                 if (map)
                 {
-                    launchRows();
+                    launchMapped(true);
                     break;
                 }
                 cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 512, true, true>
@@ -221,7 +198,7 @@ public:
 #else
                 if (map)
                 {
-                    launchTensorMap();
+                    launchMapped(false);
                     break;
                 }
                 cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
@@ -288,12 +265,12 @@ public:
 
             case CvfemKernelVariant::TensorMap:
                 needMap();
-                if (numElements > 0) launchTensorMap();
+                if (numElements > 0) launchMapped(false);
                 break;
 
             case CvfemKernelVariant::TensorRows:
                 needMap();
-                if (numElements > 0) launchRows();
+                if (numElements > 0) launchMapped(true);
                 break;
 
             case CvfemKernelVariant::TensorEarly:
@@ -503,6 +480,8 @@ public:
         int blockSize = config.blockSize;
         int numBlocks = (numElements + blockSize - 1) / blockSize;
 
+        const CvfemRowMap* map = rowMapFor(config, numElements, CvfemRowMapPattern::Full);
+
         // Full assembly supports kernel variants (but no diagonal lumping)
         switch (config.variant) {
             case CvfemKernelVariant::Original:
@@ -548,24 +527,20 @@ public:
                 break;
 
             case CvfemKernelVariant::Tensor:
-#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
-                if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType>
-                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
-#else
-                cvfem_hex_assembly_kernel_tensor<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
-#endif
-                    d_conn0, d_conn1, d_conn2, d_conn3,
-                    d_conn4, d_conn5, d_conn6, d_conn7,
-                    numElements,
-                    d_x, d_y, d_z,
-                    d_gamma, d_phi, d_beta,
-                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
-                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
-                    d_node_to_dof, d_ownership,
-                    d_matrix, d_rhs
-                );
-                break;
+                // With a row map the same kernels as the graph assembly: the rows kernel on AMD, the one-thread
+                // kernel with the map's column offsets on NVIDIA. Without one, tensor_faces: the callers that
+                // assemble once do not build a map, because it costs more than it saves for one assembly
+                // (hex192, one rank: map build 16 ms + 6.2 ms against 9.6 ms on H100, 53 + 6.3 against 19.3 ms
+                // on MI300A; the one-thread kernel takes 12.1 and tensor_early 25.8 ms).
+                if (map) {
+                    if (numElements > 0)
+                        launchRowMap<false>(rowMapRows, d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6,
+                                            d_conn7, numElements, d_x, d_y, d_z, d_gamma, d_phi, d_beta, d_grad_phi_x,
+                                            d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                                            d_node_to_dof, d_ownership, d_matrix, d_rhs, *map, config.stream);
+                    break;
+                }
+                [[fallthrough]];
 
             case CvfemKernelVariant::TensorFaces:
                 if (numElements == 0) break;
@@ -688,6 +663,59 @@ public:
             case CvfemKernelVariant::TensorRows: return "tensor_rows";
             case CvfemKernelVariant::TensorEarly: return "tensor_early";
             default: return "unknown";
+        }
+    }
+
+private:
+#if defined(__HIPCC__)
+    static constexpr bool rowMapRows = true;
+#else
+    static constexpr bool rowMapRows = false;
+#endif
+
+    static const CvfemRowMap* rowMapFor(const Config& config, size_t numElements, CvfemRowMapPattern pattern)
+    {
+        const CvfemRowMap* map = config.rowMap;
+        if (map && map->numElements != numElements)
+            throw std::runtime_error("Config::rowMap was built for other elements");
+        if (map && map->lumped != (pattern == CvfemRowMapPattern::Graph))
+            throw std::runtime_error("Config::rowMap was built for the other assembly (graph or full)");
+        return map;
+    }
+
+    // The two kernels that read a row map: the rows kernel, and the one-thread kernel with the map's column
+    // offsets, which declares 256 threads on AMD. Lump is the map's, for the rows it leaves to a CSR search.
+    template<bool Lump>
+    static void launchRowMap(bool rows,
+                             const KeyType* d_conn0, const KeyType* d_conn1, const KeyType* d_conn2,
+                             const KeyType* d_conn3, const KeyType* d_conn4, const KeyType* d_conn5,
+                             const KeyType* d_conn6, const KeyType* d_conn7, size_t numElements,
+                             const RealType* d_x, const RealType* d_y, const RealType* d_z,
+                             const RealType* d_gamma, const RealType* d_phi, const RealType* d_beta,
+                             const RealType* d_grad_phi_x, const RealType* d_grad_phi_y,
+                             const RealType* d_grad_phi_z, const RealType* d_mdot,
+                             const RealType* d_areaVec_x, const RealType* d_areaVec_y,
+                             const RealType* d_areaVec_z, const int* d_node_to_dof, const uint8_t* d_ownership,
+                             CSRMatrix<RealType>* d_matrix, RealType* d_rhs, const CvfemRowMap& map,
+                             cudaStream_t stream)
+    {
+        if (rows)
+        {
+            auto kernel = map.compact ? cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType, true>
+                                      : cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType, false>;
+            kernel<<<unsigned(map.numBlocks), 512, 0, stream>>>(
+                d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7, numElements, d_x, d_y,
+                d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x,
+                d_areaVec_y, d_areaVec_z, d_node_to_dof, d_matrix, d_rhs, map.view);
+        }
+        else
+        {
+            auto kernel = map.compact ? cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, Lump, true, true>
+                                      : cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, Lump, true, false>;
+            kernel<<<unsigned((numElements + 255) / 256), 256, 0, stream>>>(
+                d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7, numElements, d_x, d_y,
+                d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x,
+                d_areaVec_y, d_areaVec_z, d_node_to_dof, d_ownership, d_matrix, d_rhs, map.view.elemCols);
         }
     }
 };

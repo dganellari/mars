@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
     bool useExactCoords = false;
     int numIterations = 10;
     int blockSize = 256;
-    bool quiet = false;
+    bool quiet = false, rowMapAllowed = true, check = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
     for (int i = 1; i < argc; ++i) {
@@ -193,6 +193,7 @@ int main(int argc, char** argv) {
             else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
+            else if (v == "tensor_faces") kernelVariant = CvfemKernelVariant::TensorFaces;
             else if (v == "wmma_tensor")  kernelVariant = CvfemKernelVariant::WmmaTensor;
             else if (v == "wgmma_tensor") kernelVariant = CvfemKernelVariant::WgmmaTensor;
             else {
@@ -204,6 +205,10 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--quiet") {
             quiet = true;
+        } else if (arg == "--no-row-map") {
+            rowMapAllowed = false;
+        } else if (arg == "--check") {
+            check = true;
         } else if (arg[0] != '-' && meshFile.empty()) {
             // Positional argument (backward compatibility)
             meshFile = arg;
@@ -215,12 +220,15 @@ int main(int argc, char** argv) {
             std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
             std::cout << "\nOptions:" << std::endl;
             std::cout << "  --mesh=FILE         Mesh file (.mesh or .exo format) [REQUIRED]" << std::endl;
-            std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, original (default: original)" << std::endl;
+            std::cout << "  --kernel=VARIANT    tensor, tensor_faces, shmem, optimized, original (default: original)" << std::endl;
             std::cout << "  --block-size=N      CUDA block size (default: 256)" << std::endl;
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)" << std::endl;
             std::cout << "  --key-bits=32|64    SFC key size (default: 64)" << std::endl;
             std::cout << "  --exact-coords      Store exact original coordinates" << std::endl;
             std::cout << "  --quiet             Suppress detailed debug output" << std::endl;
+            std::cout << "  --no-row-map        tensor without the row map, as before it" << std::endl;
+            std::cout << "  --check             compare every matrix and RHS entry with the original kernel, exit 1 if"
+                         " they differ" << std::endl;
             std::cout << "\nBackward compatible positional syntax:" << std::endl;
             std::cout << "  " << argv[0] << " <mesh_file> [options]" << std::endl;
         }
@@ -508,6 +516,25 @@ int main(int argc, char** argv) {
     };
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
+    // Row map (one-time setup for tensor)
+    CvfemRowMap rowMap;
+    const bool useRowMap = rowMapAllowed && kernelVariant == CvfemKernelVariant::Tensor;
+    if (useRowMap) {
+        auto mapStart = std::chrono::high_resolution_clock::now();
+        buildCvfemRowMap<KeyType, RealType>(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
+            std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_nodeToDof.data(),
+            d_nodeOwnership.data(), h_matrix, CvfemRowMapPattern::Full, rowMap);
+        auto mapEnd = std::chrono::high_resolution_clock::now();
+        if (rank == 0)
+            std::cout << "Row map built in " << std::chrono::duration<float, std::milli>(mapEnd - mapStart).count()
+                      << " ms (run time): " << rowMap.bytes() / 1048576.0 << " MB, " << rowMap.numBlockRows
+                      << " block rows, " << rowMap.numDirectBlocks << " of " << rowMap.numBlocks
+                      << " blocks direct, " << rowMap.numSearchRows << " rows searched, "
+                      << (rowMap.compact ? "4-bit" : "byte") << " columns" << std::endl;
+    }
+
     // Launch assembly kernel with timing
     int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
@@ -520,6 +547,7 @@ int main(int argc, char** argv) {
         CvfemHexAssembler<KeyType, RealType>::Config config;
         config.blockSize = blockSize;
         config.variant = kernelVariant;
+        if (useRowMap) config.rowMap = &rowMap;
 
         CvfemHexAssembler<KeyType, RealType>::assembleFull(
             std::get<0>(d_conn).data(),
@@ -597,6 +625,58 @@ int main(int argc, char** argv) {
         std::cout << " ms\n";
     }
 
+    // --check: assemble with the original kernel into a second matrix and compare entry by entry
+    bool checkPassed = true;
+    if (check) {
+        cstone::DeviceVector<RealType> d_refValues(nnz, 0.0), d_refRhs(numOwnedDofs, 0.0);
+        MatrixType h_ref = h_matrix;
+        h_ref.values     = d_refValues.data();
+        MatrixType* d_ref;
+        cudaMalloc(&d_ref, sizeof(MatrixType));
+        cudaMemcpy(d_ref, &h_ref, sizeof(MatrixType), cudaMemcpyHostToDevice);
+        CvfemHexAssembler<KeyType, RealType>::Config refConfig;
+        refConfig.variant = CvfemKernelVariant::Original;
+        CvfemHexAssembler<KeyType, RealType>::assembleFull(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
+            std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_x.data(), d_y.data(),
+            d_z.data(), d_gamma.data(), d_phi.data(), d_beta.data(), d_grad_phi_x.data(), d_grad_phi_y.data(),
+            d_grad_phi_z.data(), d_mdot.data(), d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data(),
+            d_nodeToDof.data(), d_nodeOwnership.data(), d_ref, d_refRhs.data(), refConfig);
+        cudaCheckCall(cudaDeviceSynchronize());
+
+        const RealType *a = d_values.data(), *ra = d_refValues.data(), *b = d_rhs.data(), *rb = d_refRhs.data();
+        auto reduce = [](auto f, size_t n, auto op) {
+            return mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n), f,
+                                         RealType(0), op);
+        };
+        RealType local[4] = {
+            reduce([=] __host__ __device__(size_t k) { return fabs(a[k] - ra[k]); }, nnz, thrust::maximum<RealType>()),
+            reduce([=] __host__ __device__(size_t k) { return fabs(ra[k]); }, nnz, thrust::maximum<RealType>()),
+            reduce([=] __host__ __device__(size_t k) { return fabs(b[k] - rb[k]); }, numOwnedDofs,
+                   thrust::maximum<RealType>()),
+            reduce([=] __host__ __device__(size_t k) { return fabs(rb[k]); }, numOwnedDofs, thrust::maximum<RealType>())};
+        // a max-reduction can step over NaN, so count the non-finite entries separately
+        const RealType bad =
+            reduce([=] __host__ __device__(size_t k) { return RealType(!isfinite(a[k]) || !isfinite(ra[k])); }, nnz,
+                   thrust::plus<RealType>()) +
+            reduce([=] __host__ __device__(size_t k) { return RealType(!isfinite(b[k]) || !isfinite(rb[k])); },
+                   numOwnedDofs, thrust::plus<RealType>());
+        RealType global[4], globalBad;
+        MPI_Allreduce(local, global, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&bad, &globalBad, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        // the kernels add the same terms in different orders: allow rounding, relative to the largest entry
+        const RealType tol = 1e-12;
+        checkPassed = globalBad == 0 && global[1] > 0 && global[3] > 0 && global[0] <= tol * global[1] &&
+                      global[2] <= tol * global[3];
+        if (rank == 0)
+            std::cout << std::scientific << std::setprecision(3) << "check against original: matrix max |diff| "
+                      << global[0] << " of max |entry| " << global[1] << ", rhs max |diff| " << global[2]
+                      << " of max |entry| " << global[3] << ", non-finite " << std::defaultfloat << globalBad
+                      << std::scientific << ": " << (checkPassed ? "PASS" : "FAIL") << std::endl;
+        cudaFree(d_ref);
+    }
+
     // Compute matrix norm (L2/Frobenius)
     auto square_op = [] __host__ __device__ (RealType x) -> RealType {
         return x * x;
@@ -640,5 +720,5 @@ int main(int argc, char** argv) {
 
     cudaFree(d_matrix);
     MPI_Finalize();
-    return 0;
+    return checkPassed ? 0 : 1;
 }

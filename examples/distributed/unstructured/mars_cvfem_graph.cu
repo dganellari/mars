@@ -395,12 +395,14 @@ int main(int argc, char** argv) {
             std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
             std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
             std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
-            elementCount, d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix, rowMap);
+            elementCount, d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix, CvfemRowMapPattern::Graph, rowMap);
         auto mapEnd = std::chrono::high_resolution_clock::now();
         if (rank == 0)
             std::cout << "Row map built in " << std::chrono::duration<float, std::milli>(mapEnd - mapStart).count()
                       << " ms (run time): " << rowMap.bytes() / 1048576.0 << " MB, " << rowMap.numBlockRows
-                      << " block rows" << std::endl;
+                      << " block rows, " << rowMap.numDirectBlocks << " of " << rowMap.numBlocks
+                      << " blocks direct, " << rowMap.numSearchRows << " rows searched, "
+                      << (rowMap.compact ? "4-bit" : "byte") << " columns" << std::endl;
     }
 
     // Pack AoS node data (one-time, for TensorAoS variant)

@@ -137,7 +137,8 @@ int main(int argc, char** argv)
         cudaEvent_t m0, m1; cudaEventCreate(&m0); cudaEventCreate(&m1);
         cudaEventRecord(m0);
         buildCvfemRowMap<KeyType, RealType>(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
-                                            d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix, rowMap);
+                                            d_nodeToDof.data(), d_nodeOwnership.data(), h_matrix,
+                                            CvfemRowMapPattern::Graph, rowMap);
         cudaEventRecord(m1); cudaEventSynchronize(m1);
         float mapMs = 0; cudaEventElapsedTime(&mapMs, m0, m1);
         cudaEventDestroy(m0); cudaEventDestroy(m1);

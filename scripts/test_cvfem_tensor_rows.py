@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Host emulation of the row map build and the tensor_rows kernels, not a GPU test: one std::thread per GPU
-thread, a std::barrier per block. Checks tensor_rows and tensor_map entry by entry against tensor_faces."""
+thread, a std::barrier per block. Checks tensor_rows and tensor_map entry by entry against tensor_faces,
+graph and full assembly, structured and unstructured meshes."""
 import os
 from pathlib import Path
 import re
@@ -15,7 +16,8 @@ def body(name):
     text = (FEM / name).read_text()
     text = re.sub(r'^\s*#\s*(include|pragma once).*$', '', text, flags=re.M)
     # kernel<<<grid, block[, shared, stream]>>>(args) -> hostLaunch(grid, block, call kernel, args); the
-    # generic lambda lets the call deduce the kernel's template arguments, as a launch does
+    # generic lambda lets the call deduce the kernel's template arguments, as a launch does, and captures a
+    # kernel pointer chosen at run time
     def launch(m):
         depth, parts, cur = 0, [], ''
         for ch in m.group(2):
@@ -27,7 +29,7 @@ def body(name):
             else:
                 cur += ch
         parts.append(cur)
-        return f'hostLaunch({parts[0]}, {parts[1]}, [](auto... a) {{ {m.group(1)}(a...); }}, '
+        return f'hostLaunch({parts[0]}, {parts[1]}, [&](auto... a) {{ {m.group(1)}(a...); }}, '
     return re.sub(r'([\w:]+(?:<[^<>;]*>)?)<<<(.+?)>>>\(', launch, text)
 
 
@@ -122,7 +124,8 @@ void exclusive_scan(Policy, It first, It last, Out out) { std::exclusive_scan(fi
 }
 '''
 
-source = prologue + ''.join(body(f) for f in ['mars_cvfem_hex_kernel.hpp', 'mars_cvfem_hex_kernel_tensor.hpp',
+source = prologue + ''.join(body(f) for f in ['mars_cvfem_hex_kernel.hpp', 'mars_cvfem_row_map_format.hpp',
+                                               'mars_cvfem_hex_kernel_tensor.hpp',
                                                'mars_cvfem_hex_kernel_tensor_faces.hpp',
                                                'mars_cvfem_hex_kernel_tensor_rows.hpp', 'mars_cvfem_row_map.hpp'])
 with tempfile.TemporaryDirectory(prefix='mars-tensor-rows-host-') as tmp:
