@@ -8,6 +8,9 @@
 // Mesh: the unit cube as ne^3 trilinear hexahedra deformed by x += a sin(pi x) sin(pi y)
 // sin(pi z) (1,1,1), GLL nodes of degree p, q = p + 2 Gauss points. Geometry per Gauss
 // point on the GPU: w det J (BP1), the symmetric w det J J^-1 J^-T (BP3).
+// --stretch s divides z by s after the deformation: elements s times thinner in z than wide
+// (aspect ratio s at --deform 0), to see what stretched elements cost the solvers. u is taken
+// at s z, so it is the same vector at every s (up to rounding); BP1 applied to 1 sums to 1 / s.
 //
 // --spec bp1_tri | bp3_tri: the same operators from specs with `geometry = trilinear`;
 // the kernel reads the element's 8 corners and forms the geometry in registers. The
@@ -86,7 +89,7 @@
 // little. --block, --rotate, --block-dss and --dss-ptx are for one rank.
 //
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
-//                     [--deform 0.05] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
+//                     [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
 //                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t]
 //                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
@@ -128,6 +131,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kMaxQ = 9;   // Gauss points per axis at p = 7
 __constant__ double c_gll[kMaxQ];
+__constant__ double c_stretch;   // --stretch: z divided by it after the deformation
 
 // A Gauss rule passed by value: each multigrid level has its own (q = p + 2).
 struct Rule {
@@ -143,6 +147,7 @@ __device__ void lattice_vertex(int i, int j, int k, int ne, double deform, doubl
     x[2] = (double)k / ne;
     const double bump = deform * sin(kPi * x[0]) * sin(kPi * x[1]) * sin(kPi * x[2]);
     for (int d = 0; d < 3; ++d) x[d] += bump;
+    x[2] /= c_stretch;
 }
 
 // B = 0, the plain layout: this rank's box of n[0] x n[1] x n[2] elements at element
@@ -330,7 +335,8 @@ __global__ void exact_kernel(double* __restrict__ u, long long E, int ne, double
     element_corners(e, ne, deform, corners);
     const double r[3] = {c_gll[a], c_gll[b], c_gll[c]};
     trilinear(corners, r, x, J);
-    u[t] = sin(kPi * x[0]) * sin(kPi * x[1]) * sin(kPi * x[2]);
+    // Undo --stretch, so that u is the same vector at every stretch.
+    u[t] = sin(kPi * x[0]) * sin(kPi * x[1]) * sin(kPi * x[2] * c_stretch);
 }
 
 // The GLL Lagrange basis of degree P at xi.
@@ -798,7 +804,7 @@ struct Options {
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
     std::string cheb_interval = "mars", rhs = "discrete", mesh;
-    double deform = 0.05, tol = 1e-10;
+    double deform = 0.05, stretch = 1.0, tol = 1e-10;
     // PASS needs the true assembled residual at or below this. FCG stops on sqrt(<r,z>/<r0,z0>):
     // with the V-cycle at tol 1e-10 that left true residuals of 6.5e-10 to 1.9e-9.
     double true_tol = 1e-10;
@@ -833,6 +839,7 @@ int run(const Options& o)
     const std::vector<double>&B = fine.B, &Bt = fine.Bt, &D = fine.D, &Dt = fine.Dt, &DB = fine.DB, &gq = fine.gq,
                              &wq = fine.wq;
     BP_CK(cudaMemcpyToSymbol(c_gll, fine.zeta.data(), n * sizeof(double)));
+    BP_CK(cudaMemcpyToSymbol(c_stretch, &o.stretch, sizeof(double)));
     const int Bk = o.block ? o.block : o.ne;
     const bool blocked = o.block || o.rotate || !o.block_dss.empty();   // the block layout (one rank)
     const Layout layout{o.ne, blocked ? Bk : 0, o.ne / Bk, o.rotate ? 1 : 0, {box.nx, box.ny, box.nz},
@@ -1254,7 +1261,7 @@ int run(const Options& o)
     const bool converged = res.relative <= o.tol;
     const bool accurate = std::isfinite(true_rel) && true_rel <= o.true_tol;
     const bool pass = converged && accurate && std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
-                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 - 1.0) <= 1e-12) && (pde || err <= 1e-8 * umax) &&
+                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 * o.stretch - 1.0) <= 1e-12) && (pde || err <= 1e-8 * umax) &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
     if (root) {
@@ -1271,6 +1278,8 @@ int run(const Options& o)
             printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
                    o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
                    tri ? "trilinear (corners)" : "stored");
+            if (o.stretch != 1.0)
+                printf("  z divided by %g: elements %g times thinner in z than wide\n", o.stretch, o.stretch);
             if (dec.size > 1)
                 printf("  %d ranks (%d x %d x %d); rank 0: %d x %d x %d elements, %lld ghosts, %d peers\n", dec.size,
                        dec.P[0], dec.P[1], dec.P[2], box.nx, box.ny, box.nz, topo.elements - topo.local, h->peers());
@@ -1284,7 +1293,7 @@ int run(const Options& o)
         if (bp3)
             printf("  BP3 applied to 1: max %.1e (of max %.1e for a random v)\n", max1, maxv);
         else
-            printf("  BP1 applied to 1, summed: %.15f (the volume: 1)\n", sum1);
+            printf("  BP1 applied to 1, summed: %.15f (the volume: %.15f)\n", sum1, 1.0 / o.stretch);
         printf("  first %lld elements vs direct quadrature sums, random v: %.1e of max %.1e\n", Ec, oracle_err,
                oracle_scale);
         if (o.mg)
@@ -1373,6 +1382,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--p")) o.p = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--ne")) o.ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--deform")) o.deform = atof(argv[i + 1]);
+        else if (!strcmp(argv[i], "--stretch")) o.stretch = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--tol")) o.tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--true-tol")) o.true_tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--maxit")) o.maxit = atoi(argv[i + 1]);
@@ -1411,6 +1421,9 @@ int main(int argc, char** argv)
     if (!error && !o.mesh.empty() &&
         (o.spec.rfind("bp3", 0) != 0 || o.rhs == "pde" || o.block || o.rotate || !o.block_dss.empty()))
         error = "--mesh is for bp3 and bp3_tri, without --rhs pde, --block, --rotate or --block-dss";
+    if (!error && !(o.stretch >= 1.0)) error = "--stretch is at least 1";
+    if (!error && o.stretch != 1.0 && (!o.mesh.empty() || o.rhs == "pde"))
+        error = "--stretch is for the cube, without --mesh or --rhs pde";
     if (!error && o.p1_matrix_free && !(o.p == 1 && o.amg)) error = "--p1-matrix-free goes with --p 1 --mg --amg";
     o.p1_assembled = o.p == 1 && o.amg && !o.p1_matrix_free;
     if (!error && (!(o.amg_theta > 0.0 && o.amg_theta < 1.0) || o.amg_agg < 0 || o.amg_coarse_size < 1))
@@ -1437,7 +1450,7 @@ int main(int argc, char** argv)
     }
     if (error) {
         if (rank == 0)
-            fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--tol t] [--true-tol t] "
+            fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
                             "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
