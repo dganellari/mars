@@ -804,3 +804,27 @@ time (wing: 541 to 533). So here too the p = 3 smoother sets the p = 3 count. Th
 reproduces every wing observation: the iteration growth, the 1 / sqrt(k) response to smoothing,
 the small response to more AMG cycles, and a BoomerAMG that is slower on p = 1 alone. BP1 at
 s = 10 sums to the volume 0.100000000000000, PASS (the check of the new option).
+
+### MFEM on the stretched cube (f9406acc)
+
+`mfem_bp3 --stretch s`: the same mesh, problem and V-cycle shape (Chebyshev order 2, BoomerAMG
+x3 with the MARS settings), ne 64, one GH200, tol 3e-13, all PASS (true residuals 9.4e-12 to
+2.1e-11):
+
+| iterations | s = 1 | s = 10 | s = 100 | s = 1000 |
+|---|---|---|---|---|
+| MFEM p = 3 | 16 | 114 | 502 | 799 |
+| MARS p = 3 | 14 | 91 | 401 | 648 |
+| MFEM p = 1 alone | 12 | 61 | 279 | 351 |
+| MARS p = 1 alone | 12 | 62 | 275 | 352 |
+
+At s = 100, MFEM with Chebyshev order 4 takes 365 (order 2: 502) and with BoomerAMG x10 473;
+order 8 aborts (MFEM 4.8: "Chebyshev smoother not implemented for order = 8"). MARS with MFEM's
+Chebyshev interval and power steps (`--cheb-interval mfem`) takes 505.
+
+MFEM degrades the same way: the same growth with s, the same small gain from ten AMG cycles
+(6% in both codes), a similar gain from order 4 (27%, MARS 33%), and the same BoomerAMG counts on
+p = 1 alone. With MFEM's interval MARS needs MFEM's iterations (505 against 502); MARS's default
+interval saves 13-20% of them. So the slowdown on stretched elements belongs to the method, point
+Chebyshev-Jacobi p-multigrid with BoomerAMG on p = 1, not to MARS. The times are first solves
+(MFEM's also include its first device allocations) and are not compared here.
