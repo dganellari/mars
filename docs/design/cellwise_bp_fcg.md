@@ -1002,4 +1002,27 @@ face orientation bit fails (1.8e-2). The sum-factorized line matrix on all three
 quadrature entry match probed element matrices to 2.2e-15 and 3.3e-16. Expected on the GPU, one
 rank, ne 8, s = 100, `--mg --coarse 100`, tol 1e-10 (`bp3_smoother_study.py --gpu --smoothers
 nodeline`): 12 iterations, lmax 2.9089, it 1 / 5 / 10 = 5.230568e-02 / 1.314450e-05 /
-2.920982e-09 (deform 0.05); 7 iterations on boxes. GPU runs pending.
+2.920982e-09 (deform 0.05); 7 iterations on boxes.
+
+GPU, second version (373601b9): the one-rank reference runs print exactly these lines (12
+iterations, lmax 2.9089, the same history to every digit; 7 on boxes). Cube, s = 100,
+BoomerAMG x3: p = 7 on one GH200 39 iterations (first version 61, lmax 3.80 against 9.81), p = 3
+ne 32 on 8 GH200 155 (228, lmax 3.22 against 93.4), both PASS. The wing, 64 GH200, tol 3e-13:
+
+| wing | iterations | lmax at p | FCG iteration | solve | setup |
+|---|---|---|---|---|---|
+| p = 3, Jacobi | 541 | 2.90 | 24.93 ms | 13.6 s | 2.0 s |
+| p = 3, node lines | 259 | 2.49 | 35.04 ms | 9.1 s | 3.2 s |
+| p = 7, Jacobi | 904 | 3.37 | 136.2 ms | 123.1 s | 2.7 s |
+| p = 7, node lines | breakdown at 18 | 2.71 | 205.5 ms | | 5.8 s |
+
+At p = 3 the lines halve the iterations and the solve is 1.5x faster; an iteration costs 40% more
+(two DSS and the block solves per smoothing step against one fused DSS). At p = 7 FCG stopped
+after 18 iterations with <r, z> <= 0 (printed as 0) and a true residual of 4.1e-6: the V-cycle
+was not positive definite. The blocks are (Cholesky checked them), so the likely cause is the
+Chebyshev bound: hi = 1.1 x 2.71 = 2.98 lies below Jacobi's lmax of 3.37, and where lines are cut
+(1.3% of the links, at rank boundaries) a node's strong couplings go to another block, so local
+eigenvalues of M^-1 A approach Jacobi's; modes above hi are amplified. On host meshes cut
+everywhere, 30 power steps find the cut lines' lmax (within 1-4% of 300 steps); on the wing the
+cuts are rare and localized, and the power iteration may miss them. At p = 3 the gap is 2.74
+against 2.90. Not yet tested: `--power-steps` (100, 300) on the wing.

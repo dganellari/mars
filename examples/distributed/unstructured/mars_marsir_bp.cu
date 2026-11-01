@@ -54,6 +54,7 @@
 // --cheb-interval mfem smooths on MFEM's interval ([0.3, 1.2] lmax, 10 power steps;
 // cellwise::ChebyshevInterval) instead of MARS's ([1.1 / 15, 1.1] lmax, 30 steps), so this
 // V-cycle is the one of tests/performance/mfem_bp3.
+// --power-steps k: k power steps for each level's lmax instead of the interval's (30; MFEM's 10).
 // --smoother lines: Chebyshev on node-line Jacobi (cellwise::NodeLines) instead of point Jacobi
 // at p (and at 3 under p = 7), for stretched elements: element lines along each element's thin
 // axis, built on the host from the rank's own elements and cut at rank boundaries.
@@ -805,6 +806,7 @@ struct Options {
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
+    int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
     std::string cheb_interval = "mars", rhs = "discrete", mesh, smoother = "jacobi";
@@ -1117,11 +1119,12 @@ int run(const Options& o)
             return lp == P ? raw(elem_fine) : (lp == 3 ? raw(L3->elem) : raw(L1->elem));
         };
         if constexpr (P > 1) {
+            cellwise::ChebyshevInterval interval =
+                o.cheb_interval == "mfem" ? cellwise::ChebyshevInterval::mfem() : cellwise::ChebyshevInterval{};
+            if (o.power_steps > 0) interval.power_steps = o.power_steps;
             mg = std::make_unique<Multigrid>(P, level_apply, level_elem, topo,
                                              std::array<cellwise::UnstructuredHalo*, 3>{P == 7 ? h : nullptr, h3, h1},
-                                             d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream,
-                                             o.cheb_interval == "mfem" ? cellwise::ChebyshevInterval::mfem()
-                                                                       : cellwise::ChebyshevInterval{});
+                                             d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream, interval);
             if (o.smoother == "lines") {
                 // The element lines of the rank's own elements: corners from the device geometry,
                 // vertex ids from the file or the lattice.
@@ -1458,6 +1461,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
         else if (!strcmp(argv[i], "--smoother")) o.smoother = argv[i + 1];
+        else if (!strcmp(argv[i], "--power-steps")) o.power_steps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--rhs")) o.rhs = argv[i + 1];
         else if (!strcmp(argv[i], "--mesh")) o.mesh = argv[i + 1];
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
@@ -1486,6 +1490,7 @@ int main(int argc, char** argv)
     if (!error && o.solves < 1) error = "--solves must be positive";
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
     if (!error && o.smoother != "jacobi" && o.smoother != "lines") error = "--smoother is jacobi or lines";
+    if (!error && o.power_steps < 0) error = "--power-steps must not be negative";
     if (!error && o.smoother == "lines" && (!o.mg || o.p == 1 || o.block || o.rotate || !o.block_dss.empty()))
         error = "--smoother lines goes with --mg at p = 3 or 7, without --block, --rotate or --block-dss";
     if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
@@ -1523,7 +1528,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
