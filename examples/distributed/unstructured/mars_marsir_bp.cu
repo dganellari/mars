@@ -54,7 +54,8 @@
 // --cheb-interval mfem smooths on MFEM's interval ([0.3, 1.2] lmax, 10 power steps;
 // cellwise::ChebyshevInterval) instead of MARS's ([1.1 / 15, 1.1] lmax, 30 steps), so this
 // V-cycle is the one of tests/performance/mfem_bp3.
-// --power-steps k: k power steps for each level's lmax instead of the interval's (30; MFEM's 10).
+// --power-steps k: k power steps for each level's lmax instead of the interval's (30; MFEM's 10;
+// 100 at the levels with --smoother lines).
 // --smoother lines: Chebyshev on node-line Jacobi (cellwise::NodeLines) instead of point Jacobi
 // at p (and at 3 under p = 7), for stretched elements: element lines along each element's thin
 // axis, built on the host from the rank's own elements and cut at rank boundaries.
@@ -1150,6 +1151,11 @@ int run(const Options& o)
                         }
                     }
                 const cellwise::ElementLines lines = cellwise::build_element_lines(corners, vid, E);
+                // Where lines are cut (rank boundaries) a node's strong couplings go to another block
+                // and its eigenvalues of M^-1 A approach Jacobi's; those modes are rare, and 30 power
+                // steps miss them: on the wing at p = 7, lmax 2.71 against 3.25 after 100 steps (3.27
+                // after 300), and the V-cycle was indefinite (docs/design/cellwise_bp_fcg.md).
+                const int line_steps = o.power_steps > 0 ? o.power_steps : 100;
                 auto sizes = [&](int lp, const auto& nl) {
                     line_sizes.push_back({lp, all_sum((double)nl.element_lines()), all_max((double)nl.longest()),
                                           all_sum((double)nl.blocks()), all_sum((double)nl.rows())});
@@ -1160,7 +1166,7 @@ int run(const Options& o)
                     P,
                     [&nl = *lines_top](const double* in, const double* y, double* d, double* xs, double c1, double c2,
                                        bool first, bool assign) { nl.step(in, y, d, xs, c1, c2, first, assign); },
-                    MPI_COMM_WORLD);
+                    MPI_COMM_WORLD, line_steps);
                 sizes(P, *lines_top);
                 if constexpr (P == 7) {
                     lines_three = std::make_unique<cellwise::NodeLines<3>>(lines, topo, h3, raw(L3->G), raw(L3->B),
@@ -1172,7 +1178,7 @@ int run(const Options& o)
                                              double c2, bool first, bool assign) {
                             nl.step(in, y, d, xs, c1, c2, first, assign);
                         },
-                        MPI_COMM_WORLD);
+                        MPI_COMM_WORLD, line_steps);
                     sizes(3, *lines_three);
                 }
             }

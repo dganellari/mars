@@ -252,15 +252,16 @@ public:
 
     // step(b, y, d, x, c1, c2, first, assign): one Chebyshev step at level P with another
     // smoother in place of Jacobi (NodeLines::step, mars_cellwise_lines.hpp). lmax of the level
-    // is measured again for the new preconditioned operator.
+    // is measured again for the new preconditioned operator, with power_steps steps (0: the
+    // interval's).
     using SmootherStep = std::function<void(const double*, const double*, double*, double*, double, double, bool, bool)>;
-    void set_smoother(int P, SmootherStep step, MPI_Comm comm)
+    void set_smoother(int P, SmootherStep step, MPI_Comm comm, int power_steps = 0)
     {
         line_[P == 7 ? 0 : (P == 3 ? 1 : 2)] = std::move(step);
         Reduction red(comm);
-        if (P == 7) lmax_[0] = power_iteration<7>(red);
-        else if (P == 3) lmax_[1] = power_iteration<3>(red);
-        else lmax_[2] = power_iteration<1>(red);
+        if (P == 7) lmax_[0] = power_iteration<7>(red, power_steps);
+        else if (P == 3) lmax_[1] = power_iteration<3>(red, power_steps);
+        else lmax_[2] = power_iteration<1>(red, power_steps);
     }
 
     // The assembled diagonal at level P, on every copy.
@@ -420,7 +421,7 @@ private:
     // start depends on the local numbering, so lmax differs in the last digits between
     // rank counts; the smoother's interval has a 10% margin.
     template <int P>
-    double power_iteration(Reduction& red) const
+    double power_iteration(Reduction& red, int steps = 0) const
     {
         constexpr int n3 = (P + 1) * (P + 1) * (P + 1);
         const long long n = E_ * n3;
@@ -432,7 +433,7 @@ private:
         MARS_CELLWISE_CK(cudaGetLastError());
         step<P, true>(y, nullptr, d, v, 0.0, 1.0);   // v = Jacobi(DSS(hash))
         double lam = 0.0;
-        for (int i = 0; i < interval_.power_steps; ++i) {
+        for (int i = 0; i < (steps > 0 ? steps : interval_.power_steps); ++i) {
             apply<P>(v, y);
             step<P, true>(y, nullptr, d, w, 0.0, 1.0);   // w = Jacobi(DSS(A v))
             const double nw = norm<P>(red, w), nv = norm<P>(red, v);

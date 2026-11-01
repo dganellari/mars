@@ -325,11 +325,11 @@ def chebyshev_steps(lmax, steps):
     return out
 
 
-def power(lv, prec):   # lmax of prec(A): 30 steps from the GPU's hash vector, node norms
+def power(lv, prec, steps=30):   # lmax of prec(A): steps from the GPU's hash vector, node norms
     t = np.arange(lv.E * lv.n3, dtype=np.uint64)
     h = ((t * np.uint64(2654435761)) & np.uint64(0xffffffff)).astype(float) / 4294967296.0 - 0.5
     v = prec(h.reshape(lv.E, lv.n3)); lam = 0.0
-    for _ in range(30):
+    for _ in range(steps):
         w = prec(lv.apply(v))
         nw = np.linalg.norm(lv.nodes(w)); lam = nw / np.linalg.norm(lv.nodes(v)); v = w / nw
     return lam
@@ -348,10 +348,10 @@ class VCycle:
     """p -> 1 with Chebyshev on prec(A) at p; at p = 1 an exact solve of the assembled matrix, or
     coarse_steps Chebyshev-Jacobi steps (mars_marsir_bp --mg without --amg)."""
 
-    def __init__(self, fine, coarse, prec, pre, post, coarse_steps=0):
+    def __init__(self, fine, coarse, prec, pre, post, coarse_steps=0, power_steps=30):
         self.f, self.c, self.prec, self.pre, self.post = fine, coarse, prec, pre, post
         self.I = np.array([lag(coarse.zeta, x)[0] for x in fine.zeta])
-        self.lmax = power(fine, prec)
+        self.lmax = power(fine, prec, power_steps)
         self.coarse_steps = coarse_steps
         if coarse_steps:
             self.lmax_c = power(coarse, coarse.jacobi)
@@ -460,6 +460,8 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="the run of mars_marsir_bp --mg --coarse k (see gpu())")
     ap.add_argument("--coarse", type=int, default=100, help="--gpu: Chebyshev steps on p = 1")
     ap.add_argument("--tol", type=float, default=1e-10, help="--gpu: FCG tolerance on sqrt(<r,z>/<r0,z0>)")
+    ap.add_argument("--power-steps", type=int, default=0,
+                    help="--gpu: power steps at p (0: the driver's, 30 for jacobi and 100 for node lines)")
     args = ap.parse_args()
     if args.gpu:
         return gpu(args)
@@ -493,7 +495,8 @@ def gpu(args):
     u = f.mask * np.prod(np.sin(np.pi * xs), -1)
     for name in args.smoothers.split(","):
         prec, label = smoother(name, f, corners, vid, args.line_cut, ne)
-        mg = VCycle(f, c, prec, args.pre, args.post, args.coarse)
+        steps = args.power_steps or (100 if name.startswith("nodeline") else 30)
+        mg = VCycle(f, c, prec, args.pre, args.post, args.coarse, steps)
         b = f.apply(u)
         x, hist = fcg_history(f, mg, b, args.tol, args.maxit)
         true = f.true_residual(b, x) / f.true_residual(b, np.zeros_like(b))

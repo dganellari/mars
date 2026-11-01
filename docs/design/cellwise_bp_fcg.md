@@ -1025,4 +1025,23 @@ Chebyshev bound: hi = 1.1 x 2.71 = 2.98 lies below Jacobi's lmax of 3.37, and wh
 eigenvalues of M^-1 A approach Jacobi's; modes above hi are amplified. On host meshes cut
 everywhere, 30 power steps find the cut lines' lmax (within 1-4% of 300 steps); on the wing the
 cuts are rare and localized, and the power iteration may miss them. At p = 3 the gap is 2.74
-against 2.90. Not yet tested: `--power-steps` (100, 300) on the wing.
+against 2.90.
+
+`--power-steps` on the wing (38a89e01) confirms it:
+
+| wing, 64 GH200 | power steps | lmax at p | iterations | FCG iteration | solve | setup |
+|---|---|---|---|---|---|---|
+| p = 7, node lines | 30 | 2.71 | breakdown at 18 | 205.5 ms | | 5.8 s |
+| p = 7, node lines | 100 | 3.25 | 401 | 189.0 ms | 75.8 s | 10.8 s |
+| p = 7, node lines | 300 | 3.27 | 403 | 194.5 ms | 78.4 s | 25.4 s |
+| p = 7, Jacobi | 30 / 100 | 3.37 / 3.60 | 904 / 931 | 136.2 / 138.6 ms | 123.1 / 129.0 s | 2.7 / 4.9 s |
+| p = 3, node lines | 30 / 100 | 2.49 / 2.57 | 259 / 262 | 35.0 / 35.5 ms | 9.1 / 9.3 s | 3.2 / 3.8 s |
+
+Thirty power steps put the node lines' lmax 20% low at p = 7 (Jacobi's 7% low, within the 1.1
+margin); 100 steps are within 0.6% of 300. With them p = 7 converges in 401 iterations against
+Jacobi's 904, and the solve is 1.6x faster (75.8 against 123.1 s; with setup 86.6 against 125.8 s).
+So the levels with node lines take 100 power steps by default (`--power-steps` still sets all
+levels); the one-rank reference (`bp3_smoother_study.py --gpu`, which follows the driver) then
+gives 12 iterations, lmax 2.9190, it 1 / 5 / 10 = 5.230355e-02 / 1.327880e-05 / 3.012310e-09.
+An iteration with node lines costs 40% more than with Jacobi at both degrees; the coarse solve is
+43% of the p = 3 solve and 8% of the p = 7 one.
