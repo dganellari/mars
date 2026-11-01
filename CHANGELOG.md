@@ -39,17 +39,20 @@ public API may change between minor releases.
   P7/E32 case a per-point and an affine apply take 0.43 and 0.21 ms on H100 (staged path 0.83 and
   0.69 ms) and 0.58 and 0.34 ms on MI300A (staged path 3.07 and 2.43-2.49 ms). Older NVIDIA GPUs keep the
   staged path. These are operator timings, not full-solver speedups.
-- The `tensor` graph assembly takes a row map (`fem/mars_cvfem_row_map.hpp`), built once on the GPU:
-  the sorted CSR rows of each block of 32 elements, and for each element row the CSR offsets of its 8
-  columns (40 bytes per element and 4 per block row). On AMD the new `tensor_rows` kernel adds up each
-  block's rows in shared memory and adds them to the matrix row by row, with 3.3e7 global atomics
-  instead of 1.35e8 on hex192; on NVIDIA `tensor_map` reads the offsets instead of searching each CSR
-  row. On public hex192, one rank, `tensor` takes 4.56-4.59 ms on MI300A and 4.87-4.92 ms on H100,
-  against 8.25-8.29 and 6.97-7.61 ms without the map; building the map takes 31 and 7 ms.
-  `mars_cvfem_graph` and `mars_cvfem_scale` build it (`--no-row-map` to skip). Other callers keep the
-  kernels without it until they set `Config::rowMap`: on AMD the aggregated `tensor_faces` kernel
-  (16 threads per element, shared rows added up per block before the global atomics), on NVIDIA the
-  one-thread kernel. See `tests/performance/AMD-*.md` for scope.
+- The `tensor` assembly, graph and full, takes a row map (`fem/mars_cvfem_row_map.hpp`), built once on
+  the GPU: the sorted CSR rows of each block of 32 elements, and for each element row the CSR offsets of
+  its 8 columns. On AMD the new `tensor_rows` kernel adds up each block's rows in shared memory and adds
+  them to the matrix row by row; on NVIDIA `tensor_map` reads the offsets instead of searching each CSR
+  row. Any mesh takes a map: each row keeps its own length in shared memory, a block whose rows do not
+  fit adds them straight to the matrix, and a row longer than 254 entries is searched. One rank, median
+  of the rounds, MI300A / H100: graph assembly 4.82 / 4.88 ms on public hex192 and 4.93 / 4.77 ms on an
+  unstructured hex mesh of the same size (`scripts/generate_hex_trisplit.py`, rows of up to 9
+  entries), full assembly 6.33 / 6.19 and 6.56 / 6.40 ms; without the map the graph assembly takes
+  8.21-8.24 / 6.60-7.38 ms on hex192. Building the map takes 35-64 ms on MI300A and 8-19 ms on H100.
+  `mars_cvfem_graph`, `mars_cvfem_full` and `mars_cvfem_scale` build it (`--no-row-map` to skip). The
+  full assembly without a map (`assembleCvfemDiffusion` and the drivers that assemble once) runs the
+  `tensor_faces` kernel on both GPUs: 19.4 / 9.6 ms on hex192, against 25.8 ms for `tensor_early` on
+  MI300A and 12.1 ms for the one-thread kernel on H100. See `tests/performance/AMD-assembly.md`.
 - On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
   each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
