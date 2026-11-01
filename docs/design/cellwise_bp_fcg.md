@@ -959,21 +959,47 @@ that keeps lines whole would matter from a few thousand ranks on.
 
 ### Node-line smoother on the GPU (--smoother lines)
 
-`solvers/mars_cellwise_lines.hpp` (`cellwise::NodeLines`), used by `mars_marsir_bp --mg
---smoother lines` at p and, under p = 7, at 3. The host builds the element lines of each rank's
-own elements (cut at rank boundaries). Each node goes to the rank that counts it (one DSS of a
-code naming the counting copy); a chain proposes itself for its nodes and the lowest chain wins
-(atomicMin), which gives the reference's sequential claims. A block's matrix is the sum of its own
-line's element matrices along the thin axis (sum-factorized from the stored geometry), scaled
-symmetrically to the assembled diagonal: the lateral neighbours enter only through the
-diagonal, so no ghost geometry is needed. On the host this "scaled" form gives the exact
-assembled form's iterations on all four wing blocks (23 / 12 / 11 / 15) and on graded boxes (10),
-and 36 against 18 on the cube sheared to a scaled Jacobian of 0.2 (the unscaled own-line form:
-76). One thread per chain assembles, scales and factors its blocks (banded Cholesky, bandwidth
-p), so the sums run in a fixed order; blocks are sorted by length and stored interleaved by warp.
-A smoothing step is three passes: DSS of the residual onto the counting copies, one thread per
-block for the two banded triangular solves (p values in registers each), and a DSS of the
-solution with the Chebyshev update. `scripts/bp3_smoother_study.py --gpu` gives the history the
-driver must print with `--mg --coarse k` on one rank (its Jacobi history equals
-`cellwise_bp_mg_ref.py --gpu`): ne 8, s = 100, coarse 100, tol 1e-10: Jacobi 65 iterations, node
-lines 28 (deform 0.05) and 7 (deform 0). GPU runs pending.
+`solvers/mars_cellwise_lines.hpp` (`cellwise::NodeLines`; host part `mars_cellwise_lines_host.hpp`),
+used by `mars_marsir_bp --mg --smoother lines` at p and, under p = 7, at 3. The host builds the
+element lines of each rank's own elements (cut at rank boundaries) and, for every line element,
+the lateral neighbours of its node lines (the element across each side face, the other elements
+of each side edge) with their frames, matched by vertex ids. Each node goes to the rank that
+counts it (one DSS of a code naming the counting copy); a chain proposes itself for its nodes and
+the lowest chain wins (atomicMin), the reference's sequential claims. A block's matrix is the
+assembled operator restricted to it: the assembled diagonal, and off it the line's own element and
+its lateral neighbours on this rank, their line matrices sum-factorized from the stored geometry.
+Neighbours on other ranks give the diagonal only, which keeps the block positive definite. One
+thread per chain assembles and factors its blocks (banded Cholesky, bandwidth p) in a fixed order;
+blocks are sorted by length and stored interleaved by warp. A smoothing step is three passes: DSS
+of the residual onto the counting copies, one thread per block for the two banded triangular
+solves (p values in registers each), a DSS of the solution with the Chebyshev update.
+
+First version (83632260): the block from the line's own element matrices only, scaled
+symmetrically to the assembled diagonal, so that no neighbour data was needed; on the host it
+equalled the exact form on the four wing blocks. On the GPU it reproduced the reference to every
+printed digit (ne 8, s = 100, `--mg --coarse 100`, tol 1e-10: 28 iterations, as
+`bp3_smoother_study.py --gpu`; Jacobi 65, and 7 on boxes), but on the whole wing it was worse
+than Jacobi: p = 3 1029 iterations (Jacobi 541), p = 7 2167 (904), with lmax 63 and 126 against
+about 3: a few blocks with large eigenvalues of M^-1 A raise the Chebyshev interval [hi / 15, hi]
+so far that the smoother does little anywhere else. The cause shows on the host with lines cut
+every 4 elements, as rank boundaries cut them: lmax 74.6 and 131 iterations, against 2.69 and 31
+for the exact form. Rows scaled by different factors (the rows at a cut lose a neighbour's share
+of the diagonal) lose the near-zero row sums of a strongly coupled line, and the block gets nearly
+singular modes the operator does not have. The four host blocks had no cuts. The own-line form
+with the assembled diagonal and no scaling is safe (lmax 2.1-2.7) but weaker: wing blocks 35 / 27
+/ 33 / 16 against exact 23 / 12 / 11 / 15.
+
+Second version, exact: the neighbours' contributions as above. At an edge of valence 3 (an
+irregular region of the wing), one lateral element borders two consecutive line elements and the
+node line turns a corner in it; its dense element matrix couples the nodes before and after the
+joint, which a sum over node-line segments misses (2% of a block's entries in the irregular wing
+block, and positive definiteness is no longer certain). These couplings are added by quadrature
+(element_entry). `scripts/test_node_lines.py` builds the tables with the C++ host code
+(`tests/cellwise_lines_host_check.cpp`), emulates build_kernel step for step and compares every
+band entry with the assembled operator: 1.1e-15 to 1.8e-15 relative on the cube (sheared, mixed
+line directions, graded boxes) and on four wing blocks including the irregular one; a corrupted
+face orientation bit fails (1.8e-2). The sum-factorized line matrix on all three axes and the
+quadrature entry match probed element matrices to 2.2e-15 and 3.3e-16. Expected on the GPU, one
+rank, ne 8, s = 100, `--mg --coarse 100`, tol 1e-10 (`bp3_smoother_study.py --gpu --smoothers
+nodeline`): 12 iterations, lmax 2.9089, it 1 / 5 / 10 = 5.230568e-02 / 1.314450e-05 /
+2.920982e-09 (deform 0.05); 7 iterations on boxes. GPU runs pending.

@@ -3,14 +3,20 @@
 // place of point Jacobi. Elements are chained into lines along their thin axis (the reference
 // axis with the shortest mean edge; two elements chain through a face that lies across the thin
 // axis of both). Every free node belongs to exactly one block, a run of nodes along the thin axis
-// of its element line, on the rank that counts the node. A block's matrix is the sum of its own
-// line's element matrices restricted to it, scaled symmetrically to the assembled diagonal, so
-// the lateral neighbours enter only through the diagonal and no ghost geometry is needed. It is
-// banded (bandwidth P), factored once by banded Cholesky and solved by one thread.
-// Evidence and design: docs/design/cellwise_bp_fcg.md ("Smoothers for stretched elements",
-// "Real wing elements and graded boxes"). Reference: scripts/bp3_smoother_study.py (NodeLines
-// with own = "scaled"), whose blocks this builds in the same order.
+// of its element line, on the rank that counts the node. A block's matrix is the assembled
+// operator restricted to it: the assembled diagonal, and off the diagonal the sum over the
+// elements that hold both nodes, the line's own element and the lateral neighbours of a node
+// line on a face or an edge of it (their line matrices from their stored geometry). Neighbours
+// on other ranks have no geometry here and give the diagonal only, which keeps the block
+// positive definite. It is banded (bandwidth P), factored once by banded Cholesky and solved by
+// one thread. A scaled own-line form without the neighbours was tried and fails where lines are
+// cut: rows scaled by different factors lose the near-zero row sums along a strongly coupled
+// line (docs/design/cellwise_bp_fcg.md, "Node-line smoother on the GPU").
+// Evidence: docs/design/cellwise_bp_fcg.md ("Smoothers for stretched elements", "Real wing
+// elements and graded boxes"). Reference: scripts/bp3_smoother_study.py (NodeLines), whose
+// blocks this builds in the same order; on one rank they are the same matrices.
 
+#include "backend/distributed/unstructured/solvers/mars_cellwise_lines_host.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 #include "backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 
@@ -27,190 +33,6 @@
 
 namespace mars {
 namespace cellwise {
-
-// ---- element lines (host) --------------------------------------------------------------
-
-// One rank's local elements as lines, longest first: line l is entries start[l] .. start[l+1)
-// of elem and code. code bits 0-1: the element's thin axis; bit 2: the line runs from node P
-// down to 0 along it; bits 3-5: the map from the line's transverse node position, given in its
-// first element's frame, to this element's (bit 3 swaps the two transverse axes, bits 4 and 5
-// reverse the first and the second).
-struct ElementLines {
-    std::vector<int> start{0}, elem;
-    std::vector<unsigned char> code;
-    long long lines() const { return (long long)start.size() - 1; }
-};
-
-namespace line_detail {
-
-MARS_CW_HD inline void transverse(int code, int P, int& i, int& j)
-{
-    if (code & 1) {
-        const int t = i;
-        i = j;
-        j = t;
-    }
-    if (code & 2) i = P - i;
-    if (code & 4) j = P - j;
-}
-
-// The two reference axes other than a, ascending.
-MARS_CW_HD inline void other_axes(int a, int& k1, int& k2)
-{
-    k1 = a == 0 ? 1 : 0;
-    k2 = a == 2 ? 1 : 2;
-}
-
-// The code c with transverse(c) = transverse(outer) after transverse(inner).
-inline int compose(int outer, int inner)
-{
-    for (int c = 0; c < 8; ++c) {
-        bool same = true;
-        for (int i = 0; i <= 1 && same; ++i)
-            for (int j = 0; j <= 1 && same; ++j) {
-                int a = i, b = j, x = i, y = j;
-                transverse(inner, 1, a, b);
-                transverse(outer, 1, a, b);
-                transverse(c, 1, x, y);
-                same = a == x && b == y;
-            }
-        if (same) return c;
-    }
-    return -1;
-}
-
-}  // namespace line_detail
-
-// corners[(e * 8 + c) * 3 + a]: coordinate a of corner c (corner_bits order) of local element
-// e; vid[e * 8 + c]: an id of that corner's vertex, equal ids for equal vertices. As
-// element_lines of the reference: elements in order, a line started at every element with no
-// chain neighbour on one side, closed loops opened at their lowest element, then sorted by
-// length (stable).
-inline ElementLines build_element_lines(const std::vector<double>& corners, const std::vector<long long>& vid,
-                                        long long E)
-{
-    using line_detail::other_axes;
-    std::vector<int> axis(E);
-    for (long long e = 0; e < E; ++e) {
-        double len[3];
-        for (int k = 0; k < 3; ++k) {
-            double sum = 0.0;
-            for (int c = 0; c < 8; ++c) {
-                int b[3];
-                corner_bits(c, b[0], b[1], b[2]);
-                if (b[k]) continue;
-                b[k] = 1;
-                const int d = corner_from_bits(b[0], b[1], b[2]);
-                double s2 = 0.0;
-                for (int a = 0; a < 3; ++a) {
-                    const double t = corners[(e * 8 + d) * 3 + a] - corners[(e * 8 + c) * 3 + a];
-                    s2 += t * t;
-                }
-                sum += std::sqrt(s2);
-            }
-            len[k] = sum / 4.0;
-        }
-        int a = 0;
-        if (len[1] < len[a]) a = 1;
-        if (len[2] < len[a]) a = 2;
-        axis[e] = a;
-    }
-    // The faces across each element's thin axis, sorted by their vertices: a face listed twice
-    // chains its two elements.
-    struct Face {
-        std::array<long long, 4> v;
-        long long e;
-        int side;
-    };
-    std::vector<Face> faces;
-    faces.reserve(2 * E);
-    for (long long e = 0; e < E; ++e)
-        for (int side = 0; side < 2; ++side) {
-            Face f{{}, e, side};
-            int m = 0;
-            for (int c = 0; c < 8; ++c) {
-                int b[3];
-                corner_bits(c, b[0], b[1], b[2]);
-                if (b[axis[e]] == side) f.v[m++] = vid[e * 8 + c];
-            }
-            std::sort(f.v.begin(), f.v.end());
-            faces.push_back(f);
-        }
-    std::sort(faces.begin(), faces.end(), [](const Face& x, const Face& y) {
-        return x.v != y.v ? x.v < y.v : (x.e != y.e ? x.e < y.e : x.side < y.side);
-    });
-    std::vector<long long> nxt(2 * E, -1);   // nxt[e * 2 + side]: neighbour * 2 + its side
-    for (size_t i = 0; i + 1 < faces.size(); ++i)
-        if (faces[i].v == faces[i + 1].v) {
-            nxt[faces[i].e * 2 + faces[i].side] = faces[i + 1].e * 2 + faces[i + 1].side;
-            nxt[faces[i + 1].e * 2 + faces[i + 1].side] = faces[i].e * 2 + faces[i].side;
-            ++i;
-        }
-    // Walk: a line entered through side `entry` (0: the axis' low face, 1: its high face).
-    std::vector<char> seen(E, 0);
-    std::vector<std::vector<std::pair<long long, int>>> lines;
-    auto walk = [&](long long e, int entry) {
-        std::vector<std::pair<long long, int>> line;
-        while (!seen[e]) {
-            seen[e] = 1;
-            line.emplace_back(e, entry);
-            const long long n = nxt[e * 2 + (1 - entry)];
-            if (n < 0) break;
-            e = n / 2;
-            entry = (int)(n % 2);
-        }
-        lines.push_back(std::move(line));
-    };
-    for (long long e = 0; e < E; ++e)
-        for (int side = 0; side < 2; ++side)
-            if (!seen[e] && nxt[e * 2 + side] < 0) walk(e, side);
-    for (long long e = 0; e < E; ++e)
-        if (!seen[e]) walk(e, 0);
-    std::stable_sort(lines.begin(), lines.end(), [](const auto& x, const auto& y) { return x.size() > y.size(); });
-
-    ElementLines out;
-    out.elem.reserve(E);
-    out.code.reserve(E);
-    for (const auto& line : lines) {
-        int cum = 0;
-        for (size_t m = 0; m < line.size(); ++m) {
-            const long long e = line[m].first;
-            const int entry = line[m].second, a = axis[e];
-            if (m > 0) {
-                // The previous element's exit face and this one's entry face are the same 4
-                // vertices; their transverse corner positions give the map between the frames.
-                const long long p = line[m - 1].first;
-                const int pa = axis[p], pexit = 1 - line[m - 1].second;
-                int pk1, pk2, k1, k2;
-                other_axes(pa, pk1, pk2);
-                other_axes(a, k1, k2);
-                auto corner_vid = [&](long long el, int ax, int bit, int t1, int t2, int i, int j) {
-                    int b[3];
-                    b[ax] = bit;
-                    b[t1] = i;
-                    b[t2] = j;
-                    return vid[el * 8 + corner_from_bits(b[0], b[1], b[2])];
-                };
-                int rel = -1;
-                for (int c = 0; c < 8 && rel < 0; ++c) {
-                    bool ok = true;
-                    for (int i = 0; i <= 1 && ok; ++i)
-                        for (int j = 0; j <= 1 && ok; ++j) {
-                            int x = i, y = j;
-                            line_detail::transverse(c, 1, x, y);
-                            ok = corner_vid(p, pa, pexit, pk1, pk2, i, j) == corner_vid(e, a, entry, k1, k2, x, y);
-                        }
-                    if (ok) rel = c;
-                }
-                cum = line_detail::compose(rel, cum);
-            }
-            out.elem.push_back((int)e);
-            out.code.push_back((unsigned char)(a | (entry << 2) | (cum << 3)));
-        }
-        out.start.push_back((int)out.elem.size());
-    }
-    return out;
-}
 
 // ---- node blocks (device) --------------------------------------------------------------
 
@@ -246,29 +68,24 @@ __global__ void owner_decode_kernel(const double* __restrict__ sum, long long* _
 // Packed upper triangle of an n x n symmetric matrix.
 MARS_CW_HD inline int packed(int n, int k, int l) { return k * n - k * (k - 1) / 2 + (l - k); }
 
-// M[(e * n^2 + i n + j) * n(n+1)/2 + packed(k, l)]: entry (k, l) of element e's matrix on its
-// node line along its thin axis at transverse position (i, j) (the ascending other two axes),
-// from the stored geometry G[(e * 6 + s) Q^3 + point] (w det J J^-1 J^-T, entries 00 01 02 11
-// 12 22) and the GLL basis B and its derivative DB at the Gauss points (Q x n): with V, W the
-// values and derivatives of the 1D factors, the 2D sums over the transverse Gauss points are
-// formed once per point along the line, then the 1D sums.
+// K[packed(k, l)]: entry (k, l) of an element's matrix on its node line along axis c at
+// transverse position (i, j) (on the ascending other two axes), from the element's stored
+// geometry g[s Q^3 + point] (w det J J^-1 J^-T, entries 00 01 02 11 12 22) and the GLL basis B
+// and its derivative DB at the Gauss points (Q x n): with V, W the values and derivatives of the
+// 1D factors, the 2D sums over the transverse Gauss points are formed once per point along the
+// line, then the 1D sums. line_matrices_kernel stores it for every element along its thin axis,
+// M[(e n^2 + i n + j) n(n+1)/2 + packed(k, l)].
 template <int P>
-__global__ void line_matrices_kernel(const double* __restrict__ G, const int* __restrict__ axis,
-                                     const double* __restrict__ B, const double* __restrict__ DB, long long E,
-                                     double* __restrict__ M)
+__device__ inline void line_matrix(const double* __restrict__ g, int c, int i, int j, const double* __restrict__ B,
+                                   const double* __restrict__ DB, double (&K)[(P + 1) * (P + 2) / 2])
 {
-    constexpr int n = P + 1, n2 = n * n, Q = P + 2, q3 = Q * Q * Q, NP = n * (n + 1) / 2;
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= E * n2) return;
-    const long long e = t / n2;
-    const int i = (int)(t % n2) / n, j = (int)(t % n2) % n, c = axis[e];
+    constexpr int n = P + 1, Q = P + 2, q3 = Q * Q * Q, NP = n * (n + 1) / 2;
     int ka, kb;
     other_axes(c, ka, kb);
     auto s = [](int r, int q) {
         const int lo = r < q ? r : q, hi = r < q ? q : r;
         return lo == 0 ? hi : (lo == 1 ? 2 + hi : 5);
     };
-    const double* g = G + e * 6 * q3;
     const double* gaa = g + s(ka, ka) * q3;
     const double* gbb = g + s(kb, kb) * q3;
     const double* gab = g + s(ka, kb) * q3;
@@ -277,7 +94,8 @@ __global__ void line_matrices_kernel(const double* __restrict__ G, const int* __
     const double* gbc = g + s(kb, c) * q3;
     int stride[3];
     stride[0] = Q * Q, stride[1] = Q, stride[2] = 1;
-    double K[NP] = {};
+#pragma unroll
+    for (int k = 0; k < NP; ++k) K[k] = 0.0;
     for (int qc = 0; qc < Q; ++qc) {
         double vv = 0.0, ww = 0.0, vw = 0.0;   // weights of V V', W W' and V W' + W V' along the line
         for (int qa = 0; qa < Q; ++qa) {
@@ -298,6 +116,45 @@ __global__ void line_matrices_kernel(const double* __restrict__ G, const int* __
                 K[packed(n, k, l)] += vv * Vk * Vl + ww * Wk * Wl + vw * (Vk * Wl + Wk * Vl);
             }
     }
+}
+
+// Entry (a, b) of an element's matrix for any two of its nodes (coordinates a, b), from its stored
+// geometry g by quadrature: the couplings a lateral element adds where a node line turns a corner
+// in it (build_kernel), which are not on one of its node lines.
+template <int P>
+__device__ inline double element_entry(const double* __restrict__ g, const int (&a)[3], const int (&b)[3],
+                                       const double* __restrict__ B, const double* __restrict__ DB)
+{
+    constexpr int n = P + 1, Q = P + 2, q3 = Q * Q * Q;
+    double sum = 0.0;
+    for (int q0 = 0; q0 < Q; ++q0)
+        for (int q1 = 0; q1 < Q; ++q1)
+            for (int q2 = 0; q2 < Q; ++q2) {
+                const int pt = (q0 * Q + q1) * Q + q2;
+                const double va0 = B[q0 * n + a[0]], va1 = B[q1 * n + a[1]], va2 = B[q2 * n + a[2]];
+                const double vb0 = B[q0 * n + b[0]], vb1 = B[q1 * n + b[1]], vb2 = B[q2 * n + b[2]];
+                const double ga[3] = {DB[q0 * n + a[0]] * va1 * va2, va0 * DB[q1 * n + a[1]] * va2,
+                                      va0 * va1 * DB[q2 * n + a[2]]};
+                const double gb[3] = {DB[q0 * n + b[0]] * vb1 * vb2, vb0 * DB[q1 * n + b[1]] * vb2,
+                                      vb0 * vb1 * DB[q2 * n + b[2]]};
+                sum += g[pt] * ga[0] * gb[0] + g[3 * q3 + pt] * ga[1] * gb[1] + g[5 * q3 + pt] * ga[2] * gb[2] +
+                       g[q3 + pt] * (ga[0] * gb[1] + ga[1] * gb[0]) + g[2 * q3 + pt] * (ga[0] * gb[2] + ga[2] * gb[0]) +
+                       g[4 * q3 + pt] * (ga[1] * gb[2] + ga[2] * gb[1]);
+            }
+    return sum;
+}
+
+template <int P>
+__global__ void line_matrices_kernel(const double* __restrict__ G, const int* __restrict__ axis,
+                                     const double* __restrict__ B, const double* __restrict__ DB, long long E,
+                                     double* __restrict__ M)
+{
+    constexpr int n = P + 1, n2 = n * n, q3 = (P + 2) * (P + 2) * (P + 2), NP = n * (n + 1) / 2;
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= E * n2) return;
+    const long long e = t / n2;
+    double K[NP];
+    line_matrix<P>(G + e * 6 * q3, axis[e], (int)(t % n2) / n, (int)(t % n2) % n, B, DB, K);
     double* out = M + t * NP;
 #pragma unroll
     for (int k = 0; k < NP; ++k) out[k] = K[k];
@@ -367,46 +224,131 @@ __global__ void count_kernel(const int* __restrict__ start, const int* __restric
     runs[chain] = b;
 }
 
-// The chain's blocks: their rows (counting copies), band matrices A[row * (P+1) + d] =
-// A(row, row - d) summed from the line's element matrices, scaled to the assembled diagonal
-// and factored in place by banded Cholesky (L(row, row - d)). One thread per chain, so the sums
-// run in a fixed order. bad is set when a pivot is not positive.
+// Device views of ElementLines' neighbour tables and of the level's geometry and basis.
+struct LineNeighbours {
+    const int *face_elem, *edge_start, *edge_elem;
+    const unsigned char *face_code, *edge_code;
+    const double *G, *B, *DB;
+};
+
+// The chain's blocks: their rows (counting copies) and band matrices A[row * (P+1) + d] =
+// A(row, row - d): the assembled diagonal, and off it the sums over the line's own element (M)
+// and its lateral neighbours on this rank (line_matrix from their geometry), in a fixed order;
+// then banded Cholesky in place (L(row, row - d)). At an edge of valence 3 one lateral element
+// borders two consecutive line elements and the node line turns a corner in it: its couplings
+// between the nodes before and after the joint are added too (element_entry). One thread per
+// chain. bad is set when a pivot is not positive.
 template <int P>
 __global__ void build_kernel(const int* __restrict__ start, const int* __restrict__ elem,
                              const unsigned char* __restrict__ code, const long long* __restrict__ own,
                              const unsigned long long* __restrict__ claim, const double* __restrict__ M,
-                             const double* __restrict__ diag, const long long* __restrict__ row_off,
+                             LineNeighbours nb, const double* __restrict__ diag, const long long* __restrict__ row_off,
                              const long long* __restrict__ run_off, long long chains, long long* __restrict__ row_copy,
                              long long* __restrict__ block_row, int* __restrict__ block_len, double* __restrict__ A,
-                             double* __restrict__ scale, int* __restrict__ bad)
+                             int* __restrict__ bad)
 {
-    constexpr int n = P + 1, n2 = n * n, NP = n * (n + 1) / 2;
+    constexpr int n = P + 1, n2 = n * n, NP = n * (n + 1) / 2, q3 = (P + 2) * (P + 2) * (P + 2);
     const long long chain = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (chain >= chains) return;
-    long long row = row_off[chain], b = run_off[chain] - 1, seg[P + 1];
-    int kseg[P + 1];
+    long long row = row_off[chain], b = run_off[chain] - 1, seg[P + 1], prev_seg[P + 1];
+    int kseg[P + 1], prev_kseg[P + 1];
     bool prev = false;
-    int cur = -1;
-    const double* Me = nullptr;
-    auto flush = [&]() {   // the element's entries for the pairs of the segment within one run
-        for (int s1 = 0; s1 <= P; ++s1) {
-            if (seg[s1] < 0) continue;
-            for (int s2 = s1; s2 <= P && seg[s2] >= 0; ++s2) {
-                const int k = kseg[s1] < kseg[s2] ? kseg[s1] : kseg[s2], l = kseg[s1] < kseg[s2] ? kseg[s2] : kseg[s1];
-                A[seg[s2] * (P + 1) + (s2 - s1)] += Me[packed(n, k, l)];
+    int cur = -1, ci = 0, cj = 0, prev_cur = -1, prev_ci = 0, prev_cj = 0;
+    double K[NP];
+    // visit(element, axis, c1, c2, flip) for the lateral elements of entry m's node line at
+    // transverse position (i, j): the element across the face it lies on, or the other elements
+    // of its edge; the line runs along their axis at coordinates (c1, c2) on their two other
+    // axes, reversed when flip.
+    auto laterals = [&](int m, int i, int j, auto&& visit) {
+        const bool on1 = i == 0 || i == P, on2 = j == 0 || j == P;
+        if (on1 && on2) {
+            const int g = (i == P) + 2 * (j == P);
+            for (int q = nb.edge_start[m * 4 + g]; q < nb.edge_start[m * 4 + g + 1]; ++q) {
+                const int ec = nb.edge_code[q];
+                visit(nb.edge_elem[q], ec & 3, (ec >> 2 & 1) * P, (ec >> 3 & 1) * P, (ec >> 4) & 1);
+            }
+        } else if (on1 || on2) {
+            const int f = on1 ? (i == P) : 2 + (j == P), other = nb.face_elem[m * 4 + f];
+            if (other >= 0) {
+                const int fc = nb.face_code[m * 4 + f], an = fc & 3, kn = (fc >> 2) & 3, t = on1 ? j : i;
+                int x[3], o1, o2;
+                x[kn] = (fc >> 4 & 1) * P;
+                x[3 - an - kn] = (fc >> 6 & 1) ? P - t : t;
+                other_axes(an, o1, o2);
+                visit(other, an, x[o1], x[o2], (fc >> 5) & 1);
             }
         }
     };
+    // The segment's pairs within one run, off the diagonal, from Kp in coordinates along the
+    // line that run the other way when flip.
+    auto add = [&](const double* Kp, bool flip) {
+        for (int s1 = 0; s1 < P; ++s1) {
+            if (seg[s1] < 0) continue;
+            for (int s2 = s1 + 1; s2 <= P && seg[s2] >= 0; ++s2) {
+                int k = flip ? P - kseg[s1] : kseg[s1], l = flip ? P - kseg[s2] : kseg[s2];
+                if (k > l) {
+                    const int t = k;
+                    k = l;
+                    l = t;
+                }
+                A[seg[s2] * (P + 1) + (s2 - s1)] += Kp[packed(n, k, l)];
+            }
+        }
+    };
+    // Element en, lateral to the previous segment (its line along axis ap at (w1, w2), flip fp) and
+    // to this one (along an at (v1, v2), flip fl): its couplings between the previous segment's
+    // nodes before the joint and this segment's after it, within one run and the band.
+    auto corner = [&](int en, int ap, int w1, int w2, int fp, int an, int v1, int v2, int fl) {
+        const double* g = nb.G + (long long)en * 6 * q3;
+        int pa, pb, ca, cb;
+        other_axes(ap, pa, pb);
+        other_axes(an, ca, cb);
+        for (int s1 = 0; s1 < P; ++s1) {
+            bool run = true;
+            for (int q = s1; q <= P; ++q) run = run && prev_seg[q] >= 0;
+            if (!run) continue;
+            for (int s2 = 1; s2 <= P && seg[s2] >= 0; ++s2) {
+                const long long d = seg[s2] - prev_seg[s1];
+                if (d > P) break;
+                int x[3], y[3];
+                x[ap] = fp ? P - prev_kseg[s1] : prev_kseg[s1];
+                x[pa] = w1;
+                x[pb] = w2;
+                y[an] = fl ? P - kseg[s2] : kseg[s2];
+                y[ca] = v1;
+                y[cb] = v2;
+                A[seg[s2] * (P + 1) + d] += element_entry<P>(g, x, y, nb.B, nb.DB);
+            }
+        }
+    };
+    // Entry cur at transverse position (ci, cj): the corner couplings with the previous entry,
+    // its own matrix, then its lateral elements' line matrices.
+    auto flush = [&]() {
+        if (prev_cur >= 0)
+            laterals(cur, ci, cj, [&](int en, int an, int v1, int v2, int fl) {
+                laterals(prev_cur, prev_ci, prev_cj, [&](int ep, int ap, int w1, int w2, int fp) {
+                    if (ep == en) corner(en, ap, w1, w2, fp, an, v1, v2, fl);
+                });
+            });
+        add(M + ((long long)elem[cur] * n2 + ci * n + cj) * NP, false);
+        laterals(cur, ci, cj, [&](int en, int an, int v1, int v2, int fl) {
+            line_matrix<P>(nb.G + (long long)en * 6 * q3, an, v1, v2, nb.B, nb.DB, K);
+            add(K, fl);
+        });
+    };
     walk_chain<P>(chain, start, elem, code, [&](int m, int s, int k, int i, int j, long long t) {
         if (m != cur) {
-            if (cur >= 0) flush();
-            Me = M + ((long long)elem[m] * n2 + i * n + j) * NP;
+            if (cur >= 0) {
+                flush();
+                for (int q = 0; q <= P; ++q) prev_seg[q] = seg[q], prev_kseg[q] = kseg[q];
+                prev_cur = cur, prev_ci = ci, prev_cj = cj;
+            }
             for (int q = 0; q <= P; ++q) seg[q] = -1;
             if (cur >= 0) {   // position 0: the previous element's last node
                 seg[0] = prev ? row - 1 : -1;
                 kseg[0] = (code[m] >> 2) & 1 ? P : 0;
             }
-            cur = m;
+            cur = m, ci = i, cj = j;
         }
         const long long cc = own[t];
         const bool won = cc >= 0 && claim[cc] == (unsigned long long)chain;
@@ -426,16 +368,14 @@ __global__ void build_kernel(const int* __restrict__ start, const int* __restric
     for (long long q = run_off[chain]; q <= b; ++q) {
         const long long r0 = block_row[q];
         const int len = block_len[q];
-        for (int r = 0; r < len; ++r) scale[r0 + r] = sqrt(diag[row_copy[r0 + r]] / A[(r0 + r) * (P + 1)]);
-        for (int r = 0; r < len; ++r)
-            for (int d = 0; d <= P && d <= r; ++d) A[(r0 + r) * (P + 1) + d] *= scale[r0 + r] * scale[r0 + r - d];
         for (int r = 0; r < len; ++r) {
             double* Lr = A + (r0 + r) * (P + 1);
+            Lr[0] = diag[row_copy[r0 + r]];
             const int w = r < P ? r : P;
             for (int d = w; d >= 1; --d) {
                 const double* Lj = A + (r0 + r - d) * (P + 1);
                 double sum = Lr[d];
-                for (int t = d + 1; t <= w; ++t) sum -= Lr[t] * Lj[t - d];
+                for (int u = d + 1; u <= w; ++u) sum -= Lr[u] * Lj[u - d];
                 Lr[d] = sum / Lj[0];
             }
             double sum = Lr[0];
@@ -566,8 +506,10 @@ public:
             longest_ = std::max(longest_, lines.start[l + 1] - lines.start[l]);
         std::vector<int> axis(local_, 0);
         for (size_t m = 0; m < lines.elem.size(); ++m) axis[lines.elem[m]] = lines.code[m] & 3;
-        thrust::device_vector<int> d_start(lines.start), d_elem(lines.elem), d_axis(axis);
-        thrust::device_vector<unsigned char> d_code(lines.code);
+        thrust::device_vector<int> d_start(lines.start), d_elem(lines.elem), d_axis(axis), d_face(lines.face_elem),
+            d_edge_start(lines.edge_start), d_edge(lines.edge_elem);
+        thrust::device_vector<unsigned char> d_code(lines.code), d_face_code(lines.face_code),
+            d_edge_code(lines.edge_code);
         const int* start = raw_pointer_cast(d_start.data());
         const int* elem = raw_pointer_cast(d_elem.data());
         const unsigned char* code = raw_pointer_cast(d_code.data());
@@ -618,14 +560,17 @@ public:
 
         thrust::device_vector<long long> row_copy(rows_), block_row(blocks_);
         thrust::device_vector<int> block_len(blocks_), bad(1, 0);
-        thrust::device_vector<double> A(rows_ * (P + 1), 0.0), scale(rows_);
+        thrust::device_vector<double> A(rows_ * (P + 1), 0.0);
+        const LineNeighbours nb{raw_pointer_cast(d_face.data()),      raw_pointer_cast(d_edge_start.data()),
+                                raw_pointer_cast(d_edge.data()),      raw_pointer_cast(d_face_code.data()),
+                                raw_pointer_cast(d_edge_code.data()), G,
+                                B,                                    DB};
         if (chains > 0)
             build_kernel<P><<<grid_for(chains), kThreads, 0, stream_>>>(
                 start, elem, code, raw_pointer_cast(own.data()), raw_pointer_cast(claim.data()),
-                raw_pointer_cast(M.data()), diag, raw_pointer_cast(row_off.data()), raw_pointer_cast(run_off.data()),
+                raw_pointer_cast(M.data()), nb, diag, raw_pointer_cast(row_off.data()), raw_pointer_cast(run_off.data()),
                 chains, raw_pointer_cast(row_copy.data()), raw_pointer_cast(block_row.data()),
-                raw_pointer_cast(block_len.data()), raw_pointer_cast(A.data()), raw_pointer_cast(scale.data()),
-                raw_pointer_cast(bad.data()));
+                raw_pointer_cast(block_len.data()), raw_pointer_cast(A.data()), raw_pointer_cast(bad.data()));
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
         if (bad[0]) {
