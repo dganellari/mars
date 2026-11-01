@@ -956,3 +956,24 @@ aspect-ratio class is covered (99.7-99.9% in lines). Cut by the partition:
 
 So a GPU smoother can keep the present partition and cut lines at rank boundaries; a partition
 that keeps lines whole would matter from a few thousand ranks on.
+
+### Node-line smoother on the GPU (--smoother lines)
+
+`solvers/mars_cellwise_lines.hpp` (`cellwise::NodeLines`), used by `mars_marsir_bp --mg
+--smoother lines` at p and, under p = 7, at 3. The host builds the element lines of each rank's
+own elements (cut at rank boundaries). Each node goes to the rank that counts it (one DSS of a
+code naming the counting copy); a chain proposes itself for its nodes and the lowest chain wins
+(atomicMin), which gives the reference's sequential claims. A block's matrix is the sum of its own
+line's element matrices along the thin axis (sum-factorized from the stored geometry), scaled
+symmetrically to the assembled diagonal: the lateral neighbours enter only through the
+diagonal, so no ghost geometry is needed. On the host this "scaled" form gives the exact
+assembled form's iterations on all four wing blocks (23 / 12 / 11 / 15) and on graded boxes (10),
+and 36 against 18 on the cube sheared to a scaled Jacobian of 0.2 (the unscaled own-line form:
+76). One thread per chain assembles, scales and factors its blocks (banded Cholesky, bandwidth
+p), so the sums run in a fixed order; blocks are sorted by length and stored interleaved by warp.
+A smoothing step is three passes: DSS of the residual onto the counting copies, one thread per
+block for the two banded triangular solves (p values in registers each), and a DSS of the
+solution with the Chebyshev update. `scripts/bp3_smoother_study.py --gpu` gives the history the
+driver must print with `--mg --coarse k` on one rank (its Jacobi history equals
+`cellwise_bp_mg_ref.py --gpu`): ne 8, s = 100, coarse 100, tol 1e-10: Jacobi 65 iterations, node
+lines 28 (deform 0.05) and 7 (deform 0). GPU runs pending.

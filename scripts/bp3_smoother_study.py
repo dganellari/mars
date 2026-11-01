@@ -244,13 +244,15 @@ def element_lines(corners, vid, cut=0):
 class NodeLines:
     """Block Jacobi on lines of nodes: every free node belongs to exactly one block, a run of nodes
     along the thin axis of its element line, solved exactly with the assembled operator restricted
-    to it. Lines are claimed longest first; a node already claimed ends the run."""
+    to it. Lines are claimed longest first; a node already claimed ends the run. own: each block
+    from the element matrices of its own line's elements only, with the assembled diagonal (the
+    lateral neighbours enter through the diagonal alone; what a GPU can build without them)."""
 
-    def __init__(self, lv, lines):
+    def __init__(self, lv, lines, own=False):
         n, p = lv.n, lv.p
         loc = [dict(zip(row, range(lv.n3))) for row in lv.gidx]
         abc = np.stack(np.indices((n, n, n)).reshape(3, -1), 1)
-        claimed = np.zeros(lv.N, bool); blocks = []
+        claimed = np.zeros(lv.N, bool); blocks = []; owners = []
         for line in lines:
             e0, k0, t0 = line[0]
             k1, k2 = [a for a in range(3) if a != k0]
@@ -272,17 +274,36 @@ class NodeLines:
                         if lv.free[g] and not claimed[g]:
                             claimed[g] = True; run.append(g)
                         elif run:
-                            blocks.append(run); run = []
+                            blocks.append(run); owners.append(line); run = []
                     if run:
-                        blocks.append(run)
+                        blocks.append(run); owners.append(line)
         assert claimed[lv.inner].all()
-        keys, vals = lv.assembled()
         self.lv = lv; self.groups = []
-        for m in sorted({len(b) for b in blocks}):
-            S = np.array([b for b in blocks if len(b) == m])
-            kk = S[:, :, None] * lv.N + S[:, None, :]
-            pos = np.minimum(np.searchsorted(keys, kk), len(keys) - 1)
-            self.groups.append((S, np.linalg.inv(np.where(keys[pos] == kk, vals[pos], 0.0))))
+        if own:
+            K = lv.matrices(); dg = lv.nodes(lv.diag)
+            inverses = []
+            for run, line in zip(blocks, owners):
+                A = np.zeros((len(run), len(run)))
+                for e, _, _ in line:
+                    hit = [(r, loc[e][g]) for r, g in enumerate(run) if g in loc[e]]
+                    if hit:
+                        ri, li = zip(*hit)
+                        A[np.ix_(ri, ri)] += K[e][np.ix_(li, li)]
+                if own == "scaled":   # S A S with S^2 = assembled / own diagonal
+                    sc = np.sqrt(dg[run] / np.diag(A)); A = A * sc[:, None] * sc[None, :]
+                else:
+                    A[np.diag_indices(len(run))] = dg[run]
+                inverses.append(np.linalg.inv(A))
+            for m in sorted({len(b) for b in blocks}):
+                pick = [i for i, b in enumerate(blocks) if len(b) == m]
+                self.groups.append((np.array([blocks[i] for i in pick]), np.stack([inverses[i] for i in pick])))
+        else:
+            keys, vals = lv.assembled()
+            for m in sorted({len(b) for b in blocks}):
+                S = np.array([b for b in blocks if len(b) == m])
+                kk = S[:, :, None] * lv.N + S[:, None, :]
+                pos = np.minimum(np.searchsorted(keys, kk), len(keys) - 1)
+                self.groups.append((S, np.linalg.inv(np.where(keys[pos] == kk, vals[pos], 0.0))))
         sizes = np.array([len(b) for b in blocks])
         self.stats = f"{len(lines)} element lines (longest {len(lines[0])}), {len(blocks)} node blocks, " \
                      f"mean {sizes.mean():.1f} nodes"
@@ -304,42 +325,54 @@ def chebyshev_steps(lmax, steps):
     return out
 
 
-class VCycle:
-    """p -> 1 with Chebyshev on prec(A) at p and an exact solve of the assembled p = 1 matrix."""
+def power(lv, prec):   # lmax of prec(A): 30 steps from the GPU's hash vector, node norms
+    t = np.arange(lv.E * lv.n3, dtype=np.uint64)
+    h = ((t * np.uint64(2654435761)) & np.uint64(0xffffffff)).astype(float) / 4294967296.0 - 0.5
+    v = prec(h.reshape(lv.E, lv.n3)); lam = 0.0
+    for _ in range(30):
+        w = prec(lv.apply(v))
+        nw = np.linalg.norm(lv.nodes(w)); lam = nw / np.linalg.norm(lv.nodes(v)); v = w / nw
+    return lam
 
-    def __init__(self, fine, coarse, prec, pre, post):
+
+def smooth(lv, prec, lmax, b, x, steps, zero_x):
+    d = None
+    for i, (c1, c2) in enumerate(chebyshev_steps(lmax, steps)):
+        z = prec(b if (i == 0 and zero_x) else b - lv.apply(x))
+        d = c2 * z if i == 0 else c1 * d + c2 * z
+        x = d.copy() if (i == 0 and zero_x) else x + d
+    return x
+
+
+class VCycle:
+    """p -> 1 with Chebyshev on prec(A) at p; at p = 1 an exact solve of the assembled matrix, or
+    coarse_steps Chebyshev-Jacobi steps (mars_marsir_bp --mg without --amg)."""
+
+    def __init__(self, fine, coarse, prec, pre, post, coarse_steps=0):
         self.f, self.c, self.prec, self.pre, self.post = fine, coarse, prec, pre, post
         self.I = np.array([lag(coarse.zeta, x)[0] for x in fine.zeta])
-        self.lmax = self.power()
+        self.lmax = power(fine, prec)
+        self.coarse_steps = coarse_steps
+        if coarse_steps:
+            self.lmax_c = power(coarse, coarse.jacobi)
+            return
         A = np.zeros((coarse.N, coarse.N))
         np.add.at(A, (coarse.gidx[:, :, None], coarse.gidx[:, None, :]), coarse.matrices())
         self.Ac_inv = np.linalg.inv(A[np.ix_(coarse.inner, coarse.inner)])
 
-    def power(self):
-        lv = self.f
-        t = np.arange(lv.E * lv.n3, dtype=np.uint64)
-        h = ((t * np.uint64(2654435761)) & np.uint64(0xffffffff)).astype(float) / 4294967296.0 - 0.5
-        v = self.prec(h.reshape(lv.E, lv.n3)); lam = 0.0
-        for _ in range(30):
-            w = self.prec(lv.apply(v))
-            nw = np.linalg.norm(lv.nodes(w)); lam = nw / np.linalg.norm(lv.nodes(v)); v = w / nw
-        return lam
-
     def smooth(self, b, x, steps, zero_x):
-        d = None
-        for i, (c1, c2) in enumerate(chebyshev_steps(self.lmax, steps)):
-            z = self.prec(b if (i == 0 and zero_x) else b - self.f.apply(x))
-            d = c2 * z if i == 0 else c1 * d + c2 * z
-            x = d.copy() if (i == 0 and zero_x) else x + d
-        return x
+        return smooth(self.f, self.prec, self.lmax, b, x, steps, zero_x)
 
     def __call__(self, b):
         f, c, I = self.f, self.c, self.I
         x = self.smooth(b, np.zeros_like(b), self.pre, True)
         r = (b - f.apply(x)) * f.mask
         rc = np.einsum("ai,bj,ck,eabc->eijk", I, I, I, r.reshape(-1, f.n, f.n, f.n), optimize=True).reshape(-1, c.n3)
-        u = np.zeros(c.N); u[c.inner] = self.Ac_inv @ c.scatter(rc)[c.inner]
-        xc = u[c.gidx]
+        if self.coarse_steps:
+            xc = smooth(c, c.jacobi, self.lmax_c, rc, np.zeros_like(rc), self.coarse_steps, True)
+        else:
+            u = np.zeros(c.N); u[c.inner] = self.Ac_inv @ c.scatter(rc)[c.inner]
+            xc = u[c.gidx]
         x = x + np.einsum("ai,bj,ck,eijk->eabc", I, I, I, xc.reshape(-1, c.n, c.n, c.n), optimize=True).reshape(-1, f.n3)
         return self.smooth(b, x, self.post, False)
 
@@ -355,6 +388,19 @@ def fcg(lv, P, b, rtol, maxit):
         if lv.true_residual(b, x) <= rtol * r0:
             return x, it
     return x, maxit
+
+
+def fcg_history(lv, P, b, tol, maxit):   # the driver's FCG: stops on sqrt(<r,z>/<r0,z0>)
+    x = np.zeros_like(b); r = b.copy(); z = P(r); p_ = z.copy(); rz = np.sum(r * z); rz0 = rz; hist = []
+    for _ in range(maxit):
+        q = lv.apply(p_); qp = np.sum(q * p_); al = rz / qp
+        x = x + al * p_; r = r - al * q
+        z = P(r); rz = np.sum(r * z); be = -np.sum(q * z) / qp
+        p_ = z + be * p_
+        hist.append(np.sqrt(max(rz, 0.0) / rz0))
+        if hist[-1] <= tol:
+            break
+    return x, hist
 
 
 def levels(corners, vid, p):
@@ -377,9 +423,10 @@ def smoother(name, f, corners, vid, cut=0, ne=0):
         g = f.gidx.reshape(ne, ne, ne, f.n3)
         cols = (g if name == "column" else g.transpose(1, 2, 0, 3)).reshape(ne * ne, ne * f.n3)
         return Schwarz(f, np.stack([np.unique(r) for r in cols])), name
-    if name == "nodeline":
-        prec = NodeLines(f, element_lines(corners, vid, cut))
-        return prec, f"nodeline [{prec.stats}]"
+    if name in ("nodeline", "nodeline-own", "nodeline-scaled"):
+        prec = NodeLines(f, element_lines(corners, vid, cut), own={"nodeline": False, "nodeline-own": True,
+                                                                     "nodeline-scaled": "scaled"}[name])
+        return prec, f"{name} [{prec.stats}]"
     raise SystemExit(f"unknown smoother {name}")
 
 
@@ -410,7 +457,12 @@ def main():
     ap.add_argument("--maxit", type=int, default=3000)
     ap.add_argument("--line-cut", type=int, default=0, help="nodeline: split element lines every k elements")
     ap.add_argument("--grade", type=float, default=0.0, help="z layers grow by e^(grade / ne): thickest / thinnest = e^grade")
+    ap.add_argument("--gpu", action="store_true", help="the run of mars_marsir_bp --mg --coarse k (see gpu())")
+    ap.add_argument("--coarse", type=int, default=100, help="--gpu: Chebyshev steps on p = 1")
+    ap.add_argument("--tol", type=float, default=1e-10, help="--gpu: FCG tolerance on sqrt(<r,z>/<r0,z0>)")
     args = ap.parse_args()
+    if args.gpu:
+        return gpu(args)
     ne = args.ne
     print(f"BP3 p = {args.p} -> 1, Chebyshev ({args.pre},{args.post}) on [hi / 15, hi], exact p = 1 solve, "
           f"{ne}^3 elements, deform {args.deform}, grade {args.grade}, FCG to true residual {args.rtol:.0e}")
@@ -428,6 +480,32 @@ def main():
             it, err, lmax = solve(f, c, prec, u, args.pre, args.post, args.rtol, args.maxit)
             row.append(f"{label} {it} it (err {err:.1e}, lmax {lmax:.2f}, {time.time() - t0:.0f} s)")
         print(f"  s = {s:g}: " + "; ".join(row), flush=True)
+
+
+def gpu(args):
+    """The history mars_marsir_bp prints for --spec bp3 --p 3 --ne N --mg --coarse k --stretch s
+    [--deform a] --tol t [--smoother lines] (smoothers jacobi and nodeline-scaled): on one rank its
+    mesh, numbering and lines are the ones here, so the histories must match to rounding."""
+    ne, s = args.ne, float(args.stretch.split(",")[0])
+    corners, vid = cube(ne, args.deform, s, args.grade)
+    f, c = levels(corners, vid, args.p)
+    xs = f.xn.copy(); xs[..., 2] *= s
+    u = f.mask * np.prod(np.sin(np.pi * xs), -1)
+    for name in args.smoothers.split(","):
+        prec, label = smoother(name, f, corners, vid, args.line_cut, ne)
+        mg = VCycle(f, c, prec, args.pre, args.post, args.coarse)
+        b = f.apply(u)
+        x, hist = fcg_history(f, mg, b, args.tol, args.maxit)
+        true = f.true_residual(b, x) / f.true_residual(b, np.zeros_like(b))
+        print(f"GPU-comparable: bp3, p={args.p}, {ne}^3 elements, deform {args.deform}, stretch {s:g}, {label}, "
+              f"Chebyshev ({args.pre},{args.post}), coarse {args.coarse} Chebyshev steps")
+        print(f"  lmax {mg.lmax:.4f} {mg.lmax_c:.4f}")
+        print(f"  FCG + V-cycle: {len(hist)} iterations, sqrt(<r,z>/<r0,z0>) = {hist[-1]:.3e}, true assembled residual "
+              f"{true:.3e}")
+        for k in (1, 5, 10, 20, 50, 100):
+            if k <= len(hist):
+                print(f"  it {k:3d}  {hist[k - 1]:.6e}")
+        print(f"  max |x - u| / max |u| = {np.abs(x - u).max() / np.abs(u).max():.3e}")
 
 
 if __name__ == "__main__":

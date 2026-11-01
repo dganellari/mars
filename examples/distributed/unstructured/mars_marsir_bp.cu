@@ -54,6 +54,9 @@
 // --cheb-interval mfem smooths on MFEM's interval ([0.3, 1.2] lmax, 10 power steps;
 // cellwise::ChebyshevInterval) instead of MARS's ([1.1 / 15, 1.1] lmax, 30 steps), so this
 // V-cycle is the one of tests/performance/mfem_bp3.
+// --smoother lines: Chebyshev on node-line Jacobi (cellwise::NodeLines) instead of point Jacobi
+// at p (and at 3 under p = 7), for stretched elements: element lines along each element's thin
+// axis, built on the host from the rank's own elements and cut at rank boundaries.
 // p = 1 with --mg --amg: FCG on the rows of the assembled p = 1 matrix that BoomerAMG uses,
 // as MFEM does (assembled at p = 1, matrix-free above: 2x faster than the cell-wise operator
 // here, docs/design/cellwise_bp_fcg.md); b is assembled onto the rows before the timing and
@@ -102,6 +105,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_block_dss.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_raw.hpp"
 
@@ -803,7 +807,7 @@ struct Options {
     int solves = 1;
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
-    std::string cheb_interval = "mars", rhs = "discrete", mesh;
+    std::string cheb_interval = "mars", rhs = "discrete", mesh, smoother = "jacobi";
     double deform = 0.05, stretch = 1.0, tol = 1e-10;
     // PASS needs the true assembled residual at or below this. FCG stops on sqrt(<r,z>/<r0,z0>):
     // with the V-cycle at tol 1e-10 that left true residuals of 6.5e-10 to 1.9e-9.
@@ -1087,6 +1091,15 @@ int run(const Options& o)
     thrust::device_vector<double> elem_fine;
     float setup_ms = 0.0f;
     std::array<double, 3> lmax{};
+    // --smoother lines: node-line Jacobi at p (and at 3 under p = 7), with its sizes summed over
+    // the ranks for the report.
+    std::unique_ptr<cellwise::NodeLines<P>> lines_top;
+    std::unique_ptr<cellwise::NodeLines<3>> lines_three;
+    struct LineSizes {
+        int p;
+        double element_lines, longest, blocks, rows;
+    };
+    std::vector<LineSizes> line_sizes;
     if (o.mg) {
         BP_CK(cudaEventRecord(t0, stream));
         // The fine element diagonal (s is scratch from here on). The copy runs on the
@@ -1109,6 +1122,57 @@ int run(const Options& o)
                                              d_gid, o.pre, o.post, o.coarse, MPI_COMM_WORLD, stream,
                                              o.cheb_interval == "mfem" ? cellwise::ChebyshevInterval::mfem()
                                                                        : cellwise::ChebyshevInterval{});
+            if (o.smoother == "lines") {
+                // The element lines of the rank's own elements: corners from the device geometry,
+                // vertex ids from the file or the lattice.
+                thrust::device_vector<double> cx(E * 24);
+                if (E > 0) corners_kernel<<<blocks_for(E), cellwise::kThreads, 0, stream>>>(raw(cx), E, o.ne, o.deform);
+                BP_CK(cudaGetLastError());
+                BP_CK(cudaStreamSynchronize(stream));
+                std::vector<double> hx(E * 24), corners(E * 24);
+                thrust::copy(cx.begin(), cx.end(), hx.begin());
+                std::vector<long long> vid(E * 8);
+                for (long long e = 0; e < E; ++e)
+                    for (int c = 0; c < 8; ++c) {
+                        int bc[3];
+                        cellwise::corner_bits(c, bc[0], bc[1], bc[2]);
+                        for (int a = 0; a < 3; ++a)
+                            corners[(e * 8 + c) * 3 + a] = hx[e * 24 + a * 8 + bc[0] * 4 + bc[1] * 2 + bc[2]];
+                        if (meshed) {
+                            vid[e * 8 + c] = (long long)mt.key[e * 8 + c];
+                        } else {
+                            const long long g[3] = {box.ox + e / ((long long)box.ny * box.nz) + bc[0],
+                                                    box.oy + (e / box.nz) % box.ny + bc[1], box.oz + e % box.nz + bc[2]};
+                            vid[e * 8 + c] = (g[0] * (o.ne + 1) + g[1]) * (o.ne + 1) + g[2];
+                        }
+                    }
+                const cellwise::ElementLines lines = cellwise::build_element_lines(corners, vid, E);
+                auto sizes = [&](int lp, const auto& nl) {
+                    line_sizes.push_back({lp, all_sum((double)nl.element_lines()), all_max((double)nl.longest()),
+                                          all_sum((double)nl.blocks()), all_sum((double)nl.rows())});
+                };
+                lines_top = std::make_unique<cellwise::NodeLines<P>>(lines, topo, h, raw(G), raw(dB), raw(dDB),
+                                                                     mg->diag<P>(), MPI_COMM_WORLD, stream);
+                mg->set_smoother(
+                    P,
+                    [&nl = *lines_top](const double* in, const double* y, double* d, double* xs, double c1, double c2,
+                                       bool first, bool assign) { nl.step(in, y, d, xs, c1, c2, first, assign); },
+                    MPI_COMM_WORLD);
+                sizes(P, *lines_top);
+                if constexpr (P == 7) {
+                    lines_three = std::make_unique<cellwise::NodeLines<3>>(lines, topo, h3, raw(L3->G), raw(L3->B),
+                                                                           raw(L3->DB), mg->diag<3>(), MPI_COMM_WORLD,
+                                                                           stream);
+                    mg->set_smoother(
+                        3,
+                        [&nl = *lines_three](const double* in, const double* y, double* d, double* xs, double c1,
+                                             double c2, bool first, bool assign) {
+                            nl.step(in, y, d, xs, c1, c2, first, assign);
+                        },
+                        MPI_COMM_WORLD);
+                    sizes(3, *lines_three);
+                }
+            }
             lmax = mg->lambda_max();
         }
 #ifdef MARS_ENABLE_HYPRE
@@ -1302,6 +1366,10 @@ int run(const Options& o)
                    o.amg ? o.amg_cycles : o.coarse, lmax[0], lmax[1], lmax[2], setup_ms);
         if (o.mg && o.cheb_interval == "mfem" && P > 1)
             printf("  Chebyshev interval MFEM's: [0.3, 1.2] lmax, 10 power steps\n");
+        for (const LineSizes& ls : line_sizes)
+            printf("  smoother at p=%d: node lines, %.0f element lines (longest %.0f), %.0f blocks of %.1f nodes on "
+                   "average\n",
+                   ls.p, ls.element_lines, ls.longest, ls.blocks, ls.blocks > 0 ? ls.rows / ls.blocks : 0.0);
         if (o.amg)
             printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
                    o.amg_agg, o.amg_coarse_size);
@@ -1389,6 +1457,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--reps")) o.reps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--solves")) o.solves = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
+        else if (!strcmp(argv[i], "--smoother")) o.smoother = argv[i + 1];
         else if (!strcmp(argv[i], "--rhs")) o.rhs = argv[i + 1];
         else if (!strcmp(argv[i], "--mesh")) o.mesh = argv[i + 1];
         else if (!strcmp(argv[i], "--dss-ptx")) o.dss_ptx = argv[i + 1];
@@ -1416,6 +1485,9 @@ int main(int argc, char** argv)
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
+    if (!error && o.smoother != "jacobi" && o.smoother != "lines") error = "--smoother is jacobi or lines";
+    if (!error && o.smoother == "lines" && (!o.mg || o.p == 1 || o.block || o.rotate || !o.block_dss.empty()))
+        error = "--smoother lines goes with --mg at p = 3 or 7, without --block, --rotate or --block-dss";
     if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
         error = "--rhs is discrete, or pde for bp3 and bp3_tri";
     if (!error && !o.mesh.empty() &&
@@ -1451,7 +1523,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

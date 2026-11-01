@@ -250,6 +250,19 @@ public:
     // The generated V-cycle kernels (null: the hand ones).
     void set_kernels(PmgKernels* kernels) { gen_ = kernels; }
 
+    // step(b, y, d, x, c1, c2, first, assign): one Chebyshev step at level P with another
+    // smoother in place of Jacobi (NodeLines::step, mars_cellwise_lines.hpp). lmax of the level
+    // is measured again for the new preconditioned operator.
+    using SmootherStep = std::function<void(const double*, const double*, double*, double*, double, double, bool, bool)>;
+    void set_smoother(int P, SmootherStep step, MPI_Comm comm)
+    {
+        line_[P == 7 ? 0 : (P == 3 ? 1 : 2)] = std::move(step);
+        Reduction red(comm);
+        if (P == 7) lmax_[0] = power_iteration<7>(red);
+        else if (P == 3) lmax_[1] = power_iteration<3>(red);
+        else lmax_[2] = power_iteration<1>(red);
+    }
+
     // The assembled diagonal at level P, on every copy.
     template <int P>
     const double* diag() const { return P == 7 ? diag7_ : (P == 3 ? diag3_ : diag1_); }
@@ -352,6 +365,10 @@ private:
     template <int P, bool FIRST>
     void step(const double* b, const double* y, double* d, double* x, double c1, double c2) const
     {
+        if (const SmootherStep& other = line_[P == 7 ? 0 : (P == 3 ? 1 : 2)]) {
+            other(b, y, d, x, c1, c2, FIRST, FIRST && !y);
+            return;
+        }
         UnstructuredHalo* halo = halos_[P == 7 ? 0 : (P == 3 ? 1 : 2)];
         run_unstructured_pass(halo, E_, b, y, stream_, [&](const ElementList& set, const double* ghost, int) {
             if (gen_) {
@@ -454,6 +471,7 @@ private:
     double* own7_ = nullptr;     // the summed p = 7 diagonal, when this class forms it
     const unsigned long long* gid_ = nullptr;   // element ids for the power iteration's start
     ChebyshevInterval interval_;
+    std::array<SmootherStep, 3> line_;   // per level: a smoother in place of Jacobi (empty: Jacobi)
 };
 
 }  // namespace cellwise
