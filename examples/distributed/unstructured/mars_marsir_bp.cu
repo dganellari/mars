@@ -1312,6 +1312,13 @@ int run(const Options& o)
         apply(raw(u), raw(y), stream);
         dss(raw(y), raw(s), stream);
     });
+    // --smoother lines: the three passes of one smoothing step at p (s and y are scratch here).
+    float line_res_ms = 0.0f, line_solve_ms = 0.0f, line_upd_ms = 0.0f;
+    if (lines_top) {
+        line_res_ms = time_ms([&] { lines_top->residual(raw(u), raw(y)); });
+        line_solve_ms = time_ms([&] { lines_top->solve(); });
+        line_upd_ms = time_ms([&] { lines_top->update(raw(s), raw(y), 0.5, 0.5, false, false); });
+    }
     // The p = 1 DSS on its own: a coarse solve makes two, the rest is BoomerAMG.
     float dss1_ms = 0.0f;
     if (o.amg) {
@@ -1402,6 +1409,10 @@ int run(const Options& o)
         printf("  DSS          %8.3f ms  %6.2f GDoF/s unique  %6.0f GB/s per GPU  (%s)\n", dss_ms,
                unique / (dss_ms * 1e6), dss_bytes / (dss_ms * 1e6),
                block_gen ? "block, MARSIR-generated" : !o.block_dss.empty() ? "block" : dss_gen ? "MARSIR-generated" : "hand gather");
+        if (lines_top)
+            printf("  node lines   %8.3f ms  (one smoothing step at p=%d: residual DSS %.3f, block solves %.3f, "
+                   "DSS + update %.3f ms)\n",
+                   line_res_ms + line_solve_ms + line_upd_ms, P, line_res_ms, line_solve_ms, line_upd_ms);
         printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
                unique / (both_ms * 1e6));
         if (o.solves > 1) {

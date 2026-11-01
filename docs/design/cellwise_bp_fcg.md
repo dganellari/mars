@@ -1044,4 +1044,6 @@ So the levels with node lines take 100 power steps by default (`--power-steps` s
 levels); the one-rank reference (`bp3_smoother_study.py --gpu`, which follows the driver) then
 gives 12 iterations, lmax 2.9190, it 1 / 5 / 10 = 5.230355e-02 / 1.327880e-05 / 3.012310e-09.
 An iteration with node lines costs 40% more than with Jacobi at both degrees; the coarse solve is
-43% of the p = 3 solve and 8% of the p = 7 one.
+43% of the p = 3 solve and 8% of the p = 7 one. The default confirmed on the GPU (1992bc56,
+without --power-steps): the one-rank reference prints exactly those lines; the wing 262 (p = 3)
+and 401 (p = 7, the same lmax and history as with --power-steps 100).

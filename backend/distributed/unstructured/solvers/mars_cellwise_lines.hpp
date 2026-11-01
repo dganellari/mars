@@ -608,24 +608,46 @@ public:
     }
 
     // One Chebyshev step with this smoother in place of Jacobi: z = lines(DSS(b - y)) (y null:
-    // b), d = c1 d + c2 z (first: c2 z), x = d when assign, else x += d.
+    // b), d = c1 d + c2 z (first: c2 z), x = d when assign, else x += d. Its three passes are
+    // also callable one by one (the driver times them).
     void step(const double* b, const double* y, double* d, double* x, double c1, double c2, bool first,
               bool assign) const
     {
+        residual(b, y);
+        solve();
+        update(d, x, c1, c2, first, assign);
+    }
+
+    // s = DSS(b - y) on the counting copies.
+    void residual(const double* b, const double* y) const
+    {
         using namespace line_detail;
         double* s = const_cast<double*>(thrust::raw_pointer_cast(s_.data()));
-        double* z = const_cast<double*>(thrust::raw_pointer_cast(z_.data()));
         run_unstructured_pass(halo_, local_, b, y, stream_, [&](const ElementList& set, const double* ghost, int) {
             static const int grid = resident_grid(residual_kernel<P>);
             residual_kernel<P><<<grid, kThreads, 0, stream_>>>(b, y, ghost, s, T_, set);
             MARS_CELLWISE_CK(cudaGetLastError());
             return grid;
         });
+    }
+
+    // z = the block solves of s, on the counting copies.
+    void solve() const
+    {
+        using namespace line_detail;
         if (blocks_ > 0)
             solve_kernel<P><<<grid_for(blocks_), kThreads, 0, stream_>>>(
                 thrust::raw_pointer_cast(L_.data()), thrust::raw_pointer_cast(copy_.data()),
-                thrust::raw_pointer_cast(len_.data()), thrust::raw_pointer_cast(warp_off_.data()), s, z, blocks_);
+                thrust::raw_pointer_cast(len_.data()), thrust::raw_pointer_cast(warp_off_.data()),
+                thrust::raw_pointer_cast(s_.data()), const_cast<double*>(thrust::raw_pointer_cast(z_.data())), blocks_);
         MARS_CELLWISE_CK(cudaGetLastError());
+    }
+
+    // z on every copy (DSS), then the Chebyshev update of d and x.
+    void update(double* d, double* x, double c1, double c2, bool first, bool assign) const
+    {
+        using namespace line_detail;
+        const double* z = thrust::raw_pointer_cast(z_.data());
         run_unstructured_pass(halo_, local_, z, nullptr, stream_, [&](const ElementList& set, const double* ghost, int) {
             if (first) {
                 static const int grid = resident_grid(update_kernel<P, true>);
