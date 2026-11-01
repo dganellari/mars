@@ -828,3 +828,40 @@ p = 1 alone. With MFEM's interval MARS needs MFEM's iterations (505 against 502)
 interval saves 13-20% of them. So the slowdown on stretched elements belongs to the method, point
 Chebyshev-Jacobi p-multigrid with BoomerAMG on p = 1, not to MARS. The times are first solves
 (MFEM's also include its first device allocations) and are not compared here.
+
+### Smoothers for stretched elements: host study
+
+`scripts/bp3_smoother_study.py`: the V-cycle of `marsir-mlir/test/cellwise_bp_mg_ref.py`
+(p = 3 -> 1, Chebyshev (2,2), an exact p = 1 solve, so only the smoother varies) on the cube with
+z divided by s. Chebyshev is applied to one of:
+
+- point Jacobi (the GPU solver's smoother);
+- element: additive Schwarz on element closures, the assembled operator on each element's free
+  nodes, solved exactly;
+- column along z: the same on columns of elements along the thin direction, exact line solves;
+- column along x: lines across the thin direction, as a control.
+
+FCG iterations to a true residual of 1e-10. Checks: Jacobi at s = 1, ne 4 gives the reference's
+12 iterations and error; one set of all nodes inverts A to 1.6e-15; element Schwarz is symmetric
+to 1e-14.
+
+| ne 8 | s = 1 | s = 10 | s = 100 | s = 1000 |
+|---|---|---|---|---|
+| Jacobi | 12 | 44 | 76 | 79 |
+| element | 11 | 36 | 49 | 50 |
+| column along z | 11 | 11 | 11 | 11 |
+
+| ne 12 | s = 1 | s = 100 | s = 1000 |
+|---|---|---|---|
+| Jacobi | 12 | 103 | 111 |
+| element | 12 | 70 | 71 |
+| column along z | 11 | 12 | 12 |
+| column along x | 11 | 50 | 50 |
+
+Exact solves on single elements remove about a third of the iterations and keep the growth.
+Lines of elements along the thin direction keep the count at 11-12 for every s on both meshes;
+lines across it do not. So the error the point smoother leaves is strongly coupled along the thin
+direction over many elements, and the smoother must solve along that direction over whole lines
+of elements: the classic line smoother for anisotropy. The blocks are solved densely here; the
+cost of a GPU form is not measured. On the wing the thin direction changes from region to region,
+so lines would have to follow each element's short edges through the mesh; not built.
