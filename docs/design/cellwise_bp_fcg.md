@@ -1058,6 +1058,13 @@ slowest of 64 GH200 on the wing):
 
 The two DSS passes are 76% of a step at p = 3 and 67% at p = 7; Jacobi's whole step is one fused
 pass of about one DSS. Four steps per V-cycle at 2.8 ms more each give the 9.7 ms more per
-iteration at p = 3. So the lever is the second pass, not the block solves: the update could take
-each copy's value from its node's counting copy by index (with the halo for nodes counted on
-other ranks) instead of a DSS over mostly zero copies; not built.
+iteration at p = 3. So the lever looked like the second pass, not the block solves.
+
+The update now reads each copy's value at its node's counting copy by index (src, built once by a
+DSS of flag x (index + 1); a ghost copy for nodes counted on other ranks) instead of a DSS over
+mostly zero copies (39070eea). Same bits: the one-rank reference prints the same lines, the wing
+the same histories (262 at p = 3). The pass got only 7-11% faster: 1.70 -> 1.51 ms at p = 3, 6.36 ->
+5.91 at p = 7, while the plain DSS in the same runs moved 5-7% (1.61 -> 1.53, 5.97 -> 5.53); an FCG
+iteration at p = 3 34.8 ms (36.7). The pass is bound by reading and writing d and x, not by the
+sums. The residual DSS stays (the block solves sit between it and the update), so most of the
+40% is the price of a second pass over the element-local vectors.
