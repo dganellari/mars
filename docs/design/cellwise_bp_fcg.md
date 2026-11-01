@@ -759,6 +759,34 @@ not skewed: scaled Jacobian median 0.987, none below 0.2, none inverted. The lar
 the far-field boundaries (max 1590-2140 on bottom, side, sym, top, out), not at the blade
 (median 86, max 267; edge aspect ratios of the elements on each side set): the fine spacing near the blade runs along the grid lines out to the far
 field. This fits the smoother results above, since point smoothers such as Jacobi damp poorly
-across strong anisotropy (standard multigrid result, not re-derived here). It is a correlation on
-one mesh, not a test: a cube stretched to a fixed aspect ratio would test it, and the driver has
-no option for that yet.
+across strong anisotropy (standard multigrid result, not re-derived here). On the wing alone that
+is a correlation; the stretched cube below tests it.
+
+### Stretched cube (74e095c4)
+
+`--stretch s` divides z by s: the cube's elements are s times thinner in z than wide (aspect
+ratio s at deform 0; deform 0.05 as everywhere here). ne 64, p = 3 (7.2M DoFs), one GH200,
+`--mg --amg` defaults, tol 3e-13, one solve each, all PASS:
+
+| p = 3 | it | true residual | max error | FCG iteration | coarse per V-cycle | solve | it 10 / 50 / 100 |
+|---|---|---|---|---|---|---|---|
+| s = 1 | 14 | 1.1e-11 | 3.9e-14 | 12.02 ms | 2.73 ms (24%) | 0.17 s | 5.6e-10 |
+| s = 10 | 91 | 1.8e-11 | 3.2e-13 | 11.06 | 2.28 (21%) | 1.01 | 5.5e-4 / 9.3e-9 |
+| s = 100 | 401 | 2.0e-11 | 4.5e-12 | 10.64 | 1.90 (18%) | 4.27 | 1.4e-3 / 2.6e-5 / 1.7e-6 |
+| s = 1000 | 648 | 2.2e-11 | 6.6e-11 | 10.83 | 2.12 (20%) | 7.02 | 1.4e-3 / 3.2e-5 / 3.2e-6 |
+| s = 100, Chebyshev (4,4) | 267 | 1.4e-11 | 3.8e-12 | 17.55 | 2.13 (12%) | 4.68 | 1.3e-3 / 1.4e-5 / 1.8e-7 |
+| s = 100, Chebyshev (8,8) | 193 | 9.1e-12 | 2.9e-12 | 31.56 | 2.07 (7%) | 6.09 | 1.1e-3 / 4.9e-6 / 1.2e-8 |
+
+Stretching alone, on the same cube with the same solver, takes p = 3 from 14 iterations to 91,
+401 and 648, while an iteration costs the same (10.6-12.0 ms). At s = 100, more smoothing gives
+401 / 267 / 193 for k = 2 / 4 / 8, ratios 1.50 and 2.08; the wing gave 1.48 and 2.06 (541 / 366 /
+263). As on the wing it does not pay: solve 4.27 / 4.68 / 6.09 s. The histories have the wing's
+shape, fast for about 10 iterations, then slow. The wing's 541 lies between uniform stretch 100
+and 1000 (its aspect ratios: median 13.6, 10% above 100, 0.6% above 1000), though the two runs
+differ in more than the stretch (one GPU against 64, one stretch everywhere against a spread).
+So stretched elements alone reproduce the wing's iteration growth and its response to smoothing.
+The error grows with s at about the same true residual (3.9e-14 to 6.6e-11): the system gets
+worse conditioned. The (8,8) run's AMG setup took 2799 ms against 249-263 ms in the others; the
+setup does not depend on k, so it is an outlier, not explained (one run).
+Pending: p = 1 alone at each s and BoomerAMG x10 at s = 100, to separate the smoother from
+BoomerAMG as on the wing.
