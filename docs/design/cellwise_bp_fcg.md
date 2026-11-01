@@ -738,5 +738,27 @@ The solve time is flat in k: (4,4) is the only
 faster run (5%), (8,8) is 10% slower. At p = 7, (4,4) cuts 904 iterations to 584 but the solve
 is 15% slower (141.8 s against 123.3 s, first solves; 242.8 ms per iteration). The
 histories fall fast for about 10 iterations, then slowly: from it 100 on, x10 gains 0.013 decades
-per iteration. Not checked: whether the wing's stretched elements are the cause (their aspect
-ratios have not been measured).
+per iteration.
+
+### Element shapes
+
+`scripts/hex_mesh_quality.py` on the Exodus file. Edge aspect ratio: the longest over the
+shortest of the three mean edge lengths. cond(J): the condition number of the trilinear map's
+Jacobian at the element center. Scaled Jacobian: the minimum over the 8 corners.
+
+| | min | median | p90 | p99 | max |
+|---|---|---|---|---|---|
+| edge aspect ratio | 1 | 13.6 | 104 | 733 | 2140 |
+| cond(J) | 1.01 | 14.1 | 106 | 734 | 2140 |
+| scaled Jacobian | 0.298 | 0.987 | 1 | 1 | 1 |
+| volume / median | 2.2e-6 | 1 | 18.8 | 93.3 | 548 |
+
+57% of the elements have an edge aspect ratio above 10, 10% above 100, 0.6% above 1000. The cube
+(deform 0.05, same metric) has cond(J) median 1.18, max 1.34. The wing's elements are stretched,
+not skewed: scaled Jacobian median 0.987, none below 0.2, none inverted. The largest ratios are at
+the far-field boundaries (max 1590-2140 on bottom, side, sym, top, out), not at the blade
+(median 86, max 267; edge aspect ratios of the elements on each side set): the fine spacing near the blade runs along the grid lines out to the far
+field. This fits the smoother results above, since point smoothers such as Jacobi damp poorly
+across strong anisotropy (standard multigrid result, not re-derived here). It is a correlation on
+one mesh, not a test: a cube stretched to a fixed aspect ratio would test it, and the driver has
+no option for that yet.
