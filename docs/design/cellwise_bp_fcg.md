@@ -704,8 +704,11 @@ with 64^3 elements per GPU (7.1M DoFs, 10% more) 22.47 ms and 11.64 ms on 64 GPU
 p = 1 with `--mg --amg` on 4 GPUs hung until its 20 min limit: the solve finished, then rank 0
 called an `MPI_Allreduce` (the row count) inside its printing, which the other ranks never join.
 Every earlier p = 1 run of the assembled path was on one GPU, where that does not block. Fixed in
-b7223754. BoomerAMG on the wing's p = 1 matrix (14.9M rows, theta 0.25): 8 levels, grid complexity
-1.40, operator complexity 2.14.
+b7223754. The rerun (4 GPUs): FCG on the 14,900,611 rows of the assembled p = 1 matrix with
+BoomerAMG x3, 128 iterations, true residual 1.1e-13, PASS; solve 2.38 s, 18.59 ms per iteration,
+96% of it BoomerAMG; AMG setup 1.31 s (8 levels, grid complexity 1.40, operator complexity 2.14).
+On the cube (ne 128, one GPU) the same solve takes 13 iterations, so BoomerAMG alone also needs
+about 10x more iterations on this mesh.
 
 ### Where the p = 3 iterations go
 
@@ -723,10 +726,11 @@ coarse times of its third (warm) solve:
 | Chebyshev (8,8) | 263 | 57.03 | 16.17 | 15.00 | 5.7e-5 / 1.5e-7 / 3.9e-9 |
 
 A more exact coarse solve (10 BoomerAMG cycles instead of 3) or a different coarsening (theta
-0.5) saves 8 of 541 iterations: the p = 1 solve does not lose them. More smoothing does save
-iterations, but only roughly as 1 / sqrt(k) for Chebyshev (k,k): 541 / 366 / 300 / 263 for k = 2
-/ 4 / 6 / 8, still 19x the cube's 14 at k = 8. So the p = 3 smoother, or what neither it nor the
-p = 1 level reaches, is where the iterations go. The solve time is flat in k: (4,4) is the only
+0.5) saves 8 of 541 iterations. That does not clear the p = 1 level: BoomerAMG alone needs 128
+iterations on its matrix (above), so 10 cycles may still be far from an exact p = 1 solve. More
+smoothing does save iterations, but only roughly as 1 / sqrt(k) for Chebyshev (k,k): 541 / 366 /
+300 / 263 for k = 2 / 4 / 6 / 8, still 19x the cube's 14 at k = 8. So the p = 3 smoother loses
+iterations; whether the p = 1 level loses some too is open. The solve time is flat in k: (4,4) is the only
 faster run (5%), (8,8) is 10% slower. At p = 7, (4,4) cuts 904 iterations to 584 but the solve
 is 15% slower (141.8 s against 123.3 s, first solves; 242.8 ms per iteration). The
 histories fall fast for about 10 iterations, then slowly: from it 100 on, x10 gains 0.013 decades
