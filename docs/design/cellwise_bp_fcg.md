@@ -1047,3 +1047,17 @@ An iteration with node lines costs 40% more than with Jacobi at both degrees; th
 43% of the p = 3 solve and 8% of the p = 7 one. The default confirmed on the GPU (1992bc56,
 without --power-steps): the one-rank reference prints exactly those lines; the wing 262 (p = 3)
 and 401 (p = 7, the same lmax and history as with --power-steps 100).
+
+Where an iteration's extra time goes (80c8370a, the passes of one smoothing step timed alone, the
+slowest of 64 GH200 on the wing):
+
+| per GPU | residual DSS | block solves | DSS + update | step | one DSS | FCG iteration, lines / Jacobi |
+|---|---|---|---|---|---|---|
+| p = 3 | 1.70 ms | 1.07 | 1.70 | 4.47 | 1.61 | 36.7 / 27.0 ms |
+| p = 7 | 6.37 | 6.17 | 6.36 | 18.90 | 5.97 | 199.3 / 136.2 |
+
+The two DSS passes are 76% of a step at p = 3 and 67% at p = 7; Jacobi's whole step is one fused
+pass of about one DSS. Four steps per V-cycle at 2.8 ms more each give the 9.7 ms more per
+iteration at p = 3. So the lever is the second pass, not the block solves: the update could take
+each copy's value from its node's counting copy by index (with the halo for nodes counted on
+other ranks) instead of a DSS over mostly zero copies; not built.
