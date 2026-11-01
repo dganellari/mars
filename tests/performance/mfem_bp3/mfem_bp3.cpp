@@ -7,6 +7,8 @@
 // - H1 GLL nodal basis of degree p, q = p + 2 Gauss points per axis on every level;
 // - b = A u with u = sin(pi x) sin(pi y) sin(pi z) at the nodes, zero on the boundary, so
 //   the solve must return u; x starts at 0.
+// - --stretch s: z divided by s after the deformation, u taken at s z, as mars_marsir_bp
+//   --stretch (elements s times thinner in z than wide).
 //
 // Same space, quadrature and geometry, so A and b equal the MARS ones up to rounding.
 // The preconditioners differ in details that are MFEM's own: Chebyshev on [0.3, 1.2]
@@ -36,7 +38,7 @@
 // pays for that). --profile brackets the last solve with cudaProfilerStart / Stop (nsys
 // --capture-range=cudaProfilerApi).
 //
-// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
+// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
 //               [--amg-cycles 3] [--amg-settings mars|mfem] [--rhs discrete|pde] [--reps 20] [--solves 1] [--profile]
 //               [--device cuda]
 //               [--no-gpu-aware-mpi]
@@ -58,16 +60,20 @@ using namespace mfem;
 
 namespace {
 
-double g_deform = 0.05;
+double g_deform = 0.05, g_stretch = 1.0;
 
 void deform(const Vector& x, Vector& y)
 {
     const double bump = g_deform * std::sin(M_PI * x(0)) * std::sin(M_PI * x(1)) * std::sin(M_PI * x(2));
     y.SetSize(3);
     for (int d = 0; d < 3; ++d) y(d) = x(d) + bump;
+    y(2) /= g_stretch;
 }
 
-double exact(const Vector& x) { return std::sin(M_PI * x(0)) * std::sin(M_PI * x(1)) * std::sin(M_PI * x(2)); }
+double exact(const Vector& x)
+{
+    return std::sin(M_PI * x(0)) * std::sin(M_PI * x(1)) * std::sin(M_PI * x(2) * g_stretch);
+}
 
 // Gauss-Legendre with p + 2 points per axis: exact to order 2 (p + 2) - 1.
 const IntegrationRule& rule(int p) { return IntRules.Get(Geometry::CUBE, 2 * (p + 2) - 1); }
@@ -187,6 +193,7 @@ int main(int argc, char* argv[])
     args.AddOption(&p, "-p", "--p", "Degree of the finest level: 1, 3 or 7.");
     args.AddOption(&ne, "-ne", "--ne", "Elements per axis.");
     args.AddOption(&g_deform, "-a", "--deform", "Amplitude of the vertex deformation.");
+    args.AddOption(&g_stretch, "-st", "--stretch", "z divided by this after the deformation (at least 1).");
     args.AddOption(&tol, "-t", "--tol", "CG relative tolerance on sqrt(<r,z>).");
     args.AddOption(&true_tol, "-tt", "--true-tol", "PASS needs the true relative residual at or below this.");
     args.AddOption(&maxit, "-it", "--maxit", "CG iteration limit.");
@@ -207,7 +214,8 @@ int main(int argc, char* argv[])
     const bool mars_amg = !std::strcmp(amg_settings, "mars");
     const bool pde = !std::strcmp(rhs, "pde");
     if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1 ||
-        (!mars_amg && std::strcmp(amg_settings, "mfem")) || (!pde && std::strcmp(rhs, "discrete"))) {
+        (!mars_amg && std::strcmp(amg_settings, "mfem")) || (!pde && std::strcmp(rhs, "discrete")) ||
+        !(g_stretch >= 1.0) || (pde && g_stretch != 1.0)) {
         if (root) args.PrintUsage(std::cout);
         return 1;
     }
@@ -412,6 +420,8 @@ int main(int argc, char* argv[])
     if (root) {
         printf("MFEM %s BP3, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f\n", MFEM_VERSION_STRING,
                p, p + 2, ne, (long long)ne * ne * ne, (long long)unique, g_deform);
+        if (g_stretch != 1.0)
+            printf("  z divided by %g: elements %g times thinner in z than wide\n", g_stretch, g_stretch);
         printf("  %d ranks (%d x %d x %d), serial mesh %d^3 refined %d times, GPU-aware MPI %s\n", ranks, dims[0],
                dims[1], dims[2], ne0, r, gpu_aware_mpi ? "on" : "off");
         if (mg)
