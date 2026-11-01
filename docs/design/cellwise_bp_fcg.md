@@ -896,5 +896,45 @@ solve is exact. The large growth comes from stretch and shear together: there po
 9x, exact element solves keep the growth, columns along the thin direction stay at 11-12 and node
 lines at 12-18 (lines across the thin direction do not help); cutting the lines into pieces of 4
 or 2 elements, as rank boundaries would, costs a factor 1.7-2.5. So stretch alone does not explain
-the wing, whose elements are stretched but nearly orthogonal; what makes the wing hard for the
-point smoother is open. Next: the same study on blocks of real wing elements.
+the wing, whose elements are stretched but nearly orthogonal.
+
+### Real wing elements and graded boxes (host)
+
+`scripts/bp3_wing_block_study.py`: the same V-cycle (exact p = 1 solve) on blocks of the wing
+mesh, the elements within 6 vertex-neighbour layers of a seed element, Dirichlet on the block's
+boundary; seeds by the shape table (element index in file order):
+
+| block (seed) | elements | aspect ratio median / max | scaled Jacobian min | Jacobi | element | node lines |
+|---|---|---|---|---|---|---|
+| interior, median aspect ratio (2107199) | 2197 | 16 / 50 | 0.949 | 78 | 62 | 23 |
+| at the blade (4290509) | 1183 | 50 / 108 | 0.876 | 51 | 35 | 12 |
+| far-field corner, largest aspect ratio (15109394) | 343 | 1260 / 2136 | 1.000 | 59 | 40 | 11 |
+| most skewed element (1593098) | 1729 | 1 / 4 | 0.298 | 21 | 19 | 15 |
+
+On real wing elements the point smoother needs 51-78 iterations even with an exact coarse solve
+(boxes of any uniform stretch: 9-17), and node lines bring the stretched blocks to 11-23. Skew
+alone costs little (21). The wing's elements are planks with three different edge lengths, and
+their size varies within a block:
+
+| block | thin direction | short : middle : long edge, median | thin edge, max / min in the block |
+|---|---|---|---|
+| far-field corner | z for all | 1 : 7.8 : 1300 | 3 |
+| interior | z for 91% | 1 : 6.3 : 13 | 5 |
+| blade | y for all | 1 : 6.3 : 48 | 3 |
+
+The far-field block is made of perfect boxes yet needs 59 point-Jacobi iterations, against 13-14
+for uniform boxes of aspect ratio 1000. Boxes whose z layers grow geometrically (`--grade g`:
+thickest / thinnest layer e^g; deform 0, ne 12) separate this:
+
+| ne 12, deform 0 | uniform, s = 1 / 100 | layers graded 10x, s = 1 / 100 | graded 100x, s = 1 / 100 |
+|---|---|---|---|
+| Jacobi | 9 / 17 | 15 / 46 | 23 / 42 |
+| node lines | 12 / 8 | 15 / 10 | 20 / 8 |
+
+So what costs the point smoother iterations is stretch that varies from element to element, as
+on the wing, not a uniform stretch; node lines keep 8-10 iterations in all stretched cases. A
+possible reading, not measured: the error the point smoother leaves on stretched elements has
+small eigenvalues of the preconditioned operator; with identical elements they cluster and FCG
+removes them in a few iterations, with varying elements they spread. These host runs solve the
+coarse level exactly; on the GPU, BoomerAMG on the p = 1 matrix may become the next limit once
+the smoother is fixed (BoomerAMG alone needs 128 iterations on the wing's p = 1 matrix).

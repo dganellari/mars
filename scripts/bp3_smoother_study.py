@@ -2,39 +2,31 @@
 """Host study: which smoother keeps the BP3 p-multigrid iterations flat on stretched elements.
 
 On the GPU (docs/design/cellwise_bp_fcg.md, "Stretched cube") point Chebyshev-Jacobi p-multigrid
-took 14 / 91 / 401 / 648 iterations at element aspect ratio 1 / 10 / 100 / 1000, in MARS and MFEM
-alike. This runs the V-cycle of marsir-mlir/test/cellwise_bp_mg_ref.py (p = 3 -> 1, Chebyshev
-(2,2) on [hi / 15, hi], an exact p = 1 coarse solve, so only the smoother varies) on the cube with
-z divided by s after the deformation, and changes what the Chebyshev polynomial is applied to:
+took 14 / 91 / 401 / 648 iterations at --stretch 1 / 10 / 100 / 1000, in MARS and MFEM alike; with
+deform 0.05 those elements are sheared as well as stretched. This runs the V-cycle of
+marsir-mlir/test/cellwise_bp_mg_ref.py (p = 3 -> 1, Chebyshev (2,2) on [hi / 15, hi], an exact
+p = 1 coarse solve, so only the smoother varies) on the cube with z divided by s after the
+deformation, and changes what the Chebyshev polynomial is applied to:
 
-  jacobi : point Jacobi, DSS(r) / assembled diagonal (the GPU solver's smoother);
-  element: additive Schwarz on element closures, each block the assembled operator restricted to
-           the element's free nodes, solved exactly (dense here);
-  column : additive Schwarz on the columns of elements along z (the stretched direction), solved
-           exactly: a line smoother at element granularity;
-  xcolumn: the same along x, across the stretch (control).
+  jacobi  : point Jacobi, DSS(r) / assembled diagonal (the GPU solver's smoother);
+  element : additive Schwarz on element closures, each block the assembled operator restricted to
+            the element's free nodes, solved exactly (dense here);
+  column  : additive Schwarz on the columns of elements along z (the thin direction), solved
+            exactly: a line smoother at element granularity (cube only);
+  xcolumn : the same along x, across the thin direction (control, cube only);
+  nodeline: block Jacobi on lines of nodes along each element line's thin axis (NodeLines).
 
+The mesh code is generic (corner vertex ids, topological node numbering, Dirichlet on the faces
+only one element has), so scripts/bp3_wing_block_study.py runs the same on blocks of real meshes.
 Reported: FCG iterations to a true assembled residual of --rtol, with b = A u as the GPU driver.
-Run: python3 scripts/bp3_smoother_study.py [--ne 8] [--stretch 1,10,100,1000] [--smoothers jacobi,element,column]
+Run: python3 scripts/bp3_smoother_study.py [--ne 8] [--deform 0.05] [--stretch 1,10,100,1000]
+                                           [--smoothers jacobi,element,column,nodeline] [--line-cut k] [--grade g]
 """
 import argparse
 import time
 
 import numpy as np
 from numpy.polynomial import legendre as L
-
-ap = argparse.ArgumentParser()
-ap.add_argument("--ne", type=int, default=8)
-ap.add_argument("--p", type=int, default=3)
-ap.add_argument("--deform", type=float, default=0.05)
-ap.add_argument("--stretch", default="1,10,100,1000")
-ap.add_argument("--smoothers", default="jacobi,element,column")
-ap.add_argument("--pre", type=int, default=2)
-ap.add_argument("--post", type=int, default=2)
-ap.add_argument("--rtol", type=float, default=1e-10)
-ap.add_argument("--maxit", type=int, default=3000)
-ap.add_argument("--line-cut", type=int, default=0, help="nodeline: split element lines every k elements")
-args = ap.parse_args()
 
 corner_ref = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
                        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]])
@@ -65,10 +57,61 @@ def shape(rf):
     return 0.125 * f.prod(-1), dN
 
 
-class Level:
-    """BP3 at degree p on the ne^3 mesh, as cellwise_bp_mg_ref.Level."""
+def faces_of(vid):   # {sorted corner ids of a face: [(element, axis, side), ...]}
+    out = {}
+    for e in range(len(vid)):
+        for k in range(3):
+            for t in (-1, 1):
+                out.setdefault(tuple(sorted(vid[e, corner_ref[:, k] == t])), []).append((e, k, t))
+    return out
 
-    def __init__(self, p, ne, corners, eidx):
+
+def numbering(vid, p):
+    """Global ids of the degree-p GLL nodes of hexahedra with corner vertex ids vid (E, 8, in
+    corner_ref order): vertices by id, edge and face nodes by their vertices and a position in a
+    canonical frame (so both elements of a face agree whatever their orientation), interior nodes
+    per element. Returns gidx (E, (p + 1)^3) and free (N,), False on the faces only one element has."""
+    n = p + 1; E = len(vid)
+    corner = {tuple((corner_ref[c] > 0) * p): c for c in range(8)}
+    boundary = {key for key, fl in faces_of(vid).items() if len(fl) == 1}
+    ids = {}; gidx = np.empty((E, n ** 3), np.int64); fixed = set()
+    for e in range(E):
+        def V(x): return vid[e, corner[tuple(x)]]
+        on_boundary = [(k, t) for k in range(3) for t in (-1, 1)
+                       if tuple(sorted(vid[e, corner_ref[:, k] == t])) in boundary]
+        for local, x in enumerate(np.ndindex(n, n, n)):
+            ext = [i for i in range(3) if x[i] in (0, p)]
+            if len(ext) == 3:
+                key = ("v", V(x))
+            elif len(ext) == 2:
+                f = [i for i in range(3) if i not in ext][0]
+                lo = list(x); lo[f] = 0; hi = list(x); hi[f] = p
+                v0, v1 = V(lo), V(hi)
+                key = ("e", min(v0, v1), max(v0, v1), x[f] if v0 < v1 else p - x[f])
+            elif len(ext) == 1:
+                k = ext[0]; k1, k2 = [i for i in range(3) if i != k]
+                cs = {}
+                for u in (0, p):
+                    for w in (0, p):
+                        y = list(x); y[k1] = u; y[k2] = w; cs[(u, w)] = V(y)
+                ou, ow = min(cs, key=cs.get)
+                u1 = p - x[k1] if ou == p else x[k1]; w1 = p - x[k2] if ow == p else x[k2]
+                pos = (u1, w1) if cs[(p - ou, ow)] < cs[(ou, p - ow)] else (w1, u1)
+                key = ("f", tuple(sorted(cs.values())), pos)
+            else:
+                key = ("i", e, local)
+            g = ids.setdefault(key, len(ids)); gidx[e, local] = g
+            if any(x[k] == (0 if t == -1 else p) for k, t in on_boundary):
+                fixed.add(g)
+    free = np.ones(len(ids), bool); free[list(fixed)] = False
+    return gidx, free
+
+
+class Level:
+    """BP3 at degree p on the hexahedra `corners` (E, 8, 3) with node ids gidx, as
+    cellwise_bp_mg_ref.Level; free is False on Dirichlet nodes."""
+
+    def __init__(self, p, corners, gidx, free):
         self.p = p; n = self.n = p + 1; self.n3 = n ** 3; Q = self.Q = p + 2
         self.zeta = gll(p); gq, wq = L.leggauss(Q)
         self.B = np.array([lag(self.zeta, x)[0] for x in gq])
@@ -84,13 +127,9 @@ class Level:
         la, lb, lc = np.indices((n, n, n)).reshape(3, -1)
         self.xn = np.einsum("jc,eca->eja", shape(np.stack([self.zeta[la], self.zeta[lb], self.zeta[lc]], -1))[0],
                             corners)
-        NG = self.NG = ne * p + 1; self.N = NG ** 3
-        self.gidx = ((eidx[:, 0:1] * p + la) * NG + eidx[:, 1:2] * p + lb) * NG + eidx[:, 2:3] * p + lc
-        I3 = np.indices((NG, NG, NG))
-        bnd = ((I3 == 0) | (I3 == NG - 1)).any(axis=0).ravel()
-        self.free = ~bnd
-        self.inner = np.where(self.free)[0]
-        self.mask = self.free[self.gidx].astype(float)
+        self.gidx = gidx; self.free = free; self.N = len(free)
+        self.inner = np.where(free)[0]
+        self.mask = free[gidx].astype(float)
         self.diag = self.dss(self.diagonal())
 
     def apply(self, u):
@@ -132,11 +171,13 @@ class Level:
     def true_residual(self, b, x):
         return np.linalg.norm(self.scatter(b - self.apply(x))[self.inner])
 
+    def matrices(self):   # element matrices (E, n3, n3), probed
+        return np.stack([self.apply(np.tile(np.eye(self.n3)[j], (self.E, 1))) for j in range(self.n3)], 2)
+
     def assembled(self):   # the assembled operator: sorted keys row * N + col and their summed values
-        K = np.stack([self.apply(np.tile(np.eye(self.n3)[j], (self.E, 1))) for j in range(self.n3)], 2)
         keys = (self.gidx[:, :, None] * self.N + self.gidx[:, None, :]).ravel()
         u, inv = np.unique(keys, return_inverse=True)
-        return u, np.bincount(inv, weights=K.ravel())
+        return u, np.bincount(inv, weights=self.matrices().ravel())
 
 
 class Schwarz:
@@ -160,27 +201,20 @@ class Schwarz:
         return Z[lv.gidx]
 
 
-def element_lines(lv, corners, eidx, ne, cut):
-    """Chains of elements along their thin axis (the local axis with the shortest mean edge): e and
-    its neighbour across a face are chained when the face lies across the thin axis of both. Each
-    line is a list of (element, axis, entry side), longest first; cut > 0 splits lines into pieces
-    of at most cut elements (as a rank boundary would)."""
-    E = lv.E
-    vid = ((eidx[:, None, 0] + (corner_ref[None, :, 0] > 0)) * (ne + 1) + eidx[:, None, 1]
-           + (corner_ref[None, :, 1] > 0)) * (ne + 1) + eidx[:, None, 2] + (corner_ref[None, :, 2] > 0)
+def element_lines(corners, vid, cut=0):
+    """Chains of elements along their thin axis (the local axis with the shortest mean edge): an
+    element and its neighbour across a face are chained when the face lies across the thin axis of
+    both. Each line is a list of (element, axis, entry side), longest first; cut > 0 splits lines
+    into pieces of at most cut elements (as a rank boundary would)."""
+    E = len(vid)
     length = np.zeros((E, 3))
     for k in range(3):
         pairs = [(i, j) for i in range(8) for j in range(i + 1, 8)
                  if np.sum(corner_ref[i] != corner_ref[j]) == 1 and corner_ref[i][k] != corner_ref[j][k]]
         length[:, k] = np.mean([np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in pairs], 0)
     axis = np.argmin(length, 1)
-    faces = {}
-    for e in range(E):
-        for k in range(3):
-            for t in (-1, 1):
-                faces.setdefault(tuple(sorted(vid[e, corner_ref[:, k] == t])), []).append((e, k, t))
     nxt = {}
-    for fl in faces.values():
+    for fl in faces_of(vid).values():
         if len(fl) == 2 and all(axis[e] == k for e, k, _ in fl):
             (e1, _, t1), (e2, _, t2) = fl
             nxt[(e1, t1)] = (e2, t2); nxt[(e2, t2)] = (e1, t1)
@@ -271,16 +305,15 @@ def chebyshev_steps(lmax, steps):
 
 
 class VCycle:
-    """p = 3 -> 1 with Chebyshev on prec(A) at p = 3 and an exact p = 1 solve."""
+    """p -> 1 with Chebyshev on prec(A) at p and an exact solve of the assembled p = 1 matrix."""
 
     def __init__(self, fine, coarse, prec, pre, post):
         self.f, self.c, self.prec, self.pre, self.post = fine, coarse, prec, pre, post
         self.I = np.array([lag(coarse.zeta, x)[0] for x in fine.zeta])
         self.lmax = self.power()
-        K = np.stack([coarse.apply(np.tile(np.eye(coarse.n3)[j], (coarse.E, 1))) for j in range(coarse.n3)], 2)
         A = np.zeros((coarse.N, coarse.N))
-        np.add.at(A, (coarse.gidx[:, :, None], coarse.gidx[:, None, :]), K)
-        self.Ac = A[np.ix_(coarse.inner, coarse.inner)]
+        np.add.at(A, (coarse.gidx[:, :, None], coarse.gidx[:, None, :]), coarse.matrices())
+        self.Ac_inv = np.linalg.inv(A[np.ix_(coarse.inner, coarse.inner)])
 
     def power(self):
         lv = self.f
@@ -305,7 +338,7 @@ class VCycle:
         x = self.smooth(b, np.zeros_like(b), self.pre, True)
         r = (b - f.apply(x)) * f.mask
         rc = np.einsum("ai,bj,ck,eabc->eijk", I, I, I, r.reshape(-1, f.n, f.n, f.n), optimize=True).reshape(-1, c.n3)
-        u = np.zeros(c.N); u[c.inner] = np.linalg.solve(self.Ac, c.scatter(rc)[c.inner])
+        u = np.zeros(c.N); u[c.inner] = self.Ac_inv @ c.scatter(rc)[c.inner]
         xc = u[c.gidx]
         x = x + np.einsum("ai,bj,ck,eijk->eabc", I, I, I, xc.reshape(-1, c.n, c.n, c.n), optimize=True).reshape(-1, f.n3)
         return self.smooth(b, x, self.post, False)
@@ -324,44 +357,78 @@ def fcg(lv, P, b, rtol, maxit):
     return x, maxit
 
 
-def mesh(ne, s):
+def levels(corners, vid, p):
+    return Level(p, corners, *numbering(vid, p)), Level(1, corners, *numbering(vid, 1))
+
+
+def solve(f, c, prec, u, pre, post, rtol, maxit):
+    """FCG with the V-cycle on b = A u: iterations, max error relative to max |u|, lmax."""
+    mg = VCycle(f, c, prec, pre, post)
+    x, it = fcg(f, mg, f.apply(u), rtol, maxit)
+    return it, np.abs(x - u).max() / np.abs(u).max(), mg.lmax
+
+
+def smoother(name, f, corners, vid, cut=0, ne=0):
+    if name == "jacobi":
+        return f.jacobi, name
+    if name == "element":
+        return Schwarz(f, f.gidx), name
+    if name in ("column", "xcolumn"):   # the cube's lattice order, e = (ex ne + ey) ne + ez
+        g = f.gidx.reshape(ne, ne, ne, f.n3)
+        cols = (g if name == "column" else g.transpose(1, 2, 0, 3)).reshape(ne * ne, ne * f.n3)
+        return Schwarz(f, np.stack([np.unique(r) for r in cols])), name
+    if name == "nodeline":
+        prec = NodeLines(f, element_lines(corners, vid, cut))
+        return prec, f"nodeline [{prec.stats}]"
+    raise SystemExit(f"unknown smoother {name}")
+
+
+def cube(ne, deform, s, grade=0.0):
     lat = np.arange(ne + 1) / ne
     V = np.stack(np.meshgrid(lat, lat, lat, indexing="ij"), -1)
-    V = V + args.deform * np.prod(np.sin(np.pi * V), -1, keepdims=True)
+    V = V + deform * np.prod(np.sin(np.pi * V), -1, keepdims=True)
+    if grade:   # element layers growing by e^(grade / ne) in z: the stretch varies over the cube
+        V[..., 2] = np.expm1(grade * V[..., 2]) / np.expm1(grade)
     V[..., 2] /= s
     eidx = np.indices((ne, ne, ne)).reshape(3, -1).T   # e = (ex ne + ey) ne + ez
-    return np.stack([V[tuple((eidx + (c > 0)).T)] for c in corner_ref], 1), eidx
+    off = (corner_ref > 0).astype(int)
+    corners = np.stack([V[tuple((eidx + o).T)] for o in off], 1)
+    vid = ((eidx[:, None, 0] + off[:, 0]) * (ne + 1) + eidx[:, None, 1] + off[:, 1]) * (ne + 1) + eidx[:, None, 2] + off[:, 2]
+    return corners, vid
 
 
-ne = args.ne
-print(f"BP3 p = {args.p} -> 1, Chebyshev ({args.pre},{args.post}) on [hi / 15, hi], exact p = 1 solve, "
-      f"{ne}^3 elements, deform {args.deform}, FCG to true residual {args.rtol:.0e}")
-for s in [float(x) for x in args.stretch.split(",")]:
-    corners, eidx = mesh(ne, s)
-    f, c = Level(args.p, ne, corners, eidx), Level(1, ne, corners, eidx)
-    xs = f.xn.copy(); xs[..., 2] *= s
-    u = f.mask * np.prod(np.sin(np.pi * xs), -1)
-    b = f.apply(u)
-    row = []
-    for name in args.smoothers.split(","):
-        t0 = time.time()
-        if name == "jacobi":
-            prec = f.jacobi
-        elif name == "element":
-            prec = Schwarz(f, f.gidx)
-        elif name == "column":
-            cols = f.gidx.reshape(ne * ne, ne * f.n3)
-            prec = Schwarz(f, np.stack([np.unique(g) for g in cols]))
-        elif name == "xcolumn":   # control: the same lines, but along x, across the stretch
-            cols = f.gidx.reshape(ne, ne * ne, f.n3).transpose(1, 0, 2).reshape(ne * ne, ne * f.n3)
-            prec = Schwarz(f, np.stack([np.unique(g) for g in cols]))
-        elif name == "nodeline":
-            prec = NodeLines(f, element_lines(f, corners, eidx, ne, args.line_cut))
-            name = f"nodeline [{prec.stats}]"
-        else:
-            raise SystemExit(f"unknown smoother {name}")
-        mg = VCycle(f, c, prec, args.pre, args.post)
-        x, it = fcg(f, mg, b, args.rtol, args.maxit)
-        err = np.abs(x - u).max() / np.abs(u).max()
-        row.append(f"{name} {it} it (err {err:.1e}, lmax {mg.lmax:.2f}, {time.time() - t0:.0f} s)")
-    print(f"  s = {s:g}: " + "; ".join(row), flush=True)
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ne", type=int, default=8)
+    ap.add_argument("--p", type=int, default=3)
+    ap.add_argument("--deform", type=float, default=0.05)
+    ap.add_argument("--stretch", default="1,10,100,1000")
+    ap.add_argument("--smoothers", default="jacobi,element,column,nodeline")
+    ap.add_argument("--pre", type=int, default=2)
+    ap.add_argument("--post", type=int, default=2)
+    ap.add_argument("--rtol", type=float, default=1e-10)
+    ap.add_argument("--maxit", type=int, default=3000)
+    ap.add_argument("--line-cut", type=int, default=0, help="nodeline: split element lines every k elements")
+    ap.add_argument("--grade", type=float, default=0.0, help="z layers grow by e^(grade / ne): thickest / thinnest = e^grade")
+    args = ap.parse_args()
+    ne = args.ne
+    print(f"BP3 p = {args.p} -> 1, Chebyshev ({args.pre},{args.post}) on [hi / 15, hi], exact p = 1 solve, "
+          f"{ne}^3 elements, deform {args.deform}, grade {args.grade}, FCG to true residual {args.rtol:.0e}")
+    for s in [float(x) for x in args.stretch.split(",")]:
+        corners, vid = cube(ne, args.deform, s, args.grade)
+        f, c = levels(corners, vid, args.p)
+        xs = f.xn.copy(); xs[..., 2] *= s
+        if args.grade:
+            xs[..., 2] = np.log1p(xs[..., 2] * np.expm1(args.grade)) / args.grade
+        u = f.mask * np.prod(np.sin(np.pi * xs), -1)
+        row = []
+        for name in args.smoothers.split(","):
+            t0 = time.time()
+            prec, label = smoother(name, f, corners, vid, args.line_cut, ne)
+            it, err, lmax = solve(f, c, prec, u, args.pre, args.post, args.rtol, args.maxit)
+            row.append(f"{label} {it} it (err {err:.1e}, lmax {lmax:.2f}, {time.time() - t0:.0f} s)")
+        print(f"  s = {s:g}: " + "; ".join(row), flush=True)
+
+
+if __name__ == "__main__":
+    main()
