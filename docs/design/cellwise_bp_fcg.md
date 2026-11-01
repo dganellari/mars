@@ -788,5 +788,19 @@ So stretched elements alone reproduce the wing's iteration growth and its respon
 The error grows with s at about the same true residual (3.9e-14 to 6.6e-11): the system gets
 worse conditioned. The (8,8) run's AMG setup took 2799 ms against 249-263 ms in the others; the
 setup does not depend on k, so it is an outlier, not explained (one run).
-Pending: p = 1 alone at each s and BoomerAMG x10 at s = 100, to separate the smoother from
-BoomerAMG as on the wing.
+
+p = 1 alone (FCG on the assembled p = 1 rows with BoomerAMG x3, the same mesh), all PASS:
+
+| p = 1 alone | s = 1 | s = 10 | s = 100 | s = 1000 |
+|---|---|---|---|---|
+| iterations | 12 | 62 | 275 | 352 |
+| FCG iteration | 2.83 ms | 2.05 | 1.81 | 1.84 |
+
+p = 3 at s = 100 with BoomerAMG x10 instead of x3: 377 iterations (x3: 401), 14.78 ms per
+iteration, coarse 6.12 ms per V-cycle (41%), solve 5.57 s (x3: 4.27 s), true residual 2.3e-11,
+PASS. BoomerAMG alone also needs far more iterations on stretched elements (12 to 352), but ten
+cycles instead of three inside the p = 3 V-cycle save 6% of the iterations and cost 31% more
+time (wing: 541 to 533). So here too the p = 3 smoother sets the p = 3 count. The stretched cube
+reproduces every wing observation: the iteration growth, the 1 / sqrt(k) response to smoothing,
+the small response to more AMG cycles, and a BoomerAMG that is slower on p = 1 alone. BP1 at
+s = 10 sums to the volume 0.100000000000000, PASS (the check of the new option).
