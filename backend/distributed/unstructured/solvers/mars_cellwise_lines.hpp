@@ -38,31 +38,49 @@ namespace cellwise {
 
 namespace line_detail {
 
-constexpr int kIndexBits = 34;   // copy index bits of the owner code (rank in the bits above)
-
 struct ZeroValues {
     __device__ double operator()(long long) const { return 0.0; }
 };
 
-// enc = (rank << kIndexBits | copy + 1) on the counting copy of every free node, 0 elsewhere:
-// summed over a node's copies it names the node's counting copy and its rank.
+// flag = 1 on the counting copy of every free node, 0 elsewhere.
 template <int P>
 __global__ void __launch_bounds__(kThreads, kMinBlocks)
-owner_code_kernel(double* __restrict__ enc, unsigned long long rank_bits, TopologyView T, ElementList set)
+counting_flag_kernel(double* __restrict__ flag, TopologyView T, ElementList set)
 {
     for_each_copy_sum<P>(T, set, ZeroValues{}, [&](long long t, double, bool dirichlet, bool counted) {
-        enc[t] = counted && !dirichlet ? (double)(rank_bits | (unsigned long long)(t + 1)) : 0.0;
+        flag[t] = counted && !dirichlet ? 1.0 : 0.0;
     });
 }
 
-// own[t]: the counting copy of copy t's node when this rank counts it, else -1.
-__global__ void owner_decode_kernel(const double* __restrict__ sum, long long* __restrict__ own, long long n,
-                                    unsigned long long rank)
+// flag (i + 1) at copy i of the local copies and then the ghost copies (the ghosts' flags come
+// from their ranks): exactly one copy of a free node is flagged, so the sum over its copies is
+// that copy's index + 1.
+struct FlaggedIndex {
+    const double* flag;
+    const double* ghost;
+    long long local_values;
+    __device__ double operator()(long long i) const
+    {
+        return (i < local_values ? flag[i] : ghost[i - local_values]) * (double)(i + 1);
+    }
+};
+
+// src[t]: the counting copy of copy t's node, a local copy (< local copies) or a ghost copy
+// (counted on another rank); -1 for Dirichlet nodes.
+template <int P>
+__global__ void __launch_bounds__(kThreads, kMinBlocks)
+source_kernel(const double* __restrict__ flag, const double* __restrict__ ghost, int* __restrict__ src, TopologyView T,
+              ElementList set)
+{
+    const FlaggedIndex value{flag, ghost, T.local * (P + 1) * (P + 1) * (P + 1)};
+    for_each_copy_sum<P>(T, set, value, [&](long long t, double sum, bool, bool) { src[t] = (int)sum - 1; });
+}
+
+// own[t] = src[t] when that is a local copy, else -1 (the node is not this rank's).
+__global__ void owner_kernel(const int* __restrict__ src, long long* __restrict__ own, long long n)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= n) return;
-    const unsigned long long v = (unsigned long long)sum[t];
-    own[t] = v != 0 && (v >> kIndexBits) == rank ? (long long)(v & ((1ULL << kIndexBits) - 1)) - 1 : -1;
+    if (t < n) own[t] = src[t] >= 0 && src[t] < n ? src[t] : -1;
 }
 
 // Packed upper triangle of an n x n symmetric matrix.
@@ -457,21 +475,25 @@ solve_kernel(const double* __restrict__ L, const long long* __restrict__ copy, c
     }
 }
 
-// The Chebyshev step from the block solution on the counting copies: z = DSS (every copy of a
-// node gets its value; zero on Dirichlet copies), d = c1 d + c2 z (FIRST: c2 z), x = d when
-// assign, else x += d.
-template <int P, bool FIRST>
-__global__ void __launch_bounds__(kThreads, kMinBlocks)
-update_kernel(const double* __restrict__ zc, const double* __restrict__ ghost, double* __restrict__ d,
-              double* __restrict__ x, double c1, double c2, bool assign, TopologyView T, ElementList set)
+// The Chebyshev step from the block solution, which holds each node's value on its counting
+// copy only: every copy reads it there (src; a ghost copy for a node counted on another rank,
+// zero for a Dirichlet node), d = c1 d + c2 z (FIRST: c2 z), x = d when assign, else x += d. A
+// DSS would give the same bits (one value and zeros), with more traffic.
+template <bool FIRST, int N3>
+__global__ void __launch_bounds__(kThreads)
+update_kernel(const double* __restrict__ zc, const double* __restrict__ ghost, const int* __restrict__ src,
+              double* __restrict__ d, double* __restrict__ x, double c1, double c2, bool assign, long long local_values,
+              ElementList set)
 {
-    const GhostedValues value{zc, ghost, T.local * (P + 1) * (P + 1) * (P + 1)};
-    for_each_copy_sum<P>(T, set, value, [&](long long t, double sum, bool dirichlet, bool) {
-        const double zt = dirichlet ? 0.0 : sum;
+    for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < set.count * N3;
+         i += (long long)gridDim.x * blockDim.x) {
+        const long long t = (set.ids ? (long long)set.ids[i / N3] : i / N3) * N3 + i % N3;
+        const int j = src[t];
+        const double zt = j < 0 ? 0.0 : (j < local_values ? zc[j] : ghost[j - local_values]);
         const double dn = FIRST ? c2 * zt : c1 * d[t] + c2 * zt;
         d[t] = dn;
         x[t] = assign ? dn : x[t] + dn;
-    });
+    }
 }
 
 inline unsigned grid_for(long long n) { return (unsigned)((n + kThreads - 1) / kThreads); }
@@ -496,8 +518,8 @@ public:
         int rank = 0;
         MARS_CELLWISE_MPI(MPI_Comm_rank(comm, &rank));
         const long long copies = local_ * n3;
-        if (copies >= (1LL << kIndexBits) - 1 || rank >= (1 << (53 - kIndexBits))) {
-            fprintf(stderr, "node lines: %lld copies on rank %d exceed the owner code\n", copies, rank);
+        if (T.elements * n3 >= 0x7fffffffLL) {   // src holds local and ghost copy indices as int
+            fprintf(stderr, "node lines: %lld copies on rank %d exceed an int\n", T.elements * n3, rank);
             MPI_Abort(comm, 1);
         }
         element_lines_ = lines.lines();
@@ -514,22 +536,29 @@ public:
         const int* elem = raw_pointer_cast(d_elem.data());
         const unsigned char* code = raw_pointer_cast(d_code.data());
 
-        // Owners: the counting copy of every node this rank counts.
-        thrust::device_vector<double> enc(copies), sum(copies);
+        // Every copy's counting copy (src_, for the update), and from it the nodes this rank owns.
+        thrust::device_vector<double> flag(copies);
+        src_.resize(copies);
         if (local_ > 0) {
-            static const int grid = resident_grid(owner_code_kernel<P>);
-            owner_code_kernel<P><<<grid, kThreads, 0, stream_>>>(raw_pointer_cast(enc.data()),
-                                                                 (unsigned long long)rank << kIndexBits, T_,
-                                                                 ElementList{nullptr, local_});
+            static const int grid = resident_grid(counting_flag_kernel<P>);
+            counting_flag_kernel<P><<<grid, kThreads, 0, stream_>>>(raw_pointer_cast(flag.data()), T_,
+                                                                    ElementList{nullptr, local_});
             MARS_CELLWISE_CK(cudaGetLastError());
         }
-        dss<P>(raw_pointer_cast(enc.data()), raw_pointer_cast(sum.data()), T, halo_, stream_);
+        const double* fl = raw_pointer_cast(flag.data());
+        int* sp = raw_pointer_cast(src_.data());
+        run_unstructured_pass(halo_, local_, fl, nullptr, stream_, [&](const ElementList& set, const double* ghost, int) {
+            static const int grid = resident_grid(source_kernel<P>);
+            source_kernel<P><<<grid, kThreads, 0, stream_>>>(fl, ghost, sp, T_, set);
+            MARS_CELLWISE_CK(cudaGetLastError());
+            return grid;
+        });
         thrust::device_vector<long long> own(copies);
         if (copies > 0)
-            owner_decode_kernel<<<grid_for(copies), kThreads, 0, stream_>>>(
-                raw_pointer_cast(sum.data()), raw_pointer_cast(own.data()), copies, (unsigned long long)rank);
+            owner_kernel<<<grid_for(copies), kThreads, 0, stream_>>>(sp, raw_pointer_cast(own.data()), copies);
         MARS_CELLWISE_CK(cudaGetLastError());
-        enc.clear(), enc.shrink_to_fit(), sum.clear(), sum.shrink_to_fit();
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
+        flag.clear(), flag.shrink_to_fit();
 
         // Every element's matrices along its thin axis.
         thrust::device_vector<double> M(local_ * n2 * NP);
@@ -643,22 +672,23 @@ public:
         MARS_CELLWISE_CK(cudaGetLastError());
     }
 
-    // z on every copy (DSS), then the Chebyshev update of d and x.
+    // z on every copy (read at its counting copy), then the Chebyshev update of d and x.
     void update(double* d, double* x, double c1, double c2, bool first, bool assign) const
     {
         using namespace line_detail;
         const double* z = thrust::raw_pointer_cast(z_.data());
+        const int* src = thrust::raw_pointer_cast(src_.data());
+        const long long local_values = local_ * n3;
         run_unstructured_pass(halo_, local_, z, nullptr, stream_, [&](const ElementList& set, const double* ghost, int) {
-            if (first) {
-                static const int grid = resident_grid(update_kernel<P, true>);
-                update_kernel<P, true><<<grid, kThreads, 0, stream_>>>(z, ghost, d, x, c1, c2, assign, T_, set);
-                MARS_CELLWISE_CK(cudaGetLastError());
-                return grid;
-            }
-            static const int grid = resident_grid(update_kernel<P, false>);
-            update_kernel<P, false><<<grid, kThreads, 0, stream_>>>(z, ghost, d, x, c1, c2, assign, T_, set);
+            const unsigned grid = set.count > 0 ? grid_for(set.count * n3) : 1;
+            if (first)
+                update_kernel<true, n3><<<grid, kThreads, 0, stream_>>>(z, ghost, src, d, x, c1, c2, assign,
+                                                                        local_values, set);
+            else
+                update_kernel<false, n3><<<grid, kThreads, 0, stream_>>>(z, ghost, src, d, x, c1, c2, assign,
+                                                                         local_values, set);
             MARS_CELLWISE_CK(cudaGetLastError());
-            return grid;
+            return (int)grid;
         });
     }
 
@@ -679,7 +709,7 @@ private:
     double mean_ = 0.0;
     thrust::device_vector<double> L_, s_, z_;
     thrust::device_vector<long long> copy_, warp_off_;
-    thrust::device_vector<int> len_;
+    thrust::device_vector<int> len_, src_;
 };
 
 }  // namespace cellwise
