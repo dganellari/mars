@@ -777,14 +777,26 @@ ratio s at deform 0; deform 0.05 as everywhere here). ne 64, p = 3 (7.2M DoFs), 
 | s = 100, Chebyshev (4,4) | 267 | 1.4e-11 | 3.8e-12 | 17.55 | 2.13 (12%) | 4.68 | 1.3e-3 / 1.4e-5 / 1.8e-7 |
 | s = 100, Chebyshev (8,8) | 193 | 9.1e-12 | 2.9e-12 | 31.56 | 2.07 (7%) | 6.09 | 1.1e-3 / 4.9e-6 / 1.2e-8 |
 
-Stretching alone, on the same cube with the same solver, takes p = 3 from 14 iterations to 91,
-401 and 648, while an iteration costs the same (10.6-12.0 ms). At s = 100, more smoothing gives
+Stretching the deformed cube takes p = 3 from 14 iterations to 91, 401 and 648, while an
+iteration costs the same (10.6-12.0 ms). With deform 0.05, dividing z by s also shears the
+elements: the deformation moves x and y by up to 0.157 h from one element layer to the next,
+while a layer is h / s thick. Measured with the metric of the wing table (32^3 elements):
+
+| deform 0.05 | s = 1 | s = 10 | s = 100 | s = 1000 |
+|---|---|---|---|---|
+| edge aspect ratio, median | 1.1 | 9.5 | 25 | 26 |
+| scaled Jacobian, median (min) | 0.991 (0.967) | 0.903 (0.355) | 0.211 (0.038) | 0.022 (0.004) |
+
+The wing's elements are stretched but nearly orthogonal (aspect ratio median 13.6, scaled
+Jacobian median 0.987), so from s = 100 on these runs measure sheared elements as much as
+stretched ones. At s = 100, more smoothing gives
 401 / 267 / 193 for k = 2 / 4 / 8, ratios 1.50 and 2.08; the wing gave 1.48 and 2.06 (541 / 366 /
 263). As on the wing it does not pay: solve 4.27 / 4.68 / 6.09 s. The histories have the wing's
 shape, fast for about 10 iterations, then slow. The wing's 541 lies between uniform stretch 100
 and 1000 (its aspect ratios: median 13.6, 10% above 100, 0.6% above 1000), though the two runs
 differ in more than the stretch (one GPU against 64, one stretch everywhere against a spread).
-So stretched elements alone reproduce the wing's iteration growth and its response to smoothing.
+These elements reproduce the wing's iteration growth and its response to smoothing, but they are
+sheared as well as stretched; on boxes (deform 0) stretch alone costs little (host study below).
 The error grows with s at about the same true residual (3.9e-14 to 6.6e-11): the system gets
 worse conditioned. The (8,8) run's AMG setup took 2799 ms against 249-263 ms in the others; the
 setup does not depend on k, so it is an outlier, not explained (one run).
@@ -800,9 +812,10 @@ p = 3 at s = 100 with BoomerAMG x10 instead of x3: 377 iterations (x3: 401), 14.
 iteration, coarse 6.12 ms per V-cycle (41%), solve 5.57 s (x3: 4.27 s), true residual 2.3e-11,
 PASS. BoomerAMG alone also needs far more iterations on stretched elements (12 to 352), but ten
 cycles instead of three inside the p = 3 V-cycle save 6% of the iterations and cost 31% more
-time (wing: 541 to 533). So here too the p = 3 smoother sets the p = 3 count. The stretched cube
-reproduces every wing observation: the iteration growth, the 1 / sqrt(k) response to smoothing,
-the small response to more AMG cycles, and a BoomerAMG that is slower on p = 1 alone. BP1 at
+time (wing: 541 to 533). So here too the p = 3 smoother sets the p = 3 count. This cube reproduces
+every wing observation: the iteration growth, the 1 / sqrt(k) response to smoothing, the small
+response to more AMG cycles, and a BoomerAMG that is slower on p = 1 alone; with shear as well as
+stretch. BP1 at
 s = 10 sums to the volume 0.100000000000000, PASS (the check of the new option).
 
 ### MFEM on the stretched cube (f9406acc)
@@ -825,7 +838,7 @@ Chebyshev interval and power steps (`--cheb-interval mfem`) takes 505.
 MFEM degrades the same way: the same growth with s, the same small gain from ten AMG cycles
 (6% in both codes), a similar gain from order 4 (27%, MARS 33%), and the same BoomerAMG counts on
 p = 1 alone. With MFEM's interval MARS needs MFEM's iterations (505 against 502); MARS's default
-interval saves 13-20% of them. So the slowdown on stretched elements belongs to the method, point
+interval saves 13-20% of them. So the slowdown on these elements belongs to the method, point
 Chebyshev-Jacobi p-multigrid with BoomerAMG on p = 1, not to MARS. The times are first solves
 (MFEM's also include its first device allocations) and are not compared here.
 
@@ -839,17 +852,25 @@ z divided by s. Chebyshev is applied to one of:
 - element: additive Schwarz on element closures, the assembled operator on each element's free
   nodes, solved exactly;
 - column along z: the same on columns of elements along the thin direction, exact line solves;
-- column along x: lines across the thin direction, as a control.
+- column along x: lines across the thin direction, as a control;
+- node lines: block Jacobi on lines of nodes. Elements are chained into lines along their thin
+  axis (the local axis with the shortest mean edge, through faces that lie across the thin axis
+  of both elements); every free node belongs to exactly one block, a run of nodes along its line,
+  solved exactly with the assembled operator. This is the form that fits a GPU: banded blocks,
+  about p + 1 numbers per node.
 
 FCG iterations to a true residual of 1e-10. Checks: Jacobi at s = 1, ne 4 gives the reference's
 12 iterations and error; one set of all nodes inverts A to 1.6e-15; element Schwarz is symmetric
 to 1e-14.
+
+Deformed cube (deform 0.05, sheared from s = 10 on, as above):
 
 | ne 8 | s = 1 | s = 10 | s = 100 | s = 1000 |
 |---|---|---|---|---|
 | Jacobi | 12 | 44 | 76 | 79 |
 | element | 11 | 36 | 49 | 50 |
 | column along z | 11 | 11 | 11 | 11 |
+| node lines | 12 | 12 | 14 | 14 |
 
 | ne 12 | s = 1 | s = 100 | s = 1000 |
 |---|---|---|---|
@@ -857,11 +878,23 @@ to 1e-14.
 | element | 12 | 70 | 71 |
 | column along z | 11 | 12 | 12 |
 | column along x | 11 | 50 | 50 |
+| node lines | 12 | 18 | 18 |
+| node lines, cut every 4 elements | 12 | 31 | 33 |
+| node lines, cut every 2 elements | 12 | 42 | 45 |
 
-Exact solves on single elements remove about a third of the iterations and keep the growth.
-Lines of elements along the thin direction keep the count at 11-12 for every s on both meshes;
-lines across it do not. So the error the point smoother leaves is strongly coupled along the thin
-direction over many elements, and the smoother must solve along that direction over whole lines
-of elements: the classic line smoother for anisotropy. The blocks are solved densely here; the
-cost of a GPU form is not measured. On the wing the thin direction changes from region to region,
-so lines would have to follow each element's short edges through the mesh; not built.
+Boxes (deform 0: pure stretch, aspect ratio s, scaled Jacobian 1):
+
+| ne 8 / ne 12 | s = 1 | s = 10 | s = 100 | s = 1000 |
+|---|---|---|---|---|
+| Jacobi | 9 / 9 | 15 / 15 | 16 / 17 | 13 / 14 |
+| element | 10 / 10 | 27 / 30 | 39 / 53 | 40 / 55 |
+| column along z | 10 / 10 | 10 / 10 | 10 / 10 | 10 / 10 |
+| node lines | 11 / 12 | 9 / 9 | 7 / 8 | 5 / 4 |
+
+On boxes, stretch alone costs point Jacobi little (9 to at most 17 iterations) when the coarse
+solve is exact. The large growth comes from stretch and shear together: there point Jacobi grows
+9x, exact element solves keep the growth, columns along the thin direction stay at 11-12 and node
+lines at 12-18 (lines across the thin direction do not help); cutting the lines into pieces of 4
+or 2 elements, as rank boundaries would, costs a factor 1.7-2.5. So stretch alone does not explain
+the wing, whose elements are stretched but nearly orthogonal; what makes the wing hard for the
+point smoother is open. Next: the same study on blocks of real wing elements.

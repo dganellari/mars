@@ -33,6 +33,7 @@ ap.add_argument("--pre", type=int, default=2)
 ap.add_argument("--post", type=int, default=2)
 ap.add_argument("--rtol", type=float, default=1e-10)
 ap.add_argument("--maxit", type=int, default=3000)
+ap.add_argument("--line-cut", type=int, default=0, help="nodeline: split element lines every k elements")
 args = ap.parse_args()
 
 corner_ref = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
@@ -159,6 +160,106 @@ class Schwarz:
         return Z[lv.gidx]
 
 
+def element_lines(lv, corners, eidx, ne, cut):
+    """Chains of elements along their thin axis (the local axis with the shortest mean edge): e and
+    its neighbour across a face are chained when the face lies across the thin axis of both. Each
+    line is a list of (element, axis, entry side), longest first; cut > 0 splits lines into pieces
+    of at most cut elements (as a rank boundary would)."""
+    E = lv.E
+    vid = ((eidx[:, None, 0] + (corner_ref[None, :, 0] > 0)) * (ne + 1) + eidx[:, None, 1]
+           + (corner_ref[None, :, 1] > 0)) * (ne + 1) + eidx[:, None, 2] + (corner_ref[None, :, 2] > 0)
+    length = np.zeros((E, 3))
+    for k in range(3):
+        pairs = [(i, j) for i in range(8) for j in range(i + 1, 8)
+                 if np.sum(corner_ref[i] != corner_ref[j]) == 1 and corner_ref[i][k] != corner_ref[j][k]]
+        length[:, k] = np.mean([np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in pairs], 0)
+    axis = np.argmin(length, 1)
+    faces = {}
+    for e in range(E):
+        for k in range(3):
+            for t in (-1, 1):
+                faces.setdefault(tuple(sorted(vid[e, corner_ref[:, k] == t])), []).append((e, k, t))
+    nxt = {}
+    for fl in faces.values():
+        if len(fl) == 2 and all(axis[e] == k for e, k, _ in fl):
+            (e1, _, t1), (e2, _, t2) = fl
+            nxt[(e1, t1)] = (e2, t2); nxt[(e2, t2)] = (e1, t1)
+    seen = np.zeros(E, bool); out = []
+
+    def walk(e, entry):
+        line = []
+        while not seen[e]:
+            seen[e] = True; line.append((e, axis[e], entry))
+            if (e, -entry) not in nxt:
+                break
+            e, entry = nxt[(e, -entry)]
+        return line
+
+    for e in range(E):
+        for t in (-1, 1):
+            if not seen[e] and (e, t) not in nxt:
+                out.append(walk(e, t))
+    for e in range(E):   # closed loops: open them anywhere
+        if not seen[e]:
+            out.append(walk(e, -1))
+    if cut:
+        out = [line[i:i + cut] for line in out for i in range(0, len(line), cut)]
+    return sorted(out, key=len, reverse=True)
+
+
+class NodeLines:
+    """Block Jacobi on lines of nodes: every free node belongs to exactly one block, a run of nodes
+    along the thin axis of its element line, solved exactly with the assembled operator restricted
+    to it. Lines are claimed longest first; a node already claimed ends the run."""
+
+    def __init__(self, lv, lines):
+        n, p = lv.n, lv.p
+        loc = [dict(zip(row, range(lv.n3))) for row in lv.gidx]
+        abc = np.stack(np.indices((n, n, n)).reshape(3, -1), 1)
+        claimed = np.zeros(lv.N, bool); blocks = []
+        for line in lines:
+            e0, k0, t0 = line[0]
+            k1, k2 = [a for a in range(3) if a != k0]
+            for i in range(n):
+                for j in range(n):
+                    c = np.zeros(3, int); c[k1] = i; c[k2] = j
+                    chain = []
+                    for m, (e, k, t) in enumerate(line):
+                        if m > 0:   # continue at the node the previous element ended on
+                            c = abc[loc[e][chain[-1]]].copy()
+                            assert c[k] == (0 if t == -1 else p)
+                        ks = range(n) if t == -1 else range(p, -1, -1)
+                        for s, kk in enumerate(ks):
+                            if m > 0 and s == 0:
+                                continue
+                            c[k] = kk; chain.append(lv.gidx[e, (c[0] * n + c[1]) * n + c[2]])
+                    run = []
+                    for g in chain:
+                        if lv.free[g] and not claimed[g]:
+                            claimed[g] = True; run.append(g)
+                        elif run:
+                            blocks.append(run); run = []
+                    if run:
+                        blocks.append(run)
+        assert claimed[lv.inner].all()
+        keys, vals = lv.assembled()
+        self.lv = lv; self.groups = []
+        for m in sorted({len(b) for b in blocks}):
+            S = np.array([b for b in blocks if len(b) == m])
+            kk = S[:, :, None] * lv.N + S[:, None, :]
+            pos = np.minimum(np.searchsorted(keys, kk), len(keys) - 1)
+            self.groups.append((S, np.linalg.inv(np.where(keys[pos] == kk, vals[pos], 0.0))))
+        sizes = np.array([len(b) for b in blocks])
+        self.stats = f"{len(lines)} element lines (longest {len(lines[0])}), {len(blocks)} node blocks, " \
+                     f"mean {sizes.mean():.1f} nodes"
+
+    def __call__(self, r):
+        lv = self.lv; R = lv.scatter(r); Z = np.zeros(lv.N)
+        for S, inv in self.groups:
+            Z[S] = np.einsum("sij,sj->si", inv, R[S])
+        return Z[lv.gidx]
+
+
 def chebyshev_steps(lmax, steps):
     hi = 1.1 * lmax; lo = hi / 15.0
     theta, delta = 0.5 * (hi + lo), 0.5 * (hi - lo); sigma = theta / delta
@@ -254,6 +355,9 @@ for s in [float(x) for x in args.stretch.split(",")]:
         elif name == "xcolumn":   # control: the same lines, but along x, across the stretch
             cols = f.gidx.reshape(ne, ne * ne, f.n3).transpose(1, 0, 2).reshape(ne * ne, ne * f.n3)
             prec = Schwarz(f, np.stack([np.unique(g) for g in cols]))
+        elif name == "nodeline":
+            prec = NodeLines(f, element_lines(f, corners, eidx, ne, args.line_cut))
+            name = f"nodeline [{prec.stats}]"
         else:
             raise SystemExit(f"unknown smoother {name}")
         mg = VCycle(f, c, prec, args.pre, args.post)
