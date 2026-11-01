@@ -9,14 +9,18 @@ namespace fem {
 // rows per block: the place of a row is a byte, and rowMapDirect and rowMapNone are not places
 constexpr int tensorRowsMaxRows = 0xFE;
 constexpr int tensorRowsElems   = 32;
-// the doubles of a block's rows in shared memory: the element storage, less each row's DOF, CSR start and
-// base, and one byte per 8 doubles for the flush (tensorRowsChunk). A block whose rows need more adds them
-// straight to the matrix.
+// A block's shared memory: first its elements, then its rows. MI300A runs two blocks of this kernel per CU
+// (4 waves per SIMD, bound by registers), so 32 KB, half of the CU's 64 KB, costs no occupancy; the elements
+// alone take 28.9 KB, and with them as the limit 35719 of 221184 blocks of the full tri192 map went direct.
+constexpr int tensorRowsSharedBytes = 32768;
+// the doubles of a block's rows: the shared memory, less each row's DOF, CSR start and base, and one byte
+// per 8 doubles for the flush (tensorRowsChunk). A block whose rows need more adds them straight to the
+// matrix.
 constexpr int tensorRowsChunk = 8;
 template<typename RealType>
 constexpr int tensorRowsCapacity =
-    int((sizeof(TensorFacesElement<RealType>) * tensorRowsElems - (3 * tensorRowsMaxRows + 1) * sizeof(int)) *
-        tensorRowsChunk / (tensorRowsChunk * sizeof(RealType) + 1)) /
+    int((tensorRowsSharedBytes - (3 * tensorRowsMaxRows + 1) * sizeof(int)) * tensorRowsChunk /
+        (tensorRowsChunk * sizeof(RealType) + 1)) /
     tensorRowsChunk * tensorRowsChunk;
 
 template<typename KeyType>
@@ -99,9 +103,14 @@ __global__ void __launch_bounds__(512) cvfem_hex_assembly_kernel_tensor_rows(
     constexpr int BlockSize = 512, MaxRows = tensorRowsMaxRows, Capacity = tensorRowsCapacity<RealType>;
     constexpr int Chunk = tensorRowsChunk;
     static_assert(BlockSize == tensorRowsElems * 16, "16 threads per element");
-    __shared__ TensorFacesElement<RealType> shared[tensorRowsElems];
-    static_assert(Capacity * sizeof(RealType) + (3 * MaxRows + 1) * sizeof(int) + Capacity / Chunk <= sizeof(shared),
-                  "the rows fit in the element storage");
+    static_assert(sizeof(TensorFacesElement<RealType>) * tensorRowsElems <= tensorRowsSharedBytes,
+                  "the elements fit in the shared memory");
+    static_assert(Capacity * sizeof(RealType) + (3 * MaxRows + 1) * sizeof(int) + Capacity / Chunk <=
+                      tensorRowsSharedBytes,
+                  "the rows fit in the shared memory");
+    // doubles, for the alignment of the elements
+    __shared__ double sharedMem[tensorRowsSharedBytes / sizeof(double)];
+    auto* shared = reinterpret_cast<TensorFacesElement<RealType>*>(sharedMem);
 
     const int lane       = threadIdx.x % 16;
     const size_t elemIdx = size_t(blockIdx.x) * tensorRowsElems + threadIdx.x / 16;
@@ -143,8 +152,8 @@ __global__ void __launch_bounds__(512) cvfem_hex_assembly_kernel_tensor_rows(
                                              d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z, nullptr, nullptr, lhs,
                                              rhs);
 
-    // The element storage is dead now: it holds the rows, then each row's DOF, CSR start and base (one more:
-    // the block's size), then for every 8 doubles the row of the first one.
+    // The elements are dead now: the shared memory holds the rows, then each row's DOF, CSR start and base
+    // (one more: the block's size), then for every 8 doubles the row of the first one.
     RealType* acc     = reinterpret_cast<RealType*>(shared);
     int* infoDof      = reinterpret_cast<int*>(acc + Capacity);
     int* infoStart    = infoDof + MaxRows;
