@@ -222,6 +222,31 @@ The remaining 1.24x instructions in block_sum are not attributed (the copy loops
 dynamic scf.for nests; the hand kernel's SASS was not compared). Left there: about 1.4%
 of the FCG iteration at p = 3, where the hand block nodes are used anyway.
 
+## Against the cell-wise reference: BP1 on 128^3 (9f4fcd1b)
+
+Table 7 of arXiv 2607.02335 gives the whole mass operator (volumetric apply, then a full DSS)
+per unique DoF on a 128^3 mesh, A100 80 GB SXM. The same here: BP1, 128^3 elements, deform 0.05,
+every element rotated, stored geometry (one value per Gauss point), one GH200, every run PASS.
+
+| BP1 operator + DSS, GDoF/s per unique DoF | p = 1 | p = 3 | p = 7 |
+|---|---|---|---|
+| MARS, block DSS, hand / generated (GH200) | 3.15 / 3.16 | 13.55 / 13.19 | does not fit |
+| MARS, unstructured gather, hand / generated (GH200) | 1.02 / 2.31 | 10.29 / 9.17 | 13.23 at 64^3 |
+| reference, structured DSS, general geometry (A100) | 2.7 | 13.9 | omitted (memory) |
+| reference, unstructured DSS, general geometry (A100) | 2.7 | 12.3 | omitted (memory) |
+
+At p = 7, 128^3 (1.07G element-local DoFs) did not fit on one 96 GB GPU with any DSS, nor with
+the trilinear geometry; the reference omits that case for the same reason.
+
+The rates are about equal, but on a GPU with about twice the bandwidth (GH200 HBM3 up to 4.0
+TB/s, A100 2.04 TB/s), so per unit of bandwidth these are about half of the reference's (p = 3,
+structured: 3.4 against 6.8 GDoF/s per TB/s; p = 1: 0.79 against 1.32). The volumetric operator
+is where: it moves 1405-1565 GB/s at p = 1 and 3 (35-39% of 4.0 TB/s) and 643 GB/s at p = 7
+(64^3), while the reference's Cartesian mass operator moves 1526-1774 GB/s on the A100 (75-87%,
+its Table 3; its general-geometry volumetric rate is not given on its own). The block DSS moves
+1225 (p = 1) and 2054 GB/s (p = 3), against the reference's structured DSS at 1605-1686 GB/s
+(78-85%, its Table 6). The generated block DSS is within 3% of the hand one.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form
