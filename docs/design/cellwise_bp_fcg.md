@@ -1127,9 +1127,25 @@ The block solves are 2.9% and 6.9% slower, as between the two allocations. At p 
 passes are 5% and 7% slower; the generated `mir.dss` was already slower than the hand gather at
 p = 3 ("DSS: MARSIR-generated against the hand gather"). At p = 7 they are within 2%.
 
-The generated solve now fuses: `math.fma` for each acc - L y and sum + L z, as nvcc contracts
-the hand kernel, lowered by `--convert-math-to-llvm` to `fma.rn.f64` (6 at p = 3, 14 at p = 7;
-the PTX of the other five kernels is unchanged). Explicit fma, not contraction flags, so the CPU
-gate stays bit-exact: its reference uses `std::fma` at the same two places, and the old unfused
-reference now fails (306 of 3510 values differ at p = 3, 935 of 5901 at p = 7). TSan is clean.
-GPU timing pending.
+The generated solve now fuses (03caa4c8): `math.fma` for each acc - L y and sum + L z, the
+contraction nvcc does by default (`--fmad=true`), lowered by `--convert-math-to-llvm` to
+`fma.rn.f64` (6 at p = 3, 14 at p = 7; the PTX of the other five kernels is unchanged). Explicit
+fma, not contraction flags, so the CPU gate stays bit-exact: its reference uses `std::fma` at the
+same two places, and the old unfused reference now fails (306 of 3510 values differ at p = 3, 935
+of 5901 at p = 7). TSan is clean.
+
+GPU (wing, 64 GPUs, two runs per degree): the same printed numbers as before (p = 3: 262
+iterations, error 9.458e-10; p = 7: the first 50 iterations). The fma did not change the time:
+
+| block solves, ms | p = 3 | p = 7 |
+|---|---|---|
+| MARSIR, unfused (f4a6d324, 7d8876d5) | 1.110, 1.106 | 6.588, 6.533 |
+| MARSIR, fused (03caa4c8) | 1.111, 1.112 | 6.561, 6.501 |
+| hand, same process as the fused runs | 1.069, 1.081 | 6.469, 6.131 |
+
+So the gap is not the arithmetic. Two other differences show in the PTX: the generated row loops
+run one row per iteration (LLVM O3 in `gpu-module-to-binary` does not unroll them), so each
+row's loads come after the previous row's division; and the thread blocks have 128 threads
+(hand 256).
+Whether nvcc unrolls the hand loops is not checked yet; next is the hand kernel's SASS against
+ptxas of the generated PTX.
