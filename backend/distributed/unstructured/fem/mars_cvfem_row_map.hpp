@@ -76,7 +76,7 @@ __device__ __forceinline__ int rowMapDof(const RowMapConn<KeyType>& conn,
 // increasing order, and writes the block's rows, where each starts in shared memory, and every element
 // node's place among the rows. A block whose rows do not fit in capacity doubles, and a row longer than
 // rowMapMaxLen, go straight to the matrix (rowMapDirect). Without Write it only counts the rows and their
-// doubles, the direct blocks (counts[0]) and whether a row is too long for a compact map (counts[2]).
+// doubles, the direct blocks (counts[0]) and the blocks with a row too long for a compact map (counts[2]).
 template<typename KeyType, bool Write>
 __global__ void __launch_bounds__(256) cvfem_row_map_block_kernel(RowMapConn<KeyType> conn,
                                                                    size_t numElements,
@@ -94,15 +94,14 @@ __global__ void __launch_bounds__(256) cvfem_row_map_block_kernel(RowMapConn<Key
                                                                    int* counts)
 {
     static_assert(tensorRowsElems * 8 == 256, "one thread per element node");
-    __shared__ int key[256], rank[256], firstOf[256], total;
+    __shared__ int key[256], rank[256], firstOf[256], total, wide;
     const int t     = threadIdx.x;
     const size_t e  = size_t(blockIdx.x) * tensorRowsElems + t / 8;
     const int dof   = e < numElements ? rowMapDof(conn, e, t % 8, nodeToDof, ownership, numOwnedRows) : -1;
     const int len   = dof >= 0 ? rowPtr[dof + 1] - rowPtr[dof] : 0;
     const bool tooLong = len > rowMapMaxLen;
     key[t]          = (dof >= 0 && !tooLong) ? dof : INT_MAX;
-    if (t == 0) total = 0;
-    if (!Write && len > rowMapCompactMaxLen) counts[2] = 1;
+    if (t == 0) total = wide = 0;
     __syncthreads();
 
     // bitonic sort, ascending; the element nodes without a row in shared memory go to the end
@@ -134,6 +133,8 @@ __global__ void __launch_bounds__(256) cvfem_row_map_block_kernel(RowMapConn<Key
     }
     // each row's doubles: its right-hand side and its CSR row
     if (first) atomicAdd(&total, rowPtr[key[t] + 1] - rowPtr[key[t]] + 1);
+    // rows too long for a compact map, counted in the block, so that one thread per block adds to counts
+    if (!Write && len > rowMapCompactMaxLen) atomicAdd(&wide, 1);
     __syncthreads();
     const int count   = rank[255];
     const bool direct = count > tensorRowsMaxRows || total > capacity;
@@ -145,6 +146,7 @@ __global__ void __launch_bounds__(256) cvfem_row_map_block_kernel(RowMapConn<Key
             blockCount[blockIdx.x] = direct ? 0 : count;
             blockSize[blockIdx.x]  = direct ? 0 : uint16_t(total);
             if (direct) atomicAdd(&counts[0], 1);
+            if (wide > 0) atomicAdd(&counts[2], 1);
         }
     }
     else
@@ -320,6 +322,8 @@ void buildCvfemRowMap(const KeyType* d_conn0,
                                 matrix.diagPtr, map.lumped, map.elemCols.data(), counts.data());
     }
     cudaCheckError();
+    // a map rebuilt in place must not keep the count of its last mesh; a compact map has no searched rows
+    map.numSearchRows = 0;
     if (!map.compact)
         cudaCheckCall(cudaMemcpy(&map.numSearchRows, counts.data() + 1, sizeof(int), cudaMemcpyDeviceToHost));
     map.view = {map.elemRow.data(),

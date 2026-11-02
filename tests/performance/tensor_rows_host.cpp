@@ -329,6 +329,20 @@ int main()
         Mesh w = structured(4, 4, 4, 12345u + 40);
         ok = check("4x4x4 hexes, 40 more columns per row", w, full, paths, 40) && ok;
     }
+    // a map rebuilt in place takes the counts of the new mesh: a byte map with searched rows, then a compact one
+    {
+        Mesh searched = fan(253, 1, 5u), plain = structured(4, 4, 4, 12345u + 4);
+        buildPattern(searched, true);
+        buildPattern(plain, false);
+        CvfemRowMap map;
+        build(searched, true, map);
+        const int before = map.numSearchRows;
+        build(plain, false, map);
+        const bool rebuilt = before > 0 && map.compact && map.numSearchRows == 0 && map.numDirectBlocks == 0;
+        std::printf("map rebuilt in place: %d searched rows, then %d, %s columns: %s\n", before, map.numSearchRows,
+                    map.compact ? "4-bit" : "byte", rebuilt ? "PASS" : "FAIL");
+        ok = rebuilt && ok;
+    }
     std::printf("paths taken: direct blocks %s, blocks too big for shared memory %s, searched rows %s, wide "
                 "shared-memory rows %s, 4-bit maps %s, byte maps %s\n",
                 paths.direct ? "yes" : "NO", paths.tooBig ? "yes" : "NO", paths.search ? "yes" : "NO",
