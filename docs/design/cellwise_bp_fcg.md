@@ -1087,6 +1087,29 @@ of 3510 values). ThreadSanitizer (`--emu-tsan`) found a race in the first solve 
 block count is not a multiple of 128, the mapping clamps the surplus lanes onto the last block;
 their stores are masked, but their reads of z race with that block's lane writing it. So the
 layout is padded with zero-length blocks to a multiple of 128 (the kernel's contract; NodeLines
-pads, the hand kernel ignores the padding); then TSan is clean. The generated code does not fuse
-multiply-adds and nvcc fuses them in the hand kernels, so on the GPU the two should agree to
-rounding, not to the bit. GPU runs pending.
+pads, the hand kernel ignores the padding); then TSan is clean.
+
+GPU (GH200, f4a6d324): the generated passes give the hand runs' numbers in every printed digit.
+One-rank reference: 12 iterations, lmax 2.9190, the history, the true residual. Wing on 64 GPUs,
+p = 3: 262 iterations, the whole history, error 9.458e-10. Wing, p = 7, first 50 iterations:
+lmax 3.2467, the history, the error after 50. All generated PTX (every MARSIR kernel, not only
+these) has only `.rn` arithmetic, which ptxas does not fuse into FMA; nvcc fuses by default.
+Whether the bits are equal, the printed digits do not show. The cube at p = 7 (40 iterations) and
+on 8 ranks (158) pass; their hand runs (39, 155) predate the 100 power steps (lmax 3.80 vs 3.92,
+3.22 vs 3.35), so they do not compare.
+
+One smoothing step on the wing, 64 GPUs, ms; hand and generated ran in two allocations:
+
+| | residual DSS | block solves | DSS + update | plain DSS (control) | operator (control) |
+|---|---|---|---|---|---|
+| p = 3, hand | 1.562 | 1.079 | 1.514 | 1.525 | 0.988 |
+| p = 3, MARSIR | 1.878 | 1.110 | 1.857 | 1.773 | 0.989 |
+| p = 7, hand | 6.062 | 6.189 | 5.909 | 5.533 | 15.245 |
+| p = 7, MARSIR | 6.140 | 6.588 | 6.255 | 5.894 | 15.152 |
+
+The plain DSS is the same kernel in both runs and moved 16% (p = 3) and 7% (p = 7) between the
+allocations; the two DSS passes follow it, so their difference is inside that. The block solves
+are 3% and 6% slower while the operator stayed within 1%, one run each. With `--lines-ptx` the
+driver now also times the hand passes in the same process (`node lines ..., hand kernels`). The
+one-rank setup is 0.23 s longer with `--lines-ptx` (311 vs 80 ms run time); the CUDA driver
+compiles the PTX when it is loaded (`cuModuleLoadData`).
