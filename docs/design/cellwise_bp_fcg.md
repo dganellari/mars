@@ -1143,9 +1143,37 @@ iterations, error 9.458e-10; p = 7: the first 50 iterations). The fma did not ch
 | MARSIR, fused (03caa4c8) | 1.111, 1.112 | 6.561, 6.501 |
 | hand, same process as the fused runs | 1.069, 1.081 | 6.469, 6.131 |
 
-So the gap is not the arithmetic. Two other differences show in the PTX: the generated row loops
-run one row per iteration (LLVM O3 in `gpu-module-to-binary` does not unroll them), so each
-row's loads come after the previous row's division; and the thread blocks have 128 threads
-(hand 256).
-Whether nvcc unrolls the hand loops is not checked yet; next is the hand kernel's SASS against
-ptxas of the generated PTX.
+So the gap is not the arithmetic. The SASS (cuobjdump of the hand kernels, ptxas 12.9 of the
+generated PTX) shows where it is: nvcc unrolls the hand row loops, 4 rows per iteration at
+p = 3 and 2 at p = 7, while the generated loops ran one row per iteration (LLVM O3 in
+`gpu-module-to-binary` does not unroll them). In both, a row's loads still come after the
+previous row's division (its slow-path branch ends the block), but one row per iteration ran
+20-35% more instructions per row: a 64-bit loop counter, the ring moves, the address steps, and
+the z base reloaded from constant memory before each store. Registers were not the cause (42
+generated vs 46 hand at p = 3, 48 vs 56 at p = 7).
+
+| instructions per row (fast path) | p = 3 forward | p = 3 backward | p = 7 forward | p = 7 backward |
+|---|---|---|---|---|
+| hand (nvcc unrolls) | 35.5 | 31.8 | 52.5 | 41.5 |
+| MARSIR, one row per iteration | 48.0 | 39.0 | 66.0 | 50.0 |
+| MARSIR, unrolled | 36.8 | 31.5 | 58.5 | 41.5 |
+
+`_lines_solve` now unrolls both row loops the same way, then runs the rest one row per
+iteration. The CPU gate stays bit-exact and TSan clean; skipping either rest loop, or reversing
+the rows of either unrolled loop, fails it. The PTX now has the hand kernel's divisions, stores
+and loads (10, 10, 62 at p = 3; 6, 6, 62 at p = 7), with 52 and 68 registers and no spills; the
+other five kernels are unchanged.
+
+GPU (wing, 64 GPUs; one of the two p = 7 runs failed on a node without a GPU): the same printed
+numbers again.
+
+| block solves, ms | p = 3 | p = 7 |
+|---|---|---|
+| MARSIR, unrolled | 1.001, 1.000 | 5.816 |
+| hand, same process | 1.073, 1.078 | 6.172 |
+
+The generated solve is now 7% (p = 3) and 6% (p = 7) faster than the hand kernel, and 10-11%
+faster than before. With about the same instructions per row and 128-thread blocks (hand 256),
+why it beats the hand kernel is not measured. A whole smoothing step: p = 3 4.146 and 4.210 ms
+against 4.058 and 4.189 hand, the rest of the gap in the DSS passes (the update 6-7% slower);
+p = 7 18.579 against 18.775.

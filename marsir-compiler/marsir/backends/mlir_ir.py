@@ -1085,60 +1085,102 @@ def _lines_solve(p):
     L(r, r) with the last p values carried; backward from the last row, each z_r pushing
     L(r, r-d) z_r into the next p rows' sums. The hand kernel's operation order, each
     acc - L y and sum + L z one math.fma, as nvcc contracts the hand kernel.
+    Both row loops run `unroll` rows per iteration, then single rows: the unrolling nvcc
+    does for the hand kernel (its SASS, CUDA 12.9: 4 rows at p = 3, 2 at p = 7). LLVM does
+    not unroll them, and one row per iteration ran 20-35% more instructions per row (loop
+    counter, ring moves, address steps); with one lane per block, they are on its path.
     Contract: len and warp_off cover a multiple of 128 blocks (the kernel's elements per
     thread block; padding blocks have length 0), so no group runs past the last block. A
     group past it would solve the last block again (--mir-warp-per-element clamps it there),
     reading z while that block's lane writes it."""
+    unroll = 4 if p <= 3 else 2
     ys = [f"%y{d}" for d in range(1, p + 1)]
     ps = [f"%p{d}" for d in range(1, p + 1)]
     f64s = ", ".join(["f64"] * p)
-    zeros = ", ".join(f"{y} = %zero" for y in ys)
-    pzeros = ", ".join(f"{q} = %zero" for q in ps)
 
-    def row_index(r):
-        return [f"      %row = arith.addi %base, {r} : index",
-                "      %rl = arith.muli %row, %c32 : index", "      %ci = arith.addi %rl, %lane : index",
-                "      %ti = memref.load %copy[%ci] : memref<?xi64>", "      %t = arith.index_cast %ti : i64 to index",
-                "      %lb = arith.muli %row, %cn : index", "      %lb32 = arith.muli %lb, %c32 : index",
-                "      %l0 = arith.addi %lb32, %lane : index",
-                "      %L0 = memref.load %L[%l0] : memref<?xf64>"]
-    fwd = row_index("%r") + ["      %acc0 = memref.load %s[%t] : memref<?xf64>"]
-    for d in range(1, p + 1):
-        fwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
-                f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
-                f"      %nL{d} = arith.negf %L{d} : f64",
-                f"      %acc{d} = math.fma %nL{d}, %y{d}, %acc{d - 1} : f64"]
-    fwd += [f"      %v = arith.divf %acc{p}, %L0 : f64", "      memref.store %v, %z[%t] : memref<?xf64>",
-            f"      scf.yield %v{''.join(', ' + y for y in ys[:-1])} : {f64s}"]
-    bwd = ["      %r = arith.subi %last, %k : index"] + row_index("%r") + [
-        "      %zt = memref.load %z[%t] : memref<?xf64>",
-        "      %num = arith.subf %zt, %p1 : f64",
-        "      %v = arith.divf %num, %L0 : f64",
-        "      memref.store %v, %z[%t] : memref<?xf64>"]
-    nexts = []
-    for d in range(1, p + 1):
-        nxt = f"%p{d + 1}" if d < p else "%zero"
-        bwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
-                f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
-                f"      %n{d} = math.fma %L{d}, %v, {nxt} : f64"]
-        nexts.append(f"%n{d}")
-    bwd += [f"      scf.yield {', '.join(nexts)} : {f64s}"]
+    def row_index(r, x):
+        return [f"      %row{x} = arith.addi %base, {r} : index",
+                f"      %rl{x} = arith.muli %row{x}, %c32 : index", f"      %ci{x} = arith.addi %rl{x}, %lane : index",
+                f"      %ti{x} = memref.load %copy[%ci{x}] : memref<?xi64>",
+                f"      %t{x} = arith.index_cast %ti{x} : i64 to index",
+                f"      %lb{x} = arith.muli %row{x}, %cn : index", f"      %lb32{x} = arith.muli %lb{x}, %c32 : index",
+                f"      %l0{x} = arith.addi %lb32{x}, %lane : index",
+                f"      %L0{x} = memref.load %L[%l0{x}] : memref<?xf64>"]
+
+    def fwd(r, y, x):   # row r, y = (y_(r-1), ..., y_(r-p)); gives y_r
+        out = row_index(r, x) + [f"      %acc0{x} = memref.load %s[%t{x}] : memref<?xf64>"]
+        for d in range(1, p + 1):
+            out += [f"      %ld{d}{x} = arith.addi %l0{x}, %c32x{d} : index",
+                    f"      %L{d}{x} = memref.load %L[%ld{d}{x}] : memref<?xf64>",
+                    f"      %nL{d}{x} = arith.negf %L{d}{x} : f64",
+                    f"      %acc{d}{x} = math.fma %nL{d}{x}, {y[d - 1]}, %acc{d - 1}{x} : f64"]
+        return out + [f"      %v{x} = arith.divf %acc{p}{x}, %L0{x} : f64",
+                      f"      memref.store %v{x}, %z[%t{x}] : memref<?xf64>"], f"%v{x}"
+
+    def bwd(k, sums, x):   # row last - k, sums: the next p rows' sums; gives them for the row before
+        out = [f"      %r{x} = arith.subi %last, {k} : index"] + row_index(f"%r{x}", x) + [
+            f"      %zt{x} = memref.load %z[%t{x}] : memref<?xf64>",
+            f"      %num{x} = arith.subf %zt{x}, {sums[0]} : f64",
+            f"      %v{x} = arith.divf %num{x}, %L0{x} : f64",
+            f"      memref.store %v{x}, %z[%t{x}] : memref<?xf64>"]
+        for d in range(1, p + 1):
+            nxt = sums[d] if d < p else "%zero"
+            out += [f"      %ld{d}{x} = arith.addi %l0{x}, %c32x{d} : index",
+                    f"      %L{d}{x} = memref.load %L[%ld{d}{x}] : memref<?xf64>",
+                    f"      %n{d}{x} = math.fma %L{d}{x}, %v{x}, {nxt} : f64"]
+        return out, [f"%n{d}{x}" for d in range(1, p + 1)]
+
+    def loop(res, iv, lo, hi, step, names, init, rows):   # rows(iv, carried): body lines, carried values
+        body, carried = rows(iv, names)
+        args = ", ".join(f"{a} = {b}" for a, b in zip(names, init))
+        return ([f"    %{res}:{p} = scf.for {iv} = {lo} to {hi} step {step} iter_args({args}) -> ({f64s}) {{"] +
+                body + [f"      scf.yield {', '.join(carried)} : {f64s}", "    }"])
+
+    def fwd_rows(n):
+        def rows(r, y):
+            out = []
+            for j in range(n):
+                rj = r if j == 0 else f"%rf{j}"
+                if j: out.append(f"      %rf{j} = arith.addi {r}, %cu{j} : index")
+                lines, v = fwd(rj, y, f"_{j}" if n > 1 else "")
+                out += lines
+                y = [v] + y[:-1]
+            return out, y
+        return rows
+
+    def bwd_rows(n):
+        def rows(k, sums):
+            out = []
+            for j in range(n):
+                kj = k if j == 0 else f"%kb{j}"
+                if j: out.append(f"      %kb{j} = arith.addi {k}, %cu{j} : index")
+                lines, sums = bwd(kj, sums, f"_{j}" if n > 1 else "")
+                out += lines
+            return out, sums
+        return rows
+
+    zeros = ["%zero"] * p
     return "\n".join(
         [f"func.func @lines_solve_p{p}(%L: memref<?xf64>, %copy: memref<?xi64>, %len: memref<?xi32>, "
          "%warp_off: memref<?xi64>, %s: memref<?xf64>, %z: memref<?xf64>) attributes {mir.kernel, mir.noalias} {",
          "  %c0 = arith.constant 0 : index", "  %c1 = arith.constant 1 : index",
          "  %c32 = arith.constant 32 : index", f"  %cn = arith.constant {p + 1} : index",
+         f"  %cu = arith.constant {unroll} : index",
          "  %zero = arith.constant 0.0 : f64"] +
+        [f"  %cu{j} = arith.constant {j} : index" for j in range(1, unroll)] +
         [f"  %c32x{d} = arith.constant {32 * d} : index" for d in range(1, p + 1)] +
         ["  %nb = memref.dim %len, %c0 : memref<?xi32>",
          "  scf.parallel (%q) = (%c0) to (%nb) step (%c1) {",
          "    %mi = memref.load %len[%q] : memref<?xi32>", "    %m = arith.index_cast %mi : i32 to index",
          "    %last = arith.subi %m, %c1 : index",
+         "    %rest = arith.remui %m, %cu : index", "    %mu = arith.subi %m, %rest : index",
          "    %wq = arith.divui %q, %c32 : index", "    %lane = arith.remui %q, %c32 : index",
-         "    %bi = memref.load %warp_off[%wq] : memref<?xi64>", "    %base = arith.index_cast %bi : i64 to index",
-         f"    %f:{p} = scf.for %r = %c0 to %m step %c1 iter_args({zeros}) -> ({f64s}) {{"] + fwd +
-        ["    }", f"    %g:{p} = scf.for %k = %c0 to %m step %c1 iter_args({pzeros}) -> ({f64s}) {{"] + bwd +
-        ["    }", "    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.warps_per_block = 4 : i64}",
+         "    %bi = memref.load %warp_off[%wq] : memref<?xi64>", "    %base = arith.index_cast %bi : i64 to index"] +
+        loop("fu", "%r", "%c0", "%mu", "%cu", ys, zeros, fwd_rows(unroll)) +
+        loop("f", "%r", "%mu", "%m", "%c1", ys, [f"%fu#{d}" for d in range(p)], fwd_rows(1)) +
+        loop("gu", "%k", "%c0", "%mu", "%cu", ps, zeros, bwd_rows(unroll)) +
+        loop("g", "%k", "%mu", "%m", "%c1", ps, [f"%gu#{d}" for d in range(p)], bwd_rows(1)) +
+        ["    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.warps_per_block = 4 : i64}",
          "  return", "}", ""])
 
 
