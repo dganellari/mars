@@ -262,6 +262,12 @@ instructions is fused (BP1 p = 3: 428M FP64 instructions, 0 fma), so every contr
 multiply and an add. The reference reaches DRAM speed with an even-odd factorization and FP64
 tensor cores for p >= 3 (its Section 2), both of which cut the shared-memory traffic per DoF.
 
+Step 1 (this commit): `--mir-cellwise-schedule` turns each contraction step out + a b into one
+`math.fma` (BP1 p = 3: 120 fma and 1 multiply in the PTX, before 0 and 121). The BP gates pass
+for bp1, bp3, bp1_tri and bp3_tri at p = 1, 3, 7 (the gate is a tolerance against direct sums,
+so the new rounding is fine). The CVFEM operators of the same schedule are not regenerated yet.
+GPU pending.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form

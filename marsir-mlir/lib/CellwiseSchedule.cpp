@@ -31,6 +31,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
@@ -92,6 +93,22 @@ SmallVector<Value> indices(AffineMap map, ValueRange loopIvs) {
 // summation order of each output is unchanged. This is how a hand kernel's thread
 // keeps a column in registers and applies it for all faces.
 constexpr int64_t kMaxBlock = 8;
+
+// The step of a contraction, out + a * b (either order of the add), as the factors a and b:
+// it becomes one math.fma, as nvcc contracts the hand kernels (half the FP64 instructions).
+std::optional<std::pair<Value, Value>> mulAdd(Block *region, BlockArgument out) {
+  auto ops = region->without_terminator();
+  if (std::distance(ops.begin(), ops.end()) != 2)
+    return std::nullopt;
+  auto mul = dyn_cast<arith::MulFOp>(&*ops.begin());
+  auto add = dyn_cast<arith::AddFOp>(&*std::next(ops.begin()));
+  if (!mul || !add || region->getTerminator()->getOperand(0) != add.getResult() || !mul->hasOneUse())
+    return std::nullopt;
+  if (!((add.getLhs() == out && add.getRhs() == mul.getResult()) ||
+        (add.getRhs() == out && add.getLhs() == mul.getResult())))
+    return std::nullopt;
+  return std::make_pair(mul.getLhs(), mul.getRhs());
+}
 
 LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   for (AffineMap m : op.getIndexingMapsArray())
@@ -170,6 +187,7 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   Block *region = op.getBlock();
   BlockArgument outArg = region->getArgument(outs[0]->getOperandNumber());
   AffineMap outMap = op.getMatchingIndexingMap(outs[0]);
+  const std::optional<std::pair<Value, Value>> fma = mulAdd(region, outArg);
 
   phase(b, loc, parShape, [&](OpBuilder &pb, Location pl, ValueRange pivs) {
     SmallVector<Value> ivs(iters.size());
@@ -202,6 +220,11 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
           map.map(region->getArgument(ins[i]->getOperandNumber()), x);
         }
         map.map(outArg, accs[kb]);
+        if (fma) {
+          next.push_back(bb.create<math::FmaOp>(bl, map.lookupOrDefault(fma->first), map.lookupOrDefault(fma->second),
+                                                accs[kb]));
+          continue;
+        }
         for (Operation &rop : region->without_terminator()) bb.clone(rop, map);
         next.push_back(map.lookup(region->getTerminator()->getOperand(0)));
       }
@@ -267,7 +290,8 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
            "field, one phase per linalg op with fused fills, scratch temporaries)";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithDialect, linalg::LinalgDialect, memref::MemRefDialect, scf::SCFDialect>();
+    registry.insert<arith::ArithDialect, linalg::LinalgDialect, math::MathDialect, memref::MemRefDialect,
+                    scf::SCFDialect>();
   }
 
   LogicalResult schedule(func::FuncOp func) {

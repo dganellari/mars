@@ -213,6 +213,7 @@ def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
               "--expand-strided-metadata",
               "--lower-affine",
               "--convert-vector-to-llvm",
+              "--convert-math-to-llvm",   # math.fma (the cell-wise schedule's contractions) -> fma.rn.f64
               "--convert-gpu-to-nvvm",
               "--convert-arith-to-llvm", "--convert-index-to-llvm",
               "--convert-cf-to-llvm",
@@ -273,6 +274,7 @@ def emulate(ir, p, harness="emu_hl_mma.cpp", defines=()):
               "--expand-strided-metadata",
               "--lower-affine",
               "--convert-vector-to-llvm",
+              "--convert-math-to-llvm",
               "--convert-arith-to-llvm", "--convert-index-to-llvm",
               "--convert-cf-to-llvm",
               "--finalize-memref-to-llvm",
