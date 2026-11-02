@@ -1045,36 +1045,74 @@ def _lines_residual(p, minus):
 
 def _lines_update(p, kind):
     """The Chebyshev step from the block solution z, which holds each node's value on its
-    counting copy and 0 on the others: z_t = DSS(z) (0 on Dirichlet copies); first0: d = x
-    = c2 z_t; first: d = c2 z_t, x += d; next: d = c1 d + c2 z_t, x += d. NodeLines'
-    update_kernel reads z_t at the counting copy instead of summing (the same bits)."""
-    args = [("z", "f64"), ("ghost", "f64"), ("elements", "i32")] + _TABLES + _FLAGS + [("d", "f64"), ("x", "f64")]
-    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args) + ", %c1: f64, %c2: f64"
-    copies = {"first0": [], "first": ["x"], "next": ["d", "x"]}[kind]
-    opnd = ["memref<?xf64>", "memref<?xf64>", "memref<?xi32>"] + [f"memref<?x{t}>" for _, t in _TABLES + _FLAGS] + \
-        ["memref<?xf64>"] * (len(copies) + 2)
-    body = ["  %zero = arith.constant 0.0 : f64",
-            "  %zt = arith.select %dir, %zero, %sum : f64",
-            "  %cz = arith.mulf %c2, %zt : f64"]
+    counting copy only: copy t of a listed element reads it at j = src[t] (a local copy
+    below the local values, else a ghost copy; -1, a Dirichlet node, reads 0). first0:
+    d = x = c2 z_j; first: d = c2 z_j, x += d; next: d = c1 d + c2 z_j, x += d, with
+    c1 d + c2 z_j one math.fma as nvcc contracts it. NodeLines' update_kernel, one lane per
+    copy and 256 to a thread block as there; a DSS of z gives the same bits but walks every
+    copy's neighbours.
+    The element loop runs over chunks of 32 copies, 8 to a block, padded to a multiple of 8,
+    and skips the copies past the last: no group runs past the loop, where
+    --mir-warp-per-element would clamp it onto the last chunk, reading d and x while that
+    chunk's lanes write them."""
+    n3, warps = (p + 1) ** 3, 8
+    load = {"first0": [], "first": ["x"], "next": ["d", "x"]}[kind]
+    body = [f"        %{a}t = memref.load %{a}[%t] : memref<?xf64>" for a in load] + \
+        ["        %cz = arith.mulf %c2, %zt : f64"]
     if kind == "first0":
-        ys = ["%cz", "%cz"]
+        dn, xn = "%cz", "%cz"
     elif kind == "first":
-        body += ["  %xn = arith.addf %x_t, %cz : f64"]
-        ys = ["%cz", "%xn"]
+        body += ["        %xn = arith.addf %xt, %cz : f64"]
+        dn, xn = "%cz", "%xn"
     else:
-        body += ["  %cd = arith.mulf %c1, %d_t : f64", "  %dn = arith.addf %cd, %cz : f64",
-                 "  %xn = arith.addf %x_t, %dn : f64"]
-        ys = ["%dn", "%xn"]
-    bargs = "%sum: f64, %dir: i1, %cnt: i1" + "".join(f", %{c}_t: f64" for c in copies)
-    cp = f" copies({', '.join('%' + c for c in copies)})" if copies else ""
-    return "\n".join([
-        f"func.func @lines_update_{kind}_p{p}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
-        "  mir.dss ins(%z, %ghost) elements(%elements) faces(%face_nbr, %face_code)",
-        "          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
-        f"          flags(%counting, %edge_dirichlet, %vert_dirichlet){cp} outs(%d, %x)",
-        f"          {{degree = {p} : i64, reductions = 0 : i64}} : {', '.join(opnd)} epilogue {{",
-        f"  ^bb0({bargs}):", *["  " + l for l in body],
-        f"    mir.yield {', '.join(ys)} : f64, f64", "  }", "  return", "}", ""])
+        body += ["        %dn = math.fma %c1, %dt, %cz : f64", "        %xn = arith.addf %xt, %dn : f64"]
+        dn, xn = "%dn", "%xn"
+    return "\n".join(
+        [f"func.func @lines_update_{kind}_p{p}(%z: memref<?xf64>, %ghost: memref<?xf64>, %src: memref<?xi32>, "
+         "%elements: memref<?xi32>, %d: memref<?xf64>, %x: memref<?xf64>, %c1: f64, %c2: f64) "
+         "attributes {mir.kernel, mir.noalias} {",
+         "  %c0 = arith.constant 0 : index", "  %c1i = arith.constant 1 : index",
+         "  %c32 = arith.constant 32 : index", f"  %cn = arith.constant {n3} : index",
+         f"  %cc = arith.constant {n3 // 32} : index", f"  %cw = arith.constant {warps} : index",
+         f"  %cw1 = arith.constant {warps - 1} : index",
+         "  %zero = arith.constant 0.0 : f64", "  %i0 = arith.constant 0 : i32",
+         "  %ne = memref.dim %elements, %c0 : memref<?xi32>",
+         "  %nl = memref.dim %z, %c0 : memref<?xf64>",
+         "  %total = arith.muli %ne, %cn : index",
+         "  %chunks = arith.muli %ne, %cc : index",
+         "  %up = arith.addi %chunks, %cw1 : index", "  %groups = arith.divui %up, %cw : index",
+         "  %padded = arith.muli %groups, %cw : index",
+         "  scf.parallel (%w) = (%c0) to (%padded) step (%c1i) {",
+         "    scf.parallel (%l) = (%c0) to (%c32) step (%c1i) {",
+         "      %w32 = arith.muli %w, %c32 : index", "      %q = arith.addi %w32, %l : index",
+         "      %in = arith.cmpi ult, %q, %total : index",
+         "      scf.if %in {",
+         "        %ei = arith.divui %q, %cn : index", "        %k = arith.remui %q, %cn : index",
+         "        %e32 = memref.load %elements[%ei] : memref<?xi32>",
+         "        %e = arith.index_cast %e32 : i32 to index",
+         "        %en = arith.muli %e, %cn : index", "        %t = arith.addi %en, %k : index",
+         "        %j32 = memref.load %src[%t] : memref<?xi32>",
+         "        %free = arith.cmpi sge, %j32, %i0 : i32",
+         "        %zt = scf.if %free -> (f64) {",
+         "          %j = arith.index_cast %j32 : i32 to index",
+         "          %own = arith.cmpi ult, %j, %nl : index",
+         "          %v = scf.if %own -> (f64) {",
+         "            %a = memref.load %z[%j] : memref<?xf64>", "            scf.yield %a : f64",
+         "          } else {",
+         "            %g = arith.subi %j, %nl : index",
+         "            %b = memref.load %ghost[%g] : memref<?xf64>", "            scf.yield %b : f64",
+         "          }",
+         "          scf.yield %v : f64",
+         "        } else {",
+         "          scf.yield %zero : f64",
+         "        }"] + body +
+        [f"        memref.store {dn}, %d[%t] : memref<?xf64>", f"        memref.store {xn}, %x[%t] : memref<?xf64>",
+         "      }",
+         "      scf.reduce",
+         "    } {mir.lanes}",
+         "    scf.reduce",
+         f"  }} {{mir.elements, mir.warps_per_block = {warps} : i64}}",
+         "  return", "}", ""])
 
 
 def _lines_solve(p):

@@ -4,10 +4,10 @@
 // mlir_ir.emit_lines), behind cellwise::LineKernels for cellwise::NodeLines
 // (mars_cellwise_lines.hpp): the residual DSS (mir.dss of b or b - y), the block solves
 // (structured loops, one lane per block, on the layout padded to 128 blocks) and the Chebyshev
-// update (mir.dss of the counting-copy values with an epilogue). CPU gate:
-// marsir-mlir/tools/emu_lines.cpp, bit for bit against the hand kernels' formulas. On the GPU
-// the generated code does not fuse multiply-adds and nvcc fuses them in the hand kernels, so
-// the two agree to rounding.
+// update (structured loops, one lane per copy, reading z at the counting copy src). CPU gate:
+// marsir-mlir/tools/emu_lines.cpp, bit for bit against the hand kernels' formulas. The solve and
+// the update fuse their multiply-adds (math.fma) where nvcc contracts the hand kernels; the DSS
+// only adds.
 
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_cellwise.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
@@ -52,18 +52,15 @@ public:
         launch(solve_, a, blocks, stream);
     }
 
-    void update(int kind, const double* z, const double* ghost, const cellwise::ElementList& set, double* d, double* x,
-                double c1, double c2, cudaStream_t stream) override
+    // One lane per copy, in chunks of 32 copies (the kernel's elements).
+    void update(int kind, const double* z, const double* ghost, const int* src, const cellwise::ElementList& set,
+                double* d, double* x, double c1, double c2, cudaStream_t stream) override
     {
         if (set.count == 0) return;
         const long long L = T_.local * n3();
-        std::vector<Arg> a = topology_args(z, ghost, T_, set);
-        a.push_back(vec(T_.counting));
-        a.push_back(vec(T_.edge_dirichlet));
-        a.push_back(vec(T_.vert_dirichlet));
-        a.push_back({d, L});
-        a.push_back({x, L});
-        launch(update_[kind], a, set.count, stream, {}, {c1, c2});
+        std::vector<Arg> a{{z, L}, {ghost, (T_.elements - T_.local) * n3()}, {src, L}, element_list(set, T_.local),
+                           {d, L}, {x, L}};
+        launch(update_[kind], a, set.count * n3() / 32, stream, {}, {c1, c2});
     }
 
 private:

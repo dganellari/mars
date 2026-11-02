@@ -4,16 +4,18 @@
 //   lines_residual0 / lines_residual  the DSS of b, or of b - y (for_each_copy_sum's sum), on
 //                                     random tables with ghosts and Dirichlet entities
 //                                     (emu_cellwise_mesh.h);
-//   lines_update_first0 / first / next  z_t = DSS(z), zero on Dirichlet copies, then the
-//                                     Chebyshev update of d and x (update_kernel's formula);
+//   lines_update_first0 / first / next  z read at each copy's counting copy src (local,
+//                                     ghost or -1, random here), then the Chebyshev update
+//                                     of d and x (update_kernel's formula), over an element
+//                                     list whose chunks do not fill the last thread block;
 //   lines_solve                       the banded forward and backward solves of solve_kernel
 //                                     on a lane-interleaved layout of blocks of varying
 //                                     length over several warps, padded with zero-length
 //                                     blocks to the kernel's 128 per thread block
 //                                     (backend/distributed/unstructured/solvers/
 //                                     mars_cellwise_lines.hpp).
-// Built with -ffp-contract=off: the generated code fuses only its explicit math.fma (the solve),
-// and the reference uses std::fma there.
+// Built with -ffp-contract=off: the generated code fuses only its explicit math.fma (the solve
+// and the update), and the reference uses std::fma there.
 //
 // Build + run: python3 test/dss_gpu_pipeline.py 3 --lines --emulate [--emu-tsan]
 #include <algorithm>
@@ -45,8 +47,7 @@ using D32 = Desc<int32_t>;
 using D8 = Desc<int8_t>;
 using Residual0 = void(DR*, DR*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, DR*);
 using Residual = void(DR*, DR*, DR*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, DR*);
-using Update = void(DR*, DR*, D32*, D32*, D8*, D32*, D32*, D32*, D32*, D32*, D32*, D32*, D8*, D8*, DR*, DR*, double,
-                    double);
+using Update = void(DR*, DR*, D32*, D32*, DR*, DR*, double, double);
 using Solve = void(DR*, D64*, D32*, D64*, DR*, DR*);
 extern "C" {
 Residual0 CI(lines_residual0);
@@ -112,12 +113,11 @@ using Mesh = CellwiseMesh<P, double>;
 constexpr int n3 = Mesh::n3;
 
 struct Tables {
-    D32 fn, eo, eoff, eent, vo, voff, vent, cnt;
-    D8 fc, edir, vdir;
+    D32 fn, eo, eoff, eent, vo, voff, vent;
+    D8 fc;
     explicit Tables(Mesh& m)
         : fn(desc(m.face_nbr)), eo(desc(m.edge_of)), eoff(desc(m.edge_off)), eent(desc(m.edge_ent)),
-          vo(desc(m.vert_of)), voff(desc(m.vert_off)), vent(desc(m.vert_ent)), cnt(desc(m.counting)),
-          fc(desc(m.face_code)), edir(desc(m.edge_dir)), vdir(desc(m.vert_dir))
+          vo(desc(m.vert_of)), voff(desc(m.vert_off)), vent(desc(m.vert_ent)), fc(desc(m.face_code))
     {
     }
 };
@@ -151,32 +151,39 @@ void residual()
 
 void update()
 {
-    Mesh m = Mesh::random(10, 4, 57 + P);
-    std::vector<int32_t> list = {3, 0, 9, 5, 7, 1};
-    const std::vector<double> d0 = random_vector(m.E * n3, 12), x0 = random_vector(m.E * n3, 13);
+    const int E = 10;
+    const long long local = (long long)E * n3, ghosts = 3LL * n3;
+    std::vector<int32_t> list = {3, 0, 9, 5, 7};   // p = 3: 10 chunks of 32 copies, 8 to a block
+    std::vector<double> z = random_vector(local, 11), ghost = random_vector(ghosts, 14);
+    const std::vector<double> d0 = random_vector(local, 12), x0 = random_vector(local, 13);
+    std::mt19937 rng(57 + P);
+    std::vector<int32_t> src(local);
+    for (auto& j : src) {
+        const int kind = std::uniform_int_distribution<int>(0, 9)(rng);
+        j = kind == 0   ? -1
+            : kind == 1 ? (int32_t)(local + std::uniform_int_distribution<long long>(0, ghosts - 1)(rng))
+                        : (int32_t)std::uniform_int_distribution<long long>(0, local - 1)(rng);
+    }
     const double c1 = 0.37, c2 = 1.9;
     const char* names[3] = {"lines_update_first0", "lines_update_first", "lines_update_next"};
     Update* kernels[3] = {CI(lines_update_first0), CI(lines_update_first), CI(lines_update_next)};
     for (int kind = 0; kind < 3; ++kind) {
-        std::vector<double> d = d0, x = x0, dref = d0, xref = x0, stage;
-        for (int32_t e : list) {
-            m.stage(e, stage);
-            const unsigned dmask = m.dirichlet_mask(e);
+        std::vector<double> d = d0, x = x0, dref = d0, xref = x0;
+        for (int32_t e : list)
             for (int l = 0; l < n3; ++l) {
                 const long long t = (long long)e * n3 + l;
-                const double zt = (dmask >> Mesh::bit(l)) & 1u ? 0.0 : stage[l];
-                const double dn = kind == 2 ? c1 * d0[t] + c2 * zt : c2 * zt;
+                const int32_t j = src[t];
+                const double zt = j < 0 ? 0.0 : (j < local ? z[j] : ghost[j - local]);
+                const double dn = kind == 2 ? std::fma(c1, d0[t], c2 * zt) : c2 * zt;
                 dref[t] = dn;
                 xref[t] = kind == 0 ? dn : x0[t] + dn;
             }
-        }
-        DR dz = desc(m.values), dg = desc(m.ghost), dd = desc(d), dx = desc(x);
-        D32 dl = desc(list);
-        Tables t(m);
-        emulate(TH(lines_update_first0)(), (long long)list.size(), [&] {
-            kernels[kind](&dz, &dg, &dl, &t.fn, &t.fc, &t.eo, &t.eoff, &t.eent, &t.vo, &t.voff, &t.vent, &t.cnt, &t.edir,
-                          &t.vdir, &dd, &dx, c1, c2);
-        });
+        DR dz = desc(z), dg = desc(ghost), dd = desc(d), dx = desc(x);
+        D32 ds = desc(src), dl = desc(list);
+        const int64_t threads = TH(lines_update_first0)(), per_block = threads / 32;
+        const long long chunks = (long long)list.size() * n3 / 32;
+        emulate(threads, (chunks + per_block - 1) / per_block,
+                [&] { kernels[kind](&dz, &dg, &ds, &dl, &dd, &dx, c1, c2); });
         report(names[kind], differ(d, dref) + differ(x, xref), d.size() + x.size());
     }
 }

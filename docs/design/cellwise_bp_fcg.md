@@ -1073,9 +1073,9 @@ sums. The residual DSS stays (the block solves sit between it and the update), s
 
 `mlir_ir.emit_lines(p)`, through `marsir-mlir/test/dss_gpu_pipeline.py p --lines`, gives
 `generated/lines_p{3,7}_sm90.ptx` with the three passes of a smoothing step: the residual as
-`mir.dss` of b or b - y; the Chebyshev update as `mir.dss` of the counting-copy values with an
-epilogue (first0 / first / next; the hand update reads them by index, the same bits); the block
-solves as structured loops, one lane per block (`--mir-warp-per-element` with
+`mir.dss` of b or b - y; the Chebyshev update (first0 / first / next) as structured loops, one
+lane per copy, reading each copy's value at its counting copy by index as the hand update does;
+the block solves as structured loops, one lane per block (`--mir-warp-per-element` with
 `mir.lanes_per_element = 1`, 128 blocks per thread block), in the hand kernel's operation order.
 `marsir::LinesPtx` (`marsir/mars_marsir_lines.hpp`) puts them behind `cellwise::LineKernels`;
 `mars_marsir_bp --smoother lines --lines-ptx` runs them. Both forms are kept.
@@ -1177,3 +1177,15 @@ faster than before. With about the same instructions per row and 128-thread bloc
 why it beats the hand kernel is not measured. A whole smoothing step: p = 3 4.146 and 4.210 ms
 against 4.058 and 4.189 hand, the rest of the gap in the DSS passes (the update 6-7% slower);
 p = 7 18.579 against 18.775.
+
+The two remaining differences are now gone. The generated update was a `mir.dss` of the
+counting-copy values with an epilogue: the same bits as the hand update, which reads each value
+at its counting copy by index (39070eea), but a walk over every copy's neighbours. It now reads by
+index too: structured loops over chunks of 32 copies, 8 chunks (256 lanes) to a thread block as
+the hand kernel, and `c1 d + c2 z` one `math.fma`, as nvcc contracts the hand kernel. The CPU gate
+compares it bit for bit with update_kernel's formula on random counting copies (local, ghost,
+Dirichlet) over an element list that does not fill the last thread block, at p = 3 and 7, TSan
+clean; it fails a Dirichlet copy that reads anything but 0, a ghost read without the local offset,
+the node index taken from the lane, and the unfused form. The residual and solve PTX are
+unchanged. The hand solve now runs 128 threads per thread block, as the generated one, so the
+next GPU run shows whether the block size is why the generated solve is faster. GPU pending.
