@@ -104,6 +104,7 @@ Options:
 | `--bucket-size=N` | cornerstone octree bucket size (default 64; MARS lowers it for small meshes so every rank gets elements) |
 | `--bucket-size-focus=N` | focus-tree bucket size (default 8; lower = finer halo, more memory) |
 | `--quiet` | do not print the timing breakdown |
+| `--no-row-map` | run `tensor` without the row map (`tensor_map` and `tensor_rows` need it) |
 
 `--kernel` variants (all compute the same hex assembly; see [CVFEM Kernels](CVFEM-Kernels.md);
 compare them on your GPU with `--iterations=N`):
@@ -114,7 +115,9 @@ compare them on your GPU with `--iterations=N`):
 | `optimized` | optimized element kernel |
 | `shmem` | low-register, direct-scatter kernel |
 | `team` | 32 lanes per element |
-| `tensor` | full local matrix per thread |
+| `tensor` | full local matrix per thread; with the row map, `tensor_map` on NVIDIA and `tensor_rows` on AMD |
+| `tensor_map` | `tensor` with the row map's CSR offsets |
+| `tensor_rows` | 16 threads per element; each block adds up its CSR rows in shared memory (row map) |
 | `tensor_colored` | `tensor` with graph coloring, no atomics |
 | `tensor_aos` | `tensor` with packed node data |
 | `tensor_perip` | `tensor` with pre-resolved CSR positions |

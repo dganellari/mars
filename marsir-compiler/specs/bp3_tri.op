@@ -1,0 +1,10 @@
+# BP3 (Laplacian) with the geometry computed in the kernel from each element's 8
+# corners: m = the symmetric w det J J^-1 J^-T of the trilinear map at each Gauss point.
+operator bp3_tri {
+    element  = hex
+    form     = galerkin
+    geometry = trilinear
+    dv0      = m00*du0 + m01*du1 + m02*du2
+    dv1      = m01*du0 + m11*du1 + m12*du2
+    dv2      = m02*du0 + m12*du1 + m22*du2
+}

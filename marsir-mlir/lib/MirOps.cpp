@@ -46,6 +46,44 @@ mlir::LogicalResult mir::DssOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult mir::FluxOp::verify() {
+  if (getResults().empty())
+    return emitOpError("needs a result");
+  auto grid = llvm::dyn_cast<mlir::RankedTensorType>(getResult(0).getType());
+  if (!grid)
+    return emitOpError("results must be ranked tensors");
+  if (!getDims())
+    return mlir::success();
+  if (getDims()->size() != getInputs().size())
+    return emitOpError("dims needs one entry per input");
+  for (auto [input, attr] : llvm::zip(getInputs(), *getDims())) {
+    auto dims = llvm::dyn_cast<mlir::DenseI64ArrayAttr>(attr);
+    auto type = llvm::dyn_cast<mlir::RankedTensorType>(input.getType());
+    if (!dims || !type || type.getRank() != (int64_t)dims.size())
+      return emitOpError("each dims entry is an i64 array as long as its input's rank");
+    int64_t last = -1;
+    for (auto [k, d] : llvm::enumerate(dims.asArrayRef())) {
+      if (d <= last || d >= grid.getRank())
+        return emitOpError("dims must be increasing grid dimensions");
+      if (type.getDimSize(k) != grid.getDimSize(d))
+        return emitOpError("an input's extent must match the grid along its dimension");
+      last = d;
+    }
+  }
+  return mlir::success();
+}
+
+// Node numbers of a block stay well inside 32 bits up to these sizes.
+static mlir::LogicalResult verifyBlock(mlir::Operation *op, int64_t degree, int64_t block) {
+  if (degree < 1 || degree > 8 || block < 1 || block > 64)
+    return op->emitOpError("degree must be in [1, 8] and block in [1, 64]");
+  return mlir::success();
+}
+
+mlir::LogicalResult mir::BlockSumOp::verify() { return verifyBlock(*this, getDegree(), getBlock()); }
+
+mlir::LogicalResult mir::BlockSkeletonOp::verify() { return verifyBlock(*this, getDegree(), getBlock()); }
+
 mlir::LogicalResult mir::InterpolateOp::verify() {
   if (getCounting() && getAccumulate())
     return emitOpError("counting writes zeros on the other copies, so it cannot accumulate");

@@ -507,6 +507,13 @@ if(MARS_ENABLE_MARSIR)
     add_executable(mars_cellwise_unstructured_dss mars_cellwise_unstructured_dss.cu)
     target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars CUDA::cuda_driver)
     install(TARGETS mars_cellwise_unstructured_dss RUNTIME DESTINATION bin/examples)
+
+    # CEED BP1 / BP3 from their MARSIR specs (Galerkin form) on element-local vectors,
+    # with the unstructured DSS and communication-free flexible CG
+    # (solvers/mars_cellwise_fcg.hpp).
+    add_executable(mars_marsir_bp mars_marsir_bp.cu)
+    target_link_libraries(mars_marsir_bp PRIVATE mars CUDA::cuda_driver)
+    install(TARGETS mars_marsir_bp RUNTIME DESTINATION bin/examples)
 endif()
 
 # End-to-end release checks on generated meshes (`ctest -L release`).

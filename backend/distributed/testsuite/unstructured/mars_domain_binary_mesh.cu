@@ -105,10 +105,22 @@ __global__ void calculateVolumeKernel(const unsigned* sfc0_ptr,
         return thrust::make_tuple(x, y, z);
     };
     
-    auto [x0, y0, z0] = convertSfc(sfc0);
-    auto [x1, y1, z1] = convertSfc(sfc1);
-    auto [x2, y2, z2] = convertSfc(sfc2);
-    auto [x3, y3, z3] = convertSfc(sfc3);
+    const auto p0 = convertSfc(sfc0);
+    const auto x0 = thrust::get<0>(p0);
+    const auto y0 = thrust::get<1>(p0);
+    const auto z0 = thrust::get<2>(p0);
+    const auto p1 = convertSfc(sfc1);
+    const auto x1 = thrust::get<0>(p1);
+    const auto y1 = thrust::get<1>(p1);
+    const auto z1 = thrust::get<2>(p1);
+    const auto p2 = convertSfc(sfc2);
+    const auto x2 = thrust::get<0>(p2);
+    const auto y2 = thrust::get<1>(p2);
+    const auto z2 = thrust::get<2>(p2);
+    const auto p3 = convertSfc(sfc3);
+    const auto x3 = thrust::get<0>(p3);
+    const auto y3 = thrust::get<1>(p3);
+    const auto z3 = thrust::get<2>(p3);
     
     // Calculate tetrahedral volume
     float det = (x1-x0)*((y2-y0)*(z3-z0) - (z2-z0)*(y3-y0)) -

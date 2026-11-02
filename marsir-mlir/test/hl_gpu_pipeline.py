@@ -248,11 +248,12 @@ def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
     return 0 if ok else 1
 
 
-def emulate(ir, p):
+def emulate(ir, p, harness="emu_hl_mma.cpp", defines=()):
     """--emulate: the batched kernel body -- everything the GPU build runs up to
     --mir-gpu-wrap -- with its warp primitives turned into host runtime calls,
     compiled for the CPU and run with 32 threads per element by
-    tools/emu_hl_mma.cpp against the Knaus oracle."""
+    tools/emu_hl_mma.cpp against the Knaus oracle (or by another harness, with its
+    -D defines: test/bp_gpu_pipeline.py)."""
     E = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--emu-e=")), 3)
     work = os.path.join(ROOT, "build", "emu")
     os.makedirs(work, exist_ok=True)
@@ -296,10 +297,10 @@ def emulate(ir, p):
     cc = "/usr/bin/clang" if tsan else os.path.join(LLVM, "bin", "clang")
     run([cc, *san, "-c", os.path.join(work, "kernel.ll"),
          "-o", os.path.join(work, "kernel.o")], "")
-    exe = os.path.join(work, "emu_hl_mma")
+    exe = os.path.join(work, os.path.splitext(harness)[0])
     run(["/usr/bin/clang++", "-std=c++20", *san] + (["-DMIR_EMU_TSAN"] if tsan else []) +
         (["-DMIR_EMU_REAL=float"] if "--f32" in sys.argv else []) + (["-DMIR_EMU_TRACE"] if trace else []) +
-        [os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
+        list(defines) + [os.path.join(ROOT, "tools", harness),
          os.path.join(work, "kernel.o"), "-o", exe], "")
     env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")
     r = subprocess.run([exe, str(E), str(p)], capture_output=True, text=True, env=env)

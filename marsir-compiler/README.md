@@ -77,6 +77,40 @@ the whole kernel regenerates — e.g. `specs/laplacian_orthocube.op` uses
 `flux = g2*deriv`, and the compiler drops both tangential contractions and the
 interp buffer automatically.
 
+### Galerkin operators (`form = galerkin`)
+
+A standard Galerkin operator on q^3 Gauss points (q = p + 2 by default), in the
+libCEED QFunction split: the spec gives only the pointwise outputs at a Gauss point.
+Inputs: `u` (the field's value there), `du0..du2` (its reference gradient), `g0..g5`
+(per-point geometry the caller fills). Outputs: `v` (tested against the basis values),
+`dv0..dv2` (tested against the reference gradient). The compiler builds only the sweeps
+those names need: u -> B along each axis -> (D along axis d for each du_d read) ->
+outputs -> (Dt along axis d of each dv_d) + v -> Bt along each axis.
+
+```
+operator bp1 {                    operator bp3 {
+    element = hex                     element = hex
+    form    = galerkin                form    = galerkin
+    v       = g0*u                    dv0     = g0*du0 + g1*du1 + g2*du2
+}                                     dv1     = g1*du0 + g3*du1 + g4*du2
+                                      dv2     = g2*du0 + g4*du1 + g5*du2
+                                  }
+```
+
+`specs/bp1.op` and `specs/bp3.op` are the CEED benchmark problems BP1 (mass, g0 = w
+det J) and BP3 (Laplacian, g = the symmetric w det J J^-1 J^-T). `mlir_ir.emit_galerkin`
+writes them as mir; `marsir-mlir/test/bp_gpu_pipeline.py` builds the PTX or the CPU
+gate (`tools/emu_bp.cpp`: the emulated kernel against direct quadrature sums).
+
+`geometry = trilinear` replaces `g0..g5` with `wdetj` (w det J) and `m00 m01 m02 m11
+m12 m22` (w det J J^-1 J^-T) of the trilinear map, which the kernel computes at each
+Gauss point from the element's 8 corners (`specs/bp1_tri.op`, `specs/bp3_tri.op`). The
+kernel takes gq, wq (the 1D Gauss points and weights) and X (3 x 2 x 2 x 2 corners)
+instead of G. A scalar mir.flux first turns the corners into the 21 coefficients of the
+map's derivatives (7 per component; the mixed ones are shared by the three derivatives),
+and the point flux reads them through `dims`, with a coordinate and weight per axis. Each
+J entry is then 3 FMAs. So no geometry is stored or staged per point.
+
 ## Local validation (no GPU)
 
 ```bash

@@ -38,6 +38,9 @@ including element numberings that are not aligned with the coordinate axes.
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library. CUDA only: its
   kernels are PTX loaded through the CUDA driver API.
+  The BP1/BP3 example (`mars_marsir_bp`) runs only on its built-in deformed-cube mesh; its
+  block-structured and generated DSS options run on one rank only; at scale the BoomerAMG coarse
+  solve is the largest cost of a multigrid iteration.
 
 ## Not supported yet
 - **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming
@@ -77,10 +80,15 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
   high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
   tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
-  NVIDIA can be slower. The direct P7 MFMA path uses 32 KiB per two-element block; its measured
-  improvement is an operator result, not a full-solver speedup. The HIP tensor assembly path
-  reduces scratch storage but still spills registers. See `tests/performance/AMD-mfma.md` and
-  `tests/performance/AMD-tensor-early.md` for the measured cases and validation scope.
+  NVIDIA can be slower. With the same P7 plane schedule on both, the high-order operator is
+  1.3-1.6 times slower on MI300A than on H100, and 1.15-1.18 times without its atomic scatter
+  (timing-only ablation): on MI300A every FP64 atomic goes past the L2. Its measured timings are
+  operator results, not full-solver speedups. With its row map the `tensor` assembly, graph and full,
+  on structured and unstructured hex meshes of 7.1e6 elements, runs within 3.4% between MI300A and H100
+  (graph 4.82 and 4.88 ms on public hex192). The full assembly without a map, as callers that assemble
+  once run it, takes 19.4 ms on MI300A and 9.6 ms on H100 on hex192: its global atomics all go past
+  the L2 on MI300A. See `tests/performance/AMD-mfma.md` and `tests/performance/AMD-assembly.md` for
+  the measured cases and validation scope.
   With Cray MPICH, multi-rank runs need `MPICH_GPU_SUPPORT_ENABLED=1`, and on MI300A
   `MPICH_GPU_IPC_ENABLED=0`: its on-node GPU IPC path crashes there.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).

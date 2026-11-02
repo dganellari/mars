@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.1] — 2026-10-20
+## [0.1.1] — 2026-11-02
 
 ### Added
 - HIP build for AMD GPUs, tested on MI300A: every example program builds, and all release checks
@@ -33,13 +33,26 @@ public API may change between minor releases.
   use `buildHost`/`buildDistributedHost`; device builders use `buildDofs`/`buildDistributedDofs`,
   with `FromHost` wrappers for host inputs. Existing callers must update these names;
   the algorithms and execution paths are unchanged.
-- HIP P7 FP64 Laplacian launchers use direct MFMA contractions, removing intermediate tiles.
-  On the tested MI300A P7/E32 case, per-point and affine applies are 2.37 and 2.64 times faster
-  than the staged path. These are operator timings, not full-solver speedups.
-- HIP `tensor` assembly scatters each row after its last face contribution. On public hex192,
-  one MI300A rank, assembly time falls from 30.05 to 25.77 ms (14.2% less time), excluding
-  output zeroing. Scratch storage falls from 1912 to 1084 bytes/lane; spills remain.
-  Both optimizations retain the CUDA kernel paths. See `tests/performance/AMD-*.md` for scope.
+- The P7 FP64 Laplacian launchers use a plane schedule on AMD (MFMA) and on NVIDIA SM80+
+  (`mma.sync`): each lane keeps u and the output along one direction in registers, and only the
+  current plane of the element goes through shared memory. On the tested
+  P7/E32 case a per-point and an affine apply take 0.43 and 0.21 ms on H100 (staged path 0.83 and
+  0.69 ms) and 0.58 and 0.34 ms on MI300A (staged path 3.07 and 2.43-2.49 ms). Older NVIDIA GPUs keep the
+  staged path. These are operator timings, not full-solver speedups.
+- The `tensor` assembly, graph and full, takes a row map (`fem/mars_cvfem_row_map.hpp`), built once on
+  the GPU: the sorted CSR rows of each block of 32 elements, and for each element row the CSR offsets of
+  its 8 columns. On AMD the new `tensor_rows` kernel adds up each block's rows in shared memory and adds
+  them to the matrix row by row; on NVIDIA `tensor_map` reads the offsets instead of searching each CSR
+  row. Any mesh takes a map: each row keeps its own length in shared memory, a block whose rows do not
+  fit adds them straight to the matrix, and a row longer than 254 entries is searched. One rank, median
+  of the rounds, MI300A / H100: graph assembly 4.82 / 4.88 ms on public hex192 and 4.93 / 4.77 ms on an
+  unstructured hex mesh of the same size (`scripts/generate_hex_trisplit.py`, rows of up to 9
+  entries), full assembly 6.33 / 6.19 and 6.56 / 6.40 ms; without the map the graph assembly takes
+  8.21-8.24 / 6.60-7.38 ms on hex192. Building the map takes 35-64 ms on MI300A and 8-19 ms on H100.
+  `mars_cvfem_graph`, `mars_cvfem_full` and `mars_cvfem_scale` build it (`--no-row-map` to skip). The
+  full assembly without a map (`assembleCvfemDiffusion` and the drivers that assemble once) runs the
+  `tensor_faces` kernel on both GPUs: 19.4 / 9.6 ms on hex192, against 25.8 ms for `tensor_early` on
+  MI300A and 12.1 ms for the one-thread kernel on H100. See `tests/performance/AMD-assembly.md`.
 - On AMD, reductions (sums, minima, maxima, counts) run on MARS kernels instead of rocPRIM, where
   each one compiled into about 130 kernels: `mars_amr_ns_projection` builds in under two minutes
   instead of over an hour. `-DMARS_HIP_ROCPRIM_REDUCTIONS=ON` goes back to rocPRIM; NVIDIA builds
@@ -87,6 +100,26 @@ public API may change between minor releases.
   is faster than the hand-written one (53 against 77 ms). Also new: a BoomerAMG coarse level,
   right-preconditioned BiCGStab with an FP32 V-cycle (one rank), and shared-memory layouts chosen
   against bank conflicts. Design notes and results: `docs/design/cellwise_unstructured_dss.md`.
+- MARSIR (same option): the CEED benchmark problems BP1 and BP3 on element-local vectors
+  (`mars_marsir_bp`), with the Galerkin operators generated from their specs (stored geometry, or
+  trilinear geometry computed from the element corners) and communication-free flexible CG. BP3
+  can be preconditioned by a p-multigrid V-cycle (degrees 7 -> 3 -> 1, Chebyshev smoothing,
+  BoomerAMG on p = 1); at equal accuracy on one GH200 the solve is 10x (p = 3) and 14x (p = 7)
+  faster than with DSS-Jacobi, 2.9x and 4.9x with the setup. The solve runs on several ranks (validated with BP3): 4 and 8 ranks reproduce
+  the one-rank history to rounding (within one iteration with BoomerAMG), and with the same work
+  per GPU, 64 GPUs keep 76% (p = 3) and 88% (p = 7) of the 8-GPU speed at equal accuracy. Also a block-structured DSS (one rank), hand-written and
+  generated. Results: `docs/design/cellwise_bp_fcg.md`.
+- MARSIR (same option): `mars_marsir_bp --mesh` reads Exodus Hex8 meshes. On the NASA wing tip
+  (15.1M hexahedra; 410M unknowns at p = 3 and 5.19G at p = 7, on 64 GH200) the node-line smoother
+  for stretched elements (`--smoother lines`) takes 262 iterations instead of 541 with point Jacobi at
+  p = 3 (solve 1.45x faster) and 401 instead of 904 at p = 7 (1.6x). With `--lines-ptx` its passes are
+  generated by MARSIR: the same printed results as the hand-written passes, and the block solve is
+  6-7% faster. With `--mg --amg`, p = 1 now solves on the assembled matrix that BoomerAMG already has
+  (`--p1-matrix-free` keeps the element-local operator). A convergence study gives the optimal rates
+  p + 1 and the same L2 errors as MFEM.
+- An MFEM baseline for BP3 (`tests/performance/mfem_bp3`): with the same algorithm, MARS solves
+  1.18-1.38x faster at p = 3 and 1.24-1.30x at p = 7 on 1, 8 and 64 GH200, with iteration counts
+  within one. Results: `docs/design/cellwise_bp_fcg.md`.
 
 ## [0.1.0] — 2026-10-11
 

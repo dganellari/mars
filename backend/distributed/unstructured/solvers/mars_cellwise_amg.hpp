@@ -31,6 +31,7 @@
 #include <thrust/sort.h>
 #include <thrust/tuple.h>
 
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -145,12 +146,36 @@ __global__ void scatter_kernel(const double* __restrict__ u, const int* __restri
 
 }  // namespace amg_detail
 
+// The BoomerAMG options that set how deep and how wide the hierarchy is; the defaults are
+// those of HypreAmgPcgSolver. All run on the GPU in Hypre 2.33: PMIS coarsening, and
+// aggressive levels with 2-stage extended+e interpolation (Hypre's device default).
+struct AmgSettings {
+    double strong_threshold = 0.25;
+    int aggressive_levels = 0;
+    int max_coarse_size = 9;   // coarsening stops below this many rows
+    bool print = false;        // Hypre's setup statistics (levels, complexities)
+};
+
 class P1Amg {
 public:
-    // G1, M1: the p = 1 metric and matrices; halo1: the p = 1 exchange (null on one rank);
-    // cycles: V-cycles per coarse solve.
+    // y = A u at p = 1 on the local elements, for the element matrices.
+    using Apply1 = std::function<void(const double*, double*, cudaStream_t)>;
+
+    // G1, M1: the p = 1 CVFEM metric and matrices; halo1: the p = 1 exchange (null on one
+    // rank); cycles: V-cycles per coarse solve.
     P1Amg(const UnstructuredTopology& T, const double* G1, const CvfemMatrices<1>& M1, UnstructuredHalo* halo1,
           MPI_Comm comm, cudaStream_t stream, int cycles = 1)
+        : P1Amg(
+              T,
+              [G1, M1, E = T.local](const double* u, double* y, cudaStream_t s) { cvfem_apply<1>(u, y, G1, E, M1, s); },
+              halo1, comm, stream, cycles)
+    {
+    }
+
+    // Any p = 1 operator (e.g. the BP3 Galerkin form), symmetric for BoomerAMG's V-cycle
+    // to be a symmetric preconditioner.
+    P1Amg(const UnstructuredTopology& T, const Apply1& apply1, UnstructuredHalo* halo1, MPI_Comm comm,
+          cudaStream_t stream, int cycles = 1, const AmgSettings& settings = {})
         : T_(T), halo_(halo1), stream_(stream), y_(T.local * 8), v_(T.local * 8)
     {
         using namespace amg_detail;
@@ -186,7 +211,7 @@ public:
         thrust::device_vector<double> columns(8 * n);
         for (int j = 0; j < 8; ++j) {
             if (n > 0) unit_kernel<<<blocks(n), kThreads, 0, stream_>>>(raw(v_), E, j);
-            cvfem_apply<1>(raw(v_), raw(columns) + (long long)j * n, G1, E, M1, stream_);
+            apply1(raw(v_), raw(columns) + (long long)j * n, stream_);
         }
 
         // Entries: this rank's rows directly, the others' sent to their owners.
@@ -248,7 +273,12 @@ public:
         HYPRE_BoomerAMGSetCoarsenType(amg_, 8);
         HYPRE_BoomerAMGSetInterpType(amg_, 6);
         HYPRE_BoomerAMGSetPMaxElmts(amg_, 4);
-        HYPRE_BoomerAMGSetStrongThreshold(amg_, 0.25);
+        HYPRE_BoomerAMGSetStrongThreshold(amg_, settings.strong_threshold);
+        if (settings.aggressive_levels > 0) {
+            HYPRE_BoomerAMGSetAggNumLevels(amg_, settings.aggressive_levels);
+            HYPRE_BoomerAMGSetAggInterpType(amg_, 7);
+        }
+        HYPRE_BoomerAMGSetMaxCoarseSize(amg_, settings.max_coarse_size);
         HYPRE_BoomerAMGSetRelaxType(amg_, 18);
         HYPRE_BoomerAMGSetRelaxOrder(amg_, 0);
         HYPRE_BoomerAMGSetNumSweeps(amg_, 1);
@@ -257,7 +287,7 @@ public:
         HYPRE_BoomerAMGSetMaxLevels(amg_, 25);
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
         HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
-        HYPRE_BoomerAMGSetPrintLevel(amg_, 0);
+        HYPRE_BoomerAMGSetPrintLevel(amg_, settings.print ? 1 : 0);
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
         fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
         rows_global_ = total;
@@ -292,7 +322,62 @@ public:
         dss<1>(raw(v_), x1, T_, halo_, stream_);
     }
 
+    // MFEM's p = 1 path: CG on the assembled matrix itself, on this rank's rows (its free
+    // vertices). to_rows assembles a raw cell-wise vector onto them, from_rows puts row
+    // values on every copy; apply_rows and solve_rows hand Hypre the caller's vectors.
+    long long rows() const { return rows_; }
+
+    void to_rows(const double* raw_cellwise, double* rows) const
+    {
+        using namespace amg_detail;
+        dss<1>(raw_cellwise, raw(y_), T_, halo_, stream_);
+        if (rows_ > 0) gather_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(y_), raw(copy_), rows_, rows);
+        MARS_CELLWISE_CK(cudaGetLastError());
+    }
+
+    void from_rows(const double* rows, double* cellwise) const
+    {
+        using namespace amg_detail;
+        MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
+        if (rows_ > 0) scatter_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(rows, raw(copy_), rows_, raw(v_));
+        MARS_CELLWISE_CK(cudaGetLastError());
+        dss<1>(raw(v_), cellwise, T_, halo_, stream_);
+    }
+
+    // y = A x.
+    void apply_rows(const double* x, double* y) const
+    {
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
+        wrapped(x, y, [&] { HYPRE_ParCSRMatrixMatvec(1.0, matrix(), u_, 0.0, f_); });
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
+
+    // z = the V-cycles on r, from z = 0.
+    void solve_rows(const double* r, double* z) const
+    {
+        MARS_CELLWISE_CK(cudaMemsetAsync(z, 0, rows_ * sizeof(double), stream_));
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
+        wrapped(z, r, [&] { HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_); });
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+    }
+
 private:
+    // Runs f with u_ and f_ pointing at u and f instead of their own data (no copies, as
+    // MFEM wraps its vectors for Hypre).
+    template <class F>
+    void wrapped(const double* u, const double* f, F&& run) const
+    {
+        hypre_Vector* lu = hypre_ParVectorLocalVector(reinterpret_cast<hypre_ParVector*>(u_));
+        hypre_Vector* lf = hypre_ParVectorLocalVector(reinterpret_cast<hypre_ParVector*>(f_));
+        HYPRE_Complex* own_u = hypre_VectorData(lu);
+        HYPRE_Complex* own_f = hypre_VectorData(lf);
+        hypre_VectorData(lu) = const_cast<double*>(u);
+        hypre_VectorData(lf) = const_cast<double*>(f);
+        run();
+        hypre_VectorData(lu) = own_u;
+        hypre_VectorData(lf) = own_f;
+    }
+
     template <typename T>
     static T* raw(thrust::device_vector<T>& v) { return thrust::raw_pointer_cast(v.data()); }
     template <typename T>

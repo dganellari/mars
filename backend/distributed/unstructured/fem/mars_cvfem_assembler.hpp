@@ -8,6 +8,8 @@
 #if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
 #include "mars_cvfem_hex_kernel_tensor_early.hpp"
 #endif
+#include "mars_cvfem_hex_kernel_tensor_faces.hpp"
+#include "mars_cvfem_hex_kernel_tensor_rows.hpp"
 #include "mars_cvfem_hex_kernel_tensor_wmma.hpp"
 #include "mars_cvfem_hex_kernel_tensor_colored.hpp"
 #include "mars_cvfem_hex_kernel_tensor_aos.hpp"
@@ -15,7 +17,9 @@
 #include "mars_cvfem_hex_kernel_smem_cache.hpp"
 #include "mars_cvfem_node_data.hpp"
 #include "mars_cvfem_coloring.hpp"
+#include "mars_cvfem_row_map.hpp"
 #include "../utils/mars_gpu_runtime.hpp"
+#include <stdexcept>
 
 namespace mars {
 namespace fem {
@@ -33,7 +37,13 @@ enum class CvfemKernelVariant {
     TensorPeripLb2,// Same + __launch_bounds__(256,2): forces 2 blocks/SM, ~7 regs forced spill
     SmemCache,     // Smem node cache: deduplicate+load ~400 unique nodes/block, 5cyc vs 30cyc L2
     WmmaTensor,    // FP64 WMMA tensor cores: 1 warp/element, diffusion = S^T x D matmul (SM80+)
-    WgmmaTensor    // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
+    WgmmaTensor,   // Hopper WGMMA m64n8k4: 2 elem/warp (75% util) + async WGMMA for diffusion (SM90+ only)
+    TensorFaces,   // Tensor's element matrix with 16 threads per element: each face once, then the rows
+    TensorFacesAgg, // TensorFaces adding up shared rows per block before the global atomics, 16 elements per block
+    TensorFacesAgg512, // The same with 32 elements per block (the HIP Tensor without a row map)
+    TensorMap,  // Tensor's one-thread kernel with the row map's column offsets (the NVIDIA Tensor with a row map)
+    TensorRows, // 32 elements per block add up their CSR rows in shared memory (the HIP Tensor with a row map)
+    TensorEarly    // HIP only: one thread per element, rows released after their last face (the former HIP Tensor)
 };
 
 // High-level CVFEM assembler for hex elements
@@ -50,6 +60,8 @@ public:
         // SmemCache node cache per block: 512, or 64, which sends most nodes of a block down the path for
         // nodes that do not fit (read from global memory); the kernel check uses it to test that path
         int smemCacheNodes = 512;
+        // buildCvfemRowMap: required for TensorMap and TensorRows, and Tensor uses it when given
+        const CvfemRowMap* rowMap = nullptr;
     };
 
     // Assemble CVFEM system with graph-based sparsity and diagonal lumping
@@ -91,6 +103,17 @@ public:
     {
         int blockSize = config.blockSize;
         int numBlocks = (numElements + blockSize - 1) / blockSize;
+
+        const CvfemRowMap* map = rowMapFor(config, numElements, CvfemRowMapPattern::Graph);
+        auto needMap = [&] {
+            if (!map) throw std::runtime_error("tensor_map and tensor_rows need Config::rowMap (buildCvfemRowMap)");
+        };
+        auto launchMapped = [&](bool rows) {
+            launchRowMap<true>(rows, d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7,
+                               numElements, d_x, d_y, d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y,
+                               d_grad_phi_z, d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z, d_node_to_dof,
+                               d_ownership, d_matrix, d_rhs, *map, config.stream);
+        };
 
         switch (config.variant) {
             case CvfemKernelVariant::Original:
@@ -155,12 +178,30 @@ public:
             }
 
             case CvfemKernelVariant::Tensor:
-                // Release finished rows early on HIP to reduce register spills.
-#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                // With a row map, hex192 on one rank: on AMD the rows kernel, 4.5 ms on MI300A against 8.2 ms for
+                // the aggregated tensor_faces kernel and 9.2 ms for the one-thread kernel with the map; on NVIDIA
+                // the one-thread kernel with the map, 4.8-4.9 ms on H100 against 6.6-7.6 ms with its CSR search
+                // and 10.8 ms for the rows kernel. Without one, AMD runs the aggregated tensor_faces kernel
+                // (8.2 ms against 14.0 ms for tensor_early) and NVIDIA the one-thread kernel.
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
+#if defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                // the previous HIP kernel, for comparisons: one thread per element, no row map
+                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
+#elif defined(__HIPCC__)
+                if (map)
+                {
+                    launchMapped(true);
+                    break;
+                }
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 512, true, true>
+                    <<<unsigned((numElements + 31) / 32), 512, 0, config.stream>>>(
 #else
-                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                if (map)
+                {
+                    launchMapped(false);
+                    break;
+                }
+                cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
 #endif
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
@@ -174,6 +215,84 @@ public:
                 );
                 break;
 
+            case CvfemKernelVariant::TensorFaces:
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
+            case CvfemKernelVariant::TensorFacesAgg:
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 256, true, true>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
+            case CvfemKernelVariant::TensorFacesAgg512:
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType, 512, true, true>
+                    <<<unsigned((numElements + 31) / 32), 512, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
+            case CvfemKernelVariant::TensorMap:
+                needMap();
+                if (numElements > 0) launchMapped(false);
+                break;
+
+            case CvfemKernelVariant::TensorRows:
+                needMap();
+                if (numElements > 0) launchMapped(true);
+                break;
+
+            case CvfemKernelVariant::TensorEarly:
+#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                if (numElements == 0) break;
+                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType, 256, true>
+                    <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+#else
+                throw std::runtime_error("the tensor_early kernel is built for HIP only");
+#endif
+
             case CvfemKernelVariant::TensorColored: {
                 // Graph-colored tensor kernel: atomic-free CSR scatter.
                 // Requires config.coloring to be set (built once from connectivity).
@@ -183,7 +302,7 @@ public:
                     const int  cSize   = col->colorSize(c);
                     const int* cList   = col->colorStart(c);
                     const int  cBlocks = (cSize + blockSize - 1) / blockSize;
-                    cvfem_hex_assembly_kernel_tensor_colored<KeyType, RealType, 256>
+                    cvfem_hex_assembly_kernel_tensor_colored<KeyType, RealType, 256, true>
                         <<<cBlocks, blockSize, 0, config.stream>>>(
                         cList, static_cast<size_t>(cSize),
                         d_conn0, d_conn1, d_conn2, d_conn3,
@@ -202,7 +321,7 @@ public:
             case CvfemKernelVariant::TensorAoS:
                 // AoS node data: packs 9 fields per node into one 72-byte struct.
                 // Reduces scattered node reads from 9 × 1 sector/field to 3 sectors/node.
-                cvfem_hex_assembly_kernel_tensor_aos<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_aos<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -217,7 +336,7 @@ public:
                 // Pre-lookup all 64 CSR positions, scatter LHS per SCS.
                 // lhs[64 doubles] → pos[64 ints]: saves ~64 registers.
                 // Binary search moved out of 12-iteration SCS hot loop.
-                cvfem_hex_assembly_kernel_tensor_perip<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                cvfem_hex_assembly_kernel_tensor_perip<KeyType, RealType, 256, true><<<numBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -234,7 +353,7 @@ public:
                 // Same as TensorPerip + __launch_bounds__(256,2).
                 // Forces 2 blocks/SM with ~7 regs of forced spilling (vs ~44 for tensor+lb2).
                 // The launch bounds allow at most 256 threads, whatever config.blockSize says.
-                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256>
+                cvfem_hex_assembly_kernel_tensor_perip_lb2<KeyType, RealType, 256, true>
                     <<<unsigned((numElements + 255) / 256), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
@@ -258,7 +377,7 @@ public:
                     constexpr int    SC_HT  = 2048;
                     constexpr int    SC_BS  = 256;
                     constexpr size_t smemSz = smemCacheBytes<SC_HT, SC_MN>();
-                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN>;
+                    auto* scPtr = cvfem_hex_assembly_kernel_smem_cache<KeyType, RealType, SC_BS, SC_HT, SC_MN, true>;
                     cudaFuncSetAttribute(scPtr, cudaFuncAttributeMaxDynamicSharedMemorySize,    (int)smemSz);
                     cudaFuncSetAttribute(scPtr, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                     scPtr<<<unsigned((numElements + SC_BS - 1) / SC_BS), SC_BS, smemSz, config.stream>>>(
@@ -282,7 +401,7 @@ public:
                 // FP64 WMMA: 1 warp (32 threads) per element, diffusion = S^T x D
                 // Optimised for Hopper/GH200 (SM90a): hardware smem atomics, 228 KB smem.
                 // Request 100% shared memory carveout so all 228 KB go to smem not L1.
-                auto* wmmaKernelPtr = cvfem_hex_assembly_kernel_tensor_wmma<KeyType, RealType, 256>;
+                auto* wmmaKernelPtr = cvfem_hex_assembly_kernel_tensor_wmma<KeyType, RealType, 256, true>;
                 cudaFuncSetAttribute(wmmaKernelPtr,
                     cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                 constexpr int WarpsPerBlock = 256 / 32;  // 8 elements per block
@@ -306,7 +425,7 @@ public:
                 // Hopper WGMMA: 2 elem/warp (75% Jacobian util), async WGMMA m64n8k4 for diffusion.
                 // BlockSize=128 = 1 warpgroup = 8 elements/block.
                 // ~29 KB smem/block allows up to 7 blocks/SM from smem.
-                auto* wgmmaKernelPtr = cvfem_hex_assembly_kernel_wgmma<KeyType, RealType, 128>;
+                auto* wgmmaKernelPtr = cvfem_hex_assembly_kernel_wgmma<KeyType, RealType, 128, true>;
                 cudaFuncSetAttribute(wgmmaKernelPtr,
                     cudaFuncAttributePreferredSharedMemoryCarveout, 100);
                 constexpr int ElemsPerBlock = 8;  // 4 warps × 2 elements/warp
@@ -361,6 +480,8 @@ public:
         int blockSize = config.blockSize;
         int numBlocks = (numElements + blockSize - 1) / blockSize;
 
+        const CvfemRowMap* map = rowMapFor(config, numElements, CvfemRowMapPattern::Full);
+
         // Full assembly supports kernel variants (but no diagonal lumping)
         switch (config.variant) {
             case CvfemKernelVariant::Original:
@@ -406,12 +527,25 @@ public:
                 break;
 
             case CvfemKernelVariant::Tensor:
-#if defined(__HIPCC__) && !defined(MARS_CVFEM_TENSOR_BASELINE_CHECK)
+                // With a row map the same kernels as the graph assembly: the rows kernel on AMD, the one-thread
+                // kernel with the map's column offsets on NVIDIA. Without one, tensor_faces: the callers that
+                // assemble once do not build a map, because it costs more than it saves for one assembly
+                // (hex192, one rank: map build 16 ms + 6.2 ms against 9.6 ms on H100, 53 + 6.3 against 19.3 ms
+                // on MI300A; the one-thread kernel takes 12.1 and tensor_early 25.8 ms).
+                if (map) {
+                    if (numElements > 0)
+                        launchRowMap<false>(rowMapRows, d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6,
+                                            d_conn7, numElements, d_x, d_y, d_z, d_gamma, d_phi, d_beta, d_grad_phi_x,
+                                            d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                                            d_node_to_dof, d_ownership, d_matrix, d_rhs, *map, config.stream);
+                    break;
+                }
+                [[fallthrough]];
+
+            case CvfemKernelVariant::TensorFaces:
                 if (numElements == 0) break;
-                cvfem_hex_assembly_kernel_tensor_early<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
-#else
-                cvfem_hex_assembly_kernel_tensor<KeyType, RealType><<<numBlocks, blockSize, 0, config.stream>>>(
-#endif
+                cvfem_hex_assembly_kernel_tensor_faces<KeyType, RealType>
+                    <<<unsigned((numElements + 15) / 16), 256, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
                     d_conn4, d_conn5, d_conn6, d_conn7,
                     numElements,
@@ -522,7 +656,66 @@ public:
             case CvfemKernelVariant::SmemCache:      return "smem_cache";
             case CvfemKernelVariant::WmmaTensor:    return "wmma_tensor";
             case CvfemKernelVariant::WgmmaTensor: return "wgmma_tensor";
+            case CvfemKernelVariant::TensorFaces: return "tensor_faces";
+            case CvfemKernelVariant::TensorFacesAgg: return "tensor_faces_agg";
+            case CvfemKernelVariant::TensorFacesAgg512: return "tensor_faces_agg512";
+            case CvfemKernelVariant::TensorMap: return "tensor_map";
+            case CvfemKernelVariant::TensorRows: return "tensor_rows";
+            case CvfemKernelVariant::TensorEarly: return "tensor_early";
             default: return "unknown";
+        }
+    }
+
+private:
+#if defined(__HIPCC__)
+    static constexpr bool rowMapRows = true;
+#else
+    static constexpr bool rowMapRows = false;
+#endif
+
+    static const CvfemRowMap* rowMapFor(const Config& config, size_t numElements, CvfemRowMapPattern pattern)
+    {
+        const CvfemRowMap* map = config.rowMap;
+        if (map && map->numElements != numElements)
+            throw std::runtime_error("Config::rowMap was built for other elements");
+        if (map && map->lumped != (pattern == CvfemRowMapPattern::Graph))
+            throw std::runtime_error("Config::rowMap was built for the other assembly (graph or full)");
+        return map;
+    }
+
+    // The two kernels that read a row map: the rows kernel, and the one-thread kernel with the map's column
+    // offsets, which declares 256 threads on AMD. Lump is the map's, for the rows it leaves to a CSR search.
+    template<bool Lump>
+    static void launchRowMap(bool rows,
+                             const KeyType* d_conn0, const KeyType* d_conn1, const KeyType* d_conn2,
+                             const KeyType* d_conn3, const KeyType* d_conn4, const KeyType* d_conn5,
+                             const KeyType* d_conn6, const KeyType* d_conn7, size_t numElements,
+                             const RealType* d_x, const RealType* d_y, const RealType* d_z,
+                             const RealType* d_gamma, const RealType* d_phi, const RealType* d_beta,
+                             const RealType* d_grad_phi_x, const RealType* d_grad_phi_y,
+                             const RealType* d_grad_phi_z, const RealType* d_mdot,
+                             const RealType* d_areaVec_x, const RealType* d_areaVec_y,
+                             const RealType* d_areaVec_z, const int* d_node_to_dof, const uint8_t* d_ownership,
+                             CSRMatrix<RealType>* d_matrix, RealType* d_rhs, const CvfemRowMap& map,
+                             cudaStream_t stream)
+    {
+        if (rows)
+        {
+            auto kernel = map.compact ? cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType, true>
+                                      : cvfem_hex_assembly_kernel_tensor_rows<KeyType, RealType, false>;
+            kernel<<<unsigned(map.numBlocks), 512, 0, stream>>>(
+                d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7, numElements, d_x, d_y,
+                d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x,
+                d_areaVec_y, d_areaVec_z, d_node_to_dof, d_matrix, d_rhs, map.view);
+        }
+        else
+        {
+            auto kernel = map.compact ? cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, Lump, true, true>
+                                      : cvfem_hex_assembly_kernel_tensor<KeyType, RealType, 256, Lump, true, false>;
+            kernel<<<unsigned((numElements + 255) / 256), 256, 0, stream>>>(
+                d_conn0, d_conn1, d_conn2, d_conn3, d_conn4, d_conn5, d_conn6, d_conn7, numElements, d_x, d_y,
+                d_z, d_gamma, d_phi, d_beta, d_grad_phi_x, d_grad_phi_y, d_grad_phi_z, d_mdot, d_areaVec_x,
+                d_areaVec_y, d_areaVec_z, d_node_to_dof, d_ownership, d_matrix, d_rhs, map.view.elemCols);
         }
     }
 };

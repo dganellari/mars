@@ -24,6 +24,7 @@
 #include <cmath>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using namespace mars::fem;
@@ -118,19 +119,34 @@ bool runBench(int E, int iters)
     };
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    cudaError_t direct_error = cudaSuccess;
-    auto directApply = [&]() {
-        if (direct_error != cudaSuccess) return;
-        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
-        if (direct_error == cudaSuccess)
-            direct_error = ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl);
+    cudaError_t mfma_error = cudaSuccess;
+    auto mfmaApply = [&]() {
+        if (mfma_error != cudaSuccess) return;
+        mfma_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (mfma_error == cudaSuccess)
+            mfma_error = ho_laplacian_dmma_launch<Real, P>(dU, dY, dElemDof, dD, dG, nEl);
     };
-    auto directAffineApply = [&]() {
-        if (direct_error != cudaSuccess) return;
-        direct_error = cudaMemset(dY, 0, nDof*sizeof(Real));
-        if (direct_error == cudaSuccess)
-            direct_error = ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
+    auto mfmaAffineApply = [&]() {
+        if (mfma_error != cudaSuccess) return;
+        mfma_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (mfma_error == cudaSuccess)
+            mfma_error = ho_laplacian_dmma_launch_affine<Real, P>(dU, dY, dElemDof, dD, dGhat, dW, nEl);
     };
+#endif
+
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
+    // CUDA plane schedule (A/B against the staged kernel); W = warps (elements) per block.
+    cudaError_t plane_error = cudaSuccess;
+    auto planeApplyW = [&](auto warps, auto mode) {
+        if (plane_error != cudaSuccess) return;
+        constexpr int W = decltype(warps)::value, M = decltype(mode)::value;
+        plane_error = cudaMemset(dY, 0, nDof*sizeof(Real));
+        if (plane_error == cudaSuccess)
+            plane_error = ho_laplacian_dmma_plane_launch<M, W>(dU, dY, dElemDof, dD, M ? dGhat : dG, M ? dW : nullptr, nEl);
+    };
+    using I0 = std::integral_constant<int, 0>; using I1 = std::integral_constant<int, 1>;
+    using W2 = std::integral_constant<int, 2>; using W4 = std::integral_constant<int, 4>;
+    using W8 = std::integral_constant<int, 8>;
 #endif
 
     // Warmup (also surfaces launch errors before timing).
@@ -167,8 +183,13 @@ bool runBench(int E, int iters)
     if (!checkParity(scalarApply, "scalar") || !checkParity(affineApply, "affine") ||
         !checkParity(smemScalarApply, "staged scalar")) return false;
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    if (!checkParity(directApply, "public MFMA") || !checkParity(directAffineApply, "public affine MFMA")) return false;
-    CK(direct_error);
+    if (!checkParity(mfmaApply, "public MFMA") || !checkParity(mfmaAffineApply, "public affine MFMA")) return false;
+    CK(mfma_error);
+#endif
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
+    if (!checkParity([&] { planeApplyW(W4{}, I0{}); }, "plane DMMA") ||
+        !checkParity([&] { planeApplyW(W4{}, I1{}); }, "plane affine DMMA")) return false;
+    CK(plane_error);
 #endif
 
 
@@ -188,14 +209,27 @@ bool runBench(int E, int iters)
     if (!timeIt(scalarApply, msScalar) || !timeIt(dmmaApply, msDmma) ||
         !timeIt(affineApply, msAffine) || !timeIt(smemScalarApply, msSmemScalar)) return false;
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-    float msDirect, msDirectAffine;
-    if (!timeIt(directApply, msDirect) || !timeIt(directAffineApply, msDirectAffine)) return false;
-    CK(direct_error);
+    float msMfma, msMfmaAffine;
+    if (!timeIt(mfmaApply, msMfma) || !timeIt(mfmaAffineApply, msMfmaAffine)) return false;
+    CK(mfma_error);
     CK(cudaDeviceSynchronize());
-    printf("public MFMA LDS/block=32768 vs staged=35840\n"
-           "  public G/point: %.3f ms/apply; staged/direct %.3fx\n"
-           "  public affine: %.3f ms/apply; staged/direct %.3fx\n",
-           msDirect, msDmma/msDirect, msDirectAffine, msAffine/msDirectAffine);
+    printf("public MFMA LDS/block=%d vs staged=%d\n"
+           "  public G/point: %.3f ms/apply; staged/MFMA %.3fx\n"
+           "  public affine: %.3f ms/apply; staged/MFMA %.3fx\n",
+           int(2 * sizeof(HoMfmaPlaneData)), int(2 * sizeof(HoLaplacianDmmaWarpData)),
+           msMfma, msDmma/msMfma, msMfmaAffine, msAffine/msMfmaAffine);
+#endif
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
+    float msPlane2, msPlane4, msPlane8, msPlaneAffine4;
+    if (!timeIt([&] { planeApplyW(W2{}, I0{}); }, msPlane2) || !timeIt([&] { planeApplyW(W4{}, I0{}); }, msPlane4) ||
+        !timeIt([&] { planeApplyW(W8{}, I0{}); }, msPlane8) || !timeIt([&] { planeApplyW(W4{}, I1{}); }, msPlaneAffine4))
+        return false;
+    CK(plane_error);
+    CK(cudaDeviceSynchronize());
+    printf("plane DMMA shared/warp=%d\n"
+           "  plane G/point: %.3f / %.3f / %.3f ms/apply (2 / 4 / 8 warps per block); staged/plane(4) %.3fx\n"
+           "  plane affine: %.3f ms/apply (4 warps per block); staged/plane %.3fx\n",
+           int(sizeof(HoDmmaPlaneData)), msPlane2, msPlane4, msPlane8, msDmma/msPlane4, msPlaneAffine4, msAffine/msPlaneAffine4);
 #endif
 
     const double flopPerElem = 6.0 * 2.0 * std::pow((double)n, 4) + (double)N3 * 15.0;

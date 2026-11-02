@@ -1,0 +1,7 @@
+# CEED benchmark problem BP1: the mass operator on a general (curved) hex, Gauss
+# points q = p + 2. g0 = w det J at each Gauss point (the caller computes it).
+operator bp1 {
+    element = hex
+    form    = galerkin
+    v       = g0*u
+}

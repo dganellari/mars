@@ -5,7 +5,9 @@
 // smoothing through the DSS, element-local GLL interpolation between degrees
 // (restriction is its transpose on the raw residual), and on the p = 1 level Chebyshev
 // steps or a given coarse solve (BoomerAMG, mars_cellwise_amg.hpp). One V-cycle per
-// BiCGStab preconditioner call.
+// BiCGStab preconditioner call. The second constructor takes any operator level by level
+// from p = 7 or 3 down (e.g. the BP3 Galerkin Laplacian of mars_marsir_bp.cu, with FCG;
+// reference marsir-mlir/test/cellwise_bp_mg_ref.py).
 // Design: docs/design/cellwise_unstructured_dss.md ("Multigrid on unstructured meshes");
 // reference: marsir-mlir/test/cellwise_pmg_ref.py, which it must match.
 
@@ -96,24 +98,38 @@ __global__ void scale_kernel(double* __restrict__ v, long long n, double s)
     if (t < n) v[t] *= s;
 }
 
-// Deterministic start of the power iteration (the same hash as the structured multigrid).
-__global__ void hash_kernel(double* __restrict__ v, long long n)
+// Deterministic start of the power iteration (the same hash as the structured multigrid)
+// of the copy's index: global (element gid * n3 + node) when gid is given, so the start
+// is the same on any rank count, else local.
+__global__ void hash_kernel(double* __restrict__ v, long long n, const unsigned long long* __restrict__ gid, int n3)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < n) v[t] = (double)(((unsigned long long)t * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
+    if (t >= n) return;
+    const unsigned long long i = gid ? gid[t / n3] * n3 + t % n3 : (unsigned long long)t;
+    v[t] = (double)((i * 2654435761ULL) & 0xffffffffULL) / 4294967296.0 - 0.5;
 }
 
 inline unsigned blocks(long long n) { return (unsigned)((n + kThreads - 1) / kThreads); }
 
 }  // namespace pmg_detail
 
-// The coefficients of `steps` Chebyshev-Jacobi steps on [hi / 15, hi], hi = 1.1 lmax:
-// step(i, c1, c2) for i = 0 .. steps - 1, c1 = 0 at i = 0. Shared by the FP64 V-cycle
-// and the FP32 one (marsir/mars_marsir_pmg.hpp), so both smooth on the same interval.
+// The smoother's interval [hi / ratio, hi], hi = scale lmax of D^-1 A, and the power steps
+// that estimate lmax. The default is MARS's; mfem() is MFEM's OperatorChebyshevSmoother
+// ([0.3, 1.2] lmax, 10 steps), to compare both codes on the same V-cycle (its order-k
+// polynomial is the same residual polynomial as k steps here).
+struct ChebyshevInterval {
+    double scale = 1.1, ratio = 15.0;
+    int power_steps = 30;
+    static ChebyshevInterval mfem() { return {1.2, 4.0, 10}; }
+};
+
+// The coefficients of `steps` Chebyshev-Jacobi steps on the interval: step(i, c1, c2) for
+// i = 0 .. steps - 1, c1 = 0 at i = 0. Shared by the FP64 V-cycle and the FP32 one
+// (marsir/mars_marsir_pmg.hpp), so both smooth on the same interval.
 template <class Step>
-void chebyshev_steps(double lmax, int steps, Step&& step)
+void chebyshev_steps(double lmax, int steps, Step&& step, const ChebyshevInterval& interval = {})
 {
-    const double hi = 1.1 * lmax, lo = hi / 15.0;
+    const double hi = interval.scale * lmax, lo = hi / interval.ratio;
     const double theta = 0.5 * (hi + lo), delta = 0.5 * (hi - lo), sigma = theta / delta;
     double rho = 1.0 / sigma;
     step(0, 0.0, 1.0 / theta);
@@ -149,6 +165,50 @@ struct PmgKernels {
 template <class Apply7>
 class PMultigrid {
 public:
+    using LevelApply = std::function<void(int, const double*, double*, cudaStream_t)>;
+
+    // Any operator given level by level (e.g. the BP3 Galerkin form of mars_marsir_bp.cu):
+    // top = 7 or 3, the finest degree; apply(p, u, y, stream) at p = top .. 1; elem(p) the
+    // element diagonals at p (summed here); halos[0..2] the exchanges at p = 7, 3, 1 (null
+    // on one rank; slot 0 unused at top = 3); gid: a global id of each of the
+    // tables' elements (cellwise::block_elements), so the power iteration starts from the
+    // same vector on any rank count (null: from the local index). For a symmetric
+    // operator, pre == post gives a symmetric V-cycle (the smoother is a polynomial in
+    // D^-1 A). Apply7 must be constructible from a lambda (std::function).
+    PMultigrid(int top, LevelApply apply, const std::function<const double*(int)>& elem, const UnstructuredTopology& T,
+               std::array<UnstructuredHalo*, 3> halos, const unsigned long long* gid, int pre, int post,
+               int coarse_steps, MPI_Comm comm, cudaStream_t stream, const ChebyshevInterval& interval = {})
+        : apply7_([apply](const double* u, double* y, cudaStream_t s) { apply(7, u, y, s); }), T_(view(T)),
+          E_(T.local), diag7_(nullptr), G3_(nullptr), G1_(nullptr), halos_(halos), pre_(pre), post_(post),
+          coarse_steps_(coarse_steps), stream_(stream), M3_(cvfem_matrices<3>()), M1_(cvfem_matrices<1>()),
+          I73_(interpolation<7, 3>()), I31_(interpolation<3, 1>()), top_(top), lower_(std::move(apply)), gid_(gid),
+          interval_(interval)
+    {
+        if (top == 7) {
+            r7_ = alloc(E_ * 512), d7_ = alloc(E_ * 512), y7_ = alloc(E_ * 512), own7_ = alloc(E_ * 512);
+            dss<7>(elem(7), own7_, T, halos_[0], stream_);
+            diag7_ = own7_;
+        }
+        b3_ = alloc(E_ * 64), x3_ = alloc(E_ * 64), r3_ = alloc(E_ * 64), d3_ = alloc(E_ * 64), y3_ = alloc(E_ * 64);
+        diag3_ = alloc(E_ * 64);
+        b1_ = alloc(E_ * 8), x1_ = alloc(E_ * 8), d1_ = alloc(E_ * 8), y1_ = alloc(E_ * 8), diag1_ = alloc(E_ * 8);
+        dss<3>(elem(3), diag3_, T, halos_[1], stream_);
+        dss<1>(elem(1), diag1_, T, halos_[2], stream_);
+        Reduction red(comm);
+        if (top == 7) lmax_[0] = power_iteration<7>(red);
+        lmax_[1] = power_iteration<3>(red);
+        lmax_[2] = power_iteration<1>(red);
+    }
+
+    // x = one V-cycle from the top level applied to the raw residual b (x continuous).
+    void cycle(const double* b, double* x) const
+    {
+        if (top_ == 7)
+            vcycle<7>(b, x);
+        else
+            vcycle<3>(b, x);
+    }
+
     PMultigrid(Apply7 apply7, const UnstructuredTopology& T, const double* diag7, const double* G3, const double* G1,
                std::array<UnstructuredHalo*, 3> halos, int pre, int post, int coarse_steps, MPI_Comm comm,
                cudaStream_t stream)
@@ -175,7 +235,8 @@ public:
     }
     ~PMultigrid()
     {
-        for (double* p : {r7_, d7_, y7_, b3_, x3_, r3_, d3_, y3_, diag3_, b1_, x1_, d1_, y1_, diag1_}) cudaFree(p);
+        for (double* p : {r7_, d7_, y7_, own7_, b3_, x3_, r3_, d3_, y3_, diag3_, b1_, x1_, d1_, y1_, diag1_})
+            cudaFree(p);
     }
     PMultigrid(const PMultigrid&) = delete;
     PMultigrid& operator=(const PMultigrid&) = delete;
@@ -188,6 +249,20 @@ public:
 
     // The generated V-cycle kernels (null: the hand ones).
     void set_kernels(PmgKernels* kernels) { gen_ = kernels; }
+
+    // step(b, y, d, x, c1, c2, first, assign): one Chebyshev step at level P with another
+    // smoother in place of Jacobi (NodeLines::step, mars_cellwise_lines.hpp). lmax of the level
+    // is measured again for the new preconditioned operator, with power_steps steps (0: the
+    // interval's).
+    using SmootherStep = std::function<void(const double*, const double*, double*, double*, double, double, bool, bool)>;
+    void set_smoother(int P, SmootherStep step, MPI_Comm comm, int power_steps = 0)
+    {
+        line_[P == 7 ? 0 : (P == 3 ? 1 : 2)] = std::move(step);
+        Reduction red(comm);
+        if (P == 7) lmax_[0] = power_iteration<7>(red, power_steps);
+        else if (P == 3) lmax_[1] = power_iteration<3>(red, power_steps);
+        else lmax_[2] = power_iteration<1>(red, power_steps);
+    }
 
     // The assembled diagonal at level P, on every copy.
     template <int P>
@@ -252,7 +327,8 @@ private:
     template <int P>
     void apply(const double* u, double* y) const
     {
-        if constexpr (P == 7) apply7_(u, y, stream_);
+        if (lower_) lower_(P, u, y, stream_);
+        else if constexpr (P == 7) apply7_(u, y, stream_);
         else if (gen_) gen_->apply(P, u, y, stream_);
         else if constexpr (P == 3) cvfem_apply<3>(u, y, G3_, E_, M3_, stream_);
         else cvfem_apply<1>(u, y, G1_, E_, M1_, stream_);
@@ -290,6 +366,10 @@ private:
     template <int P, bool FIRST>
     void step(const double* b, const double* y, double* d, double* x, double c1, double c2) const
     {
+        if (const SmootherStep& other = line_[P == 7 ? 0 : (P == 3 ? 1 : 2)]) {
+            other(b, y, d, x, c1, c2, FIRST, FIRST && !y);
+            return;
+        }
         UnstructuredHalo* halo = halos_[P == 7 ? 0 : (P == 3 ? 1 : 2)];
         run_unstructured_pass(halo, E_, b, y, stream_, [&](const ElementList& set, const double* ghost, int) {
             if (gen_) {
@@ -312,14 +392,17 @@ private:
         double* d = P == 7 ? d7_ : (P == 3 ? d3_ : d1_);
         double* y = P == 7 ? y7_ : (P == 3 ? y3_ : y1_);
         if (!zero_x) apply<P>(x, y);
-        chebyshev_steps(lmax_[P == 7 ? 0 : (P == 3 ? 1 : 2)], steps, [&](int i, double c1, double c2) {
-            if (i == 0) {
-                step<P, true>(b, zero_x ? nullptr : y, d, x, c1, c2);
-                return;
-            }
-            apply<P>(x, y);
-            step<P, false>(b, y, d, x, c1, c2);
-        });
+        chebyshev_steps(
+            lmax_[P == 7 ? 0 : (P == 3 ? 1 : 2)], steps,
+            [&](int i, double c1, double c2) {
+                if (i == 0) {
+                    step<P, true>(b, zero_x ? nullptr : y, d, x, c1, c2);
+                    return;
+                }
+                apply<P>(x, y);
+                step<P, false>(b, y, d, x, c1, c2);
+            },
+            interval_);
     }
 
     template <int P>
@@ -333,11 +416,12 @@ private:
     }
 
     // The largest eigenvalue of the Jacobi-preconditioned operator at level P: 30 power
-    // steps from a hash vector (10 underestimate it, see the structured multigrid). The
+    // steps (interval_.power_steps) from a hash vector (10 underestimate it, see the
+    // structured multigrid). The
     // start depends on the local numbering, so lmax differs in the last digits between
     // rank counts; the smoother's interval has a 10% margin.
     template <int P>
-    double power_iteration(Reduction& red) const
+    double power_iteration(Reduction& red, int steps = 0) const
     {
         constexpr int n3 = (P + 1) * (P + 1) * (P + 1);
         const long long n = E_ * n3;
@@ -345,11 +429,11 @@ private:
         double* y = P == 7 ? y7_ : (P == 3 ? y3_ : y1_);
         double* v = alloc(n);
         double* w = alloc(n);
-        if (n > 0) pmg_detail::hash_kernel<<<pmg_detail::blocks(n), kThreads, 0, stream_>>>(y, n);
+        if (n > 0) pmg_detail::hash_kernel<<<pmg_detail::blocks(n), kThreads, 0, stream_>>>(y, n, gid_, n3);
         MARS_CELLWISE_CK(cudaGetLastError());
         step<P, true>(y, nullptr, d, v, 0.0, 1.0);   // v = Jacobi(DSS(hash))
         double lam = 0.0;
-        for (int i = 0; i < 30; ++i) {
+        for (int i = 0; i < (steps > 0 ? steps : interval_.power_steps); ++i) {
             apply<P>(v, y);
             step<P, true>(y, nullptr, d, w, 0.0, 1.0);   // w = Jacobi(DSS(A v))
             const double nw = norm<P>(red, w), nv = norm<P>(red, v);
@@ -383,6 +467,12 @@ private:
     std::array<double, 3> lmax_{};
     std::function<void(const double*, double*)> coarse_solve_;
     PmgKernels* gen_ = nullptr;
+    int top_ = 7;
+    LevelApply lower_;           // the level-by-level operator (null: CVFEM below p = 7)
+    double* own7_ = nullptr;     // the summed p = 7 diagonal, when this class forms it
+    const unsigned long long* gid_ = nullptr;   // element ids for the power iteration's start
+    ChebyshevInterval interval_;
+    std::array<SmootherStep, 3> line_;   // per level: a smoother in place of Jacobi (empty: Jacobi)
 };
 
 }  // namespace cellwise

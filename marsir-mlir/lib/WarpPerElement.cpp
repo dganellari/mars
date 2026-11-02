@@ -26,7 +26,8 @@
 // fixed order, so results are reproducible bit for bit; every lane of the group
 // ends with the same value. A 32-iteration OR reduction this way is a ballot.
 // Stores in the element body itself (outside the phases, e.g. reduction results)
-// are done by the group's lane 0.
+// are done by the group's lane 0, except to a lane's own buffer (a memref.alloca
+// without {mir.scratch}: a scalar every lane computes for itself).
 //
 // Barriers: a barrier goes between two phases when some buffer (traced to its
 // root through views) is written by one and accessed by the other with no
@@ -686,8 +687,13 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   if (valid)
     lane0 = gb.create<arith::AndIOp>(loc, lane0, valid);
   SmallVector<memref::StoreOp> stores;
+  auto isPrivate = [](Value m) {
+    auto a = m.getDefiningOp<memref::AllocaOp>();
+    return a && !a->hasAttr("mir.scratch");
+  };
   body->walk([&](memref::StoreOp st) {
-    if (!scratch.contains(rootOf(st.getMemRef())))
+    Value root = rootOf(st.getMemRef());
+    if (!scratch.contains(root) && !isPrivate(root))
       stores.push_back(st);
   });
   for (memref::StoreOp st : stores) {

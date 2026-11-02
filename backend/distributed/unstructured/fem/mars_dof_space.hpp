@@ -615,6 +615,15 @@ private:
                        cudaMemcpyDeviceToDevice);
         }
 
+        // GPU-aware MPI must not read keys before their default-stream copies finish.
+        const auto send_sync_error = cudaStreamSynchronize(0);
+        if (send_sync_error != cudaSuccess)
+        {
+            std::fprintf(stderr, "DofSpace: key-copy synchronization failed: %s\n",
+                         cudaGetErrorString(send_sync_error));
+            MPI_Abort(comm_, 1);
+            std::abort();
+        }
         cstone::DeviceVector<KeyType> requested;
         constexpr int tagDofRequests = 0x4d43;
         auto requests = sparseExchange<KeyType>(dests, destCounts, remoteKeyPtr, requested, tagDofRequests, comm_);

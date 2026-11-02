@@ -1,10 +1,11 @@
 # AMD tensor assembly with earlier row scatter
 
-Status: integrated into the HIP Tensor dispatch; HIP and CUDA regression checks passed.
+Status: the HIP Tensor until the aggregated `tensor_faces` kernel replaced it (AMD-assembly.md);
+still available as `--kernel=tensor_early`. HIP and CUDA regression checks passed.
 CUDA retains the previous tensor kernel. The previous row-per-thread
 experiment passed correctness but was 2.56 times slower in job 687417. This candidate
 keeps one thread per element, twelve face evaluations and one scatter per matrix entry.
-The validated P7 direct MFMA integration is preserved and is a separate optimization.
+The P7 MFMA operator (AMD-mfma.md) is a separate optimization.
 
 ## Discrete algebra and scheduling
 

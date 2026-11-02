@@ -81,7 +81,7 @@ struct alignas(128) CvfemWmmaWarpData {
 //   Phase 6: lanes 0-7  parallel CSR scatter (one lane per node row)
 // =============================================================================
 
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __global__ void __launch_bounds__(256, 4)
 cvfem_hex_assembly_kernel_tensor_wmma(
     const KeyType* __restrict__ d_conn0,
@@ -364,6 +364,7 @@ cvfem_hex_assembly_kernel_tensor_wmma(
             const int row_start = matrix->rowPtr[row_dof];
             const int row_end   = matrix->rowPtr[row_dof + 1];
             const int diag_pos  = matrix->diagPtr[row_dof];
+            RealType diagonal = 0.0;
 
             #pragma unroll
             for (int j = 0; j < 8; ++j) {
@@ -374,7 +375,8 @@ cvfem_hex_assembly_kernel_tensor_wmma(
                 if (value == 0.0) continue;
 
                 if (i == j) {
-                    atomicAdd(&matrix->values[diag_pos], value);
+                    if constexpr (LumpMissing) diagonal += value;
+                    else atomicAdd(&matrix->values[diag_pos], value);
                 } else {
                     int left = row_start, right = row_end - 1;
                     while (left <= right) {
@@ -389,7 +391,14 @@ cvfem_hex_assembly_kernel_tensor_wmma(
                             right = mid - 1;
                         }
                     }
+                    if constexpr (LumpMissing) {
+                        if (left > right) diagonal += value;
+                    }
                 }
+            }
+            if constexpr (LumpMissing) {
+                // Preserve the full row sum when the graph omits a coupling.
+                if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
             }
         }
     }
@@ -473,7 +482,7 @@ struct alignas(128) CvfemWgmaWarpgroupData {
 //   • Phase 6: each thread stores d{0..3} to smem_C.
 //   • Phase 7: threads 0-63 (1 per element-row) merge lhs_adv + lhs_diff → CSR.
 // =============================================================================
-template<typename KeyType, typename RealType, int BlockSize = 128>
+template<typename KeyType, typename RealType, int BlockSize = 128, bool LumpMissing = false>
 __global__ void __launch_bounds__(128, 4)
 cvfem_hex_assembly_kernel_wgmma(
     const KeyType* __restrict__ d_conn0,
@@ -799,6 +808,7 @@ cvfem_hex_assembly_kernel_wgmma(
         const int row_start = matrix->rowPtr[row_dof];
         const int row_end   = matrix->rowPtr[row_dof + 1];
         const int diag_pos  = matrix->diagPtr[row_dof];
+        RealType diagonal = 0.0;
 
         #pragma unroll
         for (int col_j = 0; col_j < 8; ++col_j) {
@@ -810,7 +820,8 @@ cvfem_hex_assembly_kernel_wgmma(
             if (value == 0.0) continue;
 
             if (row_i == col_j) {
-                atomicAdd(&matrix->values[diag_pos], value);
+                if constexpr (LumpMissing) diagonal += value;
+                else atomicAdd(&matrix->values[diag_pos], value);
             } else {
                 int left = row_start, right = row_end - 1;
                 while (left <= right) {
@@ -821,7 +832,14 @@ cvfem_hex_assembly_kernel_wgmma(
                     } else if (col < col_dof) { left  = mid + 1; }
                     else                      { right = mid - 1; }
                 }
+                if constexpr (LumpMissing) {
+                    if (left > right) diagonal += value;
+                }
             }
+        }
+        if constexpr (LumpMissing) {
+            // Preserve the full row sum when the graph omits a coupling.
+            if (diagonal != 0.0) atomicAdd(&matrix->values[diag_pos], diagonal);
         }
     }
 

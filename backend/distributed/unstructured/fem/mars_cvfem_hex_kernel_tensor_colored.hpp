@@ -21,7 +21,7 @@ namespace fem {
 //        numThisColor = colorOffset[c+1] - colorOffset[c].
 //        Matrix/RHS must be zeroed before the first color's launch.
 // =============================================================================
-template<typename KeyType, typename RealType, int BlockSize = 256>
+template<typename KeyType, typename RealType, int BlockSize = 256, bool LumpMissing = false>
 __global__ void cvfem_hex_assembly_kernel_tensor_colored(
     const int*     __restrict__ d_elemList,   // permutation: linearIdx → elemIdx
     size_t numThisColor,
@@ -197,6 +197,7 @@ __global__ void cvfem_hex_assembly_kernel_tensor_colored(
         const int row_start = matrix->rowPtr[row_dof];
         const int row_end   = matrix->rowPtr[row_dof + 1];
         const int diag_pos  = matrix->diagPtr[row_dof];
+        RealType diagonal = 0.0;
 
         #pragma unroll
         for (int j = 0; j < 8; ++j) {
@@ -206,7 +207,8 @@ __global__ void cvfem_hex_assembly_kernel_tensor_colored(
             if (value == 0.0) continue;
 
             if (i == j) {
-                matrix->values[diag_pos] += value;  // direct write
+                if constexpr (LumpMissing) diagonal += value;
+                else matrix->values[diag_pos] += value;  // direct write
             } else {
                 // Binary search for off-diagonal position
                 int left = row_start, right = row_end - 1;
@@ -219,7 +221,14 @@ __global__ void cvfem_hex_assembly_kernel_tensor_colored(
                     } else if (col < col_dof) { left  = mid + 1; }
                     else                       { right = mid - 1; }
                 }
+                if constexpr (LumpMissing) {
+                    if (left > right) diagonal += value;
+                }
             }
+        }
+        if constexpr (LumpMissing) {
+            // Preserve the full row sum when the graph omits a coupling.
+            if (diagonal != 0.0) matrix->values[diag_pos] += diagonal;
         }
     }
 }

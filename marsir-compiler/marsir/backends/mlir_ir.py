@@ -15,7 +15,7 @@ lowering path, not just a pretty dump.
 """
 
 from ..ir import ElementApply  # noqa: F401  (kept for callers/type context)
-from ..expr import Num, Var, Unary, Binary
+from ..expr import Num, Var, Unary, Binary, parse_expr
 from .common import AUTOGEN_BANNER
 
 # AST binary op -> arith float op. Unary '-' maps to arith.negf separately.
@@ -339,6 +339,184 @@ def emit_full(ea, p=7, pad_faces=False, real="f64"):
     return text if real == "f64" else text.replace("f64", real)
 
 
+def emit_galerkin(ga, p=7, q=None, real="f64"):
+    """A form-galerkin operator (marsir.ir.GalerkinApply) on one element as mir: u
+    (n^3 GLL values, n = p + 1) -> B along each axis to the q^3 Gauss points (q =
+    p + 2 by default, the CEED benchmark choice) -> the reference gradient, D along
+    each axis, for the components the outputs read -> the pointwise outputs, one
+    mir.flux -> back through the transposed sweeps of the outputs given:
+    w = v + sum_d Dt along d of dv_d, then y = Bt along each axis of w.
+    Arguments: u, B (q x n), Bt (n x q), then D and Dt (q x q) when a gradient is
+    read, then G (K x q x q x q: the K geometry components read). real: the scalar
+    type (f64, or f32).
+
+    geometry = trilinear: instead of G, gq and wq (q: the Gauss points and weights on
+    [-1, 1]) and X (3 x 2 x 2 x 2: the element's corners by component, then corner bit
+    along each axis). A scalar flux first turns the corners into the 21 coefficients
+    the Jacobian needs: x_a = sum over masks m of c[a][m] prod_{d in m} xi_d, and J reads
+    the 7 with m != 0 (the mixed ones are shared by the three derivatives). The point
+    flux takes those and the coordinate and weight along each axis (dims broadcasts
+    them) and forms, in registers, J[a][b] (3 FMAs each), the adjugate and det J, and
+    from them the inputs the spec reads: wdetj = w det J and m_de = w adj adj^T / det
+    (= w det J J^-1 J^-T). Nothing per Gauss point is stored or staged."""
+    o = ga.op
+    n = p + 1
+    q = q or p + 2
+
+    def ty(dims):
+        return "tensor<%sxf64>" % "x".join(str(d) for d in dims)
+
+    tq = ty([q, q, q])
+    grads = [d for d in range(3) if "du%d" % d in ga.free_vars]
+    args = ["%%u: %s" % ty([n, n, n]), "%%B: %s" % ty([q, n]), "%%Bt: %s" % ty([n, q])]
+    if grads:
+        args += ["%%D: %s" % ty([q, q]), "%%Dt: %s" % ty([q, q])]
+    if ga.geometry:
+        args.append("%%G: %s" % ty([ga.geometry, q, q, q]))
+    if ga.trilinear:
+        args += ["%%gq: %s" % ty([q]), "%%wq: %s" % ty([q]), "%%X: %s" % ty([3, 2, 2, 2])]
+    banner = AUTOGEN_BANNER.format(backend="mlir-galerkin", name=o.name, flux=o.flux_src)
+    L = [banner.rstrip("\n"), "// RUN: mir-opt %s | mir-opt",
+         "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), ty([n, n, n]))]
+    v = [0]
+
+    def fresh(tag):
+        v[0] += 1
+        return "%%%s%d" % (tag, v[0])
+
+    def contract(x, dims, mat, rows, axis):
+        out = list(dims)
+        out[axis] = rows
+        r = fresh("c")
+        L.append("  %s = mir.contract %s, %s {axis = %d : i64} : (%s, %s) -> %s"
+                 % (r, x, mat, axis, ty(dims), ty([rows, dims[axis]]), ty(out)))
+        return r, out
+
+    def sweep(x, dims, mat, rows):
+        for axis in range(3):
+            x, dims = contract(x, dims, mat, rows, axis)
+        return x
+
+    uq = sweep("%u", [n, n, n], "%B", q)
+    inputs = []   # (name, SSA value)
+    if ga.needs_u:
+        inputs.append(("u", uq))
+    for d in grads:
+        inputs.append(("du%d" % d, contract(uq, [q, q, q], "%D", q, d)[0]))
+    for k in range(ga.geometry):
+        g = fresh("g")
+        L.append("  %s = tensor.extract_slice %%G[%d, 0, 0, 0] [1, %d, %d, %d] [1, 1, 1, 1] : %s to %s"
+                 % (g, k, q, q, q, ty([ga.geometry, q, q, q]), tq))
+        inputs.append(("g%d" % k, g))
+    geo_names = sorted(ga.free_vars & ({"wdetj"} | {"m%d%d" % (d, e) for d in range(3) for e in range(d, 3)}))
+    dims = [[0, 1, 2] for _ in inputs]   # grid dimensions each flux input varies along
+    if ga.trilinear and geo_names:
+        for d in range(3):
+            inputs += [("xi%d" % d, "%gq"), ("w%d" % d, "%wq")]
+            dims += [[d], [d]]
+        # The element's scalars come first, ahead of every sweep, so they do not split
+        # the point flux from the contractions it fuses with.
+        corners, pre = [], []
+        for a in range(3):
+            for c in range(8):
+                x = fresh("x")
+                pre.append("  %s = tensor.extract_slice %%X[%d, %d, %d, %d] [1, 1, 1, 1] [1, 1, 1, 1] : %s to tensor<f64>"
+                           % (x, a, c >> 2, (c >> 1) & 1, c & 1, ty([3, 2, 2, 2])))
+                corners.append(x)
+        # c[a][m] = 1/8 sum over corners of X[a][corner] prod_{d in m} s_d, s_d = -1 or +1
+        # for the corner's bit along axis d (bit d of m: xi_d is a factor).
+        coef = [(a, m) for a in range(3) for m in range(1, 8)]
+        cbody, cnames, cctr = [], {"X%d%d" % (a, c): "%%a%d" % (8 * a + c) for a in range(3) for c in range(8)}, [0]
+        cyields = []
+        for a, m in coef:
+            terms = []
+            for c in range(8):
+                bits = (c >> 2, (c >> 1) & 1, c & 1)
+                sign = 1
+                for d in range(3):
+                    if m >> d & 1 and not bits[d]:
+                        sign = -sign
+                terms.append(("+ " if sign > 0 else "- ") + "X%d%d" % (a, c))
+            cyields.append(to_mlir_ssa(parse_expr("0.125*(%s)" % " ".join(terms).lstrip("+ ")), cnames, cbody, cctr))
+        cx = fresh("x")
+        pre.append("  %s:%d = mir.flux {dims = [%s]} ins(%s) : (%s) -> (%s) {"
+                   % (cx, len(coef), ", ".join(["array<i64>"] * 24), ", ".join(corners), ", ".join(["tensor<f64>"] * 24),
+                      ", ".join(["tensor<f64>"] * len(coef))))
+        pre.append("  ^bb0(%s):" % ", ".join("%%a%d: f64" % i for i in range(24)))
+        pre.extend(cbody)
+        pre.append("    mir.yield %s : %s" % (", ".join(cyields), ", ".join(["f64"] * len(coef))))
+        pre.append("  }")
+        L[3:3] = pre
+        for i, (a, m) in enumerate(coef):
+            inputs.append(("c%d%d" % (a, m), "%s#%d" % (cx, i)))
+            dims.append([])
+    names = [nm for nm, _ in inputs]
+    outs = [nm for nm, _ in ga.outputs]
+    x = fresh("x")
+    head = "%s:%d" % (x, len(outs)) if len(outs) > 1 else x
+    res_ty = "(%s)" % ", ".join([tq] * len(outs)) if len(outs) > 1 else tq
+    in_tys = [ty([q] * len(dm)) if dm else "tensor<f64>" for dm in dims]
+    attr = ("{dims = [%s]} " % ", ".join("array<i64%s>" % ((": " + ", ".join(map(str, dm))) if dm else "")
+                                          for dm in dims)) if any(dm != [0, 1, 2] for dm in dims) else ""
+    L.append("  %s = mir.flux %sins(%s) : (%s) -> %s {"
+             % (head, attr, ", ".join(val for _, val in inputs), ", ".join(in_tys), res_ty))
+    L.append("  ^bb0(%s):" % ", ".join("%%a%d: f64" % i for i in range(len(inputs))))
+    valnames = {nm: "%%a%d" % i for i, nm in enumerate(names)}
+    ctr = [0]
+    body = []
+    if ga.trilinear and geo_names:
+        # J[a][b] = d x_a / d xi_b in Horner form, o1 < o2 the other axes:
+        # (c[b] + c[b,o1] xi_o1) + xi_o2 (c[b,o2] + c[b,o1,o2] xi_o1).
+        valnames["w"] = to_mlir_ssa(parse_expr("w0*w1*w2"), valnames, body, ctr)
+        for a in range(3):
+            for b in range(3):
+                o1, o2 = [ax for ax in range(3) if ax != b]
+                mb, m1, m2 = 1 << b, 1 << o1, 1 << o2
+                text = "(c%d%d + c%d%d*xi%d) + xi%d*(c%d%d + c%d7*xi%d)" % (
+                    a, mb, a, mb | m1, o1, o2, a, mb | m2, a, o1)
+                valnames["J%d%d" % (a, b)] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
+        # The adjugate (adj = det J^-1), det J, then the geometry the spec reads.
+        adj = {(0, 0): "J11*J22 - J12*J21", (0, 1): "J02*J21 - J01*J22", (0, 2): "J01*J12 - J02*J11",
+               (1, 0): "J12*J20 - J10*J22", (1, 1): "J00*J22 - J02*J20", (1, 2): "J02*J10 - J00*J12",
+               (2, 0): "J10*J21 - J11*J20", (2, 1): "J01*J20 - J00*J21", (2, 2): "J00*J11 - J01*J10"}
+        for (d, r), text in adj.items():
+            valnames["adj%d%d" % (d, r)] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
+        valnames["det"] = to_mlir_ssa(parse_expr("J00*adj00 + J01*adj10 + J02*adj20"), valnames, body, ctr)
+        for name in geo_names:
+            if name == "wdetj":
+                text = "w*det"
+            else:
+                d, e = int(name[1]), int(name[2])
+                text = "w*(%s)/det" % " + ".join("adj%d%d*adj%d%d" % (d, r, e, r) for r in range(3))
+            valnames[name] = to_mlir_ssa(parse_expr(text), valnames, body, ctr)
+    yields = [to_mlir_ssa(expr, valnames, body, ctr) for _, expr in ga.outputs]
+    L.extend(body)
+    L.append("    mir.yield %s : %s" % (", ".join(yields), ", ".join(["f64"] * len(yields))))
+    L.append("  }")
+    result = {nm: (x if len(outs) == 1 else "%s#%d" % (x, i)) for i, nm in enumerate(outs)}
+
+    w = result.get("v")
+    for d in range(3):
+        if "dv%d" % d not in result:
+            continue
+        t, _ = contract(result["dv%d" % d], [q, q, q], "%Dt", q, d)
+        if w is None:
+            w = t
+            continue
+        s = fresh("w")
+        L.append("  %s = mir.flux ins(%s, %s) : (%s, %s) -> %s {" % (s, w, t, tq, tq, tq))
+        L.append("  ^bb0(%a0: f64, %a1: f64):")
+        L.append("    %t = arith.addf %a0, %a1 : f64")
+        L.append("    mir.yield %t : f64")
+        L.append("  }")
+        w = s
+    y = sweep(w, [q, q, q], "%Bt", n)
+    L.append("  return %s : %s" % (y, ty([n, n, n])))
+    L.append("}")
+    text = "\n".join(L) + "\n"
+    return text if real == "f64" else text.replace("f64", real)
+
+
 def emit_full_batched(ea, p=7, tpb=128):
     """The FUSED batched form: one memref-level scf.parallel (blocks x threads)
     over elements -- thread t of block b applies the WHOLE operator to element
@@ -452,6 +630,37 @@ def emit_dss(p=7, real="f64"):
         f"          edges({a['edge_of']}, {a['edge_off']}, {a['edge_ent']})",
         f"          vertices({a['vert_of']}, {a['vert_off']}, {a['vert_ent']})",
         f"          outs({a['out']}) {{degree = {p} : i64}} : {types}",
+        "  return",
+        "}",
+        ""])
+
+
+def emit_block_dss(p, block):
+    """The block-structured DSS (MARS's mars_cellwise_block_dss.hpp, the block-node form)
+    as two kernels, run in this order on one stream:
+      block_sum_p{p}_b{B}(values, out)          every block node: out at its copies in
+                                                the block = the sum of values over them
+      block_skeleton_p{p}_b{B}(out, face_nbr, face_code, edge_off, edge_ent, vert_off,
+                               vert_ent)        the nodes shared between blocks, in place,
+                                                from one copy per block
+    The tables are MARS's UnstructuredTopology built over the blocks as hexes."""
+    tag = f"p{p}_b{block}"
+    attrs = f"{{degree = {p} : i64, block = {block} : i64}}"
+    return "\n".join([
+        # mir.noalias: values and out are different arrays; the skeleton tables are
+        # read-only and never overlap the copies.
+        f"func.func @block_sum_{tag}(%values: memref<?xf64>, %out: memref<?xf64>) "
+        "attributes {mir.kernel, mir.noalias} {",
+        f"  mir.block_sum ins(%values) outs(%out) {attrs} : memref<?xf64>, memref<?xf64>",
+        "  return",
+        "}",
+        f"func.func @block_skeleton_{tag}(%values: memref<?xf64>, %face_nbr: memref<?xi32>, "
+        "%face_code: memref<?xi8>, %edge_off: memref<?xi32>, %edge_ent: memref<?xi32>, "
+        "%vert_off: memref<?xi32>, %vert_ent: memref<?xi32>) attributes {mir.kernel, mir.noalias} {",
+        "  mir.block_skeleton ins(%values) faces(%face_nbr, %face_code) edges(%edge_off, %edge_ent)",
+        f"          vertices(%vert_off, %vert_ent) {attrs}",
+        "          : memref<?xf64>, memref<?xi32>, memref<?xi8>, memref<?xi32>, memref<?xi32>, memref<?xi32>, "
+        "memref<?xi32>",
         "  return",
         "}",
         ""])
@@ -814,3 +1023,207 @@ def emit_pmg(real="f64"):
         out += [_convert(p, a, b) for p in (7, 1) for a, b in (("f64", real), (real, "f64"))]
         out += [_interpolate(8, 4, False, real, counted=True), emit_dss(7, real)]
     return "".join(out)
+
+
+# ---- node-line smoother (NodeLines of mars_cellwise_lines.hpp) ------------------
+def _lines_residual(p, minus):
+    """s = DSS(b - y), or DSS(b) at the first step from x = 0, on every listed element's
+    copies. NodeLines' residual_kernel writes only the counting copies of free nodes, the
+    only ones the block solves read; there both give the same bits."""
+    args = [("b", "f64"), ("ghost", "f64")] + ([("y", "f64")] if minus else []) + [("elements", "i32")] + \
+        _TABLES + [("s", "f64")]
+    sig = ", ".join(f"%{n}: memref<?x{t}>" for n, t in args)
+    types = ", ".join(f"memref<?x{t}>" for _, t in args)
+    name = f"lines_residual{'' if minus else '0'}_p{p}"
+    return "\n".join([
+        f"func.func @{name}({sig}) attributes {{mir.kernel, mir.noalias}} {{",
+        f"  mir.dss ins(%b, %ghost){' minus(%y)' if minus else ''} elements(%elements) faces(%face_nbr, %face_code)",
+        "          edges(%edge_of, %edge_off, %edge_ent) vertices(%vert_of, %vert_off, %vert_ent)",
+        f"          outs(%s) {{degree = {p} : i64}} : {types}",
+        "  return", "}", ""])
+
+
+def _lines_update(p, kind):
+    """The Chebyshev step from the block solution z, which holds each node's value on its
+    counting copy only: copy t of a listed element reads it at j = src[t] (a local copy
+    below the local values, else a ghost copy; -1, a Dirichlet node, reads 0). first0:
+    d = x = c2 z_j; first: d = c2 z_j, x += d; next: d = c1 d + c2 z_j, x += d, with
+    c1 d + c2 z_j one math.fma as nvcc contracts it. NodeLines' update_kernel, one lane per
+    copy and 256 to a thread block as there; a DSS of z gives the same bits but walks every
+    copy's neighbours.
+    The element loop runs over chunks of 32 copies, 8 to a block, padded to a multiple of 8,
+    and skips the copies past the last: no group runs past the loop, where
+    --mir-warp-per-element would clamp it onto the last chunk, reading d and x while that
+    chunk's lanes write them."""
+    n3, warps = (p + 1) ** 3, 8
+    load = {"first0": [], "first": ["x"], "next": ["d", "x"]}[kind]
+    body = [f"        %{a}t = memref.load %{a}[%t] : memref<?xf64>" for a in load] + \
+        ["        %cz = arith.mulf %c2, %zt : f64"]
+    if kind == "first0":
+        dn, xn = "%cz", "%cz"
+    elif kind == "first":
+        body += ["        %xn = arith.addf %xt, %cz : f64"]
+        dn, xn = "%cz", "%xn"
+    else:
+        body += ["        %dn = math.fma %c1, %dt, %cz : f64", "        %xn = arith.addf %xt, %dn : f64"]
+        dn, xn = "%dn", "%xn"
+    return "\n".join(
+        [f"func.func @lines_update_{kind}_p{p}(%z: memref<?xf64>, %ghost: memref<?xf64>, %src: memref<?xi32>, "
+         "%elements: memref<?xi32>, %d: memref<?xf64>, %x: memref<?xf64>, %c1: f64, %c2: f64) "
+         "attributes {mir.kernel, mir.noalias} {",
+         "  %c0 = arith.constant 0 : index", "  %c1i = arith.constant 1 : index",
+         "  %c32 = arith.constant 32 : index", f"  %cn = arith.constant {n3} : index",
+         f"  %cc = arith.constant {n3 // 32} : index", f"  %cw = arith.constant {warps} : index",
+         f"  %cw1 = arith.constant {warps - 1} : index",
+         "  %zero = arith.constant 0.0 : f64", "  %i0 = arith.constant 0 : i32",
+         "  %ne = memref.dim %elements, %c0 : memref<?xi32>",
+         "  %nl = memref.dim %z, %c0 : memref<?xf64>",
+         "  %total = arith.muli %ne, %cn : index",
+         "  %chunks = arith.muli %ne, %cc : index",
+         "  %up = arith.addi %chunks, %cw1 : index", "  %groups = arith.divui %up, %cw : index",
+         "  %padded = arith.muli %groups, %cw : index",
+         "  scf.parallel (%w) = (%c0) to (%padded) step (%c1i) {",
+         "    scf.parallel (%l) = (%c0) to (%c32) step (%c1i) {",
+         "      %w32 = arith.muli %w, %c32 : index", "      %q = arith.addi %w32, %l : index",
+         "      %in = arith.cmpi ult, %q, %total : index",
+         "      scf.if %in {",
+         "        %ei = arith.divui %q, %cn : index", "        %k = arith.remui %q, %cn : index",
+         "        %e32 = memref.load %elements[%ei] : memref<?xi32>",
+         "        %e = arith.index_cast %e32 : i32 to index",
+         "        %en = arith.muli %e, %cn : index", "        %t = arith.addi %en, %k : index",
+         "        %j32 = memref.load %src[%t] : memref<?xi32>",
+         "        %free = arith.cmpi sge, %j32, %i0 : i32",
+         "        %zt = scf.if %free -> (f64) {",
+         "          %j = arith.index_cast %j32 : i32 to index",
+         "          %own = arith.cmpi ult, %j, %nl : index",
+         "          %v = scf.if %own -> (f64) {",
+         "            %a = memref.load %z[%j] : memref<?xf64>", "            scf.yield %a : f64",
+         "          } else {",
+         "            %g = arith.subi %j, %nl : index",
+         "            %b = memref.load %ghost[%g] : memref<?xf64>", "            scf.yield %b : f64",
+         "          }",
+         "          scf.yield %v : f64",
+         "        } else {",
+         "          scf.yield %zero : f64",
+         "        }"] + body +
+        [f"        memref.store {dn}, %d[%t] : memref<?xf64>", f"        memref.store {xn}, %x[%t] : memref<?xf64>",
+         "      }",
+         "      scf.reduce",
+         "    } {mir.lanes}",
+         "    scf.reduce",
+         f"  }} {{mir.elements, mir.warps_per_block = {warps} : i64}}",
+         "  return", "}", ""])
+
+
+def _lines_solve(p):
+    """The block solves z = L^-T L^-1 s of NodeLines (solve_kernel), one lane per block:
+    block q of a warp's 32 (sorted by length) is lane q % 32, its row r stored lane-
+    interleaved at slot warp_off[q / 32] + r: L(r, r - d) at ((slot) (p + 1) + d) 32 + lane,
+    its counting copy at slot 32 + lane. Forward y_r = (s_r - sum_d L(r, r-d) y_(r-d)) /
+    L(r, r) with the last p values carried; backward from the last row, each z_r pushing
+    L(r, r-d) z_r into the next p rows' sums. The hand kernel's operation order, each
+    acc - L y and sum + L z one math.fma, as nvcc contracts the hand kernel.
+    Both row loops run `unroll` rows per iteration, then single rows: the unrolling nvcc
+    does for the hand kernel (its SASS, CUDA 12.9: 4 rows at p = 3, 2 at p = 7). LLVM does
+    not unroll them, and one row per iteration ran 20-35% more instructions per row (loop
+    counter, ring moves, address steps); with one lane per block, they are on its path.
+    Contract: len and warp_off cover a multiple of 128 blocks (the kernel's elements per
+    thread block; padding blocks have length 0), so no group runs past the last block. A
+    group past it would solve the last block again (--mir-warp-per-element clamps it there),
+    reading z while that block's lane writes it."""
+    unroll = 4 if p <= 3 else 2
+    ys = [f"%y{d}" for d in range(1, p + 1)]
+    ps = [f"%p{d}" for d in range(1, p + 1)]
+    f64s = ", ".join(["f64"] * p)
+
+    def row_index(r, x):
+        return [f"      %row{x} = arith.addi %base, {r} : index",
+                f"      %rl{x} = arith.muli %row{x}, %c32 : index", f"      %ci{x} = arith.addi %rl{x}, %lane : index",
+                f"      %ti{x} = memref.load %copy[%ci{x}] : memref<?xi64>",
+                f"      %t{x} = arith.index_cast %ti{x} : i64 to index",
+                f"      %lb{x} = arith.muli %row{x}, %cn : index", f"      %lb32{x} = arith.muli %lb{x}, %c32 : index",
+                f"      %l0{x} = arith.addi %lb32{x}, %lane : index",
+                f"      %L0{x} = memref.load %L[%l0{x}] : memref<?xf64>"]
+
+    def fwd(r, y, x):   # row r, y = (y_(r-1), ..., y_(r-p)); gives y_r
+        out = row_index(r, x) + [f"      %acc0{x} = memref.load %s[%t{x}] : memref<?xf64>"]
+        for d in range(1, p + 1):
+            out += [f"      %ld{d}{x} = arith.addi %l0{x}, %c32x{d} : index",
+                    f"      %L{d}{x} = memref.load %L[%ld{d}{x}] : memref<?xf64>",
+                    f"      %nL{d}{x} = arith.negf %L{d}{x} : f64",
+                    f"      %acc{d}{x} = math.fma %nL{d}{x}, {y[d - 1]}, %acc{d - 1}{x} : f64"]
+        return out + [f"      %v{x} = arith.divf %acc{p}{x}, %L0{x} : f64",
+                      f"      memref.store %v{x}, %z[%t{x}] : memref<?xf64>"], f"%v{x}"
+
+    def bwd(k, sums, x):   # row last - k, sums: the next p rows' sums; gives them for the row before
+        out = [f"      %r{x} = arith.subi %last, {k} : index"] + row_index(f"%r{x}", x) + [
+            f"      %zt{x} = memref.load %z[%t{x}] : memref<?xf64>",
+            f"      %num{x} = arith.subf %zt{x}, {sums[0]} : f64",
+            f"      %v{x} = arith.divf %num{x}, %L0{x} : f64",
+            f"      memref.store %v{x}, %z[%t{x}] : memref<?xf64>"]
+        for d in range(1, p + 1):
+            nxt = sums[d] if d < p else "%zero"
+            out += [f"      %ld{d}{x} = arith.addi %l0{x}, %c32x{d} : index",
+                    f"      %L{d}{x} = memref.load %L[%ld{d}{x}] : memref<?xf64>",
+                    f"      %n{d}{x} = math.fma %L{d}{x}, %v{x}, {nxt} : f64"]
+        return out, [f"%n{d}{x}" for d in range(1, p + 1)]
+
+    def loop(res, iv, lo, hi, step, names, init, rows):   # rows(iv, carried): body lines, carried values
+        body, carried = rows(iv, names)
+        args = ", ".join(f"{a} = {b}" for a, b in zip(names, init))
+        return ([f"    %{res}:{p} = scf.for {iv} = {lo} to {hi} step {step} iter_args({args}) -> ({f64s}) {{"] +
+                body + [f"      scf.yield {', '.join(carried)} : {f64s}", "    }"])
+
+    def fwd_rows(n):
+        def rows(r, y):
+            out = []
+            for j in range(n):
+                rj = r if j == 0 else f"%rf{j}"
+                if j: out.append(f"      %rf{j} = arith.addi {r}, %cu{j} : index")
+                lines, v = fwd(rj, y, f"_{j}" if n > 1 else "")
+                out += lines
+                y = [v] + y[:-1]
+            return out, y
+        return rows
+
+    def bwd_rows(n):
+        def rows(k, sums):
+            out = []
+            for j in range(n):
+                kj = k if j == 0 else f"%kb{j}"
+                if j: out.append(f"      %kb{j} = arith.addi {k}, %cu{j} : index")
+                lines, sums = bwd(kj, sums, f"_{j}" if n > 1 else "")
+                out += lines
+            return out, sums
+        return rows
+
+    zeros = ["%zero"] * p
+    return "\n".join(
+        [f"func.func @lines_solve_p{p}(%L: memref<?xf64>, %copy: memref<?xi64>, %len: memref<?xi32>, "
+         "%warp_off: memref<?xi64>, %s: memref<?xf64>, %z: memref<?xf64>) attributes {mir.kernel, mir.noalias} {",
+         "  %c0 = arith.constant 0 : index", "  %c1 = arith.constant 1 : index",
+         "  %c32 = arith.constant 32 : index", f"  %cn = arith.constant {p + 1} : index",
+         f"  %cu = arith.constant {unroll} : index",
+         "  %zero = arith.constant 0.0 : f64"] +
+        [f"  %cu{j} = arith.constant {j} : index" for j in range(1, unroll)] +
+        [f"  %c32x{d} = arith.constant {32 * d} : index" for d in range(1, p + 1)] +
+        ["  %nb = memref.dim %len, %c0 : memref<?xi32>",
+         "  scf.parallel (%q) = (%c0) to (%nb) step (%c1) {",
+         "    %mi = memref.load %len[%q] : memref<?xi32>", "    %m = arith.index_cast %mi : i32 to index",
+         "    %last = arith.subi %m, %c1 : index",
+         "    %rest = arith.remui %m, %cu : index", "    %mu = arith.subi %m, %rest : index",
+         "    %wq = arith.divui %q, %c32 : index", "    %lane = arith.remui %q, %c32 : index",
+         "    %bi = memref.load %warp_off[%wq] : memref<?xi64>", "    %base = arith.index_cast %bi : i64 to index"] +
+        loop("fu", "%r", "%c0", "%mu", "%cu", ys, zeros, fwd_rows(unroll)) +
+        loop("f", "%r", "%mu", "%m", "%c1", ys, [f"%fu#{d}" for d in range(p)], fwd_rows(1)) +
+        loop("gu", "%k", "%c0", "%mu", "%cu", ps, zeros, bwd_rows(unroll)) +
+        loop("g", "%k", "%mu", "%m", "%c1", ps, [f"%gu#{d}" for d in range(p)], bwd_rows(1)) +
+        ["    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.warps_per_block = 4 : i64}",
+         "  return", "}", ""])
+
+
+def emit_lines(p=3):
+    """The per-iteration kernels of the node-line smoother at degree p (NodeLines::step):
+    lines_residual0 / lines_residual, lines_update_first0 / first / next, lines_solve."""
+    return "".join([_lines_residual(p, False), _lines_residual(p, True)] +
+                   [_lines_update(p, k) for k in ("first0", "first", "next")] + [_lines_solve(p)])

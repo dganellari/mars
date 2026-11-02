@@ -15,7 +15,10 @@
 //      over its parallel loops; reduction loops run inside, accumulating in a
 //      register. A linalg.fill whose buffer the next writer overwrites entirely as
 //      a reduction output is not run at all: the accumulator starts at its value.
-//   5. Temporaries (memref.alloc) become shared scratch {mir.scratch}.
+//   5. Temporaries (memref.alloc) become shared scratch {mir.scratch}, except
+//      scalars: a rank-0 op (values of the whole element, e.g. the coefficients of
+//      its trilinear map) is not a phase; every lane computes it into a private
+//      scalar, which LLVM keeps in a register.
 //
 // Options: lanes per element (default: n^2 of the element's n^3 nodes, at most 32)
 // and warps per block (default 8: 256 threads), set on the element loop for
@@ -103,8 +106,34 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   SmallVector<OpOperand *> ins = op.getDpsInputOperands();
   SmallVector<OpOperand *> outs;
   for (OpOperand &o : op.getDpsInitsMutable()) outs.push_back(&o);
-  if (outs.size() != 1)
-    return op->emitOpError("cellwise schedule: one output expected");
+  if (outs.size() != 1) {
+    // Several outputs: a pointwise op (a mir.flux with several results, e.g. the
+    // three gradient outputs of a Galerkin Laplacian). One phase over its points
+    // computes them all from one load of the inputs.
+    if (!red.empty() || init)
+      return op->emitOpError("cellwise schedule: several outputs only for an elementwise op");
+    Block *region = op.getBlock();
+    auto body = [&](OpBuilder &pb, Location pl, ValueRange ivs) {
+      IRMapping map;
+      for (OpOperand *in : ins) {
+        Value v = in->get();
+        map.map(region->getArgument(in->getOperandNumber()),
+                isa<MemRefType>(v.getType())
+                    ? pb.create<memref::LoadOp>(pl, v, indices(op.getMatchingIndexingMap(in), ivs)).getResult()
+                    : v);
+      }
+      for (Operation &rop : region->without_terminator()) pb.clone(rop, map);
+      for (unsigned k = 0; k < outs.size(); ++k)
+        pb.create<memref::StoreOp>(pl, map.lookup(region->getTerminator()->getOperand(k)), outs[k]->get(),
+                                   indices(op.getMatchingIndexingMap(outs[k]), ivs));
+    };
+    if (ranges.empty())
+      body(b, loc, {});
+    else
+      phase(b, loc, ranges, body);
+    op->erase();
+    return success();
+  }
 
   int blocked = -1;   // the parallel loop dimension run inside the thread
   if (!red.empty()) {
@@ -429,7 +458,8 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
     for (memref::AllocOp a : allocs) {
       OpBuilder ab(a);
       auto s = ab.create<memref::AllocaOp>(a.getLoc(), a.getType());
-      s->setAttr("mir.scratch", ab.getUnitAttr());
+      if (a.getType().getRank() > 0)
+        s->setAttr("mir.scratch", ab.getUnitAttr());
       a.replaceAllUsesWith(s.getResult());
       a->erase();
     }
