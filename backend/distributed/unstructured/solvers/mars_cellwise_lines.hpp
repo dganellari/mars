@@ -435,15 +435,11 @@ residual_kernel(const double* __restrict__ b, const double* __restrict__ y, cons
     });
 }
 
-// Both block solves run 128 blocks, one per thread, to a thread block. The generated one
-// (mlir_ir._lines_solve) needs the block list padded to a multiple of it with zero-length blocks.
-constexpr int kSolveThreads = 128;
-
 // z = L^-T L^-1 s per block, written to the blocks' counting copies (one thread per block).
 // Forward: y_r = (s_r - sum_d L(r, r-d) y_(r-d)) / L(r, r); backward from the last row, each
 // solved z_r pushes L(r, r-d) z_r to the next P rows' sums. Both keep P values in registers.
 template <int P>
-__global__ void __launch_bounds__(kSolveThreads)
+__global__ void __launch_bounds__(kThreads)
 solve_kernel(const double* __restrict__ L, const long long* __restrict__ copy, const int* __restrict__ len,
              const long long* __restrict__ warp_off, const double* __restrict__ s, double* __restrict__ z,
              long long blocks)
@@ -501,6 +497,10 @@ update_kernel(const double* __restrict__ zc, const double* __restrict__ ghost, c
 }
 
 inline unsigned grid_for(long long n) { return (unsigned)((n + kThreads - 1) / kThreads); }
+
+// The generated solve maps 128 blocks to a thread block; the block list is padded to a multiple
+// of it with zero-length blocks (mlir_ir._lines_solve).
+constexpr long long kSolvePad = 128;
 
 }  // namespace line_detail
 
@@ -633,7 +633,7 @@ public:
         thrust::stable_sort_by_key(policy, keys.begin(), keys.end(), order.begin(), thrust::greater<int>());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
         const long long warps = (blocks_ + 31) / 32;
-        padded_ = (blocks_ + kSolveThreads - 1) / kSolveThreads * kSolveThreads;
+        padded_ = (blocks_ + kSolvePad - 1) / kSolvePad * kSolvePad;
         std::vector<long long> h_off(padded_ / 32 + 1, 0);
         {
             std::vector<int> h_keys(keys.size());
@@ -699,7 +699,7 @@ public:
             return;
         }
         if (blocks_ > 0)
-            solve_kernel<P><<<(unsigned)(padded_ / kSolveThreads), kSolveThreads, 0, stream_>>>(
+            solve_kernel<P><<<grid_for(blocks_), kThreads, 0, stream_>>>(
                 thrust::raw_pointer_cast(L_.data()), thrust::raw_pointer_cast(copy_.data()),
                 thrust::raw_pointer_cast(len_.data()), thrust::raw_pointer_cast(warp_off_.data()),
                 thrust::raw_pointer_cast(s_.data()), const_cast<double*>(thrust::raw_pointer_cast(z_.data())), blocks_);
@@ -751,7 +751,7 @@ private:
     thrust::device_vector<double> L_, s_, z_;
     thrust::device_vector<long long> copy_, warp_off_;
     thrust::device_vector<int> len_, src_;
-    long long padded_ = 0;   // blocks_ rounded up to kSolveThreads
+    long long padded_ = 0;   // blocks_ rounded up to kSolvePad
     LineKernels* gen_ = nullptr;
 };
 

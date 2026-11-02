@@ -1187,5 +1187,32 @@ compares it bit for bit with update_kernel's formula on random counting copies (
 Dirichlet) over an element list that does not fill the last thread block, at p = 3 and 7, TSan
 clean; it fails a Dirichlet copy that reads anything but 0, a ghost read without the local offset,
 the node index taken from the lane, and the unfused form. The residual and solve PTX are
-unchanged. The hand solve now runs 128 threads per thread block, as the generated one, so the
-next GPU run shows whether the block size is why the generated solve is faster. GPU pending.
+unchanged.
+
+GPU (wing, 64 GPUs, 6fe80eff): every printed number as before (p = 3: 262 iterations, error
+9.458e-10; p = 3 and 7: the first 50 iterations). Two runs each, generated and hand in the same
+process:
+
+| one step, ms | residual DSS | block solves | update | step |
+|---|---|---|---|---|
+| p = 3, MARSIR | 1.670, 1.654 | 0.991, 0.983 | 1.558, 1.547 | 4.219, 4.183 |
+| p = 3, hand | 1.610, 1.615 | 1.066, 1.066 | 1.558, 1.552 | 4.235, 4.234 |
+| p = 7, MARSIR | 6.558, 6.607 | 5.836, 5.826 | 6.556, 6.565 | 18.950, 18.997 |
+| p = 7, hand | 6.620, 6.760 | 6.563, 6.324 | 6.503, 6.489 | 19.686, 19.573 |
+
+The generated update now takes the hand update's time (it was 6-7% slower at p = 3), and a whole
+step at p = 3 is as fast as the hand one or 1% faster. Two tests ran in the same batch:
+- The hand solve ran 128 threads per thread block, as the generated one. At p = 3 nothing
+  changed (hand / generated 1.08, as with 256); at p = 7 the hand solve took 6.32-6.56 ms against
+  6.17 with 256 in the previous batch, while the generated one stayed at 5.83 (5.82). So the
+  block size is not why the generated solve is faster, and the hand solve is back at 256 threads.
+  The p = 7 hand times above include that slower solve.
+- The residual DSS with 2 or 4 elements (one warp each) per thread block instead of one:
+  generated / hand 1.02 and 1.03, as with one (1.02-1.04). No change: the residual stays 2-4%
+  slower than the hand gather at p = 3 (the p = 3 `mir.dss` gap, "DSS: MARSIR-generated against
+  the hand gather") and within 2% at p = 7.
+
+Why the generated solve is faster is still open. In the SASS both loops do a row the same way
+(its 6 loads, the division, the multiply-adds, then the next row). But that SASS came from the
+ptxas of CUDA 12.9, and the driver compiles the generated PTX itself when it loads it
+(`cuModuleLoadData`), so the code that ran may differ.
