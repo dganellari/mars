@@ -652,7 +652,7 @@ Its 4-GPU runs end with a Cray MPICH assertion in MPI_Finalize after printing th
 those numbers stand.
 
 From 1 to 64 GPUs MARS solves 8.4x faster at p = 3 and 11.9x at p = 7 (MFEM 13.6x at p = 7); from
-4 to 64 GPUs 3.2x and 3.6x (MFEM 3.5x and 3.7x). MARS is faster at every point: with the same
+4 to 64 GPUs 2.6x and 3.6x (MFEM 3.5x and 3.7x). MARS is faster at every point: with the same
 algorithm 1.36 / 1.03 / 1.02x at p = 3 (4 / 16 / 64 GPUs) and 1.50 / 1.37 / 1.23 / 1.31x at p = 7
 (1 / 4 / 16 / 64), with its own interval 1.55 / 1.23 / 1.15x and 1.78 / 1.62 / 1.46 / 1.56x.
 
@@ -681,7 +681,7 @@ Wing, p = 3, node lines (generated passes), tol 3e-13, one solve each, every run
 From 8 to 64 GPUs the solve is 2.74x faster: an iteration 2.96x, less a few more iterations (the
 lines are cut at more rank boundaries). The coarse solve stays at 16-18 ms, 18% of the solve on 8
 GPUs and 45% on 64; the rest of an iteration is 4.4x faster (85.6 to 19.4 ms). On 8 GPUs the
-generated residual pass took 4.53 ms against 3.76 hand (+20%), on 16-64 GPUs 3-4% more (one run
+generated residual pass took 4.53 ms against 3.76 hand (+20%), on 16-64 GPUs 3% more (one run
 each).
 
 ## Convergence: -lap u = f on the deformed cube (c6d6d88e)
