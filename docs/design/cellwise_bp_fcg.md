@@ -1215,4 +1215,17 @@ step at p = 3 is as fast as the hand one or 1% faster. Two tests ran in the same
 Why the generated solve is faster is still open. In the SASS both loops do a row the same way
 (its 6 loads, the division, the multiply-adds, then the next row). But that SASS came from the
 ptxas of CUDA 12.9, and the driver compiles the generated PTX itself when it loads it
-(`cuModuleLoadData`), so the code that ran may differ.
+(`cuModuleLoadData`), so the code that ran might differ. It does not matter: the same PTX compiled
+by that ptxas into a cubin, loaded in its place (the loader takes either), gives the same times.
+
+| one step, ms (2b994f55, hand solve at 256) | residual DSS | block solves | update | step |
+|---|---|---|---|---|
+| p = 3, MARSIR, driver JIT / cubin | 1.760 / 1.743 | 0.996 / 1.002 | 1.659 / 1.629 | 4.415 / 4.374 |
+| p = 3, hand | 1.701 / 1.685 | 1.071 / 1.076 | 1.632 / 1.632 | 4.404 / 4.393 |
+| p = 7, MARSIR, driver JIT / cubin | 5.927 / 5.895 | 5.831 / 5.816 | 5.899 / 5.917 | 17.657 / 17.628 |
+| p = 7, hand | 6.098 / 5.957 | 6.179 / 6.167 | 5.904 / 6.005 | 18.182 / 18.128 |
+
+The same printed numbers again. With the hand solve back at 256 threads a step is within 0.4% of
+the hand one at p = 3 and 3% faster at p = 7. Why the generated solve is 6-7% faster than the hand
+one is still not explained: not the block size, not the instruction order, not the compiler that
+turns the PTX into SASS. What is left is how the two kernels stall, which needs a profile.
