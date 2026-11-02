@@ -50,7 +50,7 @@ through the host.
 
 ## Releases & status ##
 
-Release candidate: **v0.1.1** (not tagged yet) — see [CHANGELOG.md](CHANGELOG.md). For the stable /
+Latest release: **v0.1.1** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
 experimental / unsupported breakdown (what to rely on and what is still under
 development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
 `0`, so the public API may change between minor releases.
