@@ -247,6 +247,21 @@ its Table 3; its general-geometry volumetric rate is not given on its own). The 
 1225 (p = 1) and 2054 GB/s (p = 3), against the reference's structured DSS at 1605-1686 GB/s
 (78-85%, its Table 6). The generated block DSS is within 3% of the hand one.
 
+Nsight Compute (one GH200, the operators of the runs above, one launch each, base clock):
+
+| | BP1 p = 1 | BP1 p = 3 | BP3 p = 3 | BP1 p = 7 (64^3) |
+|---|---|---|---|---|
+| L1/TEX throughput | 90% | 96% | 90% | 83% |
+| DRAM throughput | 31% | 28% | 36% | 14% |
+| registers, block size | 40, 256 | 64, 128 | 72, 64 | 212, 64 |
+| achieved occupancy | 61% | 50% | 22% | 12% |
+
+Every operator is bound by L1/shared memory, not DRAM: each sum-factorization pass goes through
+shared memory, and that pipe is full at a third of the DRAM bandwidth. Also, none of their FP64
+instructions is fused (BP1 p = 3: 428M FP64 instructions, 0 fma), so every contraction step is a
+multiply and an add. The reference reaches DRAM speed with an even-odd factorization and FP64
+tensor cores for p >= 3 (its Section 2), both of which cut the shared-memory traffic per DoF.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form
