@@ -631,6 +631,59 @@ p = 1, ne 128, warm): 85.9 ms against 169.2 ms with `--p1-matrix-free`, both 14 
 PASS; the SpMV takes 0.26 ms (7.9 GDoF/s; MFEM's 0.33 ms).
 
 
+## Strong scaling, 1 / 4 / 16 / 64 GPUs (52b53e71)
+
+A fixed problem of 134M element-local DoFs (p = 3: 128^3 elements, 57.1M unique; p = 7: 64^3,
+90.5M unique), defaults, tol 3e-13, warm solves (--solves 3, the last reported), every run PASS.
+MARS with its own Chebyshev interval, MARS with MFEM's (`--cheb-interval mfem`, the same
+algorithm as MFEM), and MFEM with MARS's Hypre settings. Solve ms (iterations):
+
+| | 1 GPU | 4 | 16 | 64 |
+|---|---|---|---|---|
+| p = 3, MARS | 1198 (14) | 372 (14) | 189 (14) | 142 (14) |
+| p = 3, MARS, MFEM's interval | 1356 (16) | 423 (16) | 224 (17) | 160 (16) |
+| p = 3, MFEM | failed | 577 (16) | 232 (16) | 164 (16) |
+| p = 7, MARS | 1854 (15) | 551 (15) | 241 (15) | 155 (15) |
+| p = 7, MARS, MFEM's interval | 2195 (18) | 655 (18) | 286 (18) | 185 (18) |
+| p = 7, MFEM | 3298 (19) | 894 (19) | 352 (19) | 243 (19) |
+
+MFEM at p = 3 on one GPU stopped in its setup with an illegal memory access (not investigated).
+Its 4-GPU runs end with a Cray MPICH assertion in MPI_Finalize after printing their results, so
+those numbers stand.
+
+From 1 to 64 GPUs MARS solves 8.4x faster at p = 3 and 11.9x at p = 7 (MFEM 13.6x at p = 7); from
+4 to 64 GPUs 3.2x and 3.6x (MFEM 3.5x and 3.7x). MARS is faster at every point: with the same
+algorithm 1.36 / 1.03 / 1.02x at p = 3 (4 / 16 / 64 GPUs) and 1.50 / 1.37 / 1.23 / 1.31x at p = 7
+(1 / 4 / 16 / 64), with its own interval 1.55 / 1.23 / 1.15x and 1.78 / 1.62 / 1.46 / 1.56x.
+
+What stops the scaling is the coarse solve (BoomerAMG x3 and two p = 1 DSS per V-cycle):
+
+| MARS, ms per iteration: all / coarse | 1 GPU | 4 | 16 | 64 |
+|---|---|---|---|---|
+| p = 3 | 85.6 / 9.0 | 26.6 / 7.3 | 13.5 / 7.6 | 10.1 / 7.5 |
+| p = 7 | 123.6 / 1.8 | 36.8 / 5.2 | 16.1 / 6.3 | 10.3 / 6.3 |
+
+Without the coarse solve an iteration is 29.6x (p = 3) and 29.9x (p = 7) faster on 64 GPUs than
+on one (46-47% efficiency, at 2.1M element-local DoFs per GPU). The coarse solve gets no faster
+after 4 GPUs at p = 3 and slower than on one GPU at p = 7 (1.8 to 6.3 ms; one rank sends no
+messages); on 64 GPUs it is 74% (p = 3) and 61% (p = 7) of an iteration. MFEM ends at the same
+floor, 10.2 and 12.8 ms per iteration on 64 GPUs.
+
+Wing, p = 3, node lines (generated passes), tol 3e-13, one solve each, every run PASS:
+
+| GPUs | 8 | 16 | 32 | 64 |
+|---|---|---|---|---|
+| iterations | 242 | 252 | 261 | 262 |
+| solve, s | 25.10 | 16.69 | 12.54 | 9.17 |
+| ms per iteration: all / coarse | 103.7 / 18.1 | 66.2 / 16.9 | 48.0 / 16.6 | 35.0 / 15.6 |
+| smoothing step, ms | 10.60 | 7.56 | 6.24 | 4.32 |
+
+From 8 to 64 GPUs the solve is 2.74x faster: an iteration 2.96x, less a few more iterations (the
+lines are cut at more rank boundaries). The coarse solve stays at 16-18 ms, 18% of the solve on 8
+GPUs and 45% on 64; the rest of an iteration is 4.4x faster (85.6 to 19.4 ms). On 8 GPUs the
+generated residual pass took 4.53 ms against 3.76 hand (+20%), on 16-64 GPUs 3-4% more (one run
+each).
+
 ## Convergence: -lap u = f on the deformed cube (c6d6d88e)
 
 `--rhs pde`: b = M f_h with f = 3 pi^2 u, u = sin(pi x) sin(pi y) sin(pi z), M the generated BP1
@@ -1229,3 +1282,12 @@ The same printed numbers again. With the hand solve back at 256 threads a step i
 the hand one at p = 3 and 3% faster at p = 7. Why the generated solve is 6-7% faster than the hand
 one is still not explained: not the block size, not the instruction order, not the compiler that
 turns the PTX into SASS. What is left is how the two kernels stall, which needs a profile.
+
+Nsight Compute on rank 0 of the 64-GPU wing run (52b53e71), each solve once: hand 513.6 us,
+generated 510.6 us; 13.8M and 14.2M instructions; DRAM at 41% of peak in both; achieved occupancy
+25.6% and 22.4% (theoretical 62.5% and 56.3%); in 95% of the cycles no warp can issue, so both are
+latency-bound, and both grids are under one wave (0.70 and 0.78). On rank 0 the two kernels are
+equally fast. The timer reports the slowest rank (`all_max`), and there a solve takes about 1 ms,
+at least twice rank 0's (Nsight Compute runs at the base clock): the node-line blocks are not
+balanced across ranks, whose Morton chunks balance elements. The 6-7% is on that rank, which is
+the one to profile next.
