@@ -12,7 +12,8 @@
 //                                     blocks to the kernel's 128 per thread block
 //                                     (backend/distributed/unstructured/solvers/
 //                                     mars_cellwise_lines.hpp).
-// Built with -ffp-contract=off: the generated code does not fuse multiply-adds.
+// Built with -ffp-contract=off: the generated code fuses only its explicit math.fma (the solve),
+// and the reference uses std::fma there.
 //
 // Build + run: python3 test/dss_gpu_pipeline.py 3 --lines --emulate [--emu-tsan]
 #include <algorithm>
@@ -180,7 +181,8 @@ void update()
     }
 }
 
-// solve_kernel's arithmetic on the host, block by block.
+// solve_kernel's arithmetic on the host, block by block, each multiply-add one fma as nvcc
+// contracts it (this file is built with -ffp-contract=off).
 void solve_reference(const std::vector<double>& L, const std::vector<int64_t>& copy, const std::vector<int32_t>& len,
                      const std::vector<int64_t>& warp_off, const std::vector<double>& s, std::vector<double>& z)
 {
@@ -193,7 +195,7 @@ void solve_reference(const std::vector<double>& L, const std::vector<int64_t>& c
             const double* Lr = L.data() + (base + r) * (P + 1) * 32 + lane;
             const int64_t t = copy[(base + r) * 32 + lane];
             double acc = s[t];
-            for (int dd = 1; dd <= P; ++dd) acc -= Lr[dd * 32] * ring[dd - 1];
+            for (int dd = 1; dd <= P; ++dd) acc = std::fma(-Lr[dd * 32], ring[dd - 1], acc);
             const double v = acc / Lr[0];
             z[t] = v;
             for (int dd = P - 1; dd > 0; --dd) ring[dd] = ring[dd - 1];
@@ -205,7 +207,7 @@ void solve_reference(const std::vector<double>& L, const std::vector<int64_t>& c
             const int64_t t = copy[(base + r) * 32 + lane];
             const double v = (z[t] - ring[0]) / Lr[0];
             z[t] = v;
-            for (int dd = 1; dd <= P; ++dd) ring[dd - 1] = (dd < P ? ring[dd] : 0.0) + Lr[dd * 32] * v;
+            for (int dd = 1; dd <= P; ++dd) ring[dd - 1] = std::fma(Lr[dd * 32], v, dd < P ? ring[dd] : 0.0);
         }
     }
 }

@@ -1092,11 +1092,12 @@ pads, the hand kernel ignores the padding); then TSan is clean.
 GPU (GH200, f4a6d324): the generated passes give the hand runs' numbers in every printed digit.
 One-rank reference: 12 iterations, lmax 2.9190, the history, the true residual. Wing on 64 GPUs,
 p = 3: 262 iterations, the whole history, error 9.458e-10. Wing, p = 7, first 50 iterations:
-lmax 3.2467, the history, the error after 50. All generated PTX (every MARSIR kernel, not only
-these) has only `.rn` arithmetic, which ptxas does not fuse into FMA; nvcc fuses by default.
-Whether the bits are equal, the printed digits do not show. The cube at p = 7 (40 iterations) and
-on 8 ranks (158) pass; their hand runs (39, 155) predate the 100 power steps (lmax 3.80 vs 3.92,
-3.22 vs 3.35), so they do not compare.
+lmax 3.2467, the history, the error after 50. Hand runs with the same settings of the cube at
+p = 7 (40 iterations) and on 8 ranks (158) give the same counts and histories; at p = 7 the true
+residual differs in the fourth digit (2.271e-12 generated, 2.275e-12 hand), at the rounding
+floor, so the bits differ. Until the change below no generated PTX (61 files) had a scalar fma:
+scalar arithmetic is `.rn`, which ptxas does not fuse (the tensor-core kernels multiply-add in
+`mma.sync`); nvcc fuses by default.
 
 One smoothing step on the wing, 64 GPUs, ms; hand and generated ran in two allocations:
 
@@ -1109,7 +1110,26 @@ One smoothing step on the wing, 64 GPUs, ms; hand and generated ran in two alloc
 
 The plain DSS is the same kernel in both runs and moved 16% (p = 3) and 7% (p = 7) between the
 allocations; the two DSS passes follow it, so their difference is inside that. The block solves
-are 3% and 6% slower while the operator stayed within 1%, one run each. With `--lines-ptx` the
-driver now also times the hand passes in the same process (`node lines ..., hand kernels`). The
-one-rank setup is 0.23 s longer with `--lines-ptx` (311 vs 80 ms run time); the CUDA driver
-compiles the PTX when it is loaded (`cuModuleLoadData`).
+are 3% and 6% slower while the operator stayed within 1%, one run each. The one-rank setup is
+0.23 s longer with `--lines-ptx` (311 vs 80 ms run time); the CUDA driver compiles the PTX when
+it is loaded (`cuModuleLoadData`).
+
+With `--lines-ptx` the driver also times the hand passes in the same process (7d8876d5):
+
+| one step, ms | residual DSS | block solves | DSS + update | step |
+|---|---|---|---|---|
+| p = 3, hand | 1.648 | 1.075 | 1.591 | 4.314 |
+| p = 3, MARSIR | 1.726 | 1.106 | 1.710 | 4.541 |
+| p = 7, hand | 6.227 | 6.109 | 6.298 | 18.633 |
+| p = 7, MARSIR | 6.280 | 6.533 | 6.183 | 18.997 |
+
+The block solves are 2.9% and 6.9% slower, as between the two allocations. At p = 3 both DSS
+passes are 5% and 7% slower; the generated `mir.dss` was already slower than the hand gather at
+p = 3 ("DSS: MARSIR-generated against the hand gather"). At p = 7 they are within 2%.
+
+The generated solve now fuses: `math.fma` for each acc - L y and sum + L z, as nvcc contracts
+the hand kernel, lowered by `--convert-math-to-llvm` to `fma.rn.f64` (6 at p = 3, 14 at p = 7;
+the PTX of the other five kernels is unchanged). Explicit fma, not contraction flags, so the CPU
+gate stays bit-exact: its reference uses `std::fma` at the same two places, and the old unfused
+reference now fails (306 of 3510 values differ at p = 3, 935 of 5901 at p = 7). TSan is clean.
+GPU timing pending.

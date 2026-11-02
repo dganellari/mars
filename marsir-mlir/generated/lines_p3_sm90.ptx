@@ -3167,7 +3167,7 @@ $L__BB4_53:
 	.reg .pred 	%p<9>;
 	.reg .b32 	%r<5>;
 	.reg .b64 	%rd<76>;
-	.reg .f64 	%fd<40>;
+	.reg .f64 	%fd<37>;
 
 	ld.param.u64 	%rd40, [lines_solve_p3_param_13];
 	mov.u32 	%r2, %ctaid.x;
@@ -3228,18 +3228,18 @@ $L__BB5_2:
 	add.s64 	%rd70, %rd12, %rd58;
 	setp.ge.u64 	%p4, %rd16, %rd40;
 	mov.u64 	%rd72, %rd75;
-	mov.f64 	%fd34, %fd12;
-	mov.f64 	%fd35, %fd12;
-	mov.f64 	%fd36, %fd12;
+	mov.f64 	%fd31, %fd12;
+	mov.f64 	%fd32, %fd12;
+	mov.f64 	%fd33, %fd12;
 	bra.uni 	$L__BB5_4;
 $L__BB5_6:
 	add.s64 	%rd72, %rd72, -1;
 	add.s64 	%rd71, %rd71, 256;
 	add.s64 	%rd70, %rd70, 1024;
 	setp.eq.s64 	%p5, %rd72, 0;
-	mov.f64 	%fd34, %fd35;
-	mov.f64 	%fd35, %fd36;
-	mov.f64 	%fd36, %fd4;
+	mov.f64 	%fd31, %fd32;
+	mov.f64 	%fd32, %fd33;
+	mov.f64 	%fd33, %fd4;
 	@%p5 bra 	$L__BB5_7;
 $L__BB5_4:
 	ld.global.nc.u64 	%rd59, [%rd71];
@@ -3248,14 +3248,14 @@ $L__BB5_4:
 	add.s64 	%rd61, %rd2, %rd60;
 	ld.global.nc.f64 	%fd14, [%rd61];
 	ld.global.nc.f64 	%fd15, [%rd70+-256];
-	mul.rn.f64 	%fd16, %fd36, %fd15;
-	sub.rn.f64 	%fd17, %fd14, %fd16;
+	neg.f64 	%fd16, %fd15;
+	fma.rn.f64 	%fd17, %fd16, %fd33, %fd14;
 	ld.global.nc.f64 	%fd18, [%rd70];
-	mul.rn.f64 	%fd19, %fd35, %fd18;
-	sub.rn.f64 	%fd20, %fd17, %fd19;
+	neg.f64 	%fd19, %fd18;
+	fma.rn.f64 	%fd20, %fd19, %fd32, %fd17;
 	ld.global.nc.f64 	%fd21, [%rd70+256];
-	mul.rn.f64 	%fd22, %fd34, %fd21;
-	sub.rn.f64 	%fd23, %fd20, %fd22;
+	neg.f64 	%fd22, %fd21;
+	fma.rn.f64 	%fd23, %fd22, %fd31, %fd20;
 	div.rn.f64 	%fd4, %fd23, %fd13;
 	@%p4 bra 	$L__BB5_6;
 	add.s64 	%rd28, %rd1, %rd60;
@@ -3269,20 +3269,17 @@ $L__BB5_7:
 	shl.b64 	%rd65, %rd62, 10;
 	or.b64  	%rd66, %rd65, %rd20;
 	add.s64 	%rd73, %rd14, %rd66;
-	mov.f64 	%fd37, 0d0000000000000000;
-	mov.f64 	%fd38, %fd37;
-	mov.f64 	%fd39, %fd37;
+	mov.f64 	%fd34, 0d0000000000000000;
+	mov.f64 	%fd35, %fd34;
+	mov.f64 	%fd36, %fd34;
 	bra.uni 	$L__BB5_8;
 $L__BB5_10:
 	ld.global.nc.f64 	%fd28, [%rd73+-256];
-	mul.rn.f64 	%fd29, %fd8, %fd28;
-	add.rn.f64 	%fd39, %fd38, %fd29;
-	ld.global.nc.f64 	%fd30, [%rd73];
-	mul.rn.f64 	%fd31, %fd8, %fd30;
-	add.rn.f64 	%fd38, %fd37, %fd31;
-	ld.global.nc.f64 	%fd32, [%rd73+256];
-	mul.rn.f64 	%fd33, %fd8, %fd32;
-	add.rn.f64 	%fd37, %fd33, 0d0000000000000000;
+	fma.rn.f64 	%fd36, %fd28, %fd8, %fd35;
+	ld.global.nc.f64 	%fd29, [%rd73];
+	fma.rn.f64 	%fd35, %fd29, %fd8, %fd34;
+	ld.global.nc.f64 	%fd30, [%rd73+256];
+	fma.rn.f64 	%fd34, %fd30, %fd8, 0d0000000000000000;
 	add.s64 	%rd75, %rd75, -1;
 	add.s64 	%rd74, %rd74, -256;
 	add.s64 	%rd73, %rd73, -1024;
@@ -3295,7 +3292,7 @@ $L__BB5_8:
 	shl.b64 	%rd68, %rd67, 3;
 	add.s64 	%rd35, %rd1, %rd68;
 	ld.global.f64 	%fd26, [%rd35];
-	sub.rn.f64 	%fd27, %fd26, %fd39;
+	sub.rn.f64 	%fd27, %fd26, %fd36;
 	div.rn.f64 	%fd8, %fd27, %fd25;
 	@%p4 bra 	$L__BB5_10;
 	st.global.f64 	[%rd35], %fd8;

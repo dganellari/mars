@@ -99,6 +99,7 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
               "--convert-scf-to-cf",
               "--expand-strided-metadata",
               "--lower-affine",
+              "--convert-math-to-llvm",   # math.fma -> llvm.intr.fma -> fma.rn.f64
               "--convert-gpu-to-nvvm",
               "--convert-arith-to-llvm", "--convert-index-to-llvm",
               "--convert-cf-to-llvm",
@@ -142,6 +143,7 @@ def emulate(ir, p, precond, bicg, pmg=False, lines=False):
               "--convert-scf-to-cf",
               "--expand-strided-metadata",
               "--lower-affine",
+              "--convert-math-to-llvm",
               "--convert-arith-to-llvm", "--convert-index-to-llvm",
               "--convert-cf-to-llvm",
               "--finalize-memref-to-llvm",

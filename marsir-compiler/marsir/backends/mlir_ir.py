@@ -1083,7 +1083,8 @@ def _lines_solve(p):
     interleaved at slot warp_off[q / 32] + r: L(r, r - d) at ((slot) (p + 1) + d) 32 + lane,
     its counting copy at slot 32 + lane. Forward y_r = (s_r - sum_d L(r, r-d) y_(r-d)) /
     L(r, r) with the last p values carried; backward from the last row, each z_r pushing
-    L(r, r-d) z_r into the next p rows' sums. The hand kernel's operation order.
+    L(r, r-d) z_r into the next p rows' sums. The hand kernel's operation order, each
+    acc - L y and sum + L z one math.fma, as nvcc contracts the hand kernel.
     Contract: len and warp_off cover a multiple of 128 blocks (the kernel's elements per
     thread block; padding blocks have length 0), so no group runs past the last block. A
     group past it would solve the last block again (--mir-warp-per-element clamps it there),
@@ -1105,8 +1106,8 @@ def _lines_solve(p):
     for d in range(1, p + 1):
         fwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
                 f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
-                f"      %pr{d} = arith.mulf %L{d}, %y{d} : f64",
-                f"      %acc{d} = arith.subf %acc{d - 1}, %pr{d} : f64"]
+                f"      %nL{d} = arith.negf %L{d} : f64",
+                f"      %acc{d} = math.fma %nL{d}, %y{d}, %acc{d - 1} : f64"]
     fwd += [f"      %v = arith.divf %acc{p}, %L0 : f64", "      memref.store %v, %z[%t] : memref<?xf64>",
             f"      scf.yield %v{''.join(', ' + y for y in ys[:-1])} : {f64s}"]
     bwd = ["      %r = arith.subi %last, %k : index"] + row_index("%r") + [
@@ -1119,8 +1120,7 @@ def _lines_solve(p):
         nxt = f"%p{d + 1}" if d < p else "%zero"
         bwd += [f"      %ld{d} = arith.addi %l0, %c32x{d} : index",
                 f"      %L{d} = memref.load %L[%ld{d}] : memref<?xf64>",
-                f"      %u{d} = arith.mulf %L{d}, %v : f64",
-                f"      %n{d} = arith.addf {nxt}, %u{d} : f64"]
+                f"      %n{d} = math.fma %L{d}, %v, {nxt} : f64"]
         nexts.append(f"%n{d}")
     bwd += [f"      scf.yield {', '.join(nexts)} : {f64s}"]
     return "\n".join(
