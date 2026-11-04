@@ -19,7 +19,7 @@
 namespace mars {
 
     template <Integer Type>
-    class NonSimplex<Type, DistributedImplementation> : public ParallelIElem {
+    class NonSimplexView {
     public:
         static constexpr Integer ElemType = Type;
 
@@ -30,11 +30,11 @@ namespace mars {
         // Integer parent_id = INVALID_INDEX;
         // Integer block = INVALID_INDEX;
 
-        bool ghost;
+        bool ghost = false;
 
-        MARS_INLINE_FUNCTION NonSimplex() { ghost = false; }
+        MARS_INLINE_FUNCTION NonSimplexView() { ghost = false; }
 
-        MARS_INLINE_FUNCTION NonSimplex(bool gt) : ghost(gt) {}
+        MARS_INLINE_FUNCTION NonSimplexView(bool gt) : ghost(gt) {}
 
         MARS_INLINE_FUNCTION
         Integer get_elem_id() const { return elem_id; }
@@ -48,16 +48,34 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_ghost(bool g = true) { ghost = g; }
 
-        MARS_INLINE_FUNCTION NonSimplex(SubView<Integer, Type> n) : nodes(n) {}
+        MARS_INLINE_FUNCTION NonSimplexView(SubView<Integer, Type> n) : nodes(n) {}
 
-        MARS_INLINE_FUNCTION Integer n_nodes() const override { return Type; }
+        MARS_INLINE_FUNCTION Integer n_nodes() const { return Type; }
 
-        MARS_INLINE_FUNCTION Integer node(const Integer idx) const override {
+        MARS_INLINE_FUNCTION Integer node(const Integer idx) const {
             assert(idx < Type);
             return nodes[idx];
         }
 
-        MARS_INLINE_FUNCTION Integer type() const override { return Type; }
+        MARS_INLINE_FUNCTION Integer type() const { return Type; }
+    };
+
+    template <Integer Type>
+    class NonSimplex<Type, DistributedImplementation> : public NonSimplexView<Type>, public ParallelIElem {
+    public:
+        using DeviceView = NonSimplexView<Type>;
+        using DeviceView::DeviceView;
+        MARS_INLINE_FUNCTION NonSimplex() = default;
+        MARS_INLINE_FUNCTION NonSimplex(const DeviceView& view) : DeviceView(view) {}
+        MARS_INLINE_FUNCTION DeviceView device_view() const { return *this; }
+        MARS_INLINE_FUNCTION Integer n_nodes() const override { return DeviceView::n_nodes(); }
+        MARS_INLINE_FUNCTION Integer node(Integer i) const override { return DeviceView::node(i); }
+        MARS_INLINE_FUNCTION Integer type() const override { return DeviceView::type(); }
+    };
+
+    template<class Elem, class = void> struct DeviceElement { using type = Elem; };
+    template<class Elem> struct DeviceElement<Elem, std::void_t<typename Elem::DeviceView>> {
+        using type = typename Elem::DeviceView;
     };
 
     template <Integer Type>

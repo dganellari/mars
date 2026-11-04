@@ -2,12 +2,6 @@ cmake_minimum_required(VERSION 3.22)
 
 include(CheckLanguage)
 
-#Check if the compiler is set at command line.
-#Needs to be before project(...) where the cxx compiler is set to the default value.
-if(CMAKE_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER_SET_EXTERNALLY TRUE)
-endif()
-
 project(
   mars
   VERSION 0.1.1
@@ -19,18 +13,22 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MARS_ENABLE_HIP AND MARS_ENABLE_CUDA)
+    message(FATAL_ERROR "Cannot enable both HIP and CUDA at the same time.")
+endif()
+set(MARS_GPU_LANGUAGE "")
 
 if(MARS_ENABLE_CUDA)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "Target NVIDIA GPU architectures (Volta/Ampere/Hopper)")
+    endif()
     check_language(CUDA)
     if(CMAKE_CUDA_COMPILER)
         enable_language(CUDA)
         find_package(CUDAToolkit REQUIRED)
+        set(MARS_GPU_LANGUAGE CUDA)
         set(CMAKE_CUDA_STANDARD 20)
-        # Default GPU targets if the user did not pass -DCMAKE_CUDA_ARCHITECTURES
-        # (HIP sets its own default below; CUDA had none, so nvcc fell back to an SDK default).
-        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-            set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "Target NVIDIA GPU architectures (Volta/Ampere/Hopper)")
-        endif()
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
         # 1. Add global-scope settings to ensure CUDA includes are visible everywhere
         include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
         # 2. Add via compiler flags to ensure they're used in command-line compilation
@@ -44,6 +42,9 @@ if(MARS_ENABLE_CUDA)
         set(CUDA_TOOLKIT_ROOT_DIR "${CUDAToolkit_ROOT}" CACHE PATH "Path to CUDA Toolkit" FORCE)
         message(STATUS "Configured CUDA includes globally: ${CUDAToolkit_INCLUDE_DIRS}")
     else()
+        if(MARS_ENABLE_KOKKOS)
+            message(FATAL_ERROR "The structured CUDA backend requires a working CMAKE_CUDA_COMPILER.")
+        endif()
         message(STATUS "No CUDA support")
         set(MARS_ENABLE_CUDA OFF CACHE BOOL "Disable CUDA support" FORCE)
         set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA support" FORCE)
@@ -51,10 +52,17 @@ if(MARS_ENABLE_CUDA)
 endif()
 
 if(MARS_ENABLE_HIP)
+    if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
+        if(NOT DEFINED HIP_GPU_ARCHITECTURES)
+            set(HIP_GPU_ARCHITECTURES "gfx942" CACHE STRING "AMD GPU targets (e.g., gfx90a, gfx942)")
+        endif()
+        set(CMAKE_HIP_ARCHITECTURES "${HIP_GPU_ARCHITECTURES}" CACHE STRING "Target AMD GPU architectures")
+    endif()
     check_language(HIP)
     if(CMAKE_HIP_COMPILER)
         enable_language(HIP)
-        include(cmake/rocmlibs_target.cmake)
+        find_package(hip CONFIG REQUIRED)
+        set(MARS_GPU_LANGUAGE HIP)
         set(CMAKE_HIP_STANDARD 20)
         add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
         # gfx90a/gfx942 add doubles atomically in hardware, but without this flag hipcc emits a
@@ -92,23 +100,17 @@ if(MARS_ENABLE_HIP)
         message(STATUS "Configured HIP includes globally: ${HIP_INCLUDE_DIRS}")
 
     else()
+        if(MARS_ENABLE_KOKKOS)
+            message(FATAL_ERROR "The structured HIP backend requires a working native CMAKE_HIP_COMPILER (ROCm clang++, not hipcc).")
+        endif()
         message(STATUS "No HIP support")
         set(MARS_ENABLE_HIP OFF CACHE BOOL "Disable HIP support" FORCE)
         set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP support" FORCE)
     endif()
 endif()
 
-if(MARS_ENABLE_HIP AND MARS_ENABLE_CUDA)
-    message(FATAL_ERROR "Cannot enable both HIP and CUDA at the same time.")
-endif()
-
 if(MARS_ENABLE_HIP)
-    if(NOT DEFINED HIP_GPU_ARCHITECTURES)
-        set(HIP_GPU_ARCHITECTURES "gfx942" CACHE STRING "AMD GPU targets (e.g., gfx90a, gfx942)")
-    endif()
-    set(CMAKE_HIP_ARCHITECTURES ${HIP_GPU_ARCHITECTURES})
     message(STATUS "HIP GPU architectures: ${CMAKE_HIP_ARCHITECTURES}")
-    message(STATUS "HIP GPU architectures: ${HIP_GPU_ARCHITECTURES}")
 endif()
 
 # Std CMake imports
@@ -432,7 +434,14 @@ if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
     endif()
 endif()
 
+if(MARS_ENABLE_KOKKOS AND MARS_GPU_LANGUAGE)
+    set_source_files_properties(${MARS_SOURCES} PROPERTIES LANGUAGE ${MARS_GPU_LANGUAGE})
+endif()
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
+target_compile_features(mars PUBLIC cxx_std_20)
+if(MARS_ENABLE_KOKKOS AND MARS_ENABLE_CUDA AND Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE)
+    set_target_properties(mars PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
 
 # Link mars to mars_unstructured now that mars exists
 if(TARGET mars_unstructured)
@@ -471,14 +480,15 @@ endif()
 
 # PUBLIC: programs that include the MARS headers need the same GPU definitions and, with nvcc, the
 # device-lambda flags, also when they build against an installed MARS.
-if(CMAKE_CUDA_COMPILER AND TARGET mars)
+if(MARS_ENABLE_CUDA AND TARGET mars)
     target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_CUDA)
     target_compile_options(mars PUBLIC
         $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
-elseif(CMAKE_HIP_COMPILER AND TARGET mars)
-    target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_HIP)
+elseif(MARS_ENABLE_HIP AND TARGET mars)
+    target_compile_definitions(mars PUBLIC USE_CUDA MARS_ENABLE_HIP __HIP_PLATFORM_AMD__=1)
     target_compile_options(mars PUBLIC $<$<COMPILE_LANGUAGE:HIP>:-munsafe-fp-atomics>)
+    target_link_libraries(mars PUBLIC hip::host)
 endif()
 
 # The headers are installed in the layout of the source tree (below), so an installed MARS gets the
@@ -650,8 +660,11 @@ write_basic_package_version_file(
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
         DESTINATION lib/cmake/Mars)
-if(MARS_ENABLE_HIP)
+if(MARS_ENABLE_HIP AND MARS_ENABLE_UNSTRUCTURED)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rocmlibs_target.cmake DESTINATION lib/cmake/Mars)
+endif()
+if(MARS_ENABLE_KOKKOS)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsKokkos.cmake DESTINATION lib/cmake/Mars)
 endif()
 
 include(cmake/PostInstall.cmake)

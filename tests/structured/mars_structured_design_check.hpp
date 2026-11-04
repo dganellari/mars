@@ -1,0 +1,89 @@
+#pragma once
+
+#include <mars.hpp>
+#include <type_traits>
+
+namespace mars::test {
+
+template<class T>
+concept HasContext = requires(const T& value) { value.get_context(); };
+
+inline void check_device_snapshots_and_plans() {
+    using Mesh = DistributedQuad4Mesh<MortonKey<Unsigned>>;
+    using Handler = DofHandler<Mesh, 2, 2>;
+    using Data = DM<Handler, double>;
+    static_assert(!std::is_polymorphic_v<Mesh::DeviceView>);
+    static_assert(!std::is_polymorphic_v<Handler::DeviceView>);
+    static_assert(!std::is_polymorphic_v<Data::DeviceView>);
+    static_assert(!std::is_polymorphic_v<decltype(std::declval<Mesh::DeviceView>().elem(0))>);
+    static_assert(!HasContext<Mesh::DeviceView> && !HasContext<Handler::DeviceView> && !HasContext<Data::DeviceView>);
+    static_assert(sizeof(Mesh::DeviceView) < sizeof(Mesh));
+    static_assert(sizeof(Handler::DeviceView) < sizeof(Handler));
+    static_assert(!std::is_copy_constructible_v<Data>);
+
+    const auto retained = [] {
+        auto context = make_context(proc_allocation{}, MPI_COMM_WORLD);
+        Mesh mesh(context);
+        generate_distributed_cube(mesh, 5, 3, 0);
+        Handler handler(mesh);
+        handler.enumerate_dofs();
+        Data first(handler), second(handler);
+        const auto view = handler.device_view();
+        const auto a = first.get_dof_data<0>(), b = second.get_dof_data<0>();
+        Kokkos::parallel_for("initialize_distinct_channels", view.get_dof_size(), KOKKOS_LAMBDA(Integer i) {
+            a(i) = view.is_owned(i) ? view.local_to_global(i) + 0.25 : -1;
+            b(i) = view.is_owned(i) ? view.local_to_global(i) + 0.75 : -1;
+        });
+        // Different posting order must not cross-match the two plans' tags.
+        if (rank(context) % 2) { first.start_gather<>(); second.start_gather<>(); }
+        else { second.start_gather<>(); first.start_gather<>(); }
+        second.wait();
+        first.wait();
+        int errors = 0;
+        Kokkos::parallel_reduce("isolated_halo_channels", view.get_dof_size(),
+            KOKKOS_LAMBDA(Integer i, int& n) {
+                n += a(i) != view.local_to_global(i) + 0.25;
+                n += b(i) != view.local_to_global(i) + 0.75;
+            }, errors);
+        EXPECT_EQ(errors, 0);
+        const auto snapshot = first.device_view();
+        // Replacing host mesh storage cannot change an already constructed DOF layout.
+        generate_distributed_cube(mesh, 7, 2, 0);
+        EXPECT_EQ(snapshot.get_dof_handler().get_XMax(), 10);
+        EXPECT_EQ(snapshot.get_dof_handler().get_YMax(), 6);
+        // Destruction must complete an outstanding operation before freeing its buffers/channel.
+        first.start_gather<>();
+        return snapshot;
+    }();
+    int errors = 0;
+    const auto view = retained.get_dof_handler();
+    Kokkos::parallel_reduce("retained_field_snapshot", view.get_dof_size(),
+        KOKKOS_LAMBDA(Integer i, int& n) {
+            n += retained.get_dof_data<0>(i) != view.local_to_global(i) + 0.25;
+            double point[3] = {};
+            view.get_local_dof_coordinates(i, point);
+            n += point[0] < 0 || point[0] > 1 || point[1] < 0 || point[1] > 1;
+        }, errors);
+    EXPECT_EQ(errors, 0);
+}
+
+inline void check_sparse_subset_plan() {
+    int rank = mpi::rank(MPI_COMM_WORLD), ranks = mpi::size(MPI_COMM_WORLD);
+    if (ranks >= 2 && rank < 2) {
+        const int peer = 1 - rank;
+        mpi::SparseExchange<int> exchange(MPI_COMM_WORLD, 2718, {{peer, 1, 0}}, {{peer, 1, 0}}, 1, 1);
+        const auto send = exchange.send_buffer(), recv = exchange.recv_buffer();
+        for (int step = 0; step < 3; ++step) {
+            Kokkos::deep_copy(send, rank + 10 * step);
+            exchange.start();
+            EXPECT_TRUE(exchange.active());
+            EXPECT_THROW(exchange.start(), std::logic_error);
+            exchange.wait();
+            const auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, recv);
+            EXPECT_EQ(host(0), peer + 10 * step);
+        }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+} // namespace mars::test

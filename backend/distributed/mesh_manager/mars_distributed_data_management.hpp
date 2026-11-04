@@ -24,9 +24,9 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        DM(DofHandler d) : dof_handler(d) {
-            SuperDM::template reserve_user_data(
-                user_data, "user_data tuple", get_dof_handler().get_local_dof_enum().get_elem_size());
+        DM(const DofHandler& d) : dof_handler(d), halo_plan(d) {
+            SuperDM::template reserve_user_data<>(
+                user_data, "user_data tuple", get_dof_handler().get_dof_size());
         }
 
         MARS_INLINE_FUNCTION
@@ -51,33 +51,20 @@ namespace mars {
         template <Integer... dataidx>
         void gather_ghost_data() {
             // gather operation: fill the data from the received ghost data
-            SuperDM::template gather_ghost_data<dataidx...>(get_dof_handler(), user_data);
+            halo_plan.template start_gather<dataidx...>(user_data);
+            halo_plan.wait();
         }
 
         template <Integer... dataidx>
         user_tuple scatter_ghost_data() {
-            return SuperDM::template scatter_ghost_data<dataidx...>(get_dof_handler(), user_data);
+            halo_plan.template start_scatter<dataidx...>(user_data);
+            return halo_plan.wait();
         }
 
         template <Integer... dataidx>
         void scatter_add_ghost_data() {
-            // scatter the data to the procs and keep them in a boundary data tuple
-            // again if no template argument is specified all the data is scattered.
-            // if not all of them then be careful since the tuple is not initialized on
-            // the others example: dm_tuple boundary_data =
-            // dm.scatter_ghost_data<1>();
             auto boundary_data = scatter_ghost_data<dataidx...>();
-
-            // use the scattered data "boundary_data" to do ops like max, add or min in
-            // the dof contributions. Otherwise you can use predifined features like
-            // scatter_add as following. careful to use the same template argument for
-            // specifing the data as in the scatter_ghost_data since otherwise you might
-            // try to access uninitialized tuplelement and get seg faults. example::
-            // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
-            // seg faults.
             SuperDM::template scatter_add<dataidx...>(get_dof_handler(), boundary_data, user_data);
-            /*dm.scatter_max<u>(boundary_data);*/
-            /*dm.scatter_min<u>(boundary_data);*/
         }
 
         template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
@@ -112,8 +99,24 @@ namespace mars {
             SuperDM::template data_iterate<idx>(*this, f);
         }
 
+        template<Integer... fields> void start_gather() { halo_plan.template start_gather<fields...>(user_data); }
+        template<Integer... fields> void start_scatter() { halo_plan.template start_scatter<fields...>(user_data); }
+        user_tuple wait() { return halo_plan.wait(); }
+        const HaloExchangePlan<T...>& exchange_plan() const { return halo_plan; }
+
+        struct DeviceView {
+            typename DofHandler::DeviceView dofs;
+            user_tuple fields;
+            MARS_INLINE_FUNCTION auto get_dof_handler() const { return dofs; }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto get_dof_data() const { return std::get<i>(fields); }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto& get_dof_data(Integer j) const { return std::get<i>(fields)(j); }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto& get_data(Integer j) const { return std::get<i>(fields)(j); }
+        };
+        DeviceView device_view() const { return {dof_handler.device_view(), user_data}; }
+
     private:
         DofHandler dof_handler;
+        HaloExchangePlan<T...> halo_plan;
         // data associated to the dof data.
         user_tuple user_data;
     };

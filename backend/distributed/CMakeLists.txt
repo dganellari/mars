@@ -13,6 +13,9 @@ list(APPEND DISTRIBUTED_TEST_MODULES
 )
 
 if(MARS_ENABLE_KOKKOS)
+    if(NOT MARS_ENABLE_MPI)
+        message(FATAL_ERROR "The structured Kokkos backend requires MARS_ENABLE_MPI=ON.")
+    endif()
     list(APPEND DISTRIBUTED_MODULES
         sfc
         mesh
@@ -24,7 +27,6 @@ if(MARS_ENABLE_KOKKOS)
     # Add Kokkos test directories to test modules
     list(APPEND DISTRIBUTED_TEST_MODULES
         testsuite/sfc
-        testsuite/common
         testsuite/discretization
         testsuite/mesh_manager
     )
@@ -59,6 +61,9 @@ set(MARS_SOURCES ${MARS_SOURCES} PARENT_SCOPE)
 
 # Handle test directories separately, only if tests are enabled
 if(MARS_ENABLE_TESTS)
+    if(MARS_ENABLE_KOKKOS)
+        include(testsuite/StructuredTests.cmake)
+    endif()
     # Process test modules but don't add them to MARS_SOURCES
     foreach(TEST_DIR ${DISTRIBUTED_TEST_MODULES})
         # Add the directory to the build

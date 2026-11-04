@@ -1,6 +1,6 @@
 option(MARS_ENABLE_MPI "Build mars with MPI support" ON)
 
-option(MARS_ENABLE_KOKKOS "Use -DMARS_ENABLE_KOKKOS=ON for enabling mesh transfer functions." OFF)
+option(MARS_ENABLE_KOKKOS "Enable Kokkos support, including the optional structured backend" OFF)
 option(MARS_ENABLE_KOKKOS_KERNELS "Use -DMARS_ENABLE_KOKKOS_KERNELS=ON for enabling kokkos_kernels" OFF)
 option(MARS_ENABLE_CUDA "Build mars with cuda support" OFF)
 option(MARS_ENABLE_CUDAUVM "Use as default memory space CUDAUVM. This has only an effect if MARS_ENABLE_CUDA is used too." OFF)

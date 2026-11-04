@@ -40,16 +40,13 @@ namespace mars {
         dry_run_info(unsigned ranks, unsigned cells_per_rank) : num_ranks(ranks), num_cells_per_rank(cells_per_rank) {}
     };
 
-    // A description of local computation resources to use in a computation.
-    // By default, a proc_allocation will comprise one thread and no GPU.
+    // Legacy resource inputs retained for source compatibility. The current
+    // context ignores these fields; configure threads and devices through Kokkos.
 
     struct proc_allocation {
         unsigned num_threads;
 
-        // The gpu id corresponds to the `int device` parameter used by
-        // CUDA API calls to identify gpu devices.
-        // A gpud id of -1 indicates no GPU device is to be used.
-        // See CUDA documenation for cudaSetDevice and cudaDeviceGetAttribute.
+        // Historical device ordinal; -1 means no device was requested.
         int gpu_id;
 
         proc_allocation() : proc_allocation(1, -1) {}
@@ -59,9 +56,8 @@ namespace mars {
         bool has_gpu() const { return gpu_id >= 0; }
     };
 
-    // mars::execution_context encapsulates the execution resources used in
-    // a simulation, namely the task system thread pools, GPU handle, and
-    // MPI communicator if applicable.
+    // mars::execution_context holds communication state. Kokkos owns the thread
+    // and device execution resources independently of this context.
 
     // Forward declare execution_context.
     struct execution_context;
@@ -78,11 +74,11 @@ namespace mars {
 
     // Helpers for creating contexts. These are implemented in the back end.
 
-    // Non-distributed context using the requested resources.
+    // Non-distributed communication context; resources is currently ignored.
     context make_context(const proc_allocation &resources = proc_allocation{});
 
-    // Distributed context that uses MPI communicator comm, and local resources
-    // described by resources. Or dry run context that uses dry_run_info.
+    // Distributed context borrowing MPI communicator comm, or a dry-run context
+    // using dry_run_info. resources is currently ignored.
     template <typename Comm>
     context make_context(const proc_allocation &resources, Comm comm);
 
