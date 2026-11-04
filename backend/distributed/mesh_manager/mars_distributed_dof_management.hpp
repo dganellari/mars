@@ -2098,7 +2098,7 @@ namespace mars {
             const auto mesh_recv_scan = get_mesh().get_view_scan_ghost();
             Kokkos::parallel_for("dof_peer_candidates", rank_size, KOKKOS_LAMBDA(const Integer peer) {
                 nbh_proc_predicate_send(peer) = mesh_send_scan(peer + 1) > mesh_send_scan(peer);
-                if constexpr (volume_dofs > 0) {
+                if (volume_dofs > 0) {
                     if (mesh_recv_scan(peer + 1) > mesh_recv_scan(peer)) nbh_proc_predicate_recv(peer) = true;
                 }
             });

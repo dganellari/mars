@@ -736,13 +736,15 @@ namespace mars {
             // then form their union without concurrent writes to a shared predicate.
             Kokkos::parallel_for("local_corner_keys", Policy(0, count), KOKKOS_LAMBDA(const Integer i) {
                 const Integer corner = i % corners;
+                const auto cell_key = cell_keys(i / corners);
+                auto& corner_key = corner_keys(i);
                 if constexpr (Type == ElementType::Quad4) {
-                    const auto cell = decode_sfc_2D<SfcKeyType>(cell_keys(i / corners));
-                    corner_keys(i) = encode_sfc_2D<SfcKeyType>(cell.x + (corner & 1),
+                    const auto cell = decode_sfc_2D<SfcKeyType>(cell_key);
+                    corner_key = encode_sfc_2D<SfcKeyType>(cell.x + (corner & 1),
                                                               cell.y + ((corner >> 1) & 1));
                 } else {
-                    const auto cell = decode_sfc_3D<SfcKeyType>(cell_keys(i / corners));
-                    corner_keys(i) = encode_sfc_3D<SfcKeyType>(cell.x + (corner & 1),
+                    const auto cell = decode_sfc_3D<SfcKeyType>(cell_key);
+                    corner_key = encode_sfc_3D<SfcKeyType>(cell.x + (corner & 1),
                                                               cell.y + ((corner >> 1) & 1),
                                                               cell.z + ((corner >> 2) & 1));
                 }

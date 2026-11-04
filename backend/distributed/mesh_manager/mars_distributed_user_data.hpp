@@ -237,9 +237,7 @@ namespace mars {
             const auto buffer = exchange->send_buffer();
             const auto values = std::get<I>(user_data_);
             const auto indices = mesh.get_view_boundary_sfc_index();
-            Kokkos::parallel_for("cell_halo_pack", indices.extent(0), KOKKOS_LAMBDA(Integer i) {
-                buffer(i) = values(indices(i));
-            });
+            mpi::pack_indexed("cell_halo_pack", values, buffer, indices);
         }
         template<std::size_t... I>
         void exchange_fields(const context& context, std::index_sequence<I...>) {

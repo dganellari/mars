@@ -7,6 +7,18 @@
 
 namespace mars {
 
+namespace detail {
+template<class DeviceView, bool Ghost>
+struct HaloIndices {
+    DeviceView view;
+    ViewVectorType<Integer> indices;
+    MARS_INLINE_FUNCTION void operator()(Integer i) const {
+        if constexpr (Ghost) indices(i) = view.get_ghost_local_index(i);
+        else indices(i) = view.get_boundary_local_index(i);
+    }
+};
+} // namespace detail
+
 // The layout is a snapshot. Rebuild the plan when the mesh, numbering or block changes.
 // Construction is collective; start/wait only communicate with the listed peers.
 template<class... T>
@@ -26,12 +38,10 @@ public:
         const auto view = handler.device_view();
         const auto boundary = boundary_indices_, ghosts = ghost_indices_;
         using Policy = Kokkos::RangePolicy<Kokkos::IndexType<Integer>>;
-        Kokkos::parallel_for("halo_boundary_indices", Policy(0, boundary.extent(0)), KOKKOS_LAMBDA(Integer i) {
-            boundary(i) = view.get_boundary_local_index(i);
-        });
-        Kokkos::parallel_for("halo_ghost_indices", Policy(0, ghosts.extent(0)), KOKKOS_LAMBDA(Integer i) {
-            ghosts(i) = view.get_ghost_local_index(i);
-        });
+        Kokkos::parallel_for("halo_boundary_indices", Policy(0, boundary.extent(0)),
+                            detail::HaloIndices<decltype(view), false>{view, boundary});
+        Kokkos::parallel_for("halo_ghost_indices", Policy(0, ghosts.extent(0)),
+                            detail::HaloIndices<decltype(view), true>{view, ghosts});
     }
     ~HaloExchangePlan() { wait(); Kokkos::fence("halo plan lifetime"); }
     HaloExchangePlan(const HaloExchangePlan&) = delete;
@@ -60,10 +70,7 @@ public:
                 const auto values = std::get<i>(data_);
                 const auto buffer = exchange.recv_buffer();
                 const auto indices = ghost_indices_;
-                using Policy = Kokkos::RangePolicy<Kokkos::IndexType<Integer>>;
-                Kokkos::parallel_for("halo_unpack", Policy(0, indices.extent(0)), KOKKOS_LAMBDA(Integer j) {
-                    values(indices(j)) = buffer(j);
-                });
+                mpi::unpack_indexed("halo_unpack", values, buffer, indices);
             }
         });
         active_ = false;
@@ -100,10 +107,7 @@ private:
             const auto buffer = Reverse ? exchange->recv_buffer() : exchange->send_buffer();
             const auto indices = Reverse ? ghost_indices_ : boundary_indices_;
             const auto values = std::get<i>(data);
-            using Policy = Kokkos::RangePolicy<Kokkos::IndexType<Integer>>;
-            Kokkos::parallel_for("halo_pack", Policy(0, indices.extent(0)), KOKKOS_LAMBDA(Integer j) {
-                buffer(j) = values(indices(j));
-            });
+            mpi::pack_indexed("halo_pack", values, buffer, indices);
         });
         data_ = data;
         reverse_ = Reverse;

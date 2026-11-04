@@ -6,6 +6,22 @@
 
 namespace mars::mpi {
 
+template<class Values, class Buffer, class Indices>
+void pack_indexed(const char* label, Values values, Buffer buffer, Indices indices) {
+    using Policy = Kokkos::RangePolicy<Kokkos::IndexType<Integer>>;
+    Kokkos::parallel_for(label, Policy(0, indices.extent(0)), KOKKOS_LAMBDA(Integer i) {
+        buffer(i) = values(indices(i));
+    });
+}
+
+template<class Values, class Buffer, class Indices>
+void unpack_indexed(const char* label, Values values, Buffer buffer, Indices indices) {
+    using Policy = Kokkos::RangePolicy<Kokkos::IndexType<Integer>>;
+    Kokkos::parallel_for(label, Policy(0, indices.extent(0)), KOKKOS_LAMBDA(Integer i) {
+        values(indices(i)) = buffer(i);
+    });
+}
+
 // Construct collectively once; exchanges on the resulting channel are peer-only.
 class ExchangeChannel {
 public:

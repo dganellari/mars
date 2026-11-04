@@ -74,8 +74,9 @@ namespace mars {
             const Integer linear = first + i;
             const Integer x = linear % nx;
             const Integer y = (linear / nx) % ny;
-            if constexpr (Type == ElementType::Quad4) keys(i) = encode_sfc_2D<SfcKey>(x, y);
-            else keys(i) = encode_sfc_3D<SfcKey>(x, y, linear / nx / ny);
+            auto& key = keys(i);
+            if constexpr (Type == ElementType::Quad4) key = encode_sfc_2D<SfcKey>(x, y);
+            else key = encode_sfc_3D<SfcKey>(x, y, linear / nx / ny);
         });
         Kokkos::sort(keys);
 

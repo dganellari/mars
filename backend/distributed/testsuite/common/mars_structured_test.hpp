@@ -220,7 +220,8 @@ void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false)
 }
 
 template<class Handler>
-auto dof_snapshot(const Handler& owner)
+std::pair<typename ViewMatrixType<Integer>::HostMirror, typename ViewMatrixType<double>::HostMirror>
+dof_snapshot(const Handler& owner)
 {
     const auto handler = owner.device_view();
     ViewMatrixType<Integer> indices("test_dof_indices", handler.get_dof_size(), 6);

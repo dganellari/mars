@@ -25,6 +25,21 @@
 namespace mars::test
 {
 
+namespace detail {
+struct TransportFill {
+    ViewVectorType<int> outgoing;
+    int sender;
+    MARS_INLINE_FUNCTION void operator()(int i) const { outgoing(i) = 100 * sender + i; }
+};
+struct TransportCheck {
+    ViewVectorType<int> incoming;
+    int source;
+    MARS_INLINE_FUNCTION void operator()(int i, int& failures) const {
+        failures += incoming(i) != 100 * source + i;
+    }
+};
+} // namespace detail
+
 // The tests establish device assignment and MPI transport before exercising mesh APIs.
 class StructuredRuntime
 {
@@ -177,8 +192,7 @@ private:
         ViewVectorType<int> outgoing("preflight_send", size), incoming("preflight_recv", size);
         const int source = (rank_ + ranks_ - 1) % ranks_;
         const int destination = (rank_ + 1) % ranks_;
-        const int sender = rank_;
-        Kokkos::parallel_for("preflight_fill", size, KOKKOS_LAMBDA(const int i) { outgoing(i) = 100 * sender + i; });
+        Kokkos::parallel_for("preflight_fill", size, detail::TransportFill{outgoing, rank_});
         Kokkos::fence();
         int status;
 #ifdef MARS_NO_RDMA
@@ -194,8 +208,7 @@ private:
 #endif
         require(status == MPI_SUCCESS, "MPI ring exchange failed");
         int errors = 0;
-        Kokkos::parallel_reduce("preflight_check", size,
-            KOKKOS_LAMBDA(const int i, int& failures) { failures += incoming(i) != 100 * source + i; }, errors);
+        Kokkos::parallel_reduce("preflight_check", size, detail::TransportCheck{incoming, source}, errors);
         require(errors == 0, "Kokkos kernel read incorrect values after MPI transfer");
         require(check_mpi_view_collectives(MPI_COMM_WORLD) == 0,
                 "Structured MPI view collective returned incorrect values");
