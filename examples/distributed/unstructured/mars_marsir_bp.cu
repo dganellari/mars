@@ -97,7 +97,7 @@
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
-//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t]
+//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t]
 //                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
 
 #include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
@@ -809,6 +809,7 @@ struct Options {
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
+    int consolidate_rows = 0;
     int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
@@ -1206,7 +1207,7 @@ int run(const Options& o)
             const auto a0 = std::chrono::steady_clock::now();
             amg = std::make_unique<cellwise::P1Amg>(
                 topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles,
-                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print});
+                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print, o.consolidate_rows});
             BP_CK(cudaStreamSynchronize(stream));
             amg_setup_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
             if (mg) mg->set_coarse_solve(coarse);
@@ -1230,6 +1231,7 @@ int run(const Options& o)
     cellwise::FcgResult res;
     float solve_ms = 0.0f;
     std::vector<float> solve_times;
+    std::vector<double> wall_times;
     auto cycle = [&](const double* in, double* out, cudaStream_t) {
         if (mg) mg->cycle(in, out);
 #ifdef MARS_ENABLE_HYPRE
@@ -1259,6 +1261,8 @@ int run(const Options& o)
             BP_CK(cudaDeviceSynchronize());
             BP_CK(cudaProfilerStart());
         }
+        BP_CK(cudaStreamSynchronize(stream));
+        const auto wall_start = std::chrono::steady_clock::now();
         BP_CK(cudaEventRecord(t0, stream));
 #ifdef MARS_ENABLE_HYPRE
         if (o.p1_assembled)
@@ -1269,6 +1273,9 @@ int run(const Options& o)
             res = o.mg ? solve(cellwise::CyclePrecond<decltype(cycle)>{cycle, N}) : solve(precond);
         BP_CK(cudaEventRecord(t1, stream));
         BP_CK(cudaEventSynchronize(t1));
+        const double wall_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - wall_start).count();
+        wall_times.push_back(all_max(wall_ms));
         if (last && o.profile) BP_CK(cudaProfilerStop());
         BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
         solve_times.push_back((float)all_max(solve_ms));
@@ -1437,6 +1444,9 @@ int run(const Options& o)
         }
         printf("  operator+DSS %8.3f ms  %6.2f GDoF/s unique  (the assembled operator)\n", both_ms,
                unique / (both_ms * 1e6));
+        printf("  host wall solves");
+        for (double ms : wall_times) printf(" %.3f", ms);
+        printf(" ms (max over ranks; last is reported)\n");
         if (o.solves > 1) {
             printf("  solves");
             for (float t : solve_times) printf(" %.1f", t);
@@ -1518,6 +1528,13 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-theta")) o.amg_theta = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-agg")) o.amg_agg = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-coarse-size")) o.amg_coarse_size = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-consolidate")) {
+            char* end = nullptr;
+            const long rows = std::strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end || rows < -1 || rows > 50000)
+                error = "invalid --amg-consolidate row limit";
+            else o.consolidate_rows = (int)rows;
+        }
         else error = "unknown option";
     }
     if (!error && o.ptx_dir.empty()) error = "--ptx-dir is required";
@@ -1532,6 +1549,13 @@ int main(int argc, char** argv)
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
+    if (!error && (o.consolidate_rows < -1 || o.consolidate_rows > 50000 || (o.consolidate_rows > 0 && o.consolidate_rows <= 9)))
+        error = "--amg-consolidate expects -1 (adaptive), 0 (off), or 10..50000";
+    if (!error && o.consolidate_rows != 0 && !o.amg) error = "--amg-consolidate needs --amg";
+#ifndef MARS_BP3_COARSE_CONSOLIDATION
+    if (!error && o.consolidate_rows != 0)
+        error = "--amg-consolidate needs a build with MARS_ENABLE_BP3_COARSE_CONSOLIDATION=ON";
+#endif
     if (!error && o.cheb_interval != "mars" && o.cheb_interval != "mfem") error = "--cheb-interval is mars or mfem";
     if (!error && o.smoother != "jacobi" && o.smoother != "lines") error = "--smoother is jacobi or lines";
     if (!error && o.power_steps < 0) error = "--power-steps must not be negative";
@@ -1573,7 +1597,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

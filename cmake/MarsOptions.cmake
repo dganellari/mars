@@ -37,6 +37,7 @@ option(MARS_ENABLE_DEV_EXAMPLES "Development drivers outside the v0.1 docs: pump
 # the compiler itself is a separate build-time tool and is NOT a MARS build
 # dependency. OFF by default.
 option(MARS_ENABLE_MARSIR "Build the MARSIR generated-kernel parity example (requires UNSTRUCTURED + CUDA)" OFF)
+option(MARS_ENABLE_BP3_COARSE_CONSOLIDATION "Enable the optional BP3 coarse adapter for CUDA and Hypre 2.33" OFF)
 
 # Unstructured (cornerstone-octree) module. Its kernels are CUDA/HIP only, so it defaults ON
 # only in a GPU build; a plain `cmake ..` on a CPU machine then builds the core library.
@@ -49,4 +50,14 @@ if(MARS_ENABLE_UNSTRUCTURED AND NOT (MARS_ENABLE_CUDA OR MARS_ENABLE_HIP))
     message(FATAL_ERROR
         "MARS_ENABLE_UNSTRUCTURED needs a GPU build: add -DMARS_ENABLE_CUDA=ON or "
         "-DMARS_ENABLE_HIP=ON, or set -DMARS_ENABLE_UNSTRUCTURED=OFF for a CPU-only build.")
+endif()
+
+if(MARS_ENABLE_BP3_COARSE_CONSOLIDATION)
+    if(NOT MARS_ENABLE_MARSIR OR NOT MARS_ENABLE_FEM_EXAMPLES OR NOT MARS_ENABLE_UNSTRUCTURED OR NOT MARS_ENABLE_CUDA
+       OR MARS_ENABLE_HIP OR NOT MARS_ENABLE_HYPRE OR NOT MARS_ENABLE_MPI)
+        message(FATAL_ERROR "BP3 coarse consolidation requires MARSIR, FEM_EXAMPLES, UNSTRUCTURED, CUDA, HYPRE and MPI")
+    endif()
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "BP3 coarse consolidation requires the validated Linux shared-Hypre callback ABI")
+    endif()
 endif()

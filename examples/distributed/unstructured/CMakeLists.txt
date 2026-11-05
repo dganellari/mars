@@ -513,6 +513,9 @@ if(MARS_ENABLE_MARSIR)
     # (solvers/mars_cellwise_fcg.hpp).
     add_executable(mars_marsir_bp mars_marsir_bp.cu)
     target_link_libraries(mars_marsir_bp PRIVATE mars CUDA::cuda_driver)
+    if(MARS_ENABLE_BP3_COARSE_CONSOLIDATION)
+        include(${CMAKE_SOURCE_DIR}/cmake/MarsBP3Coarse.cmake)
+    endif()
     install(TARGETS mars_marsir_bp RUNTIME DESTINATION bin/examples)
 endif()
 

@@ -301,6 +301,10 @@ if(MARS_ENABLE_HYPRE)
     set(HYPRE_INCLUDE_DIRS ${HYPRE_PC_INCLUDE_DIRS})
     set(HYPRE_LIBRARIES ${HYPRE_PC_LIBRARIES})
     set(HYPRE_LIBRARY_DIRS ${HYPRE_PC_LIBRARY_DIRS})
+    if(MARS_ENABLE_BP3_COARSE_CONSOLIDATION)
+      # Inspect and link the same library when checking the private callback ABI.
+      set(HYPRE_LIBRARIES ${HYPRE_PC_LINK_LIBRARIES})
+    endif()
   else()
     # Try manual finding
     find_path(HYPRE_INCLUDE_DIR
