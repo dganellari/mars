@@ -82,8 +82,9 @@ TEST(StructuredHalo, HilbertHex8PeriodicCells)
 
 TEST(StructuredHalo, DeviceSnapshotsAndIsolatedPlans) { test::check_device_snapshots_and_plans(); }
 TEST(StructuredHalo, SparseSubsetPlan) { test::check_sparse_subset_plan(); }
+TEST(StructuredHalo, SharedManagerCopies) { test::check_manager_copies(); }
 
 int main(int argc, char** argv)
 {
-    return mars::test::run_structured_tests(argc, argv, 22);
+    return mars::test::run_structured_tests(argc, argv, 23);
 }

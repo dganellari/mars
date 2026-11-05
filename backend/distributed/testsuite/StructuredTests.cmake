@@ -12,7 +12,7 @@ function(mars_add_structured_test name source capability distributed)
     target_include_directories(${name} PRIVATE
         ${PROJECT_SOURCE_DIR}/backend/distributed/testsuite/common
         ${PROJECT_SOURCE_DIR}/tests/structured)
-    if(MARS_GPU_LANGUAGE)
+    if(MARS_GPU_LANGUAGE OR MARS_STRUCTURED_FORCE_MPI)
         if(NOT MPIEXEC_EXECUTABLE)
             message(FATAL_ERROR "MPIEXEC_EXECUTABLE is required for structured GPU tests, including one-rank cases.")
         endif()

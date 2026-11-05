@@ -19,7 +19,7 @@ inline void check_device_snapshots_and_plans() {
     static_assert(!HasContext<Mesh::DeviceView> && !HasContext<Handler::DeviceView> && !HasContext<Data::DeviceView>);
     static_assert(sizeof(Mesh::DeviceView) < sizeof(Mesh));
     static_assert(sizeof(Handler::DeviceView) < sizeof(Handler));
-    static_assert(!std::is_copy_constructible_v<Data>);
+    static_assert(std::is_copy_constructible_v<Data>);
 
     const auto retained = [] {
         auto context = make_context(proc_allocation{}, MPI_COMM_WORLD);
@@ -63,6 +63,65 @@ inline void check_device_snapshots_and_plans() {
             double point[3] = {};
             view.get_local_dof_coordinates(i, point);
             n += point[0] < 0 || point[0] > 1 || point[1] < 0 || point[1] > 1;
+        }, errors);
+    EXPECT_EQ(errors, 0);
+}
+
+inline void check_manager_copies() {
+    using Mesh = DistributedQuad4Mesh<MortonKey<Unsigned>>;
+    using Handler = DofHandler<Mesh, 2, 2>;
+    using Data = DM<Handler, double>;
+    using Cells = UserData<Mesh, double, int>;
+    static_assert(std::is_copy_constructible_v<Data> && std::is_copy_constructible_v<Cells>);
+    auto context = make_context(proc_allocation{}, MPI_COMM_WORLD);
+    Mesh mesh(context);
+    generate_distributed_cube(mesh, 5, 3, 0);
+    Handler handler(mesh);
+    handler.enumerate_dofs();
+    auto original = std::make_unique<Data>(handler);
+    auto alias = *original;
+    EXPECT_EQ(&alias.exchange_plan(), &original->exchange_plan());
+    if (rank(context) == 0) {
+        const auto rank_local_copy = alias;
+        EXPECT_EQ(rank_local_copy.get_dof_data<0>().data(), alias.get_dof_data<0>().data());
+    }
+    Kokkos::parallel_for("legacy_manager_capture", handler.get_dof_size(), KOKKOS_LAMBDA(Integer i) {
+        const auto& dofs = alias.get_dof_handler();
+        alias.get_dof_data<0>(i) = dofs.is_owned(i) ? dofs.local_to_global(i) + 0.25 : -1;
+    });
+    original->start_gather<>();
+    EXPECT_THROW(alias.start_gather<>(), std::logic_error);
+    original.reset();
+    EXPECT_TRUE(alias.exchange_plan().active());
+    alias.wait();
+    const auto allocations = alias.exchange_plan().buffer_allocations();
+    alias.gather_ghost_data<>();
+    EXPECT_EQ(alias.exchange_plan().buffer_allocations(), allocations);
+    int errors = 0;
+    Kokkos::parallel_reduce("copied_manager_values", handler.get_dof_size(),
+        KOKKOS_LAMBDA(Integer i, int& n) {
+            n += alias.get_data<0>(i) != alias.get_dof_handler().local_to_global(i) + 0.25;
+        }, errors);
+    EXPECT_EQ(errors, 0);
+
+    auto cells = std::make_unique<Cells>(mesh);
+    auto before_exchange = *cells;
+    const auto keys = mesh.get_view_sfc(), ghost_keys = mesh.get_view_ghost();
+    Kokkos::parallel_for("legacy_cell_capture", mesh.get_chunk_size(), KOKKOS_LAMBDA(Integer i) {
+        before_exchange.set_elem_data<0>(i, keys(i) + 0.5);
+        before_exchange.set_elem_data<1>(i, keys(i) + 7);
+    });
+    cells->exchange_ghost_data(context);
+    auto after_exchange = *cells;
+    before_exchange.exchange_ghost_data(context);
+    EXPECT_EQ(before_exchange.get_ghost_data<0>().data(), after_exchange.get_ghost_data<0>().data());
+    cells.reset();
+    after_exchange.exchange_ghost_data(context);
+    errors = 0;
+    Kokkos::parallel_reduce("copied_cell_values", mesh.get_ghost_size(),
+        KOKKOS_LAMBDA(Integer i, int& n) {
+            n += before_exchange.get_ghost_elem_data<0>(i) != ghost_keys(i) + 0.5;
+            n += after_exchange.get_ghost_elem_data<1>(i) != ghost_keys(i) + 7;
         }, errors);
     EXPECT_EQ(errors, 0);
 }

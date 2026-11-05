@@ -45,9 +45,52 @@ TEST(StructuredMesh, HilbertQuad4Rectangular) { test::check_mesh<ElementType::Qu
 
 TEST(StructuredMesh, HilbertHex8Rectangular) { test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(5, 3, 2); }
 
-TEST(StructuredMesh, HilbertQuad4FullCurve) { test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(4, 4, 0); }
+TEST(StructuredMesh, HilbertQuad4FullCurve) {
+    for (Integer width : {2, 4, 8})
+        test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(width, width, 0, false, true);
+}
 
-TEST(StructuredMesh, HilbertHex8FullCurve) { test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(4, 4, 4); }
+TEST(StructuredMesh, HilbertHex8FullCurve) {
+    for (Integer width : {2, 4, 8})
+        test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(width, width, width, false, true);
+}
+
+template<Integer Type>
+void check_full_hilbert_subcommunicators() {
+    MPI_Comm comm = MPI_COMM_NULL;
+    // The four-rank gate creates a three-rank group and an independent singleton.
+    ASSERT_EQ(MPI_Comm_split(MPI_COMM_WORLD, test::rank() < 3 ? 0 : 1, test::rank(), &comm), MPI_SUCCESS);
+    {
+        auto context = make_context(proc_allocation{}, comm);
+        DistributedMesh<HilbertKey<Unsigned>, Type> mesh(context);
+        generate_distributed_cube(mesh, 4, 4, Type == ElementType::Quad4 ? 0 : 4);
+        const Integer total = Type == ElementType::Quad4 ? 16 : 64;
+        const int ranks = num_ranks(context), rank_id = rank(context);
+        const auto partition = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.get_view_gp());
+        const auto keys = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.get_view_sfc());
+        Integer offset = 0;
+        for (int peer = 0; peer <= ranks; ++peer) {
+            EXPECT_EQ(partition(2 * peer), offset);
+            EXPECT_EQ(partition(2 * peer + 1), offset);
+            if (peer == rank_id)
+                for (std::size_t i = 0; i < keys.extent(0); ++i) EXPECT_EQ(keys(i), offset + i);
+            offset += total / ranks + (peer < total % ranks);
+        }
+        EXPECT_EQ(keys.extent(0), total / ranks + (rank_id < total % ranks));
+        EXPECT_EQ(mesh.partition_received_keys(), 0);
+        std::vector<int> counts(total, 0), global(total, 0);
+        for (std::size_t i = 0; i < keys.extent(0); ++i) {
+            EXPECT_LT(keys(i), total);
+            if (keys(i) < total) ++counts[keys(i)];
+        }
+        EXPECT_EQ(MPI_Allreduce(counts.data(), global.data(), total, MPI_INT, MPI_SUM, comm), MPI_SUCCESS);
+        for (const int count : global) EXPECT_EQ(count, 1);
+    }
+    EXPECT_EQ(MPI_Comm_free(&comm), MPI_SUCCESS);
+}
+
+TEST(StructuredMesh, HilbertQuad4UnevenGroups) { check_full_hilbert_subcommunicators<ElementType::Quad4>(); }
+TEST(StructuredMesh, HilbertHex8UnevenGroups) { check_full_hilbert_subcommunicators<ElementType::Hex8>(); }
 
 TEST(StructuredMesh, MortonQuad4Thin) { test::check_mesh<ElementType::Quad4, MortonKey<Unsigned>>(257, 1, 0); }
 TEST(StructuredMesh, HilbertQuad4Thin) { test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(1, 257, 0); }
@@ -56,5 +99,5 @@ TEST(StructuredMesh, HilbertHex8Thin) { test::check_mesh<ElementType::Hex8, Hilb
 
 int main(int argc, char** argv)
 {
-    return mars::test::run_structured_tests(argc, argv, 12);
+    return mars::test::run_structured_tests(argc, argv, 14);
 }

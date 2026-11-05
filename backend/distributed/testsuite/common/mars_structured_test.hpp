@@ -73,7 +73,7 @@ inline Integer cell_index(const Cell& cell, const Cell& shape)
 }
 
 template<Integer Type, class SfcKey>
-void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false)
+void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false, bool direct_partition = false)
 {
     auto context = make_context(proc_allocation{}, MPI_COMM_WORLD);
     DistributedMesh<SfcKey, Type> mesh(context);
@@ -96,7 +96,7 @@ void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false)
     const Integer expected_end = count / ranks * (rank_id + 1) + std::min<Integer>(rank_id + 1, count % ranks);
     EXPECT_EQ(local.size(), expected_end - expected_begin);
     EXPECT_EQ(mesh.partition_generated_keys(), expected_end - expected_begin);
-    EXPECT_EQ(mesh.partition_received_keys(), expected_end - expected_begin);
+    EXPECT_EQ(mesh.partition_received_keys(), direct_partition ? 0 : expected_end - expected_begin);
     using Key = typename SfcKey::ValueType;
     std::vector<Key> reference_keys;
     for (Integer z = 0; z < shape[2]; ++z)
@@ -109,6 +109,13 @@ void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false)
     const auto actual_keys = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.get_view_sfc());
     for (Integer i = expected_begin; i < expected_end; ++i)
         EXPECT_EQ(actual_keys(i - expected_begin), reference_keys[i]);
+    const auto partition = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.get_view_gp());
+    Integer offset = 0;
+    for (int peer = 0; peer <= ranks; ++peer) {
+        EXPECT_EQ(partition(2 * peer + 1), offset);
+        EXPECT_EQ(partition(2 * peer), peer < ranks ? reference_keys[offset] : reference_keys.back() + 1);
+        offset += count / ranks + (peer < count % ranks);
+    }
     std::vector<int> ownership(count, 0);
     for (const auto& cell : local)
         ++ownership[cell_index(cell, shape)];

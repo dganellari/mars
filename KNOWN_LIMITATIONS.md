@@ -61,7 +61,8 @@ developed for v0.1:
 - `backend/serial/` — reference CPU backend, legacy (kept for debugging).
 - Kokkos structured-mesh / SFC path — optional, enabled with `MARS_ENABLE_KOKKOS`.
   Quad4/Hex8 generation, Morton/Hilbert ordering, Q1/Q2 scalar/two-component DOFs,
-  scalar/two-component field gather/additive scatter and periodic cell halos have bounded CPU/MPI checks.
+  scalar/two-component field gather/additive scatter and periodic cell halos have
+  bounded CPU, CUDA and HIP checks with MPI.
   Public-header and test-configuration failures from the baseline review are fixed.
   See [Structured Kokkos](docs/Structured-Kokkos.md) for the exact capability gates.
 - `backend/adios2/` — optional ADIOS2 I/O, off by default.
@@ -71,12 +72,19 @@ Structured validation on 2026-11-04 uses macOS arm64, Open MPI 5.0.5 and Kokkos
 4.4.01 at 1/2/4 ranks: final AppleClang 21 Debug builds use its Serial execution
 space with direct and host-staged MPI; LLVM 19/libomp Release uses two OpenMP
 threads with direct MPI. Installed consumers pass in both communication modes.
-Each full configuration passes 11 CTests and 159 case/rank-count combinations.
-Linux, CUDA and HIP remain
-unvalidated. The [structured cluster kit](tests/structured/cluster/README.md)
-prepares native CUDA and HIP builds with pinned Kokkos 4.4.01, direct and
-host-staged MPI, 1/2/4-rank capability gates and an installed consumer. GPU source
-cleanup and local CUDA syntax checks do not establish native GPU support.
+Each full configuration passes 11 CTests and 168 case/rank-count combinations.
+Native CUDA 12.9/GH200 and HIP/ROCm 7.2.3/MI300A builds also pass all 11 structured
+and 3 installed-consumer CTests in both direct and host-staged MPI modes. These
+one-node tests use 1/2/4 ranks with a distinct GPU per rank and cover the final
+full-Hilbert and shallow-manager-copy changes. The source, jobs and checked
+receipts are identified in [Structured Kokkos](docs/Structured-Kokkos.md).
+Release requires every applicable gate on CPU, AMD GPUs and NVIDIA GPUs from the
+same candidate source. Linux CPU validation, multi-node MPI, bounded setup/halo
+performance checks on all three platforms and existing applicable release
+regressions remain open; see the
+[release matrix](docs/Structured-Kokkos.md#release-gate). The
+[structured cluster kit](tests/structured/cluster/README.md) reproduces the native
+builds and capability gates with pinned Kokkos 4.4.01.
 Old PDE applications, staggered layouts, periodic DOF identification
 and scaling are outside these checks. The shared `MARS_ENABLE_DISTRIBUTED_BACKEND`
 option defaults to ON; Kokkos itself defaults to OFF.
@@ -84,7 +92,7 @@ Structured setup generates only local cell keys, selects exact balanced SFC
 partitions with rank-sized metadata, and redistributes through sparse MPI peers.
 DOF boundary scratch uses peer/DOF candidates. Device views contain no host context
 or polymorphic owner, and data managers reuse communication buffers and requests.
-These changes are locally validated, not measured scaling or native GPU results.
+These changes pass the bounded CPU/CUDA/HIP gates above; scaling is not measured.
 Plan creation is collective; start/wait is peer-only. Keep borrowed host contexts
 alive and unmoved, use a new manager after changing a layout, and finish or destroy
 plans before MPI/Kokkos finalize. The blocking cell-field and one-shot helper APIs

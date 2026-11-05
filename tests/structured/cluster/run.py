@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and validate one native structured Kokkos GPU configuration offline."""
+"""Build and validate one native structured Kokkos configuration offline."""
 
 import argparse
 import datetime
@@ -25,8 +25,8 @@ for _name in ("mesh_manager_test", "dof_handler_test", "mesh_ghost_layer_test"):
 CONSUMER = {"structured_install": 1, "structured_install_mpi2": 2, "structured_install_mpi4": 4}
 RECEIPT = "MARS_STRUCTURED_RECEIPT "
 TEST_RECEIPT = "MARS_STRUCTURED_TEST_RECEIPT "
-GTEST_CASES = {"morton_test": 4, "hilbert_test": 5, "mesh_manager_test": 12,
-               "dof_handler_test": 16, "mesh_ghost_layer_test": 22}
+GTEST_CASES = {"morton_test": 4, "hilbert_test": 5, "mesh_manager_test": 14,
+               "dof_handler_test": 16, "mesh_ghost_layer_test": 23}
 
 
 def digest(path):
@@ -108,6 +108,10 @@ def tool_version(executable, log_path, required=True):
             "version_exit": process.returncode, "version_banner": banner}
 
 
+def is_gpu(backend):
+    return backend in ("cuda", "hip")
+
+
 def verify_dependencies(args):
     version = (args.kokkos_dir / "KokkosConfigVersion.cmake").read_text()
     common = (args.kokkos_dir / "KokkosConfigCommon.cmake").read_text()
@@ -115,14 +119,15 @@ def verify_dependencies(args):
     if cmake_value(version, "PACKAGE_VERSION") != "4.4.1":
         raise ValueError("The gate requires Kokkos 4.4.01 (package version 4.4.1)")
     if args.backend.upper() not in cmake_value(common, "Kokkos_DEVICES").split(";"):
-        raise ValueError("Kokkos does not export the requested GPU backend")
-    if "COMPILE_AS_CMAKE_LANGUAGE" not in cmake_value(common, "Kokkos_OPTIONS").split(";"):
-        raise ValueError("Rebuild Kokkos with Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON")
-    if cmake_value(config, "Kokkos_COMPILE_LANGUAGE") != args.backend.upper():
-        raise ValueError("Kokkos does not export the matching native GPU language")
-    architectures = cmake_value(common, "Kokkos_{}_ARCHITECTURES".format(args.backend.upper())).split(";")
-    if args.arch not in architectures:
-        raise ValueError("Kokkos target architectures do not contain --arch=" + args.arch)
+        raise ValueError("Kokkos does not export the requested execution space")
+    if is_gpu(args.backend):
+        if "COMPILE_AS_CMAKE_LANGUAGE" not in cmake_value(common, "Kokkos_OPTIONS").split(";"):
+            raise ValueError("Rebuild Kokkos with Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON")
+        if cmake_value(config, "Kokkos_COMPILE_LANGUAGE") != args.backend.upper():
+            raise ValueError("Kokkos does not export the matching native GPU language")
+        architectures = cmake_value(common, "Kokkos_{}_ARCHITECTURES".format(args.backend.upper())).split(";")
+        if args.arch not in architectures:
+            raise ValueError("Kokkos target architectures do not contain --arch=" + args.arch)
     gtest_manifest = verify_dependency(args.gtest_source, GTEST_SHA)
     dependency_files = {}
     # Header, package and library hashes identify the installed dependency actually used.
@@ -140,7 +145,7 @@ def verify_dependencies(args):
             "googletest_sha": GTEST_SHA, "googletest_manifest_sha256": gtest_manifest}
 
 
-def audit_receipts(output, backend, ranks, transport):
+def audit_receipts(output, backend, ranks, transport, min_nodes=1, threads=1):
     receipts = []
     for line in output.splitlines():
         if RECEIPT in line:
@@ -148,26 +153,37 @@ def audit_receipts(output, backend, ranks, transport):
     if len(receipts) != ranks or sorted(receipt.get("rank") for receipt in receipts) != list(range(ranks)):
         raise ValueError("Missing or duplicate per-rank runtime receipts")
     hosts = {}
+    gpu = is_gpu(backend)
     for receipt in receipts:
-        if (receipt.get("backend") != backend.upper() or receipt.get("ranks") != ranks or
+        if (str(receipt.get("backend", "")).upper() != backend.upper() or receipt.get("ranks") != ranks or
                 receipt.get("kokkos_version") != 40401 or
-                receipt.get("mpi_device_buffer") is not (transport == "direct") or
-                not isinstance(receipt.get("device"), int) or receipt["device"] < 0 or
-                not receipt.get("hostname") or not receipt.get("device_id") or receipt["device_id"] == "cpu" or
-                not receipt.get("mpi_library") or not receipt.get("device_name") or receipt["device_name"] == "cpu" or
-                not isinstance(receipt.get("runtime_version"), int) or receipt["runtime_version"] <= 0 or
-                not isinstance(receipt.get("driver_version"), int) or receipt["driver_version"] <= 0):
-            raise ValueError("Runtime receipt does not match the requested GPU/transport gate")
+                receipt.get("transport") != transport or
+                receipt.get("mpi_device_buffer") is not (gpu and transport == "direct") or
+                not receipt.get("hostname") or not receipt.get("mpi_library") or
+                not isinstance(receipt.get("concurrency"), int) or receipt["concurrency"] < threads):
+            raise ValueError("Runtime receipt does not match execution space, threads or transport")
+        if gpu:
+            if (not isinstance(receipt.get("device"), int) or receipt["device"] < 0 or
+                    not receipt.get("device_id") or receipt["device_id"] == "cpu" or
+                    not receipt.get("device_name") or receipt["device_name"] == "cpu" or
+                    not isinstance(receipt.get("runtime_version"), int) or receipt["runtime_version"] <= 0 or
+                    not isinstance(receipt.get("driver_version"), int) or receipt["driver_version"] <= 0):
+                raise ValueError("Missing native GPU runtime/device evidence")
+        elif (receipt.get("device") != -1 or receipt.get("device_id") != "cpu" or
+              receipt.get("device_name") != "cpu" or receipt.get("runtime_version") != 0):
+            raise ValueError("CPU run used an unexpected device")
         hosts.setdefault(receipt["hostname"], []).append(receipt)
+    if len(hosts) < min(min_nodes, ranks):
+        raise ValueError("MPI test did not span the required number of hosts")
     for records in hosts.values():
         if (any(record.get("local_ranks") != len(records) for record in records) or
                 sorted(record.get("local_rank") for record in records) != list(range(len(records))) or
-                len({record["device_id"] for record in records}) != len(records)):
+                (gpu and len({record["device_id"] for record in records}) != len(records))):
             raise ValueError("Local-rank or physical-device assignment is inconsistent")
     return receipts
 
 
-def audit_junit(path, expected, backend, transport, gtest):
+def audit_junit(path, expected, backend, transport, gtest, min_nodes=1, threads=1):
     root = ET.parse(path).getroot()
     cases = list(root.iter("testcase"))
     names = [case.attrib.get("name") for case in cases]
@@ -190,7 +206,7 @@ def audit_junit(path, expected, backend, transport, gtest):
                     any(record.get("ranks") != expected[name] or record.get("cases") != cases or
                         record.get("passed") != cases or record.get("skipped") != 0 for record in records)):
                 raise ValueError("GoogleTest did not pass the complete suite on every rank: " + name)
-        results[name] = audit_receipts(output, backend, expected[name], transport)
+        results[name] = audit_receipts(output, backend, expected[name], transport, min_nodes, threads)
     return results
 
 
@@ -204,22 +220,24 @@ def test_binary(test):
 
 def plan(args):
     gpu = args.backend.upper()
-    other = "HIP" if gpu == "CUDA" else "CUDA"
     build, install, consumer = args.work / "build", args.work / "install", args.work / "consumer"
     launcher = ["-DMPIEXEC_EXECUTABLE=" + str(args.launcher),
                 "-DMPIEXEC_NUMPROC_FLAG=" + args.rank_flag,
                 "-DMPIEXEC_PREFLAGS=" + ";".join(args.launcher_arg)]
     common = ["-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_CXX_COMPILER=" + str(args.cxx),
-              "-DCMAKE_{}_COMPILER={}".format(gpu, args.gpu_compiler),
-              "-DCMAKE_{}_STANDARD=20".format(gpu), "-DCMAKE_{}_STANDARD_REQUIRED=ON".format(gpu),
-              "-DCMAKE_{}_ARCHITECTURES={}".format(gpu, args.arch),
-              "-DKokkos_DIR=" + str(args.kokkos_dir), "-DMARS_STRUCTURED_TEST_RANKS=2;4"] + launcher
+              "-DKokkos_DIR=" + str(args.kokkos_dir), "-DMARS_STRUCTURED_TEST_RANKS=2;4",
+              "-DMARS_STRUCTURED_FORCE_MPI=ON"] + launcher
+    if is_gpu(args.backend):
+        common += ["-DCMAKE_{}_COMPILER={}".format(gpu, args.gpu_compiler),
+                   "-DCMAKE_{}_STANDARD=20".format(gpu), "-DCMAKE_{}_STANDARD_REQUIRED=ON".format(gpu),
+                   "-DCMAKE_{}_ARCHITECTURES={}".format(gpu, args.arch)]
     if args.backend == "cuda":
         common.append("-DCMAKE_CUDA_HOST_COMPILER=" + str(args.cxx))
     configure = [args.cmake, "-S", str(args.source), "-B", str(build), "-G", "Ninja"] + common + [
         "-DCMAKE_INSTALL_PREFIX=" + str(install), "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DMARS_ENABLE_KOKKOS=ON", "-DMARS_ENABLE_MPI=ON", "-DMARS_ENABLE_DISTRIBUTED_BACKEND=ON",
-        "-DMARS_ENABLE_{}=ON".format(gpu), "-DMARS_ENABLE_{}=OFF".format(other),
+        "-DMARS_ENABLE_CUDA=" + ("ON" if args.backend == "cuda" else "OFF"),
+        "-DMARS_ENABLE_HIP=" + ("ON" if args.backend == "hip" else "OFF"),
         "-DMARS_ENABLE_CUDAUVM=OFF",
         "-DMARS_ENABLE_RDMA=" + ("ON" if args.transport == "direct" else "OFF"),
         "-DMARS_ENABLE_UNSTRUCTURED=OFF", "-DMARS_ENABLE_SERIAL_BACKEND=OFF", "-DMARS_ENABLE_AMR_BACKEND=OFF",
@@ -256,7 +274,11 @@ def run(args):
     for key in list(env):
         if key.startswith(("MARS_STRUCTURED_", "GTEST_")):
             del env[key]
-    env["MARS_STRUCTURED_EXPECT_BACKEND"] = args.backend.upper()
+    env["MARS_STRUCTURED_EXPECT_BACKEND"] = {"serial": "Serial", "openmp": "OpenMP"}.get(args.backend, args.backend.upper())
+    env["MARS_GATE_LAYOUT"] = "single"
+    env["OMP_NUM_THREADS"] = str(getattr(args, "threads", 1))
+    env["OMP_PROC_BIND"] = "false"
+    env["KOKKOS_NUM_THREADS"] = str(getattr(args, "threads", 1))
     status["environment"] = {key: env[key] for key in (
         "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "OMP_NUM_THREADS",
         "MPICH_GPU_SUPPORT_ENABLED", "MPICH_GPU_IPC_ENABLED", "SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_NTASKS",
@@ -271,7 +293,7 @@ def run(args):
             return status
         status["tools"] = {name: tool_version(executable, args.work / (name + "-version.log"))
                            for name, executable in (("cxx", args.cxx), ("gpu-compiler", args.gpu_compiler),
-                                                    ("cmake", args.cmake), ("ctest", args.ctest), ("launcher", args.launcher))}
+                                                    ("cmake", args.cmake), ("ctest", args.ctest), ("launcher", args.launcher)) if executable}
         lists = {}
         for name, command in commands:
             print("Running " + name, flush=True)
@@ -292,9 +314,21 @@ def run(args):
                     raise ValueError("CTest registration is missing or duplicates required tests")
                 lists[name] = listing
             if name == "tests":
-                status["tests"] = audit_junit(args.work / "tests.xml", SUITES, args.backend, args.transport, True)
+                status["tests"] = audit_junit(args.work / "tests.xml", SUITES, args.backend, args.transport, True, threads=getattr(args, "threads", 1))
             if name == "consumer-tests":
-                status["consumer"] = audit_junit(args.work / "consumer.xml", CONSUMER, args.backend, args.transport, False)
+                status["consumer"] = audit_junit(args.work / "consumer.xml", CONSUMER, args.backend, args.transport, False, threads=getattr(args, "threads", 1))
+        if getattr(args, "multi_node", False):
+            env["MARS_GATE_LAYOUT"] = "multi"
+            for phase, expected, gtest in (("tests", SUITES, True), ("consumer-tests", CONSUMER, False)):
+                command = list(dict(commands)[phase])
+                xml = args.work / (phase + "-multinode.xml")
+                command[command.index("--output-junit") + 1] = str(xml)
+                with (args.work / (phase + "-multinode.log")).open("w") as log:
+                    process = run_child(command, stdout=log, stderr=subprocess.STDOUT, env=env)
+                if process.returncode:
+                    raise ValueError("Multi-node " + phase + " failed")
+                status[phase + "-multinode"] = audit_junit(xml, expected, args.backend, args.transport,
+                                                           gtest, 2, getattr(args, "threads", 1))
         status["artifacts"] = {}
         for listing in lists.values():
             for test in listing["tests"]:
@@ -330,11 +364,14 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("source", "work", "cxx", "gpu-compiler", "kokkos-dir", "gtest-source", "launcher"):
+    for name in ("source", "work", "cxx", "kokkos-dir", "gtest-source", "launcher"):
         parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--backend", choices=("cuda", "hip"), required=True)
+    parser.add_argument("--backend", choices=("cuda", "hip", "serial", "openmp"), required=True)
     parser.add_argument("--transport", choices=("direct", "staged"), default="direct")
-    parser.add_argument("--arch", required=True)
+    parser.add_argument("--gpu-compiler", type=Path)
+    parser.add_argument("--arch", default="native")
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--multi-node", action="store_true")
     parser.add_argument("--rank-flag", default="-n")
     parser.add_argument("--launcher-arg", action="append", default=[])
     parser.add_argument("--jobs", type=int, default=8)
@@ -343,12 +380,18 @@ def main():
     parser.add_argument("--plan-only", action="store_true", help="Check inputs and write commands without building or running")
     args = parser.parse_args()
     for name in ("source", "work", "cxx", "gpu_compiler", "kokkos_dir", "gtest_source", "launcher"):
+        if getattr(args, name) is None:
+            continue
         path = getattr(args, name).expanduser()
         setattr(args, name, path.absolute() if name in ("cxx", "gpu_compiler", "launcher") else path.resolve())
+    if args.threads <= 0 or (args.backend == "openmp" and args.threads < 2):
+        parser.error("OpenMP needs at least two threads; all thread counts must be positive")
+    if is_gpu(args.backend) and (args.gpu_compiler is None or args.arch == "native"):
+        parser.error("GPU builds need --gpu-compiler and --arch")
     if args.jobs <= 0 or any(character in args.arch for character in ";\n\r"):
         parser.error("Use a positive job count and one explicit GPU architecture")
     for name in ("cxx", "gpu_compiler", "launcher"):
-        if not getattr(args, name).is_file():
+        if getattr(args, name) is not None and not getattr(args, name).is_file():
             parser.error("--{} must name an existing executable".format(name.replace("_", "-")))
     if args.launcher.name == "srun" and "--export=ALL" not in args.launcher_arg:
         args.launcher_arg.insert(0, "--export=ALL")

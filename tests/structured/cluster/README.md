@@ -1,15 +1,101 @@
-# Structured Kokkos GPU gate
+# Structured Kokkos release validation
 
-This kit builds and checks the optional structured backend on NVIDIA CUDA or
-AMD HIP. It does not build the serial, bisection or unstructured backends.
+This kit builds and checks the optional structured backend using CPU Kokkos
+Serial/OpenMP, NVIDIA CUDA or AMD HIP. The MARS serial and bisection backends
+remain excluded. A separate regression runner checks the existing unstructured
+GPU release configuration with Kokkos disabled.
 Each run covers the five suites at their registered one/two/four-rank matrix
-(11 CTests, 159 case/rank-count combinations) and the installed consumer at
+(11 CTests, 168 case/rank-count combinations) and the installed consumer at
 one/two/four ranks (3 CTests). One GoogleTest case is counted once per rank count,
 not once per process.
 
 Run `direct` and `staged` separately for each backend. `direct` passes device
 buffers to MPI; `staged` copies communication buffers through host memory. A
 staged pass establishes GPU execution with host-staged MPI, not GPU-aware MPI.
+
+The release workflow has two phases. A one-node preparation builds dependencies,
+passes capability/install checks and prepares candidate/reference benchmark
+binaries. A dependent two-node validation reuses those binaries, audits the
+multi-node capability/install tests and measures performance. Neither a prepared
+build nor the structured result alone establishes full release readiness; the
+existing unstructured GPU release suite must also pass. See the
+[release matrix](../../../docs/Structured-Kokkos.md#release-gate).
+
+## CPU and distributed release workflow
+
+`run.py --backend serial` and `--backend openmp --threads 4` run the same 11+3
+capability/install matrix as CUDA/HIP. CPU builds omit `--gpu-compiler` and `--arch`.
+The CPU receipt proves its execution space and thread count, and distinguishes
+the direct/staged code paths without claiming device-buffer MPI. One-rank tests
+also use the supplied MPI launcher. `build_deps.py` accepts these CPU backends.
+
+From an allocated batch shell, prepare one platform with `release.py`:
+
+```sh
+python3 /SNAPSHOT/source/tests/structured/cluster/release.py \
+  --phase prepare --backend cpu --source /SNAPSHOT/source \
+  --reference /REFERENCE/source --work /PREPARATION \
+  --cxx /HOST_CXX --launcher /PATH/TO/srun --threads 4 --jobs 8 \
+  --launcher-arg=--cpu-bind=cores
+```
+
+Use `--backend cuda --arch 90 --gpu-compiler /CUDA/bin/nvcc`, or
+`--backend hip --arch gfx942 --gpu-compiler /ROCM/llvm/bin/clang++`, for GPUs.
+Preparation covers both transport modes; CPU covers both Serial and OpenMP.
+It also checks a Kokkos-OFF CPU core build. Add the site's explicit image/view and
+binding flags through repeated `--launcher-arg=...` arguments.
+
+After successful preparation, run this inside a two-node allocation with four
+ranks, at least four CPU cores per rank and, for GPUs, distinct devices per rank:
+
+```sh
+python3 /SNAPSHOT/source/tests/structured/cluster/release.py \
+  --phase validate --backend cpu --source /SNAPSHOT/source \
+  --reference /REFERENCE/source --prepared /PREPARATION \
+  --work /VALIDATION --threads 4
+```
+
+`mpi_launch.py` launches one rank on one node and distributes the two/four-rank
+checks over two nodes. Receipts must name at least two different hosts; a
+single-node launch cannot satisfy this gate. Binary, installed dependency and
+source checksums must still match preparation. The launcher uses the same image
+and binding arguments recorded at preparation.
+
+## Performance comparison
+
+The reference is the separately frozen, previously native-validated `7c0684ad`
+snapshot. This measures the full-Hilbert/copy follow-up against that version;
+it does not measure the whole redesign against the original legacy code.
+The same benchmark source is compiled against both installed libraries.
+
+Six fixed Q1 workloads cover Morton/Hilbert Quad4 and Hex8 rectangles plus full
+Hilbert squares/cubes. Each process warms all workloads before measurement.
+Every measured halo iteration changes the owned affine field, poisons ghosts,
+and verifies all resulting values; global cell and unique-DOF counts must match.
+Five paired rounds alternate reference/candidate order at 1/2/4 ranks on one node
+and 2/4 ranks over two nodes. Timings are maximum-rank host elapsed intervals with
+Kokkos fences, measured separately for mesh setup, DOF setup and repeated gather.
+They are not GPU-only kernel timings or a scaling claim.
+
+The predeclared acceptance limit is candidate median <= 1.10 times reference
+median plus 50 microseconds for mesh/DOF setup or 5 microseconds per halo exchange.
+The absolute allowance prevents tiny timings from dominating the decision.
+Missing/invalid correctness receipts fail the run; a timing regression returns
+`TIMING_REJECTED`, with raw samples retained. Other configurations still run.
+The workflow cannot report PASS if any required comparison is rejected.
+
+## Existing GPU release regressions
+
+`export_release.py` starts from the structured manifest's committed base and
+overlays only the structured snapshot. It excludes uncommitted AMR work, private
+documents and geometry; the shipped Poiseuille mesh is the sole included data
+fixture. Export Cornerstone at `2a95e63b0ca5454712ab83f27505055c078887dc` and the same
+pinned GoogleTest into its dependencies directory. `regression.py` builds the
+existing Kokkos-OFF GPU drivers using GPU-enabled Hypre, netCDF and NumPy. It
+requires exactly all 48 existing release tests, including flow/Poiseuille tests,
+and rejects skipped or missing cases. `--multi-node` repeats this suite with
+multi-rank runs spanning two nodes. Keep these receipts separate from the
+structured capability/performance results.
 
 ## Prepare an offline source snapshot
 
@@ -42,8 +128,8 @@ No network fetch runs in the build or test job.
 
 ## Allocation and environment
 
-Load the site's working C++ compiler, CUDA or ROCm, MPI, Python 3, CMake >=3.24
-and Ninja environment before submission. The kit does not guess module names,
+Load the site's working C++ compiler, MPI, Python 3, CMake >=3.24
+and Ninja environment before submission; GPU jobs also need CUDA or ROCm. The kit does not guess module names,
 accounts, partitions, containers or compiler paths. Use a host C++ compiler for
 `CXX`, CUDA `nvcc` for the CUDA compiler, and ROCm `llvm/bin/clang++` for the HIP
 compiler. Do not use `nvcc_wrapper` or `hipcc` as `CXX`: the build uses native
@@ -129,11 +215,12 @@ commands, but reports `PLANNED_NOT_VALIDATED`, never `PASS`.
 
 `result.json` is `PASS` only if configuration, build, installation and every
 required CTest succeeded. The runner rejects zero tests, missing/duplicate tests,
-skips, filtered GoogleTest suites, a CPU default execution space, the wrong
-transport, missing rank receipts or shared physical devices. Ordered runtime
+skips, filtered GoogleTest suites, the wrong execution space or transport,
+missing rank receipts or shared physical GPUs. CPU jobs require the requested
+Serial/OpenMP execution space and thread count. Ordered runtime
 receipts report backend, MPI ranks, local rank, physical device and Kokkos version.
-Ordered test receipts require the complete suites: Morton 4, Hilbert 5, mesh 12,
-DOF 16 and halo 22 cases per process, all passing with no skips.
+Ordered test receipts require the complete suites: Morton 4, Hilbert 5, mesh 14,
+DOF 16 and halo 23 cases per process, all passing with no skips.
 CTest runs one case at a time to avoid competing GPU allocations. Inherited
 `GTEST_*` options and diagnostic structured-runtime overrides are cleared.
 

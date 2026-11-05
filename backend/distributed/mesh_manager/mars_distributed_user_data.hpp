@@ -25,12 +25,15 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        UserData(Mesh m) : mesh(m) {
+        UserData(Mesh m)
+            : mesh(m), h_exchanges_(Kokkos::view_alloc("cell_halo_owner", Kokkos::SequentialHostInit)) {
             const Integer size = get_mesh().get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }
 
-        UserData(Mesh m, const user_tuple &data) : mesh(m), user_data_(data) {}
+        UserData(Mesh m, const user_tuple &data)
+            : mesh(m), user_data_(data),
+              h_exchanges_(Kokkos::view_alloc("cell_halo_owner", Kokkos::SequentialHostInit)) {}
 
         void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
             apply_impl(resize_view_functor(view_desc, size), tuple);
@@ -223,7 +226,7 @@ namespace mars {
     private:
         template<std::size_t I>
         void prepare_field(const context& context) {
-            auto& exchange = std::get<I>(exchanges_);
+            auto& exchange = std::get<I>(h_exchanges_());
             if (!exchange) {
                 const auto comm = context->distributed->mpi_comm();
                 const auto ranks = num_ranks(context);
@@ -232,8 +235,9 @@ namespace mars {
                     comm, I, mpi::sparse_segments(mesh.get_view_scan_send_mirror().data(), ranks, 1, comm),
                     mpi::sparse_segments(mesh.get_view_scan_recv_mirror().data(), ranks, 1, comm),
                     mesh.get_boundary_size(), mesh.get_ghost_size());
-                std::get<I>(ghost_user_data_) = exchange->recv_buffer();
             }
+            // A copy made before the first exchange has not acquired this buffer yet.
+            std::get<I>(ghost_user_data_) = exchange->recv_buffer();
             const auto buffer = exchange->send_buffer();
             const auto values = std::get<I>(user_data_);
             const auto indices = mesh.get_view_boundary_sfc_index();
@@ -242,15 +246,16 @@ namespace mars {
         template<std::size_t... I>
         void exchange_fields(const context& context, std::index_sequence<I...>) {
             (prepare_field<I>(context), ...);
-            (std::get<I>(exchanges_)->start(), ...);
-            (std::get<I>(exchanges_)->wait(), ...);
+            (std::get<I>(h_exchanges_())->start(), ...);
+            (std::get<I>(h_exchanges_())->wait(), ...);
         }
-        std::tuple<std::unique_ptr<mpi::SparseExchange<T>>...> exchanges_;
 
         Mesh mesh;
         // ghost data layer
         user_tuple user_data_;
         user_tuple ghost_user_data_;
+        // Only host exchange methods access the shared plans, including their MPI cleanup.
+        Kokkos::View<std::tuple<std::unique_ptr<mpi::SparseExchange<T>>...>, Kokkos::HostSpace> h_exchanges_;
     };
 
     template <class UserData>

@@ -29,7 +29,7 @@ def receipt(rank, ranks, backend="CUDA", transport="direct"):
             "local_ranks": ranks, "device": rank, "device_id": "0000:{:02x}:00.0".format(rank),
             "hostname": "fixture", "kokkos_version": 40401, "mpi_device_buffer": transport == "direct",
             "mpi_library": "fixture MPI", "device_name": "fixture GPU", "runtime_version": 12000,
-            "driver_version": 12000}
+            "driver_version": 12000, "transport": transport, "concurrency": 32}
 
 
 def output(ranks, backend="CUDA", transport="direct", tests=3):
@@ -72,7 +72,7 @@ class KitTests(unittest.TestCase):
         result = run.audit_junit(self.junit(), run.SUITES, "cuda", "direct", True)
         self.assertEqual(len(result), 11)
         self.assertEqual(sum(map(len, result.values())), 23)
-        self.assertEqual(sum(run.GTEST_CASES[name.split("_mpi")[0]] for name in run.SUITES), 159)
+        self.assertEqual(sum(run.GTEST_CASES[name.split("_mpi")[0]] for name in run.SUITES), 168)
         with self.assertRaises(ValueError):
             run.audit_junit(self.junit(output(1, tests=12), {"mesh_ghost_layer_test": 1}),
                             {"mesh_ghost_layer_test": 1}, "cuda", "direct", True)
@@ -121,6 +121,101 @@ class KitTests(unittest.TestCase):
             tree.write(path)
             with self.assertRaises(ValueError):
                 run.audit_junit(path, {"morton_test": 1}, "cuda", "direct", True)
+
+    def test_cpu_receipts_threads_transport_and_nodes(self):
+        for backend in ("serial", "openmp"):
+            for transport in ("direct", "staged"):
+                records = [receipt(rank, 4, backend.upper(), transport) for rank in range(4)]
+                for rank, record in enumerate(records):
+                    record.update(device=-1, device_id="cpu", device_name="cpu", runtime_version=0,
+                                  driver_version=0, mpi_device_buffer=False, concurrency=2 if backend == "openmp" else 1,
+                                  hostname="host" + str(rank // 2), local_rank=rank % 2, local_ranks=2)
+                text = "\n".join(run.RECEIPT + json.dumps(x) for x in records)
+                run.audit_receipts(text, backend, 4, transport, 2, 2 if backend == "openmp" else 1)
+                with self.assertRaises(ValueError):
+                    run.audit_receipts(text, backend, 4, transport, 3)
+                with self.assertRaises(ValueError):
+                    run.audit_receipts(text, backend, 4, transport, 2, 3)
+                with self.assertRaises(ValueError):
+                    run.audit_receipts(text, "cuda", 4, transport)
+                args = self.arguments(backend, transport)
+                args.gpu_compiler = None
+                config = dict(run.plan(args))["configure"]
+                self.assertIn("-DMARS_ENABLE_CUDA=OFF", config)
+                self.assertIn("-DMARS_ENABLE_HIP=OFF", config)
+                self.assertIn("-DMARS_STRUCTURED_FORCE_MPI=ON", config)
+                self.assertFalse(any("None" in x for x in config))
+                deps = dict(build_deps.commands(args))["configure"]
+                self.assertIn("-DKokkos_ENABLE_OPENMP=" + ("ON" if backend == "openmp" else "OFF"), deps)
+
+    def test_actual_scheduler_command_places_ranks(self):
+        import mpi_launch
+        for ranks in (1, 2, 4):
+            args = SimpleNamespace(launcher="/usr/bin/srun", ranks=ranks,
+                launcher_arg=["--uenv=fixture", "--cpu-bind=cores"], binary=["/build/test"])
+            for layout in ("single", "multi"):
+                argv = mpi_launch.command(args, layout)
+                nodes = min(ranks, 2) if layout == "multi" else 1
+                self.assertIn("--nodes=" + str(nodes), argv)
+                self.assertIn("--ntasks-per-node=" + str(ranks // nodes), argv)
+                self.assertIn("--export=ALL", argv)
+                self.assertEqual(argv[-1], "/build/test")
+
+    def test_performance_gate_rejects_incomplete_or_slow_results(self):
+        import performance
+        samples = []
+        for ranks in (1, 2, 4):
+            cases = {name: {metric: 1.0 for metric in performance.METRICS} for name in performance.CASES}
+            for repeat in range(5):
+                for variant in ("reference", "candidate"):
+                    samples.append(dict(layout="single", ranks=ranks, round=repeat, variant=variant,
+                                        audit={"cases": copy.deepcopy(cases)}))
+        self.assertTrue(all(x["pass"] for x in performance.compare(samples)))
+        with self.assertRaises(ValueError):
+            performance.compare(samples[:-1])
+        for s in samples:
+            if s["variant"] == "candidate":
+                s["audit"]["cases"]["hilbert-hex-full"]["halo_seconds"] = 2.0
+        self.assertFalse(all(x["pass"] for x in performance.compare(samples)))
+        rows = []
+        for name, (nx, ny, nz) in performance.CASES.items():
+            row = dict(case=name, nx=nx, ny=ny, nz=nz, cells=nx*ny*(nz or 1),
+                       owned_dofs=(nx+1)*(ny+1)*(nz+1 if nz else 1), ranks=1, iterations=20, errors=0)
+            row.update({metric: 1.0 for metric in performance.METRICS})
+            rows.append(row)
+        def checked(rows):
+            return performance.audit(output(1) + "\n" + "\n".join(performance.PREFIX + json.dumps(x) for x in rows),
+                                     1, "cuda", "direct", 1, 1)
+        checked(rows)
+        for key, value in (("errors",1),("owned_dofs",0),("halo_seconds",float("nan")),("nx",0),("iterations",0)):
+            broken = copy.deepcopy(rows)
+            broken[0][key] = value
+            with self.assertRaises(ValueError): checked(broken)
+        with self.assertRaises(ValueError): checked(rows[:-1])
+
+    def test_release_regression_matrix_rejects_missing_and_skipped(self):
+        import regression
+        self.assertEqual(len(regression.NAMES), 48)
+        root = ET.Element("testsuite")
+        for name in regression.NAMES:
+            ET.SubElement(root, "testcase", name=name, status="run")
+        path = self.root / "release.xml"
+        ET.ElementTree(root).write(path)
+        self.assertEqual(len(regression.audit_junit(path)), 48)
+        ET.SubElement(root.find("testcase"), "skipped")
+        ET.ElementTree(root).write(path)
+        with self.assertRaises(ValueError): regression.audit_junit(path)
+        root.remove(root.find("testcase"))
+        ET.ElementTree(root).write(path)
+        with self.assertRaises(ValueError): regression.audit_junit(path)
+
+    def test_release_export_excludes_private_material(self):
+        import export_release
+        for name in ("docs/pump.md", "internal-notes/note.md", "tests/data/private/mesh.e", "pump.stl", "mesh.bin"):
+            self.assertFalse(export_release.eligible(name), name)
+        for name in ("tests/data/poiseuille/poiseuille_hex_14k_elem.e", "tests/release/ReleaseTests.cmake",
+                     "backend/distributed/unstructured/domain.cu"):
+            self.assertTrue(export_release.eligible(name), name)
 
     def test_source_mutation_and_extra_files_rejected(self):
         source = self.root / "source"

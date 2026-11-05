@@ -20,7 +20,7 @@ if(MARS_GPU_LANGUAGE STREQUAL "CUDA" AND Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_C
 endif()
 target_link_libraries(mars_structured_consumer PRIVATE Mars::mars)
 enable_testing()
-if(MARS_GPU_LANGUAGE)
+if(MARS_GPU_LANGUAGE OR MARS_STRUCTURED_FORCE_MPI)
     if(NOT MPIEXEC_EXECUTABLE)
         message(FATAL_ERROR "MPIEXEC_EXECUTABLE is required for the structured GPU consumer, including one-rank cases.")
     endif()

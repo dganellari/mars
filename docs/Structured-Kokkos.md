@@ -110,8 +110,8 @@ later communication.
 The local 2026-11-04 validation uses macOS arm64 and Open MPI 5.0.5 with Kokkos
 4.4.01. The final AppleClang 21 Debug builds using its Serial execution space pass
 with direct and host-staged MPI; an LLVM 19/libomp Release build passes with two
-OpenMP threads and direct MPI. Each configuration passes 11 CTests and 159
-GoogleTest case/rank-count combinations, for 477 combinations total. This counts
+OpenMP threads and direct MPI. Each configuration passes 11 CTests and 168
+GoogleTest case/rank-count combinations, for 504 combinations total. This counts
 each MPI case once, not once per process. Installed-consumer tests pass at one,
 two and four ranks in both communication modes. Kokkos's Serial execution space
 is separate from the excluded MARS serial backend.
@@ -125,14 +125,57 @@ failure detection and short-valued MPI operations.
 CUDA compatibility syntax checks cover the nine library sources, five suites
 and consumer in both modes using LLVM 19, CUDA 12.4 headers and Kokkos 4.4.01.
 These use a private macOS compatibility configuration; they are not native
-compilation, linking or GPU execution. Native CUDA and HIP validation is pending.
-See `KNOWN_LIMITATIONS.md` for the current platform status before making a release
-claim.
+compilation, linking or GPU execution.
+
+The subsequent native builds and tests pass with CUDA 12.9 on NVIDIA GH200
+and HIP/ROCm 7.2.3 on AMD MI300A, using Kokkos 4.4.01. Both direct and host-staged
+MPI pass all 11 structured and 3 installed-consumer CTests at 1/2/4 ranks on one
+node, with a distinct GPU per rank. Each mode covers 168 GoogleTest
+case/rank-count combinations, including full-Hilbert direct partitioning and
+shallow manager copies. CUDA jobs are 5259527 (direct) and 5259528 (staged);
+HIP jobs are 720226 (direct) and 720227 (staged). Their JUnit results, runtime
+receipts and retrieved artifact hashes were independently checked against the
+same frozen source snapshot, whose manifest SHA256 is
+`14eb4f9f7030292f51a392bcd195c6957a7da6a3ff50e421b6c603258ac9976b`.
 
 These tests do not establish old PDE application correctness, staggered
 discretizations, periodic DOF identification, arbitrary
-polynomial orders, empty partitions, large-scale performance or GPU race freedom. Linux and native GPU
-validation remain required before promoting this backend for the next release.
+polynomial orders, empty partitions, large-scale performance or GPU race freedom.
+
+## Release gate
+
+All applicable checks must pass on **CPU, AMD GPUs and NVIDIA GPUs** before
+release. Use the same candidate source on all three platforms and retain its
+hashes, build configuration and runtime receipts. A pass on one platform does
+not cover another. Required tests that fail, are skipped or have no evidence
+keep the release blocked.
+
+| Required check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
+| --- | --- | --- | --- |
+| Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pending; macOS CPU checks pass | Pass, both MPI modes | Pass, both MPI modes |
+| MPI across at least two nodes, including ownership, partition and halo checks | Pending | Pending | Pending |
+| Bounded mesh setup and repeated halo performance checks | Pending | Pending | Pending |
+| Kokkos-OFF build and existing applicable release regressions | Pending on release candidate | Pending on release candidate | Pending on release candidate |
+
+CPU validation includes Kokkos Serial and OpenMP execution, with direct and
+host-staged communication paths. Both use host-accessible buffers on CPU;
+they do not establish GPU-aware MPI. The MARS serial backend stays excluded.
+Both GPU platforms require direct device MPI and host-staged MPI, including
+the multi-node checks. The single-node results above do not cover inter-node
+communication.
+
+Measure setup and repeated halo exchanges on each platform with fixed workloads,
+rank/thread counts and source versions. Define the comparison and acceptance
+criteria before running; include correctness checks with the timings. A
+correctness pass alone does not establish acceptable performance or scaling.
+
+For regressions, validate the supported CPU/core configuration on CPU and the
+existing unstructured release suite on both GPUs. The unstructured GPU backend
+has no CPU release configuration. Keep the backend's optional, OFF-by-default
+behavior and verify supported build combinations. The cluster kit now prepares CPU/GPU capability and installed-package checks,
+multi-node checks and paired setup/halo measurements; a separate runner audits
+the existing 48-test unstructured GPU release suite. These new runs still need
+cluster receipts before any pending row can be closed. AMR remains a separate release scope.
 
 ## Device views and layout lifetime
 
@@ -160,9 +203,23 @@ layout. Do not mutate shared topology arrays while a dependent view is in use.
 The host mesh/handler still borrows its context; keep that context alive, unmoved
 and non-null for host operations. Device snapshots do not borrow the context.
 
+Copy construction of `DM` and `UserData` remains shallow and requires no MPI
+collective. Copies share field storage and host communication plans. The plan
+owner uses a managed host Kokkos view; device copies retain the handle without
+accessing the host plan. The compatibility test exercises legacy manager captures
+as well as copies that outlive the original manager. Prefer `device_view()` for
+new kernels to keep host control state out of their captures.
+
 ## Partition construction
 
-Both curves use the same distributed algorithm. Each rank generates and sorts
+Full Hilbert squares/cubes with power-of-two side lengths directly generate each
+rank's consecutive key interval and partition offsets on device. This path skips
+sorting, splitter searches and key redistribution. Rank sizes differ by at most
+one cell, including uneven rank counts. Map construction and collective input/map
+validation remain. Tests compare against Cartesian reference keys and exercise
+three-rank subcommunicators inside the four-rank gate.
+
+The general case uses the same distributed algorithm for both curves. Each rank generates and sorts
 only its Cartesian share, with at most `ceil(global_cells / ranks)` keys. Parallel
 binary searches and reductions of rank-sized counts select exact SFC split points.
 A sparse MPI distributed graph discovers the destinations' incoming peers, and
@@ -198,7 +255,9 @@ next exchange of the same field; copy them if they must live longer. Gather
 updates ghosts, and additive scatter accumulates remote contributions at their
 unique owner. Unselected fields are unchanged. Peers must select matching fields
 and directions; two independent managers can communicate concurrently because
-they use separate channels. Do not change an in-flight field's layout or access
+they use separate channels. Copies of a manager share one plan: starting an
+exchange through one copy makes it active through every copy, and any copy may
+wait for it. Do not change an in-flight field's layout or access
 its receive values before `wait()`.
 
 Only plan/channel construction is collective. `start` and `wait` use sparse
@@ -208,8 +267,12 @@ operations use `DM` or an explicit `HaloExchangePlan<...>`. Callback helpers now
 post communication before invoking the callback. The blocking cell-field
 `UserData` API also reuses its field buffers and peer requests, on its existing
 shared communicator; calls on that communicator must remain consistently ordered.
+A `UserData` copy made before the first exchange acquires its ghost-buffer handles
+when it exchanges. Copies made after that exchange share the existing ghost views.
 
-Destroy plans and managers before MPI and Kokkos finalize. Destruction completes
-outstanding requests before releasing buffers and the channel. Actual MPI
+Destroy plans and every manager copy before MPI and Kokkos finalize. Destruction
+of the last host copy completes outstanding requests before releasing buffers and
+the channel. Host plan initialization/destruction is sequential, so MPI cleanup
+stays on the calling thread. Actual MPI
 progress during independent work depends on the MPI implementation; the start/wait
 contract does not establish a performance gain or measured overlap.

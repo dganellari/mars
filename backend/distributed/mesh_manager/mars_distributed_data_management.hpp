@@ -24,7 +24,9 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        DM(const DofHandler& d) : dof_handler(d), halo_plan(d) {
+        DM(const DofHandler& d)
+            : dof_handler(d), h_halo_plan_(Kokkos::view_alloc("halo_plan_owner", Kokkos::SequentialHostInit)) {
+            h_halo_plan_() = std::make_unique<HaloExchangePlan<T...>>(d);
             SuperDM::template reserve_user_data<>(
                 user_data, "user_data tuple", get_dof_handler().get_dof_size());
         }
@@ -51,14 +53,14 @@ namespace mars {
         template <Integer... dataidx>
         void gather_ghost_data() {
             // gather operation: fill the data from the received ghost data
-            halo_plan.template start_gather<dataidx...>(user_data);
-            halo_plan.wait();
+            halo_plan().template start_gather<dataidx...>(user_data);
+            halo_plan().wait();
         }
 
         template <Integer... dataidx>
         user_tuple scatter_ghost_data() {
-            halo_plan.template start_scatter<dataidx...>(user_data);
-            return halo_plan.wait();
+            halo_plan().template start_scatter<dataidx...>(user_data);
+            return halo_plan().wait();
         }
 
         template <Integer... dataidx>
@@ -99,10 +101,10 @@ namespace mars {
             SuperDM::template data_iterate<idx>(*this, f);
         }
 
-        template<Integer... fields> void start_gather() { halo_plan.template start_gather<fields...>(user_data); }
-        template<Integer... fields> void start_scatter() { halo_plan.template start_scatter<fields...>(user_data); }
-        user_tuple wait() { return halo_plan.wait(); }
-        const HaloExchangePlan<T...>& exchange_plan() const { return halo_plan; }
+        template<Integer... fields> void start_gather() { halo_plan().template start_gather<fields...>(user_data); }
+        template<Integer... fields> void start_scatter() { halo_plan().template start_scatter<fields...>(user_data); }
+        user_tuple wait() { return halo_plan().wait(); }
+        const HaloExchangePlan<T...>& exchange_plan() const { return halo_plan(); }
 
         struct DeviceView {
             typename DofHandler::DeviceView dofs;
@@ -115,10 +117,13 @@ namespace mars {
         DeviceView device_view() const { return {dof_handler.device_view(), user_data}; }
 
     private:
+        HaloExchangePlan<T...>& halo_plan() const { return *h_halo_plan_(); }
         DofHandler dof_handler;
-        HaloExchangePlan<T...> halo_plan;
         // data associated to the dof data.
         user_tuple user_data;
+        // Copies share the host plan; kernel copies never dereference this handle.
+        // Sequential host destruction keeps MPI completion on the calling thread.
+        Kokkos::View<std::unique_ptr<HaloExchangePlan<T...>>, Kokkos::HostSpace> h_halo_plan_;
     };
 
 }  // namespace mars

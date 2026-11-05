@@ -155,6 +155,12 @@ public:
                 << ",\"hostname\":" << std::quoted(std::string(hostname, hostname_size))
                 << ",\"mpi_library\":" << std::quoted(mpi_library)
                 << ",\"kokkos_version\":" << KOKKOS_VERSION
+                << ",\"concurrency\":" << Kokkos::DefaultExecutionSpace().concurrency()
+#ifdef MARS_NO_RDMA
+                << ",\"transport\":\"staged\""
+#else
+                << ",\"transport\":\"direct\""
+#endif
                 << ",\"mpi_device_buffer\":" << (device_mpi_ ? "true" : "false") << "}";
         // Ordered complete lines keep launcher output machine-readable.
         for (int writer = 0; writer < ranks_; ++writer)
