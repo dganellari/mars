@@ -82,10 +82,13 @@ Release requires every applicable gate on CPU, AMD GPUs and NVIDIA GPUs from the
 same candidate source. On 2026-11-05, Linux CPU Serial/OpenMP passes both MPI
 modes, each with 11 structured and 3 installed-consumer CTests; its Kokkos-OFF
 core build also passes. Both GPUs pass the 48 existing release tests in each
-single-node and two-node launch layout. Structured multi-node MPI and bounded
-setup/halo performance remain open on all three platforms: their validation
-jobs stopped before test execution because the runner replayed an expired
-Slurm allocation. The launcher is corrected; retries remain pending. See the
+single-node and two-node launch layout. Subsequent structured multi-node
+capability/install tests pass in all eight configurations. HIP passes its
+180 setup/halo timing comparisons. Release remains blocked by one CPU
+OpenMP/direct timing rejection, NVIDIA setup timing regressions in both
+transport modes, and an MPI abort in the reference CUDA/direct benchmark
+before the candidate multi-node benchmark runs. Their causes remain unresolved;
+the earlier launcher failures are fixed. See the
 [release matrix](docs/Structured-Kokkos.md#release-gate). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.

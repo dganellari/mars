@@ -153,8 +153,8 @@ keep the release blocked.
 | Required check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
 | --- | --- | --- | --- |
 | Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pass, Serial/OpenMP and both MPI modes | Pass, both MPI modes | Pass, both MPI modes |
-| MPI across at least two nodes, including ownership, partition and halo checks | Pending | Pending | Pending |
-| Bounded mesh setup and repeated halo performance checks | Pending | Pending | Pending |
+| MPI across at least two nodes, including ownership, partition and halo checks | Pass, all four configurations | Pass, both MPI modes | Pass, both MPI modes |
+| Bounded mesh setup and repeated halo performance checks | Blocked: one OpenMP/direct timing rejection | Pass, both MPI modes | Blocked: setup timing rejections and reference MPI abort |
 | Kokkos-OFF build and existing applicable release regressions | Core build passes | Pass, 48 tests in each launch layout | Pass, 48 tests in each launch layout |
 
 Results checked on 2026-11-05 use structured source manifest
@@ -166,12 +166,25 @@ case/rank-count combinations. GPU regression jobs 721522 (HIP) and 5262346
 (CUDA) pass all 48 existing release tests in each single-node and two-node
 launch layout, with Kokkos OFF.
 
-Structured validation jobs 721519, 721521 and 5262345 stopped before test
-execution because the runner replayed the preparation job's expired
-`SLURM_JOB_ID`. The corrected runner preserves the current allocation and GPU
-visibility, and reuses the prepared binaries. Structured multi-node correctness
-and all performance checks remain pending; the launch failure supplies no
-numerical or timing result.
+Validation jobs 721898 (CPU), 721899 (HIP) and 5264408 (CUDA) reuse those
+prepared binaries and pass the 11+3 CTest matrix in every configuration, with
+two/four-rank cases spanning two nodes. The earlier allocation and batch-path
+launch failures are resolved. Runtime receipts, driver hashes, JUnit results
+and raw benchmark samples were independently checked.
+
+HIP passes all 180 setup/halo performance comparisons. CPU Serial/direct,
+Serial/staged and OpenMP/staged pass; OpenMP/direct rejects one of 90 comparisons:
+four-rank single-node Morton Quad4 mesh setup has candidate/reference medians
+2.084/1.810 ms, above the predefined limit of 2.041 ms.
+
+CUDA/staged rejects eight of 90 comparisons. CUDA/direct completes its
+single-node samples, with four of 54 comparisons rejected, then the reference
+binary aborts in MPI during its first two-node, two-rank Morton Quad4 warmup.
+No candidate multi-node benchmark runs in that mode. The largest observed setup
+slowdown is four-rank single-node Hilbert Hex8 rectangular mesh generation:
+4.793/2.688 ms candidate/reference with direct MPI, and 4.963/2.889 ms staged.
+The MPI error and timing regressions remain unresolved. Passing capability tests
+do not close these larger-workload performance gates; release remains blocked.
 
 CPU validation includes Kokkos Serial and OpenMP execution, with direct and
 host-staged communication paths. Both use host-accessible buffers on CPU;
@@ -190,8 +203,8 @@ existing unstructured release suite on both GPUs. The unstructured GPU backend
 has no CPU release configuration. Keep the backend's optional, OFF-by-default
 behavior and verify supported build combinations. The cluster kit prepares CPU/GPU capability and installed-package checks,
 multi-node checks and paired setup/halo measurements; a separate runner audits
-the existing 48-test unstructured GPU release suite. The remaining structured
-multi-node and performance gates still need passing cluster receipts.
+the existing 48-test unstructured GPU release suite. CPU and NVIDIA performance
+gates still need resolution and passing cluster receipts.
 AMR remains a separate release scope.
 
 ## Device views and layout lifetime
