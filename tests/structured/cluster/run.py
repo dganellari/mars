@@ -27,6 +27,30 @@ RECEIPT = "MARS_STRUCTURED_RECEIPT "
 TEST_RECEIPT = "MARS_STRUCTURED_TEST_RECEIPT "
 GTEST_CASES = {"morton_test": 4, "hilbert_test": 5, "mesh_manager_test": 14,
                "dof_handler_test": 16, "mesh_ghost_layer_test": 23}
+TEST_ENVIRONMENT = ("OMP_NUM_THREADS", "MPICH_GPU_SUPPORT_ENABLED", "MPICH_GPU_IPC_ENABLED",
+                    "MARS_STRUCTURED_EXPECT_BACKEND")
+RUNTIME_ENVIRONMENT = TEST_ENVIRONMENT + ("SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_NTASKS",
+    "SLURM_STEP_ID", "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "MARS_GATE_LAYOUT")
+
+
+def execution_environment(recorded):
+    # Scheduler identity and device visibility belong to the current allocation.
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(("MARS_STRUCTURED_", "GTEST_")):
+            del env[key]
+    env.update({key: recorded[key] for key in TEST_ENVIRONMENT if key in recorded})
+    return env
+
+
+def environment_receipt(env):
+    return {key: env[key] for key in RUNTIME_ENVIRONMENT if key in env}
+
+
+def driver_files():
+    directory = Path(__file__).resolve().parent
+    return {str(directory / name): digest(directory / name)
+            for name in ("run.py", "release.py", "performance.py", "mpi_launch.py")}
 
 
 def digest(path):
@@ -270,19 +294,13 @@ def run(args):
     status = {"status": "FAILED", "backend": args.backend, "transport": args.transport,
               "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
               "host": platform.platform(), "child_signal_policy": child_signal_policy()}
-    env = dict(os.environ)
-    for key in list(env):
-        if key.startswith(("MARS_STRUCTURED_", "GTEST_")):
-            del env[key]
+    env = execution_environment({})
     env["MARS_STRUCTURED_EXPECT_BACKEND"] = {"serial": "Serial", "openmp": "OpenMP"}.get(args.backend, args.backend.upper())
     env["MARS_GATE_LAYOUT"] = "single"
     env["OMP_NUM_THREADS"] = str(getattr(args, "threads", 1))
     env["OMP_PROC_BIND"] = "false"
     env["KOKKOS_NUM_THREADS"] = str(getattr(args, "threads", 1))
-    status["environment"] = {key: env[key] for key in (
-        "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "OMP_NUM_THREADS",
-        "MPICH_GPU_SUPPORT_ENABLED", "MPICH_GPU_IPC_ENABLED", "SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_NTASKS",
-        "MARS_STRUCTURED_EXPECT_BACKEND") if key in env}
+    status["environment"] = environment_receipt(env)
     try:
         status["source_manifest_sha256"] = verify_snapshot(args.source)
         status["dependencies"] = verify_dependencies(args)

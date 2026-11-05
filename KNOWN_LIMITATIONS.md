@@ -79,9 +79,13 @@ one-node tests use 1/2/4 ranks with a distinct GPU per rank and cover the final
 full-Hilbert and shallow-manager-copy changes. The source, jobs and checked
 receipts are identified in [Structured Kokkos](docs/Structured-Kokkos.md).
 Release requires every applicable gate on CPU, AMD GPUs and NVIDIA GPUs from the
-same candidate source. Linux CPU validation, multi-node MPI, bounded setup/halo
-performance checks on all three platforms and existing applicable release
-regressions remain open; see the
+same candidate source. On 2026-11-05, Linux CPU Serial/OpenMP passes both MPI
+modes, each with 11 structured and 3 installed-consumer CTests; its Kokkos-OFF
+core build also passes. Both GPUs pass the 48 existing release tests in each
+single-node and two-node launch layout. Structured multi-node MPI and bounded
+setup/halo performance remain open on all three platforms: their validation
+jobs stopped before test execution because the runner replayed an expired
+Slurm allocation. The launcher is corrected; retries remain pending. See the
 [release matrix](docs/Structured-Kokkos.md#release-gate). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.

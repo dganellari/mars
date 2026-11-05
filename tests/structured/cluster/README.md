@@ -61,6 +61,14 @@ single-node launch cannot satisfy this gate. Binary, installed dependency and
 source checksums must still match preparation. The launcher uses the same image
 and binding arguments recorded at preparation.
 
+Only the test backend, thread count and MPI transport settings are reused from
+the preparation environment. Slurm allocation identifiers and GPU visibility
+must come from the current job. Validation and performance receipts record
+that environment and the driver hashes. A corrected driver directory can run
+against an unchanged snapshot and prepared build; keep `run.py`, `release.py`,
+`performance.py` and `mpi_launch.py` together. This avoids rebuilding validated
+binaries when only orchestration changes.
+
 ## Performance comparison
 
 The reference is the separately frozen, previously native-validated `7c0684ad`

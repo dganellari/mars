@@ -152,10 +152,26 @@ keep the release blocked.
 
 | Required check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
 | --- | --- | --- | --- |
-| Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pending; macOS CPU checks pass | Pass, both MPI modes | Pass, both MPI modes |
+| Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pass, Serial/OpenMP and both MPI modes | Pass, both MPI modes | Pass, both MPI modes |
 | MPI across at least two nodes, including ownership, partition and halo checks | Pending | Pending | Pending |
 | Bounded mesh setup and repeated halo performance checks | Pending | Pending | Pending |
-| Kokkos-OFF build and existing applicable release regressions | Pending on release candidate | Pending on release candidate | Pending on release candidate |
+| Kokkos-OFF build and existing applicable release regressions | Core build passes | Pass, 48 tests in each launch layout | Pass, 48 tests in each launch layout |
+
+Results checked on 2026-11-05 use structured source manifest
+`1518a67c6efe04f184adf6c1487fb9dd7392f95ded360235745d20b4e8a58270`.
+Preparation jobs 721518 (CPU), 721520 (HIP) and 5262344 (CUDA) pass all 11+3
+single-node CTests in each configuration. Linux CPU uses GCC 13.4 and Kokkos
+4.4.01, with four OpenMP threads. Each configuration covers 168 GoogleTest
+case/rank-count combinations. GPU regression jobs 721522 (HIP) and 5262346
+(CUDA) pass all 48 existing release tests in each single-node and two-node
+launch layout, with Kokkos OFF.
+
+Structured validation jobs 721519, 721521 and 5262345 stopped before test
+execution because the runner replayed the preparation job's expired
+`SLURM_JOB_ID`. The corrected runner preserves the current allocation and GPU
+visibility, and reuses the prepared binaries. Structured multi-node correctness
+and all performance checks remain pending; the launch failure supplies no
+numerical or timing result.
 
 CPU validation includes Kokkos Serial and OpenMP execution, with direct and
 host-staged communication paths. Both use host-accessible buffers on CPU;
@@ -172,10 +188,11 @@ correctness pass alone does not establish acceptable performance or scaling.
 For regressions, validate the supported CPU/core configuration on CPU and the
 existing unstructured release suite on both GPUs. The unstructured GPU backend
 has no CPU release configuration. Keep the backend's optional, OFF-by-default
-behavior and verify supported build combinations. The cluster kit now prepares CPU/GPU capability and installed-package checks,
+behavior and verify supported build combinations. The cluster kit prepares CPU/GPU capability and installed-package checks,
 multi-node checks and paired setup/halo measurements; a separate runner audits
-the existing 48-test unstructured GPU release suite. These new runs still need
-cluster receipts before any pending row can be closed. AMR remains a separate release scope.
+the existing 48-test unstructured GPU release suite. The remaining structured
+multi-node and performance gates still need passing cluster receipts.
+AMR remains a separate release scope.
 
 ## Device views and layout lifetime
 

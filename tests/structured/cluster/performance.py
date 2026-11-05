@@ -3,7 +3,6 @@
 import argparse
 import json
 import math
-import os
 from pathlib import Path
 import statistics
 import subprocess
@@ -70,7 +69,7 @@ def validate(args):
     if args.work.exists():
         raise ValueError("Use a new performance result directory")
     args.work.mkdir(parents=True)
-    result = {"status": "FAILED", "samples": [], "commands": [], "policy":
+    result = {"status": "FAILED", "samples": [], "commands": [], "driver_files": run.driver_files(), "policy":
               "five alternating reference/candidate rounds; median <= 1.10*reference + 50us setup/DOFs or 5us halo"}
     try:
         candidate = json.loads((args.candidate / "result.json").read_text())
@@ -85,11 +84,11 @@ def validate(args):
         result["reference_manifest_sha256"] = run.verify_snapshot(args.reference)
         result["candidate_result_sha256"] = run.digest(args.candidate / "result.json")
         result["backend"], result["transport"] = candidate["backend"], candidate["transport"]
-        env = dict(os.environ)
-        env.update(candidate["environment"])
+        env = run.execution_environment(candidate["environment"])
         env["OMP_NUM_THREADS"] = str(args.threads)
         env["KOKKOS_NUM_THREADS"] = str(args.threads)
         env["OMP_PROC_BIND"] = "false"
+        result["environment"] = run.environment_receipt(env)
         steps = dict(json.loads((args.candidate / "commands.json").read_text()))
         if args.reuse:
             prepared = json.loads((args.reuse / "result.json").read_text())
@@ -151,6 +150,8 @@ def validate(args):
         result["comparisons"] = compare(result["samples"])
         if run.verify_snapshot(args.source) != result["source_manifest_sha256"] or run.verify_snapshot(args.reference) != result["reference_manifest_sha256"]:
             raise ValueError("Source changed during performance run")
+        if run.driver_files() != result["driver_files"]:
+            raise ValueError("Performance drivers changed during run")
         result["binaries"] = {str(p): run.digest(p) for p in binaries.values()}
         result["status"] = "PASS" if all(x["pass"] for x in result["comparisons"]) else "TIMING_REJECTED"
     except Exception as error:

@@ -4,6 +4,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import signal
@@ -216,6 +217,87 @@ class KitTests(unittest.TestCase):
         for name in ("tests/data/poiseuille/poiseuille_hex_14k_elem.e", "tests/release/ReleaseTests.cmake",
                      "backend/distributed/unstructured/domain.cu"):
             self.assertTrue(export_release.eligible(name), name)
+
+    def test_execution_environment_preserves_live_allocation(self):
+        recorded = {"SLURM_JOB_ID": "old", "SLURM_JOB_NODELIST": "oldnode", "SLURM_NTASKS": "4",
+                    "CUDA_VISIBLE_DEVICES": "0", "HIP_VISIBLE_DEVICES": "0", "ROCR_VISIBLE_DEVICES": "0",
+                    "MPICH_GPU_SUPPORT_ENABLED": "1", "MPICH_GPU_IPC_ENABLED": "0", "OMP_NUM_THREADS": "4",
+                    "MARS_STRUCTURED_EXPECT_BACKEND": "CUDA", "PATH": "/old/path", "OLD_ONLY": "old"}
+        current = dict(os.environ, SLURM_JOB_ID="new", SLURM_JOB_NODELIST="newnodes", SLURM_NTASKS="8",
+                       CUDA_VISIBLE_DEVICES="2,3", HIP_VISIBLE_DEVICES="2,3", ROCR_VISIBLE_DEVICES="2,3",
+                       GTEST_FILTER="wrong", MARS_STRUCTURED_DIAGNOSTIC="wrong")
+        with patch.dict(os.environ, current, clear=True):
+            env = run.execution_environment(recorded)
+        for key in ("SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_NTASKS", "CUDA_VISIBLE_DEVICES",
+                    "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "PATH"):
+            self.assertEqual(env[key], current[key])
+        for key in run.TEST_ENVIRONMENT:
+            self.assertEqual(env[key], recorded[key])
+        self.assertNotIn("OLD_ONLY", env)
+        self.assertNotIn("GTEST_FILTER", env)
+        self.assertNotIn("MARS_STRUCTURED_DIAGNOSTIC", env)
+        with patch.dict(os.environ, {}, clear=True):
+            env = run.execution_environment(recorded)
+        self.assertNotIn("SLURM_JOB_ID", env)
+        self.assertNotIn("CUDA_VISIBLE_DEVICES", env)
+
+    def test_validation_call_sites_launch_with_current_allocation(self):
+        import release
+        import performance
+        class StopAfterProbe(Exception):
+            pass
+        live = dict(os.environ, SLURM_JOB_ID="222", SLURM_JOB_NODELIST="live1,live2", SLURM_NTASKS="4",
+                    SLURM_STEP_ID="batch", CUDA_VISIBLE_DEVICES="2,3", HIP_VISIBLE_DEVICES="2,3")
+        old = {"SLURM_JOB_ID": "111", "SLURM_JOB_NODELIST": "expired", "SLURM_NTASKS": "1",
+               "CUDA_VISIBLE_DEVICES": "0", "HIP_VISIBLE_DEVICES": "0", "OMP_NUM_THREADS": "1",
+               "MARS_STRUCTURED_EXPECT_BACKEND": "CUDA", "MPICH_GPU_SUPPORT_ENABLED": "1"}
+        def probe(command, log, env):
+            process = run.run_child([sys.executable, "-c",
+                "import os,json; print(json.dumps({k:os.environ.get(k) for k in ['SLURM_JOB_ID','SLURM_JOB_NODELIST','SLURM_NTASKS','CUDA_VISIBLE_DEVICES','HIP_VISIBLE_DEVICES']}))"],
+                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            child = json.loads(process.stdout)
+            for key in child:
+                self.assertEqual(child[key], live[key], key)
+            raise StopAfterProbe()
+        source, reference = self.root / "source", self.root / "reference"
+        prep = self.root / "prepared"
+        target = prep / "cuda-direct"
+        target.mkdir(parents=True)
+        (prep / "result.json").write_text(json.dumps({"status":"PREPARED_NOT_RELEASE_VALIDATED",
+            "backend":"cuda", "source_manifest_sha256":"source", "reference_manifest_sha256":"reference"}))
+        (target / "result.json").write_text(json.dumps({"status":"PASS", "source_manifest_sha256":"source",
+            "backend":"cuda", "transport":"direct", "artifacts":{}, "dependencies":{"kokkos_files":{}}, "environment":old}))
+        (target / "commands.json").write_text(json.dumps({"tests":["ctest","--output-junit","old.xml"]}))
+        (target / "consumer-list.log").write_text(json.dumps({"tests":[{"name":"structured_install",
+            "command":["srun","-n","1","/binary/mars_structured_consumer"]}]}))
+        binaries = {}
+        for name in ("candidate", "reference"):
+            path=self.root / (name+"-binary"); path.write_text("fixture")
+            binaries[name]=str(path)
+        reuse = self.root / "performance-build"
+        reuse.mkdir()
+        (reuse / "result.json").write_text(json.dumps({"status":"BUILT_NOT_RUN",
+            "source_manifest_sha256":"source", "reference_manifest_sha256":"reference",
+            "candidate_result_sha256":run.digest(target/"result.json"), "binary_paths":binaries,
+            "binaries":{path:run.digest(path) for path in binaries.values()}}))
+        helper = run.execution_environment
+        for legacy in (False, True):
+            environment = (lambda recorded: dict(os.environ, **recorded)) if legacy else helper
+            expected_error = AssertionError if legacy else StopAfterProbe
+            args = SimpleNamespace(source=source, reference=reference, prepared=prep, backend="cuda",
+                                   threads=4, work=self.root / ("distributed-old" if legacy else "distributed-new"))
+            args.work.mkdir()
+            record={"source_manifest_sha256":"source", "reference_manifest_sha256":"reference", "configurations":[]}
+            with patch.dict(os.environ, live, clear=True), patch.object(run, "execution_environment", side_effect=environment), \
+                 patch.object(release, "execute", side_effect=probe):
+                with self.assertRaises(expected_error): release.validate(args, record)
+            args=SimpleNamespace(source=source, reference=reference, candidate=target, reuse=reuse, threads=1,
+                multi_node=True, prepare_only=False, work=self.root / ("performance-old" if legacy else "performance-new"))
+            with patch.dict(os.environ, live, clear=True), patch.object(run, "execution_environment", side_effect=environment), \
+                 patch.object(run, "verify_snapshot", side_effect=lambda path: "source" if path==source else "reference"), \
+                 patch.object(performance, "execute", side_effect=probe):
+                with self.assertRaises(expected_error): performance.validate(args)
 
     def test_source_mutation_and_extra_files_rejected(self):
         source = self.root / "source"

@@ -2,7 +2,6 @@
 """Prepare once, then run the structured CPU/CUDA/HIP distributed release gates."""
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -64,7 +63,8 @@ def prepare(args, result):
 
 
 def validate(args, result):
-    kit = args.source / "tests/structured/cluster"
+    # Updated orchestration can reuse an immutable, already validated source build.
+    kit = Path(__file__).resolve().parent
     prepared = json.loads((args.prepared / "result.json").read_text())
     if (prepared.get("status") != "PREPARED_NOT_RELEASE_VALIDATED" or
             prepared.get("source_manifest_sha256") != result["source_manifest_sha256"] or
@@ -81,12 +81,11 @@ def validate(args, result):
         for path, checksum in dict(checked["artifacts"], **checked["dependencies"]["kokkos_files"]).items():
             if run.digest(path) != checksum:
                 raise ValueError("Prepared artifact changed: " + path)
-        env = dict(os.environ)
-        env.update(checked["environment"])
+        env = run.execution_environment(checked["environment"])
         threads = args.threads if backend == "openmp" else 1
         env.update(MARS_GATE_LAYOUT="multi", OMP_NUM_THREADS=str(threads), KOKKOS_NUM_THREADS=str(threads), OMP_PROC_BIND="false")
         commands = dict(json.loads((target / "commands.json").read_text()))
-        record = {"name": name, "multinode": {}}
+        record = {"name": name, "multinode": {}, "environment": run.environment_receipt(env)}
         for phase, expected, gtest in (("tests", run.SUITES, True), ("consumer-tests", run.CONSUMER, False)):
             argv = commands[phase][:]
             xml = args.work / (name + "-" + phase + ".xml")
@@ -136,13 +135,16 @@ def main():
     if args.phase == "validate" and not args.prepared:
         parser.error("Validation needs --prepared")
     args.work.mkdir(parents=True)
-    result = {"status": "FAILED", "backend": args.backend, "configurations": [], "threads": args.threads}
+    result = {"status": "FAILED", "backend": args.backend, "configurations": [], "threads": args.threads,
+              "driver_files": run.driver_files()}
     try:
         result["source_manifest_sha256"] = run.verify_snapshot(args.source)
         result["reference_manifest_sha256"] = run.verify_snapshot(args.reference)
         (prepare if args.phase == "prepare" else validate)(args, result)
         if run.verify_snapshot(args.source) != result["source_manifest_sha256"] or run.verify_snapshot(args.reference) != result["reference_manifest_sha256"]:
             raise ValueError("Source changed during run")
+        if run.driver_files() != result["driver_files"]:
+            raise ValueError("Validation drivers changed during run")
     except Exception as error:
         result.update(status="FAILED", error=str(error))
         print("FAILED: " + str(error), file=sys.stderr)
