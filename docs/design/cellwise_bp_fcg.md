@@ -312,8 +312,8 @@ No staging of the field (this commit). The schedule copied u into shared memory 
 which paid while threads read the field many times. With one thread per 1D line the first sweep
 reads u once and the last writes y once, so both now go straight to global memory. Shared memory
 per element falls 8-35% (BP1 p = 3 3776 -> 2720 B, p = 7 24976 -> 16272 B, two elements per block
-again; BP3 p = 7 48304 -> 39600 B; BP3 p = 1 32 elements per block instead of 16). Same process
-binary, staged against unstaged PTX, one GH200, operator ms (GB/s):
+again; BP3 p = 7 48304 -> 39600 B; BP3 p = 1 32 elements per block instead of 16). Same binary,
+staged against unstaged PTX in separate runs, one GH200, operator ms (GB/s):
 
 | | staged | unstaged |
 |---|---|---|
@@ -326,7 +326,8 @@ binary, staged against unstaged PTX, one GH200, operator ms (GB/s):
 
 The p-multigrid solve, warm: 1037.5 -> 1010.5 ms at p = 3 and 1747.7 -> 1405.3 ms at p = 7, the same
 iterations and true residuals (14, 3.084e-11; 15, 2.628e-11). From before step 1 the operators are
-1.4-1.6x faster at p = 3 and 7 for BP1 and BP3 (BP1 p = 3 2.92 -> 1.83 ms, BP3 p = 7 16.76 -> 11.35 ms).
+1.3-1.6x faster at p = 3 and 7 (BP1 p = 3 2.92 -> 1.83 ms, p = 7 5.72 -> 4.41; BP3 p = 3 8.44 -> 6.31,
+p = 7 16.76 -> 11.35).
 The 12 BP gates pass and TSan is clean at bp1 p = 7 and bp3 p = 3; the trilinear kernels are
 regenerated the same way but have not run on a GPU yet.
 
