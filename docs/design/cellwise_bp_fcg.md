@@ -292,7 +292,21 @@ loops, so every matrix entry is read at a constant address (BP1 p = 3: 20 `ld.co
 p = 7; filling the gate's B with Bt fails it. Shared memory per element +3-15%; launch shapes as
 before except BP1 p = 7, one element per block instead of two (2 x 24976 B > 48 KB). The options
 are opt-in: the CVFEM cell-wise operators keep their schedule (only the fma of step 1 changes
-them; not regenerated yet). GPU pending.
+them; not regenerated yet).
+
+GPU (bf087b34, one GH200, same runs as step 1), operator ms step 1 -> step 2: BP1 p = 1 0.466 ->
+0.437 (-6%), p = 3 2.920 -> 2.373 (-19%), p = 7 5.569 -> 5.395 (-3%); BP3 p = 3 8.391 -> 6.859
+(-18%), p = 7 16.172 -> 15.600 (-4%). BP1 operator + block DSS at p = 3: 15.95 GDoF/s (was 14.01;
+the reference's A100 Table 7: 13.9). Nsight Compute, BP1 p = 3: L1/TEX 96% -> 67%, DRAM 28% -> 38%
+(1789 GB/s on the timer, 45% of 4.0 TB/s); BP3 p = 3: DRAM 36% -> 47% (2148 GB/s). p = 3 is no longer
+bound by L1. p = 7 is now bound by occupancy: one or two warps per block with 25-48 KB of shared
+memory per element, achieved occupancy 12%, L1 23% and DRAM 15% (BP1).
+The p-multigrid solve (128^3 p = 3, 64^3 p = 7, BoomerAMG, warm): 14 and 15 iterations as before
+(true residuals 3.084e-11 and 2.628e-11, were 3.105e-11 and 2.793e-11: the rounding changed), solve
+1198 -> 1066 ms (-11%) at p = 3 and 1854 -> 1751 ms (-6%) at p = 7. BP3 p = 7 with DSS-Jacobi alone
+reached the FCG tolerance after 2458 iterations with a true residual of 1.6e-10, above the 1e-10
+test (error 2.3e-12): the gap between FCG's and the true residual over many Jacobi iterations,
+not this change; the step-1 run stopped at 2000 iterations before that.
 
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
