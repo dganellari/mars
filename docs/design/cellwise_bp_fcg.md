@@ -266,7 +266,21 @@ Step 1 (this commit): `--mir-cellwise-schedule` turns each contraction step out 
 `math.fma` (BP1 p = 3: 120 fma and 1 multiply in the PTX, before 0 and 121). The BP gates pass
 for bp1, bp3, bp1_tri and bp3_tri at p = 1, 3, 7 (the gate is a tolerance against direct sums,
 so the new rounding is fine). The CVFEM operators of the same schedule are not regenerated yet.
-GPU pending.
+
+GPU (df67598a, one GH200, 128^3 or 64^3 at p = 7, every run PASS except one, see below), operator ms
+before -> after: BP1 p = 1 0.461-0.468 -> 0.466, p = 3 2.92-3.02 -> 2.920, p = 7 5.715 -> 5.569
+(-2.6%); BP3 p = 3 8.435 -> 8.391, p = 7 16.760 -> 16.172 (-3.5%). Nsight Compute, BP1 p = 3: 3.79 ->
+3.73 ms, L1/TEX 95.7% -> 96.3%. Half the arithmetic instructions buy almost nothing: the operators
+are bound by L1/TEX requests, not by arithmetic. (BP3 p = 7 with DSS-Jacobi and no multigrid
+stopped at the 2000-iteration limit, error 3.5e-10 against the 1e-10 test; that run had no
+multigrid by mistake, not a wrong result.)
+
+Where the L1/TEX requests come from (BP1 p = 3, the scheduled IR): the 1D matrices B and Bt are
+kernel arguments in global memory, and every sweep re-reads them for every element and reduction
+step. The x-sweep keeps a field value in a register for its 5 outputs but loads each B(i, j) once
+per output: 5 matrix loads per field load. The y- and z-sweeps keep B(i, j) and read 5 field values
+from shared memory. The reference's mass operator needs neither: its even-odd factorization
+halves the matrices and its tensor-core tiles hold them in registers.
 
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
