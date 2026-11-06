@@ -48,16 +48,25 @@ class UnfencedTests(unittest.TestCase):
         path = self.root / 'sample.rank0.json'
         data = {'rank': 0, 'status': 'complete', 'dropped': 0, 'tools_loaded': True,
                 'tools_finalized': True, 'global_fencing': False, 'hostname': 'fixture',
+                'waitall_retains_statuses': False,
                 'events': [{'kind': 'mpi', 'name': 'MPI_Allreduce', 'seconds': .001},
                            {'kind': 'parallel_for', 'name': 'fixture', 'seconds': .001}]}
         path.write_text(json.dumps(data))
         diagnose.observer(prefix, 1, 'host')
-        for change in ({'global_fencing': True}, {'tools_loaded': False}, {'tools_finalized': False}):
+        for change in ({'global_fencing': True}, {'tools_loaded': False}, {'tools_finalized': False},
+                       {'waitall_retains_statuses': True}, {'waitall_retains_statuses': None}):
             path.write_text(json.dumps(dict(data, **change)))
             with self.assertRaises(ValueError):
                 diagnose.observer(prefix, 1, 'host')
         path.write_text(json.dumps(data))
         with self.assertRaisesRegex(ValueError, 'MPI-only'):
+            diagnose.observer(prefix, 1, 'mpi-quiet')
+        data.update(tools_loaded=False, tools_finalized=False)
+        path.write_text(json.dumps(data))
+        diagnose.observer(prefix, 1, 'mpi-quiet')
+        data['waitall_retains_statuses'] = True
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'status argument'):
             diagnose.observer(prefix, 1, 'mpi-quiet')
 
     def test_profiles_cannot_pass_controls_or_hide_missing_rounds(self):

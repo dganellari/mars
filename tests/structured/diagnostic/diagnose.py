@@ -58,6 +58,8 @@ def observer(prefix, ranks, mode, probe=False):
             raise ValueError('No Kokkos kernels were observed')
         if mode == 'mpi-quiet' and (data['tools_loaded'] or data['global_fencing']):
             raise ValueError('MPI-only trace enabled Kokkos profiling')
+        if mode in ('mpi-quiet', 'host') and data.get('waitall_retains_statuses') is not False:
+            raise ValueError('Timing observer must preserve the MPI_Waitall status argument')
         totals = collections.defaultdict(lambda: {'calls': 0, 'seconds': 0.0})
         for event in data['events']:
             key = event['kind'] + ':' + event['name']

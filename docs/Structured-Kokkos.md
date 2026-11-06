@@ -160,19 +160,44 @@ hashes, build configuration and runtime receipts. A pass on one platform does
 not cover another. Required tests that fail, are skipped or have no evidence
 keep the release blocked.
 
-The pending DOF optimization sorts identical owned/local candidate lists once,
-while retaining independent final key arrays. It passes local Serial/direct and
-OpenMP/staged checks, but needs fresh native validation on all three platforms.
-The table below records the preceding candidate's evidence; those passes do not
-validate this new change. The current suite adds minimum valid partitions and
-contains 171 case/rank-count combinations.
+The DOF optimization sorts identical owned/local candidate lists once, while
+retaining independent final key arrays. The completed 2026-11-06 native matrix
+passes correctness and installation checks on all three platforms. The suite
+includes minimum valid partitions and171 case/rank-count combinations. Setup
+timing acceptance remains incomplete, as recorded below.
 
 | Required check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
 | --- | --- | --- | --- |
 | Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pass, Serial/OpenMP and both MPI modes | Pass, both MPI modes | Pass, both MPI modes |
 | MPI across at least two nodes, including ownership, partition and halo checks | Pass, all four configurations | Pass, both MPI modes | Pass, both MPI modes |
-| Bounded mesh setup and repeated halo performance checks | Pass, all four configurations | Pass, both MPI modes | Blocked: ten setup timing rejections; MPI abort resolved |
+| Bounded mesh setup and repeated halo performance checks | 359/360 pass; one OpenMP DOF setup rejection | Pass, 180/180 | 172/180 pass; eight setup rejections; MPI abort resolved |
 | Kokkos-OFF build and existing applicable release regressions | Core build passes | Pass, 48 tests in each launch layout | Pass, 48 tests in each launch layout |
+
+Current preparation/validation jobs are724562/724563 (CPU),724564/724565 (HIP)
+and5275808/5275809 (CUDA), with structured source manifest
+`79b112f4813a5244a8a2166b522017e91832a9bd76430d90ff79f1cda19738d4`.
+All eight configurations pass11 structured and3 installed-consumer CTests in
+both launch layouts. All400 benchmark invocations pass correctness; all240 halo
+comparisons pass. Independent review verifies781 downloaded artifact hashes,
+all720 comparison verdicts and16 CUDA diagnostic invocations plus3 preflights.
+Binary/install hashes not downloaded remain runner-recorded.
+
+CPU's remaining rejection is four-rank/two-node OpenMP/direct Hilbert Quad4
+full-grid DOF setup:10.425ms reference versus12.200ms candidate. CUDA has six
+direct and two staged rejections. Four direct multi-node setup medians increase
+from2.991–5.707ms to40.509–58.983ms; the other four CUDA rejections are13–21%
+DOF setup increases. The single-GPU CUDA DOF medians improve by11–16% across
+the six direct-mode workloads. These bounded results do not establish scaling.
+
+The large delays recur on the earlier failing node pair nid005463/nid005500.
+They do not recur in the subsequent MPI-only or unfenced host profiles in the
+same allocation. That observer replaces `MPI_STATUSES_IGNORE` with a status
+array, so its absence of stalls cannot establish their cause. The diagnostic
+wrapper now preserves that argument by default and timing audits reject status
+replacement. This local diagnostic correction has not established a native
+timing fix; the original eight CUDA failures remain rejected.
+
+### Earlier native results
 
 Results checked on 2026-11-05 use structured source manifest
 `1518a67c6efe04f184adf6c1487fb9dd7392f95ded360235745d20b4e8a58270`.
@@ -250,8 +275,9 @@ checked. Three of126 focused control comparisons reject. The repeatable
 single-rank Morton Quad4 DOF slowdown is concentrated in CUDA temporary allocation
 and free calls around the two sorts. The large multi-node stalls do not recur in
 these untouched controls on a different node pair; their cause remains unresolved.
-The new full validation uses the earlier failing CUDA node pair and retains
-unfenced diagnostic traces after the uninstrumented gate.
+Full validation5275809 uses the earlier failing CUDA node pair and retains
+unfenced diagnostic traces after the uninstrumented gate; its results and the
+observer limitation are recorded above.
 
 CPU validation includes Kokkos Serial and OpenMP execution, with direct and
 host-staged communication paths. Both use host-accessible buffers on CPU;

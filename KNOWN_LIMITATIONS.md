@@ -85,20 +85,29 @@ core build also passes. Both GPUs pass the 48 existing release tests in each
 single-node and two-node launch layout. Subsequent structured multi-node
 capability/install tests pass in all eight configurations. HIP passes its
 180 setup/halo timing comparisons. CPU confirmation722701 passes the full90
-OpenMP/direct comparisons, completing the current CPU gate while retaining the
+OpenMP/direct comparisons, completing the preceding CPU gate while retaining the
 earlier rejected result. CUDA5267897/5267898 confirms the MPI failure comes from
 pooled CUDA allocations on this stack; rebuilding Kokkos with malloc_async OFF
 passes all correctness gates and100 benchmark invocations without MPI failure.
-Release remains blocked by ten NVIDIA setup timing rejections across direct and
+That candidate retains ten NVIDIA setup timing rejections across direct and
 staged modes. The private buffer-lifetime trial5269247 still rejects eight setup
 comparisons and is not adopted. Fenced profiles did not reproduce the large
 multi-node delays. Their cause remains unresolved, with no new implementation
 accepted for release. Unfenced diagnostic5269661 narrows the repeatable
 single-rank cost to sort-time CUDA allocations/frees; its untouched
 controls do not reproduce the large multi-node stalls on a different node pair.
-A pending optimization removes the second sort when the owned/local candidate
-lists are provably identical. Local checks pass, including minimum valid meshes;
-fresh CPU, HIP and CUDA native gates are required before accepting this change.
+The optimization removes the second sort when the owned/local candidate lists
+are provably identical. Native validation completed on2026-11-06: all eight
+CPU/HIP/CUDA configurations pass correctness/install checks, including minimum
+valid meshes and one/two-node MPI. All400 benchmark invocations pass correctness
+and all240 halo comparisons pass. HIP passes180/180 timing comparisons; CPU
+passes359/360 and CUDA172/180. One CPU and eight CUDA setup comparisons still
+block timing acceptance. CUDA's large direct multi-node delays recur on the
+earlier failing node pair. The diagnostic observer changes the MPI_Waitall
+status argument, so the absence of stalls in its profiles does not explain
+them. A locally checked observer correction preserves this argument; it is not
+a proven native performance fix. No full matrix rerun is required merely for
+that diagnostic-only change.
 See the [release matrix](docs/Structured-Kokkos.md#release-gate). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.

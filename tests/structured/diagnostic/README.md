@@ -5,8 +5,10 @@ prepared reference and candidate benchmark binaries. It builds only an observer
 library and small MPI activation probes. It does not rebuild MARS, change its
 algorithms or relax the release limits. AMD's passing gate is not repeated.
 
-The current CPU gate passes. CUDA's pooled-allocation MPI failure is resolved by
-the checked Kokkos dependency recipe, but setup timing regressions remain. The
+The completed sort-once matrix passes correctness and installed-consumer checks
+on CPU, AMD and NVIDIA. AMD passes all timing comparisons; one CPU and eight
+CUDA setup comparisons remain rejected. CUDA's pooled-allocation MPI failure is
+resolved by the checked Kokkos dependency recipe. The
 partition-buffer lifetime trial did not resolve them and is not adopted.
 
 `unfenced.py` targets the remaining CUDA timings. It reuses the original binaries
@@ -21,6 +23,13 @@ global fencing disabled. The wrappers forward the original calls and return
 codes without adding CUDA operations. Host callbacks measure host time, including
 existing waits; they do not measure asynchronous GPU kernel duration. Activation
 preflights verify the actual native interposition before interpreting traces.
+
+Timing observers now preserve the original `MPI_Waitall` status argument.
+The earlier observer, including job5275809, replaced `MPI_STATUSES_IGNORE` with
+a status array even in `mpi-quiet` mode. This can select a different MPI wait
+path, so the absence of large stalls in those traces does not establish why
+the uninstrumented run stalled. It is a diagnostic confound, not a proven cause.
+The original acceptance samples remain valid and their failures are retained.
 
 Both modes record the existing `MPI_Wtime` return values. `setup_trace.py` checks
 all 528 timer calls per rank and reconstructs the benchmark's reported max-rank
@@ -57,9 +66,12 @@ failure cannot suppress the scheduled candidate diagnostics. Successful control
 runs are compared using the original formula and preserved raw samples. These
 focused controls do not replace the full release matrix.
 
-The PMPI observer preserves message buffers, counts and return codes. It retains
-`MPI_Waitall` statuses when the application discards them, so individual request
-errors remain available. On error it
+The PMPI observer preserves message buffers, counts, status arguments and return
+codes by default. `MARS_DIAG_RETAIN_STATUSES=1` explicitly enables replacement
+of ignored `MPI_Waitall` statuses for an error investigation. Timing audits
+reject this mode and older traces without an explicit status-policy receipt.
+When statuses are ignored, aggregate errors remain visible; individual request
+errors are reported only when a status array is available. On error it
 prints the operation, error class/string, rank, peer, tag and count before the
 application aborts. The native preflight intentionally sends to an invalid rank
 on an errors-return communicator and requires per-rank observer receipts. This
@@ -84,3 +96,8 @@ Runtime injection on macOS may be suppressed, while Kokkos plugin loading still
 works; that is not evidence for Linux PMPI injection. Native jobs therefore
 require activation of the ordinary, unlinked probe through `LD_PRELOAD` before
 running benchmarks. Local host profiling does not validate GPU execution.
+
+`ctest -R trace_waitall_contract` checks forwarding and return codes against a
+controlled PMPI implementation, including ignored/explicit statuses, empty
+waits, errors and opt-in retention. It does not test native MPI transport or
+establish the cause of the cluster timing failures.

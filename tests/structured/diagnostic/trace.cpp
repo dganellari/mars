@@ -87,6 +87,7 @@ void flush(const char* status) {
         << ",\"pid\":" << getpid() << ",\"tools_loaded\":" << (s.tools ? "true" : "false")
         << ",\"tools_finalized\":" << (s.tools_finalized ? "true" : "false")
         << ",\"global_fencing\":" << (enabled("MARS_DIAG_FENCE") ? "true" : "false")
+        << ",\"waitall_retains_statuses\":" << (enabled("MARS_DIAG_RETAIN_STATUSES") ? "true" : "false")
         << ",\"cuda_trace_requested\":" << (enabled("MARS_DIAG_CUDA") ? "true" : "false")
         << ",\"dropped\":" << s.dropped << ",\"events\":[";
     bool comma = false;
@@ -211,9 +212,9 @@ double MPI_Wtime() {
     return value;
 }
 int MPI_Waitall(int count, MPI_Request* requests, MPI_Status* statuses) {
-    // Retain request errors when the application does not request status objects.
+    // Status replacement is opt-in: it can change the MPI library's wait path.
     std::vector<MPI_Status> retained;
-    if (count > 0 && statuses == MPI_STATUSES_IGNORE) {
+    if (count > 0 && statuses == MPI_STATUSES_IGNORE && enabled("MARS_DIAG_RETAIN_STATUSES")) {
         retained.resize(count);
         statuses = retained.data();
     }
@@ -221,7 +222,7 @@ int MPI_Waitall(int count, MPI_Request* requests, MPI_Status* statuses) {
     int error = PMPI_Waitall(count, requests, statuses);
     int error_class = MPI_SUCCESS;
     if (error != MPI_SUCCESS) PMPI_Error_class(error, &error_class);
-    if (error_class == MPI_ERR_IN_STATUS) {
+    if (error_class == MPI_ERR_IN_STATUS && statuses != MPI_STATUSES_IGNORE) {
         for (int i = 0; i < count; ++i) {
             if (statuses[i].MPI_ERROR != MPI_SUCCESS && statuses[i].MPI_ERROR != MPI_ERR_PENDING) {
                 std::string operation = "MPI_Waitall request " + std::to_string(i);
