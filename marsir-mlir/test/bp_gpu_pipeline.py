@@ -47,12 +47,12 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
 
     # Per element: u (first), the geometry G (the last input, when the spec reads any)
     # and the out-param y (last); the 1D matrices are shared. Bufferization renames the
-    # arguments, so they are found by position. The field is staged into shared
-    # memory, the result out of it.
+    # arguments, so they are found by position. u and y are not staged in shared memory:
+    # with one thread per 1D line the first sweep reads u once and the last writes y once.
     m = re.search(rf"(func\.func @{spec}_apply\()(.*?)(\) \{{)", ir, re.S)
     args = m.group(2).split(", ")
-    args[0] += ' {mir.element, mir.stage = "in"}'
-    args[-1] += ' {mir.element, mir.stage = "out"}'
+    args[0] += ' {mir.element}'
+    args[-1] += ' {mir.element}'
     if "%G:" in src or "%X:" in src:   # stored geometry, or the corners (geometry = trilinear)
         args[-2] += " {mir.element}"
     # The 1D matrices B, Bt [, D, Dt] follow u: constant memory, filled by the host.
