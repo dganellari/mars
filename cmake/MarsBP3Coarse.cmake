@@ -1,33 +1,13 @@
-# The private callbacks must remain replaceable in the linked Hypre library.
-find_path(_mars_bp3_hypre_include HYPRE_config.h PATHS ${HYPRE_INCLUDE_DIRS} NO_DEFAULT_PATH NO_CACHE REQUIRED)
-file(READ "${_mars_bp3_hypre_include}/HYPRE_config.h" _mars_bp3_hypre_config)
-if(NOT _mars_bp3_hypre_config MATCHES "#define HYPRE_RELEASE_NUMBER[ \t]+23300([ \r\n]|$)"
-   OR NOT _mars_bp3_hypre_config MATCHES "#define HYPRE_USING_CUDA([ \r\n]|$)")
-    message(FATAL_ERROR "BP3 coarse consolidation requires CUDA-enabled Hypre 2.33.0 headers")
-endif()
-
-set(_mars_bp3_hypre_candidates ${HYPRE_LIBRARIES})
-list(FILTER _mars_bp3_hypre_candidates INCLUDE REGEX "/lib(HYPRE|hypre)[.-]")
-list(LENGTH _mars_bp3_hypre_candidates _mars_bp3_hypre_count)
-if(NOT _mars_bp3_hypre_count EQUAL 1)
-    message(FATAL_ERROR "BP3 coarse consolidation requires one resolved Hypre library path")
-endif()
-list(GET _mars_bp3_hypre_candidates 0 _mars_bp3_hypre_library)
-if(NOT _mars_bp3_hypre_library MATCHES "\\.so(\\.|$)")
-    message(FATAL_ERROR "BP3 coarse consolidation needs shared Hypre with replaceable callbacks")
-endif()
-find_program(_mars_bp3_readelf NAMES readelf llvm-readelf REQUIRED)
-execute_process(COMMAND "${_mars_bp3_readelf}" -rW "${_mars_bp3_hypre_library}"
-    RESULT_VARIABLE _mars_bp3_readelf_status OUTPUT_VARIABLE _mars_bp3_relocations
-    ERROR_VARIABLE _mars_bp3_readelf_error)
-if(NOT _mars_bp3_readelf_status EQUAL 0)
-    message(FATAL_ERROR "Cannot inspect Hypre callback relocations: ${_mars_bp3_readelf_error}")
-endif()
-foreach(_mars_bp3_callback hypre_seqAMGSetup hypre_seqAMGCycle)
-    if(NOT _mars_bp3_relocations MATCHES "[^\n]*(JUMP_SLOT|GLOB_DAT)[^\n]*${_mars_bp3_callback}([ \n]|$)")
-        message(FATAL_ERROR "Hypre does not expose a replaceable ${_mars_bp3_callback} callback")
+include(${CMAKE_CURRENT_LIST_DIR}/MarsBP3CoarseSupport.cmake)
+mars_bp3_coarse_support(_mars_bp3_reason _mars_bp3_hypre_library)
+if(_mars_bp3_reason)
+    if(_mars_bp3_mode STREQUAL "ON")
+        message(FATAL_ERROR "BP3 coarse consolidation ${_mars_bp3_reason}")
     endif()
-endforeach()
+    message(STATUS "BP3 coarse consolidation disabled: ${_mars_bp3_reason}")
+    return()
+endif()
+message(STATUS "BP3 coarse consolidation enabled (${_mars_bp3_mode}, shared CUDA Hypre 2.33.0)")
 
 add_library(mars_bp3_coarse OBJECT
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/solvers/mars_cellwise_amg_consolidate.cu)

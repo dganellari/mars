@@ -1,4 +1,4 @@
-"""Build the unchanged default and opt-in targets through MARS's top-level CMake."""
+"""Build explicit OFF and automatic targets through MARS's top-level CMake."""
 import argparse
 import json
 from pathlib import Path
@@ -24,14 +24,14 @@ def configure_args(bundle, build, enabled):
             '-DMARS_ENABLE_UNSTRUCTURED=ON', '-DMARS_ENABLE_HYPRE=ON', '-DMARS_ENABLE_MARSIR=ON',
             '-DMARS_ENABLE_FEM_EXAMPLES=ON', '-DMARS_ENABLE_MPI=ON', '-DMARS_ENABLE_TESTS=ON',
             '-DMARS_ENABLE_DEV_EXAMPLES=OFF',
-            '-DMARS_ENABLE_BP3_COARSE_CONSOLIDATION=' + ('ON' if enabled else 'OFF'),
             '-DHYPRE_INCLUDE_DIR=' + str(prefix / 'include'), '-DHYPRE_LIBRARY=' + str(HYPRE),
             '-DFETCHCONTENT_SOURCE_DIR_CORNERSTONE_FETCH=' + str(bundle / 'dependencies/cornerstone'),
             '-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=' + str(bundle / 'dependencies/googletest'),
-            '-DCMAKE_DISABLE_FIND_PACKAGE_GTest=ON', '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + mpi_args()
+            '-DCMAKE_DISABLE_FIND_PACKAGE_GTest=ON', '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'] + mpi_args() + (
+                [] if enabled else ['-DMARS_ENABLE_BP3_COARSE_CONSOLIDATION=OFF'])
 
 
-def build(bundle, out):
+def build(bundle, out, extra_on=()):
     verify_bundle(bundle)
     if not shutil.which('mpicxx') or not shutil.which('nvcc'):
         raise ValueError('The pinned CUDA uenv must expose mpicxx and nvcc')
@@ -48,7 +48,8 @@ def build(bundle, out):
     binaries = {}
     for mode in ('off', 'on'):
         directory = out / mode
-        command(configure_args(bundle, directory, mode == 'on'), out / (mode + '-configure.log'), timeout=600)
+        options = list(extra_on) if mode == 'on' else []
+        command(configure_args(bundle, directory, mode == 'on') + options, out / (mode + '-configure.log'), timeout=600)
         targets = ['mars_marsir_bp', 'mars_marsir_cellwise_solve']
         if mode == 'on':
             targets.append('mars_bp3_coarse_test')

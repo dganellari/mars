@@ -33,15 +33,20 @@ def verify_accepted(bundle):
         raise ValueError('Generated kernels differ from the accepted control')
 
 
-def solve(bundle, prepared, root, name, mode, ranks, p, ne, cutoff):
+def solve(bundle, prepared, root, name, mode, ranks, p, ne, cutoff, executable=None, automatic=False):
     out = root / name
     out.mkdir()
+    executable = binary(prepared, mode) if executable is None else executable
     args = step(ranks) + ['/usr/bin/python3', str(HERE / 'rank.py'), str(out),
-                         'no' if mode == 'off' else 'yes', str(binary(prepared, mode))]
-    args += solver_args(bundle / 'generated', p, ne, cutoff)
+                         'no' if mode == 'off' else 'yes', str(executable)]
+    flags = solver_args(bundle / 'generated', p, ne, cutoff)
+    if automatic:
+        index = flags.index('--amg-consolidate')
+        del flags[index:index + 2]
+    args += flags
     command(args, out / 'solver.log')
     result = parse(out, ranks, cutoff, mode != 'off')
-    expected_sha = digest(binary(prepared, mode))
+    expected_sha = digest(executable)
     for rank in range(ranks):
         receipt = json.loads((out / ('process%d.json' % rank)).read_text())
         if receipt['rank'] != rank or receipt['returncode'] != 0 or receipt['binary_sha256'] != expected_sha:

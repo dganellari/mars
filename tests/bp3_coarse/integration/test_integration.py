@@ -60,6 +60,27 @@ class Integration(unittest.TestCase):
                                         env=dict(os.environ, MPICH_GPU_SUPPORT_ENABLED='1'), universal_newlines=True)
                 self.assertEqual(result.returncode == 0, expected, result.stderr)
                 records.append(dict(enabled=enabled, args=args[1:], passed=result.returncode == 0))
+            base = common.solver_args(Path('/generated'), 3, 8, 0)
+            index = base.index('--amg-consolidate')
+            del base[index:index + 2]
+            for extra, values, selected in (
+                ([], {}, -1),
+                (['--amg-consolidate', '0'], {}, 0),
+                (['--amg-agg', '1'], {}, 0),
+                (['--amg-theta', '0.5'], {}, 0),
+                (['--amg-coarse-size', '500'], {}, 0),
+                ([], {'MARS_HYPRE_GPU_AWARE': '0'}, 0),
+                ([], {'MARS_HYPRE_SPMV_VENDOR': '1'}, 0),
+                ([], {'MARS_HYPRE_SPGEMM_VENDOR': '1'}, 0)):
+                env = dict(os.environ, MPICH_GPU_SUPPORT_ENABLED='1', MARS_HYPRE_GPU_AWARE='1',
+                           MARS_HYPRE_SPMV_VENDOR='0', MARS_HYPRE_SPGEMM_VENDOR='0')
+                env.update(values)
+                result = subprocess.run([str(binary)] + base + extra, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, env=env, universal_newlines=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(int(result.stdout.split()[0]), selected if enabled else 0)
+                records.append(dict(enabled=enabled, automatic=True, extra=extra, environment=values,
+                                    selected=selected if enabled else 0))
         common.save(EVIDENCE / 'cli-checks.json', records)
 
     def test_config_guards(self):
@@ -74,10 +95,16 @@ class Integration(unittest.TestCase):
             script.write_text('\n'.join(lines) + '\n')
             result = subprocess.run(['cmake', '-P', str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(result.returncode == 0, missing is None, result.stderr.decode())
+            script.write_text(script.read_text().replace('CONSOLIDATION ON CACHE BOOL', 'CONSOLIDATION AUTO CACHE STRING') + '\nif(NOT MARS_BP3_COARSE_REQUESTED STREQUAL \"' + ('TRUE' if missing is None else 'FALSE') + '\")\n message(FATAL_ERROR \"wrong automatic selection\")\nendif()\n')
+            if missing == 'CUDA':
+                script.write_text(script.read_text().replace('MARS_ENABLE_UNSTRUCTURED ON', 'MARS_ENABLE_UNSTRUCTURED OFF'))
+            result = subprocess.run(['cmake', '-P', str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_callback_abi_guards(self):
         # These synthetic inputs exercise CMake rejection, not GPU ABI compatibility.
         module = (REPO / 'cmake/MarsBP3Coarse.cmake').read_text().split('add_library(mars_bp3_coarse OBJECT')[0]
+        module = module.replace('${CMAKE_CURRENT_LIST_DIR}', str(REPO / 'cmake'))
         include = self.root / 'include'
         include.mkdir()
         library = self.root / 'libHYPRE.so'
@@ -87,10 +114,12 @@ class Integration(unittest.TestCase):
         reader.chmod(0o755)
         header = '#define HYPRE_RELEASE_NUMBER 23300\n#define HYPRE_USING_CUDA\n'
         relocations = '0 R_AARCH64_JUMP_SLOT 0 hypre_seqAMGSetup + 0\n0 R_AARCH64_JUMP_SLOT 0 hypre_seqAMGCycle + 0\n'
-        for mutation in ('valid', 'version', 'backend', 'static', 'unresolved', 'setup', 'cycle'):
+        for mutation in ('valid', 'version', 'backend', 'static', 'unresolved', 'setup', 'cycle', 'single', 'complex', 'bigint', 'long_double'):
             config = header.replace('23300', '23400') if mutation == 'version' else header
             if mutation == 'backend':
                 config = config.replace('#define HYPRE_USING_CUDA', '/* #undef HYPRE_USING_CUDA */')
+            if mutation in ('single', 'complex', 'bigint', 'long_double'):
+                config += '#define HYPRE_' + mutation.upper() + '\n'
             (include / 'HYPRE_config.h').write_text(config)
             text = relocations
             if mutation in ('setup', 'cycle'):
@@ -98,10 +127,14 @@ class Integration(unittest.TestCase):
             (self.root / 'relocs').write_text(text)
             path = str(library).replace('.so', '.a') if mutation == 'static' else 'HYPRE' if mutation == 'unresolved' else str(library)
             script = self.root / 'abi.cmake'
-            script.write_text('set(HYPRE_INCLUDE_DIRS "{}")\nset(HYPRE_LIBRARIES "{}")\n'
+            script.write_text('set(_mars_bp3_mode ON)\nset(HYPRE_INCLUDE_DIRS "{}")\nset(HYPRE_LIBRARIES "{}")\n'
                               'set(_mars_bp3_readelf "{}")\n'.format(include, path, reader) + module)
             result = subprocess.run(['cmake', '-P', str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(result.returncode == 0, mutation == 'valid', result.stderr.decode())
+            script.write_text(script.read_text().replace('set(_mars_bp3_mode ON)', 'set(_mars_bp3_mode AUTO)'))
+            result = subprocess.run(['cmake', '-P', str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertIn(b'enabled' if mutation == 'valid' else b'disabled', result.stdout)
 
     def test_native_log_reader(self):
         if not (HISTORY / '5253440').is_dir():

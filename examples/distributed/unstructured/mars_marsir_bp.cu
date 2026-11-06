@@ -810,6 +810,7 @@ struct Options {
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
     int consolidate_rows = 0;
+    bool consolidate_explicit = false;
     int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
     bool p1_assembled = false;   // set from the others after parsing
@@ -1529,6 +1530,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-agg")) o.amg_agg = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-coarse-size")) o.amg_coarse_size = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-consolidate")) {
+            o.consolidate_explicit = true;
             char* end = nullptr;
             const long rows = std::strtol(argv[i + 1], &end, 10);
             if (end == argv[i + 1] || *end || rows < -1 || rows > 50000)
@@ -1549,6 +1551,16 @@ int main(int argc, char** argv)
     if (!error && o.mg && o.p == 1 && !o.amg) error = "--mg at p = 1 needs --amg (the coarse solve is the whole cycle)";
     if (!error && o.amg_cycles < 1) error = "--amg-cycles must be positive";
     if (!error && o.solves < 1) error = "--solves must be positive";
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+    // Use the measured policy automatically with the validated AMG settings.
+    const char* gpu_aware = std::getenv("MARS_HYPRE_GPU_AWARE");
+    const char* vendor = std::getenv("MARS_HYPRE_SPMV_VENDOR");
+    const char* spgemm_vendor = std::getenv("MARS_HYPRE_SPGEMM_VENDOR");
+    if (!o.consolidate_explicit && o.amg && o.amg_theta == 0.25 && o.amg_agg == 0 && o.amg_coarse_size == 9 &&
+        (!gpu_aware || !strcmp(gpu_aware, "1")) && (!vendor || strcmp(vendor, "1")) &&
+        (!spgemm_vendor || strcmp(spgemm_vendor, "1")))
+        o.consolidate_rows = -1;
+#endif
     if (!error && (o.consolidate_rows < -1 || o.consolidate_rows > 50000 || (o.consolidate_rows > 0 && o.consolidate_rows <= 9)))
         error = "--amg-consolidate expects -1 (adaptive), 0 (off), or 10..50000";
     if (!error && o.consolidate_rows != 0 && !o.amg) error = "--amg-consolidate needs --amg";

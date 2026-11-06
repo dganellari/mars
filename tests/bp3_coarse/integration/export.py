@@ -10,7 +10,7 @@ ROOTS = ('backend/', 'base/', 'cmake/', 'core/', 'examples/', 'io/', 'kokkos/', 
 SUFFIXES = {'.cmake', '.in', '.hpp', '.h', '.hxx', '.cpp', '.cc', '.c', '.cu', '.cuh', '.py', '.sh'}
 NEW = ('backend/distributed/unstructured/solvers/mars_cellwise_amg_consolidate.cu',
        'backend/distributed/unstructured/solvers/mars_cellwise_amg_consolidate.hpp',
-       'cmake/MarsBP3Coarse.cmake', 'tests/bp3_coarse/fixture.cu', 'tests/bp3_coarse/register.cmake')
+       'cmake/MarsBP3Coarse.cmake', 'cmake/MarsBP3CoarseSupport.cmake', 'tests/bp3_coarse/fixture.cu', 'tests/bp3_coarse/register.cmake')
 REVISIONS = {'cornerstone': '2a95e63b0ca5454712ab83f27505055c078887dc',
              'googletest': '15460959cbbfa20e66ef0b5ab497367e47fc0a04'}
 
