@@ -282,6 +282,18 @@ per output: 5 matrix loads per field load. The y- and z-sweeps keep B(i, j) and 
 from shared memory. The reference's mass operator needs neither: its even-odd factorization
 halves the matrices and its tensor-core tiles hold them in registers.
 
+Step 2 (this commit): the matrices move to constant memory and every sweep becomes one thread
+per 1D line. `--mir-cellwise-schedule` turns {mir.constant} arguments into globals
+`<kernel>__m0 .. __m3` in the GPU's constant memory, which `GalerkinPtx` fills from the host's
+matrices when their pointers change; with `max-block = q` a sweep keeps the field line in the
+thread (constant inputs no longer count as reuse), and `unroll-reductions` unrolls the reduction
+loops, so every matrix entry is read at a constant address (BP1 p = 3: 20 `ld.const` and no
+`ld.global` of a matrix left in the PTX). All 12 BP gates pass, TSan clean at bp1 p = 3 and bp3
+p = 7; filling the gate's B with Bt fails it. Shared memory per element +3-15%; launch shapes as
+before except BP1 p = 7, one element per block instead of two (2 x 24976 B > 48 KB). The options
+are opt-in: the CVFEM cell-wise operators keep their schedule (only the fma of step 1 changes
+them; not regenerated yet). GPU pending.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form

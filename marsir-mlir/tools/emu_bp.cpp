@@ -8,7 +8,7 @@
 //   w          = v + sum_d Dt along axis d of dv_d
 //   y[i,j,k]   = sum_abc Bt[i,a] Bt[j,b] Bt[k,c] w[a,b,c]
 // Defines: BP_NAME (kernel), BP_SPEC_BP1 | BP_SPEC_BP3, BP_Q, BP_K (geometry components),
-// BP_GRAD (D and Dt are arguments), MIR_EMU_REAL (float for the f32 kernel).
+// BP_GRAD (D and Dt are used), MIR_EMU_REAL (float for the f32 kernel).
 // BP_TRILINEAR (geometry = trilinear): the kernel takes gq (random points in [-1, 1]), wq
 // (random positive weights) and the corners X (a perturbed unit cube per element) instead
 // of G; the oracle forms G from them by direct sums over the corners (w det J, or the
@@ -37,10 +37,12 @@ using D2 = Desc<Real, 2>;
 using D4 = Desc<Real, 4>;
 using D5 = Desc<Real, 5>;
 extern "C" {
-void BP_CAT(_mlir_ciface_, BP_NAME)(D4*, D2*, D2*,
+// The 1D matrices are globals of the kernel (constant memory on the GPU), filled here.
+extern Real BP_CAT(BP_NAME, __m0)[], BP_CAT(BP_NAME, __m1)[];
 #ifdef BP_GRAD
-                                    D2*, D2*,
+extern Real BP_CAT(BP_NAME, __m2)[], BP_CAT(BP_NAME, __m3)[];
 #endif
+void BP_CAT(_mlir_ciface_, BP_NAME)(D4*,
 #ifdef BP_TRILINEAR
                                     D1*, D1*, D5*,
 #elif BP_K > 0
@@ -140,10 +142,14 @@ int main(int argc, char** argv)
 
     D4 du{ru.data(), ru.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
     D4 dy{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
-    D2 dB{rB.data(), rB.data(), 0, {Q, n}, {n, 1}}, dBt{rBt.data(), rBt.data(), 0, {n, Q}, {Q, 1}};
-    D2 dD{rD.data(), rD.data(), 0, {Q, Q}, {Q, 1}}, dDt{rDt.data(), rDt.data(), 0, {Q, Q}, {Q, 1}};
+    std::copy(rB.begin(), rB.end(), BP_CAT(BP_NAME, __m0));
+    std::copy(rBt.begin(), rBt.end(), BP_CAT(BP_NAME, __m1));
+#ifdef BP_GRAD
+    std::copy(rD.begin(), rD.end(), BP_CAT(BP_NAME, __m2));
+    std::copy(rDt.begin(), rDt.end(), BP_CAT(BP_NAME, __m3));
+#endif
     D5 dG{rG.data(), rG.data(), 0, {E, K, Q, Q, Q}, {K * q3, q3, (int64_t)Q * Q, Q, 1}};
-    (void)dD, (void)dDt, (void)dG;
+    (void)dG;
 
     Warp w;
     w.bar.threads = (int)BP_CAT(BP_NAME, __threads)();
@@ -155,10 +161,7 @@ int main(int argc, char** argv)
                 tlLane = L;
                 tlBlock = b;
                 tlGrid = E;
-                BP_CAT(_mlir_ciface_, BP_NAME)(&du, &dB, &dBt,
-#ifdef BP_GRAD
-                                               &dD, &dDt,
-#endif
+                BP_CAT(_mlir_ciface_, BP_NAME)(&du,
 #ifdef BP_TRILINEAR
                                                &dgq, &dwq, &dX,
 #elif BP_K > 0

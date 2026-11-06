@@ -23,6 +23,16 @@
 // Options: lanes per element (default: n^2 of the element's n^3 nodes, at most 32)
 // and warps per block (default 8: 256 threads), set on the element loop for
 // --mir-warp-per-element.
+//
+// {mir.constant} arguments (the 1D matrices of a Galerkin operator: the same for every
+// element and thread) become globals <func>__m<k>, k counting them in argument order,
+// in address space const-space (4: the GPU's constant memory), defined uninitialized:
+// the host fills them once (cuModuleGetGlobal). Their loads then go through the constant cache, not L1/TEX with the field.
+// They also no longer count as reuse when a loop dimension is kept in the thread,
+// so a sweep keeps the field (one thread per 1D line, all its outputs), and with
+// unroll-reductions its reduction loops are unrolled: the matrix indices are then
+// constants, which ptxas folds into the fma operands. max-block: the longest
+// dimension kept in the thread.
 
 #include "mir/MirPasses.h"
 #include "mir/ViewTypes.h"
@@ -47,7 +57,7 @@ using namespace mlir;
 
 namespace {
 
-constexpr StringLiteral kElementAttr = "mir.element", kStageAttr = "mir.stage";
+constexpr StringLiteral kElementAttr = "mir.element", kStageAttr = "mir.stage", kConstantAttr = "mir.constant";
 
 Value rootOf(Value m) {
   while (Operation *def = m.getDefiningOp()) {
@@ -92,7 +102,6 @@ SmallVector<Value> indices(AffineMap map, ValueRange loopIvs) {
 // reduction step and the outputs along the dimension accumulate in registers. The
 // summation order of each output is unchanged. This is how a hand kernel's thread
 // keeps a column in registers and applies it for all faces.
-constexpr int64_t kMaxBlock = 8;
 
 // The step of a contraction, out + a * b (either order of the add), as the factors a and b:
 // it becomes one math.fma, as nvcc contracts the hand kernels (half the FP64 instructions).
@@ -110,7 +119,13 @@ std::optional<std::pair<Value, Value>> mulAdd(Block *region, BlockArgument out) 
   return std::make_pair(mul.getLhs(), mul.getRhs());
 }
 
-LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
+bool inConstantSpace(Value v) {
+  auto t = dyn_cast<MemRefType>(v.getType());
+  auto space = t ? dyn_cast_or_null<IntegerAttr>(t.getMemorySpace()) : IntegerAttr();
+  return space && space.getInt() != 0;
+}
+
+LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes, int64_t maxBlock, bool unrollReductions) {
   for (AffineMap m : op.getIndexingMapsArray())
     if (!m.isProjectedPermutation())
       return op->emitOpError("cellwise schedule: indexing maps must be projected permutations");
@@ -156,7 +171,7 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
   if (!red.empty()) {
     int best = 0;
     for (unsigned d : par) {
-      if (ranges[d] > kMaxBlock || ranges[d] < 2)
+      if (ranges[d] > maxBlock || ranges[d] < 2)
         continue;
       int64_t rest = 1;
       for (unsigned e : par)
@@ -166,7 +181,8 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
         continue;
       int reuse = 0;
       for (OpOperand *in : ins)
-        if (isa<MemRefType>(in->get().getType()) && !op.getMatchingIndexingMap(in).isFunctionOfDim(d))
+        if (isa<MemRefType>(in->get().getType()) && !inConstantSpace(in->get()) &&
+            !op.getMatchingIndexingMap(in).isFunctionOfDim(d))
           ++reuse;
       if (reuse > best) {
         best = reuse;
@@ -243,6 +259,14 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes) {
         [&](OpBuilder &nb, Location nl, unsigned k, ValueRange accs) -> SmallVector<Value> {
       if (k == red.size())
         return step(nb, nl, accs);
+      if (unrollReductions) {
+        SmallVector<Value> a(accs);
+        for (int64_t r = 0; r < ranges[red[k]]; ++r) {
+          ivs[red[k]] = cidx(nb, nl, r);
+          a = nest(nb, nl, k + 1, a);
+        }
+        return a;
+      }
       auto loop = nb.create<scf::ForOp>(nl, cidx(nb, nl, 0), cidx(nb, nl, ranges[red[k]]), cidx(nb, nl, 1), accs,
                                         [&](OpBuilder &lb, Location ll, Value iv, ValueRange a) {
                                           ivs[red[k]] = iv;
@@ -283,6 +307,13 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
   CellwiseSchedulePass(const CellwiseSchedulePass &other) : PassWrapper(other) {}
   Option<int64_t> lanes{*this, "lanes", llvm::cl::desc("lanes per element (0: n^2, at most 32)"), llvm::cl::init(0)};
   Option<int64_t> warps{*this, "warps", llvm::cl::desc("warps per block"), llvm::cl::init(8)};
+  Option<int64_t> maxBlock{*this, "max-block", llvm::cl::desc("longest loop dimension kept in a thread"),
+                           llvm::cl::init(8)};
+  Option<bool> unrollReductions{*this, "unroll-reductions", llvm::cl::desc("unroll the reduction loops"),
+                                llvm::cl::init(false)};
+  Option<int64_t> constSpace{*this, "const-space",
+                             llvm::cl::desc("address space of the {mir.constant} globals (4: GPU constant memory)"),
+                             llvm::cl::init(4)};
 
   StringRef getArgument() const final { return "mir-cellwise-schedule"; }
   StringRef getDescription() const final {
@@ -298,6 +329,33 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
     MLIRContext *ctx = func.getContext();
     Block &entry = func.getBody().front();
     Location loc = func.getLoc();
+
+    // 0. {mir.constant} arguments into constant-memory globals.
+    {
+      SmallVector<unsigned> constants;
+      for (unsigned i = 0; i < func.getNumArguments(); ++i)
+        if (func.getArgAttr(i, kConstantAttr))
+          constants.push_back(i);
+      auto module = func->getParentOfType<ModuleOp>();
+      OpBuilder gb = OpBuilder::atBlockBegin(module.getBody());
+      OpBuilder fb = OpBuilder::atBlockBegin(&entry);
+      llvm::BitVector erase(func.getNumArguments());
+      for (auto [k, i] : llvm::enumerate(constants)) {
+        auto t = dyn_cast<MemRefType>(func.getArgument(i).getType());
+        if (!t || !t.hasStaticShape())
+          return func.emitOpError("cellwise schedule: a {mir.constant} argument must be a static memref");
+        auto gt = MemRefType::get(t.getShape(), t.getElementType(), MemRefLayoutAttrInterface(),
+                                  gb.getI64IntegerAttr(constSpace));
+        const std::string name = (func.getName() + "__m" + Twine(k)).str();
+        gb.create<memref::GlobalOp>(loc, gb.getStringAttr(name), /*sym_visibility=*/StringAttr(), TypeAttr::get(gt),
+                                    /*initial_value=*/gb.getUnitAttr(), /*constant=*/UnitAttr(), IntegerAttr());
+        Value g = fb.create<memref::GetGlobalOp>(loc, gt, name);
+        func.getArgument(i).replaceAllUsesWith(g);
+        erase.set(i);
+      }
+      func.eraseArguments(erase);
+    }
+
     SmallVector<unsigned> marked;
     for (unsigned i = 0; i < func.getNumArguments(); ++i)
       if (func.getArgAttr(i, kElementAttr))
@@ -453,7 +511,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
             return op->emitOpError("cellwise schedule: cannot generalize");
           lop = cast<linalg::LinalgOp>(g->getOperation());
         }
-        if (failed(lowerLinalg(lop, init, L)))
+        if (failed(lowerLinalg(lop, init, L, maxBlock, unrollReductions)))
           return failure();
         continue;
       }

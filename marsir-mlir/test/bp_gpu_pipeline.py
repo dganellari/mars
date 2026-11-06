@@ -8,8 +8,9 @@ PTX, or to the CPU warp emulation.
   --convert-mir-to-linalg, bufferize       as for the CVFEM operator (hl_gpu_pipeline.py)
   --mir-cellwise-schedule, --mir-fuse-phases, --mir-warp-per-element
   -> generated/{spec}_p{p}[_f32]_sm90.ptx  kernel {spec}_apply_p{p}[_f32]; arguments u,
-     B (q x n), Bt (n x q), [D, Dt (q x q)], [G (E x K x q^3)], y; launch shape
-     published as {kernel}__launch
+     [G (E x K x q^3)], y; the 1D matrices B (q x n), Bt (n x q) [, D, Dt (q x q)] in
+     constant memory, {kernel}__m0 .. __m3, filled by the host; launch shape published as
+     {kernel}__launch
 
 --emulate: tools/emu_bp.cpp runs the emulated kernel on random u, matrices and geometry
 against direct six-index sums. --q=Q sets the Gauss points (default p + 2), --f32 the
@@ -54,6 +55,9 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     args[-1] += ' {mir.element, mir.stage = "out"}'
     if "%G:" in src or "%X:" in src:   # stored geometry, or the corners (geometry = trilinear)
         args[-2] += " {mir.element}"
+    # The 1D matrices B, Bt [, D, Dt] follow u: constant memory, filled by the host.
+    for i in range(1, 5 if "%D:" in src else 3):
+        args[i] += " {mir.constant}"
     ir = ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {" + ir[m.end(3):]
 
     # Warps per block: the CVFEM operator's measured default, halved (fewer elements
@@ -62,7 +66,11 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     warps = given or (4 if p >= 3 else 8)
     bufferized = ir
     while True:
-        ir = hl.run([hl.MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+        # One thread per 1D line (max-block = q), unrolled; on the CPU the matrices stay in
+        # address space 0.
+        space = 0 if "--emulate" in sys.argv else 4
+        sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space={space}"
+        ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse",
                      "--mir-fuse-phases", "--canonicalize", "--cse",
                      "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"],
                     bufferized)
@@ -77,7 +85,8 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
                                        f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
                               + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else []))
         suffix = "_f32" if real == "f32" else ""
-        named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(")
+        named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(").replace(
+            f"@{spec}_apply__m", f"@{spec}_apply_p{p}{suffix}__m")
         status = hl.finish(named, p, suffix, no_chain=True, prefix=spec)
         ptx = open(os.path.join(hl.ROOT, "generated", f"{spec}_p{p}{suffix}_sm90.ptx")).read()
         shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))

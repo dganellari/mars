@@ -1,11 +1,13 @@
 #pragma once
 // A Galerkin operator MARSIR generates from a `form = galerkin` spec
 // (marsir-compiler/specs/bp1.op, bp3.op; PTX from marsir-mlir/test/bp_gpu_pipeline.py),
-// run on element-local vectors. Kernel contract: {spec}_apply_p{p}(u, B, Bt, [D, Dt],
-// [G], y) with u, y E x n x n x n (n = p + 1 GLL nodes per axis), B q x n (the GLL basis
-// at the q Gauss points), Bt its transpose, D the q x q Gauss-point derivative and Dt its
-// transpose (when the spec reads a gradient), G E x K x q x q x q (the K geometry
-// components the spec reads), each an MLIR memref descriptor. A `geometry = trilinear`
+// run on element-local vectors. Kernel contract: {spec}_apply_p{p}(u, [G], y) with u, y
+// E x n x n x n (n = p + 1 GLL nodes per axis) and G E x K x q x q x q (the K geometry
+// components the spec reads), each an MLIR memref descriptor. The 1D matrices are globals
+// in constant memory, {kernel}__m0 .. __m3: B q x n (the GLL basis at the q Gauss points),
+// Bt its transpose, and when the spec reads a gradient D, the q x q Gauss-point derivative,
+// and Dt its transpose; read at constant indices, they become fma operands instead of
+// loads through L1. They are copied in when their pointers change. A `geometry = trilinear`
 // spec (bp1_tri.op, bp3_tri.op) takes gq, wq (q: the Gauss points and weights) and X (E x
 // 3 x 2 x 2 x 2: the corners by component, then corner bit along each reference axis)
 // instead of G, and forms the geometry in registers. The launch shape is the published
@@ -36,6 +38,9 @@ public:
             threads_ = (unsigned)v[0];
             per_block_ = v[1];
         }
+        for (int k = 0; k < (grad ? 4 : 2); ++k)
+            MARS_MARSIR_CU(cuModuleGetGlobal(&matrix_[k], &matrix_bytes_[k], module_,
+                                             (kernel + "__m" + std::to_string(k)).c_str()));
     }
     ~GalerkinPtx() { cuModuleUnload(module_); }
     GalerkinPtx(const GalerkinPtx&) = delete;
@@ -83,12 +88,14 @@ private:
                 const std::vector<Desc>& geometry, double* y, long long E, cudaStream_t stream) const
     {
         if (E == 0) return;
-        const long long n = p_ + 1, q = q_;
-        std::vector<Desc> descs{make(u, {E, n, n, n}), make(B, {q, n}), make(Bt, {n, q})};
-        if (grad_) {
-            descs.push_back(make(D, {q, q}));
-            descs.push_back(make(Dt, {q, q}));
-        }
+        const long long n = p_ + 1;
+        const double* source[4] = {B, Bt, D, Dt};
+        for (int k = 0; k < (grad_ ? 4 : 2); ++k)
+            if (source[k] != copied_[k]) {
+                MARS_MARSIR_CU(cuMemcpyDtoDAsync(matrix_[k], (CUdeviceptr)source[k], matrix_bytes_[k], (CUstream)stream));
+                copied_[k] = source[k];
+            }
+        std::vector<Desc> descs{make(u, {E, n, n, n})};
         descs.insert(descs.end(), geometry.begin(), geometry.end());
         descs.push_back(make(y, {E, n, n, n}));
         std::vector<void*> params;
@@ -110,6 +117,9 @@ private:
     int K_;
     unsigned threads_ = 32;
     long long per_block_ = 1;
+    CUdeviceptr matrix_[4] = {};
+    size_t matrix_bytes_[4] = {};
+    mutable const double* copied_[4] = {};   // the matrices last copied into matrix_
 };
 
 }  // namespace marsir
