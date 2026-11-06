@@ -53,7 +53,7 @@ class Policy(unittest.TestCase):
         private = self.root / 'private'
         candidate.generate(REPO, private)
         text = (private / 'driver/mars_marsir_bp.cu').read_text()
-        options = text[text.index('struct Options {'):text.index('\n\ntemplate <int P>\nint run(const Options& o)')]
+        options = text[text.index('struct Options {'):text.index('\ntemplate <int P>\nint run(const Options& o)')]
         start = text.index('    Options o;', text.index('int main(int argc, char** argv)'))
         body = text[start:text.index('    const int status = o.p == 1 ? run<1>(o)', start)]
         source = self.root / 'cli.cpp'
@@ -61,7 +61,7 @@ class Policy(unittest.TestCase):
             '#define MARS_ENABLE_HYPRE 1\n#define MARS_BP3_COARSE_CONSOLIDATION 1\n'
             '#define MPI_MAX_LIBRARY_VERSION_STRING 128\n'
             'void MPI_Get_library_version(char*s,int*n){std::strcpy(s,"MPICH");*n=5;}\nvoid MPI_Finalize(){}\n' +
-            options + '\nint main(int argc,char**argv){int rank=0,ranks=64;\n' + body +
+            (REPO / 'tests/bp3_coarse/integration/cli_stubs.hpp').read_text() + options + '\nint main(int argc,char**argv){int rank=0,ranks=64;\n' + body +
             'std::printf("selected %d\\n",o.consolidate_rows);return 0;}\n')
         binary = self.root / 'cli'
         subprocess.run(['c++', '-std=c++20', '-Wall', '-Wextra', '-Werror', str(source), '-o', str(binary)], check=True)

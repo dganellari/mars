@@ -84,7 +84,7 @@ def solver_args(generated, p, ne, cutoff):
             '--tol', '1e-13', '--true-tol', '1e-10', '--maxit', '2000', '--solves', '3', '--reps', '1', '--amg-print']
 
 
-def parse(directory, ranks, cutoff, audited=True):
+def parse(directory, ranks, cutoff, audited=True, solves=3):
     log = (directory / 'solver.log').read_text()
     matches = re.findall(r'FCG \+ V-cycle: (\d+) iterations, sqrt\(<r,z>/<r0,z0>\) = (\S+), true assembled residual (\S+)', log)
     if len(matches) != 1 or not re.search(r'\bPASS\b', log) or re.search(r'\bFAIL\b', log):
@@ -96,7 +96,7 @@ def parse(directory, ranks, cutoff, audited=True):
     times = [float(x) for x in wall[1].split()] if wall else []
     event = re.search(r'FCG iteration\s+[\d.]+ ms\s+\(solve ([\d.]+) ms, \+ setup ([\d.]+) ms', log)
     coarse = re.search(r'coarse solve\s+([\d.]+) ms per V-cycle', log)
-    if len(times) != 3 or not event or not coarse:
+    if len(times) != solves or not event or not coarse:
         raise ValueError('Missing solve timings')
     if not all(math.isfinite(x) and x > 0 for x in times + [float(event[1]), float(coarse[1])]):
         raise ValueError('Invalid solve timings')

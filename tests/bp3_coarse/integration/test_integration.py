@@ -34,14 +34,14 @@ class Integration(unittest.TestCase):
 
     def test_cli_from_real_driver(self):
         text = (REPO / 'examples/distributed/unstructured/mars_marsir_bp.cu').read_text()
-        options = text[text.index('struct Options {'):text.index('\n\ntemplate <int P>\nint run(const Options& o)')]
+        options = text[text.index('struct Options {'):text.index('\ntemplate <int P>\nint run(const Options& o)')]
         start = text.index('    Options o;', text.index('int main(int argc, char** argv)'))
         body = text[start:text.index('    const int status = o.p == 1 ? run<1>(o)', start)]
         source = self.root / 'cli.cpp'
         source.write_text('#include <string>\n#include <cstdio>\n#include <cstring>\n#include <cstdlib>\n'
             '#define MARS_ENABLE_HYPRE 1\n#define MPI_MAX_LIBRARY_VERSION_STRING 128\n'
             'void MPI_Get_library_version(char*s,int*n){std::strcpy(s,"MPICH");*n=5;}\nvoid MPI_Finalize(){}\n' +
-            options + '\nint main(int argc,char**argv){int rank=0,ranks=64;\n' + body +
+            (REPO / 'tests/bp3_coarse/integration/cli_stubs.hpp').read_text() + options + '\nint main(int argc,char**argv){int rank=0,ranks=64;\n' + body +
             'std::printf("%d %d %d\\n",o.consolidate_rows,o.p,o.ne);return 0;}\n')
         records = []
         for enabled in (False, True):
@@ -78,7 +78,7 @@ class Integration(unittest.TestCase):
                 result = subprocess.run([str(binary)] + base + extra, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, env=env, universal_newlines=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(int(result.stdout.split()[0]), selected if enabled else 0)
+                self.assertEqual(int(result.stdout.splitlines()[-1].split()[0]), selected if enabled else 0)
                 records.append(dict(enabled=enabled, automatic=True, extra=extra, environment=values,
                                     selected=selected if enabled else 0))
         common.save(EVIDENCE / 'cli-checks.json', records)

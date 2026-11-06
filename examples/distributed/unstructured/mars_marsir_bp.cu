@@ -115,6 +115,11 @@
 
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_cellwise_amg.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_h_coarse.hpp"
+namespace bp3_h = mars::cellwise::h_coarse;
+#ifdef MARS_BP3_HCOARSE_CHECK
+#include "check.hpp"
+#endif
 #endif
 
 #include <cuda_profiler_api.h>
@@ -809,6 +814,11 @@ struct Options {
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
     int p = 3, ne = 32, maxit = 2000, reps = 20, block = 0, pre = 2, post = 2, coarse = 100, amg_cycles = 3;
     int solves = 1;
+    int h_levels = -1;   // automatic for measured configurations; zero keeps p=1 AMG
+    bool h_automatic = true;
+#ifdef MARS_BP3_HCOARSE_CHECK
+    bool h_check = false;
+#endif
     int consolidate_rows = 0;
     bool consolidate_explicit = false;
     int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
@@ -824,6 +834,23 @@ struct Options {
     double amg_theta = 0.25;
     int amg_agg = 0, amg_coarse_size = 9;
 };
+
+bool h_configuration(const Options& o)
+{
+    return o.mg && o.amg && (o.p == 3 || o.p == 7) && o.spec == "bp3" && o.mesh.empty() &&
+           !o.block && !o.rotate && o.block_dss.empty() && o.dss_ptx.empty() &&
+           o.smoother == "jacobi" && o.cheb_interval == "mars" && o.pre == 2 && o.post == 2;
+}
+
+// These are measured benchmark choices, not a scaling model for other workloads.
+[[maybe_unused]] int measured_h_levels(int p, int ne, int ranks, int solves)
+{
+    if (p == 3 && ((ranks == 8 && ne == 128) || (ranks == 64 && (ne == 128 || ne == 256)))) return 2;
+    if (p == 7 && ranks == 64 && ne == 128) return 1;
+    // Four later solves recover the worst observed extra setup cost at eight ranks.
+    if (p == 7 && ranks == 8 && ne == 64 && solves >= 5) return 1;
+    return 0;
+}
 
 template <int P>
 int run(const Options& o)
@@ -1088,10 +1115,12 @@ int run(const Options& o)
     double coarse_s = 0.0, amg_setup_ms = 0.0;
 #ifdef MARS_ENABLE_HYPRE
     std::unique_ptr<cellwise::P1Amg> amg;
+    std::unique_ptr<bp3_h::Hierarchy> hmg;
     auto coarse = [&](const double* in, double* out) {
         BP_CK(cudaStreamSynchronize(stream));
         const auto c0 = std::chrono::steady_clock::now();
-        amg->solve(in, out);
+        if (hmg) hmg->solve(in, out);
+        else amg->solve(in, out);
         BP_CK(cudaStreamSynchronize(stream));
         coarse_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - c0).count();
     };
@@ -1206,9 +1235,12 @@ int run(const Options& o)
                                                });
             BP_CK(cudaStreamSynchronize(stream));
             const auto a0 = std::chrono::steady_clock::now();
-            amg = std::make_unique<cellwise::P1Amg>(
-                topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles,
-                cellwise::AmgSettings{o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print, o.consolidate_rows});
+            const cellwise::AmgSettings settings{
+                o.amg_theta, o.amg_agg, o.amg_coarse_size, o.amg_print, o.consolidate_rows};
+            if (o.h_levels)
+                hmg = std::make_unique<bp3_h::Hierarchy>(dec, topo, h1, apply1, o.h_levels, o.amg_cycles, settings, stream);
+            else
+                amg = std::make_unique<cellwise::P1Amg>(topo, apply1, h1, MPI_COMM_WORLD, stream, o.amg_cycles, settings);
             BP_CK(cudaStreamSynchronize(stream));
             amg_setup_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a0).count();
             if (mg) mg->set_coarse_solve(coarse);
@@ -1218,6 +1250,10 @@ int run(const Options& o)
         BP_CK(cudaEventSynchronize(t1));
         BP_CK(cudaEventElapsedTime(&setup_ms, t0, t1));
     }
+#ifdef MARS_BP3_HCOARSE_CHECK
+    bp3_h::report_memory(MPI_COMM_WORLD);
+    if (o.h_check) bp3_h::validate(*hmg, dec, stream);
+#endif
     if (tri) {
         BP_CK(cudaStreamSynchronize(stream));
         G.clear();
@@ -1455,7 +1491,10 @@ int run(const Options& o)
         }
         printf("  FCG iteration %7.3f ms  (solve %.1f ms%s)\n", res.iterations ? solve_ms / res.iterations : 0.0f,
                solve_ms, o.mg ? (", + setup " + std::to_string((int)setup_ms) + " ms").c_str() : "");
-        if (o.amg)   // one coarse solve per V-cycle: FCG's iterations + the first
+        if (o.h_levels)
+            printf("  coarse solve  %7.3f ms per V-cycle (entire h hierarchy including bottom AMG); hierarchy setup %.0f ms\n",
+                   coarse_s * 1e3 / (res.iterations + 1), amg_setup_ms);
+        else if (o.amg)   // one coarse solve per V-cycle: FCG's iterations + the first
             printf("  coarse solve  %7.3f ms per V-cycle, %.0f%% of the solve (BoomerAMG x%d and two p = 1 DSS of "
                    "%.3f ms); AMG setup %.0f ms\n",
                    coarse_s * 1e3 / (res.iterations + 1), 100.0 * coarse_s * 1e3 / solve_ms, o.amg_cycles, dss1_ms,
@@ -1487,6 +1526,13 @@ int main(int argc, char** argv)
     Options o;
     const char* error = nullptr;
     for (int i = 1; i < argc && !error; i += 2) {
+#ifdef MARS_BP3_HCOARSE_CHECK
+        if (!strcmp(argv[i], "--h-check")) {
+            o.h_check = true;
+            --i;
+            continue;
+        }
+#endif
         if (!strcmp(argv[i], "--lines-ptx")) {
             o.lines_ptx = true;
             --i;
@@ -1505,6 +1551,12 @@ int main(int argc, char** argv)
         if (i + 1 >= argc) error = "an option needs a value";
         else if (!strcmp(argv[i], "--ptx-dir")) o.ptx_dir = argv[i + 1];
         else if (!strcmp(argv[i], "--spec")) o.spec = argv[i + 1];
+        else if (!strcmp(argv[i], "--h-levels")) {
+            char* end = nullptr;
+            const long value = std::strtol(argv[i + 1], &end, 10);
+            if (end == argv[i + 1] || *end || value < -1 || value > 3) error = "--h-levels expects -1 (auto), 0 (off), or 1..3";
+            else o.h_levels = (int)value;
+        }
         else if (!strcmp(argv[i], "--p")) o.p = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--ne")) o.ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--deform")) o.deform = atof(argv[i + 1]);
@@ -1561,6 +1613,39 @@ int main(int argc, char** argv)
         (!spgemm_vendor || strcmp(spgemm_vendor, "1")))
         o.consolidate_rows = -1;
 #endif
+    o.h_automatic = o.h_levels == -1;
+    if (!error && o.h_automatic) {
+        o.h_levels = 0;
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+        int supported = 0;
+        if (h_configuration(o) && o.amg_cycles == 3 && o.consolidate_rows == -1 &&
+            o.amg_theta == 0.25 && o.amg_agg == 0 && o.amg_coarse_size == 9 &&
+            o.deform == 0.05 && o.stretch == 1.0 && o.rhs == "discrete" && o.power_steps == 0 &&
+            (!gpu_aware || !strcmp(gpu_aware, "1")) && (!vendor || strcmp(vendor, "1")) &&
+            (!spgemm_vendor || strcmp(spgemm_vendor, "1"))) {
+            int device = 0;
+            cudaDeviceProp properties{};
+            BP_CK(cudaGetDevice(&device));
+            BP_CK(cudaGetDeviceProperties(&properties, device));
+            supported = properties.major == 9 && properties.minor == 0;
+        }
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &supported, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD));
+        if (supported) o.h_levels = measured_h_levels(o.p, o.ne, ranks, o.solves);
+#endif
+    }
+    if (!error && o.h_levels && !h_configuration(o))
+        error = "h levels require unblocked procedural bp3, p=3/7, mg/amg and symmetric Jacobi smoothing";
+    if (!error && o.h_levels) {
+        int dims[3] = {0, 0, 0};
+        MARS_CELLWISE_MPI(MPI_Dims_create(ranks, 3, dims));
+        const int factor = 1 << o.h_levels;
+        for (int d = 0; d < 3; ++d)
+            if (o.ne % (factor * dims[d]) || o.ne / (factor * dims[d]) < 2)
+                error = "h levels need aligned rank blocks and at least two coarse cells per axis";
+    }
+#ifdef MARS_BP3_HCOARSE_CHECK
+    if (!error && o.h_check && !o.h_levels) error = "--h-check needs --h-levels 1..3";
+#endif
     if (!error && (o.consolidate_rows < -1 || o.consolidate_rows > 50000 || (o.consolidate_rows > 0 && o.consolidate_rows <= 9)))
         error = "--amg-consolidate expects -1 (adaptive), 0 (off), or 10..50000";
     if (!error && o.consolidate_rows != 0 && !o.amg) error = "--amg-consolidate needs --amg";
@@ -1609,10 +1694,11 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
+    if (rank == 0) printf("BP3 h selection: requested=%s levels=%d\n", o.h_automatic ? "auto" : "explicit", o.h_levels);
     const int status = o.p == 1 ? run<1>(o) : o.p == 3 ? run<3>(o) : run<7>(o);
     MPI_Finalize();
     return status;
