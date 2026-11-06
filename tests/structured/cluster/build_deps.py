@@ -36,7 +36,9 @@ def commands(args):
                       "-DKokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE=ON",
                       "-DKokkos_ARCH_{}=ON".format(ARCHITECTURES[(args.backend, args.arch)])]
     if args.backend == "cuda":
-        configure.append("-DCMAKE_CUDA_HOST_COMPILER=" + str(args.cxx))
+        # Some GPU-aware MPI stacks cannot register cudaMallocAsync pool memory.
+        configure += ["-DCMAKE_CUDA_HOST_COMPILER=" + str(args.cxx),
+                      "-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=OFF"]
     steps = [("configure", configure),
              ("build", [args.cmake, "--build", str(build), "--parallel", str(args.jobs)]),
              ("install", [args.cmake, "--install", str(build)])]
@@ -80,6 +82,11 @@ def main():
                     raise ValueError("Kokkos {} failed; inspect {}.log".format(name, name))
             if verify_dependency(args.source, KOKKOS_SHA) != result["source_manifest_sha256"]:
                 raise ValueError("Kokkos source changed during build")
+            if args.backend == "cuda":
+                cache = (args.work / "build/CMakeCache.txt").read_text()
+                if "Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC:BOOL=OFF" not in cache.splitlines():
+                    raise ValueError("CUDA MPI validation requires the ordinary CUDA allocator")
+                result["cuda_malloc_async"] = False
             result["cache_sha256"] = digest(args.work / "build/CMakeCache.txt")
             result["status"] = "PASS"
     except Exception as error:

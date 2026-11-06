@@ -84,12 +84,22 @@ modes, each with 11 structured and 3 installed-consumer CTests; its Kokkos-OFF
 core build also passes. Both GPUs pass the 48 existing release tests in each
 single-node and two-node launch layout. Subsequent structured multi-node
 capability/install tests pass in all eight configurations. HIP passes its
-180 setup/halo timing comparisons. Release remains blocked by one CPU
-OpenMP/direct timing rejection, NVIDIA setup timing regressions in both
-transport modes, and an MPI abort in the reference CUDA/direct benchmark
-before the candidate multi-node benchmark runs. Their causes remain unresolved;
-the earlier launcher failures are fixed. See the
-[release matrix](docs/Structured-Kokkos.md#release-gate). The
+180 setup/halo timing comparisons. CPU confirmation722701 passes the full90
+OpenMP/direct comparisons, completing the current CPU gate while retaining the
+earlier rejected result. CUDA5267897/5267898 confirms the MPI failure comes from
+pooled CUDA allocations on this stack; rebuilding Kokkos with malloc_async OFF
+passes all correctness gates and100 benchmark invocations without MPI failure.
+Release remains blocked by ten NVIDIA setup timing rejections across direct and
+staged modes. The private buffer-lifetime trial5269247 still rejects eight setup
+comparisons and is not adopted. Fenced profiles did not reproduce the large
+multi-node delays. Their cause remains unresolved, with no new implementation
+accepted for release. Unfenced diagnostic5269661 narrows the repeatable
+single-rank cost to sort-time CUDA allocations/frees; its untouched
+controls do not reproduce the large multi-node stalls on a different node pair.
+A pending optimization removes the second sort when the owned/local candidate
+lists are provably identical. Local checks pass, including minimum valid meshes;
+fresh CPU, HIP and CUDA native gates are required before accepting this change.
+See the [release matrix](docs/Structured-Kokkos.md#release-gate). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.
 Old PDE applications, staggered layouts, periodic DOF identification

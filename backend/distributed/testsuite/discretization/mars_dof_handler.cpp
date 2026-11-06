@@ -45,7 +45,21 @@ TEST(StructuredDofs, HilbertHex8Q2) { test::check_dofs<ElementType::Hex8, 2, Hil
 
 TEST(StructuredDofs, HilbertHex8Q2Vector) { test::check_dofs<ElementType::Hex8, 2, HilbertKey<Unsigned>, 2>(5, 3, 2); }
 
+TEST(StructuredDofs, MinimumCellsPerRank)
+{
+    int ranks = 0;
+    ASSERT_EQ(MPI_Comm_size(MPI_COMM_WORLD, &ranks), MPI_SUCCESS);
+    test::check_dofs<ElementType::Quad4, 1, MortonKey<Unsigned>>(ranks, 1, 0);
+    test::check_dofs<ElementType::Quad4, 2, MortonKey<Unsigned>>(ranks, 1, 0);
+    test::check_dofs<ElementType::Quad4, 1, HilbertKey<Unsigned>>(ranks, 1, 0);
+    test::check_dofs<ElementType::Quad4, 2, HilbertKey<Unsigned>>(ranks, 1, 0);
+    test::check_dofs<ElementType::Hex8, 1, MortonKey<Unsigned>>(ranks, 1, 1);
+    test::check_dofs<ElementType::Hex8, 2, MortonKey<Unsigned>>(ranks, 1, 1);
+    test::check_dofs<ElementType::Hex8, 1, HilbertKey<Unsigned>>(ranks, 1, 1);
+    test::check_dofs<ElementType::Hex8, 2, HilbertKey<Unsigned>>(ranks, 1, 1);
+}
+
 int main(int argc, char** argv)
 {
-    return mars::test::run_structured_tests(argc, argv, 16);
+    return mars::test::run_structured_tests(argc, argv, 17);
 }

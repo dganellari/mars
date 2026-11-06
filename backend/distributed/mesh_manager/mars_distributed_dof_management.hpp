@@ -1747,9 +1747,12 @@ namespace mars {
                 ghost_size,
                 InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
 
-            kokkos_sort(owned_dofs);
+            // Without ghosts, equal counts mean every local candidate is owned.
+            // Sort that list once; keep the two final key arrays independent.
+            const bool same_dof_candidates = ghost_size == 0 && owned_size == local_size;
+            if (!same_dof_candidates) kokkos_sort(owned_dofs);
             kokkos_sort(dofs);
-            auto owned_unique_dofs = kokkos_unique(owned_dofs);
+            auto owned_unique_dofs = kokkos_unique(same_dof_candidates ? dofs : owned_dofs);
             auto unique_dofs = kokkos_unique(dofs);
 
             global_dof_enum.set_elements(owned_unique_dofs);

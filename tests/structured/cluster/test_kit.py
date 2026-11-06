@@ -73,7 +73,7 @@ class KitTests(unittest.TestCase):
         result = run.audit_junit(self.junit(), run.SUITES, "cuda", "direct", True)
         self.assertEqual(len(result), 11)
         self.assertEqual(sum(map(len, result.values())), 23)
-        self.assertEqual(sum(run.GTEST_CASES[name.split("_mpi")[0]] for name in run.SUITES), 168)
+        self.assertEqual(sum(run.GTEST_CASES[name.split("_mpi")[0]] for name in run.SUITES), 171)
         with self.assertRaises(ValueError):
             run.audit_junit(self.junit(output(1, tests=12), {"mesh_ghost_layer_test": 1}),
                             {"mesh_ghost_layer_test": 1}, "cuda", "direct", True)
@@ -85,6 +85,12 @@ class KitTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     run.audit_receipts(output(4, backend.upper(), transport), backend, 4,
                                        "direct" if transport == "staged" else "staged")
+
+    def test_cuda_dependency_uses_mpi_compatible_allocator(self):
+        for backend in ("cuda", "hip", "serial", "openmp"):
+            configure = dict(build_deps.commands(self.arguments(backend)))["configure"]
+            option = "-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=OFF"
+            self.assertEqual(option in configure, backend == "cuda")
 
     def test_missing_duplicate_cpu_wrong_version_and_shared_gpu_rejected(self):
         baseline = [receipt(rank, 4) for rank in range(4)]
@@ -209,6 +215,43 @@ class KitTests(unittest.TestCase):
         root.remove(root.find("testcase"))
         ET.ElementTree(root).write(path)
         with self.assertRaises(ValueError): regression.audit_junit(path)
+
+    def test_performance_retains_failure_and_runs_remaining_pairs(self):
+        import performance
+        source, reference = self.root / 'source', self.root / 'reference'
+        target, reuse = self.root / 'candidate', self.root / 'reuse'
+        target.mkdir(); reuse.mkdir()
+        checked = {'status': 'PASS', 'source_manifest_sha256': 'source', 'artifacts': {},
+                   'backend': 'cuda', 'transport': 'direct', 'environment': {}}
+        (target / 'result.json').write_text(json.dumps(checked))
+        (target / 'commands.json').write_text('{}')
+        (target / 'consumer-list.log').write_text(json.dumps({'tests': [
+            {'name': 'structured_install_mpi' + str(n), 'command': ['launcher', '-n', str(n), '/mars_structured_consumer']}
+            for n in (1, 2, 4)]}))
+        binaries = {name: self.root / (name + '-binary') for name in ('reference', 'candidate')}
+        for path in binaries.values(): path.write_text('binary fixture')
+        (reuse / 'result.json').write_text(json.dumps({'status': 'BUILT_NOT_RUN',
+            'source_manifest_sha256': 'source', 'reference_manifest_sha256': 'reference',
+            'candidate_result_sha256': run.digest(target / 'result.json'),
+            'binary_paths': {k: str(v) for k, v in binaries.items()},
+            'binaries': {str(p): run.digest(p) for p in binaries.values()}}))
+        calls = []
+        def execute(command, log, env):
+            calls.append(log.name)
+            log.write_text('fixture')
+            if log.name == 'multi-np2-0-reference.log': raise ValueError('retained MPI failure')
+        args = SimpleNamespace(source=source, reference=reference, candidate=target, reuse=reuse,
+            work=self.root / 'performance', threads=1, multi_node=True, prepare_only=False)
+        with patch.object(run, 'verify_snapshot', side_effect=lambda p: p.name), \
+             patch.object(performance, 'execute', side_effect=execute), \
+             patch.object(performance, 'audit', return_value={}):
+            result = performance.validate(args)
+        self.assertEqual(len(calls), 50)
+        self.assertIn('multi-np2-0-candidate.log', calls)
+        self.assertEqual(len(result['samples']), 49)
+        self.assertEqual(len(result['failures']), 1)
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertNotIn('comparisons', result)
 
     def test_release_export_excludes_private_material(self):
         import export_release

@@ -26,7 +26,7 @@ CONSUMER = {"structured_install": 1, "structured_install_mpi2": 2, "structured_i
 RECEIPT = "MARS_STRUCTURED_RECEIPT "
 TEST_RECEIPT = "MARS_STRUCTURED_TEST_RECEIPT "
 GTEST_CASES = {"morton_test": 4, "hilbert_test": 5, "mesh_manager_test": 14,
-               "dof_handler_test": 16, "mesh_ghost_layer_test": 23}
+               "dof_handler_test": 17, "mesh_ghost_layer_test": 23}
 TEST_ENVIRONMENT = ("OMP_NUM_THREADS", "MPICH_GPU_SUPPORT_ENABLED", "MPICH_GPU_IPC_ENABLED",
                     "MARS_STRUCTURED_EXPECT_BACKEND")
 RUNTIME_ENVIRONMENT = TEST_ENVIRONMENT + ("SLURM_JOB_ID", "SLURM_JOB_NODELIST", "SLURM_NTASKS",

@@ -1,11 +1,24 @@
 # Structured Kokkos release validation
 
+The CUDA dependency recipe explicitly disables `Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC`
+for MPI compatibility. This option belongs to the Kokkos build, so changing it
+requires rebuilding Kokkos, MARS and the installed consumers. It keeps device
+buffers and direct GPU-aware MPI enabled. Native allocation comparisons and
+MARS correctness checks pass on GH200; ten setup timing comparisons still block
+release. See the current [release matrix](../../../docs/Structured-Kokkos.md#release-gate).
+The subsequent partition-buffer lifetime trial did not resolve those timings and
+is excluded. Unfenced diagnostics reuse the original executables; their traced
+timings cannot replace uninstrumented release acceptance samples.
+The subsequent DOF optimization avoids sorting identical owned/local candidate
+lists twice. It has local validation; the changed implementation requires fresh
+CPU, AMD and NVIDIA native gates before release.
+
 This kit builds and checks the optional structured backend using CPU Kokkos
 Serial/OpenMP, NVIDIA CUDA or AMD HIP. The MARS serial and bisection backends
 remain excluded. A separate regression runner checks the existing unstructured
 GPU release configuration with Kokkos disabled.
 Each run covers the five suites at their registered one/two/four-rank matrix
-(11 CTests, 168 case/rank-count combinations) and the installed consumer at
+(11 CTests, 171 case/rank-count combinations) and the installed consumer at
 one/two/four ranks (3 CTests). One GoogleTest case is counted once per rank count,
 not once per process.
 
@@ -228,7 +241,7 @@ missing rank receipts or shared physical GPUs. CPU jobs require the requested
 Serial/OpenMP execution space and thread count. Ordered runtime
 receipts report backend, MPI ranks, local rank, physical device and Kokkos version.
 Ordered test receipts require the complete suites: Morton 4, Hilbert 5, mesh 14,
-DOF 16 and halo 23 cases per process, all passing with no skips.
+DOF 17 and halo 23 cases per process, all passing with no skips.
 CTest runs one case at a time to avoid competing GPU allocations. Inherited
 `GTEST_*` options and diagnostic structured-runtime overrides are cleared.
 

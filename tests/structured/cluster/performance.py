@@ -69,7 +69,7 @@ def validate(args):
     if args.work.exists():
         raise ValueError("Use a new performance result directory")
     args.work.mkdir(parents=True)
-    result = {"status": "FAILED", "samples": [], "commands": [], "driver_files": run.driver_files(), "policy":
+    result = {"status": "FAILED", "samples": [], "failures": [], "commands": [], "driver_files": run.driver_files(), "policy":
               "five alternating reference/candidate rounds; median <= 1.10*reference + 50us setup/DOFs or 5us halo"}
     try:
         candidate = json.loads((args.candidate / "result.json").read_text())
@@ -142,18 +142,25 @@ def validate(args):
                         command = [str(binaries[variant]) if Path(value).name == "mars_structured_consumer" else value for value in templates[ranks]]
                         log = args.work / ("{}-np{}-{}-{}.log".format(layout, ranks, repeat, variant))
                         result["commands"].append(command)
-                        execute(command, log, env)
-                        checked = audit(log.read_text(), ranks, result["backend"], result["transport"],
-                                        2 if layout == "multi" else 1, args.threads)
-                        result["samples"].append({"layout": layout, "ranks": ranks, "round": repeat,
-                                                  "variant": variant, "audit": checked})
-        result["comparisons"] = compare(result["samples"])
+                        try:
+                            execute(command, log, env)
+                            checked = audit(log.read_text(), ranks, result["backend"], result["transport"],
+                                            2 if layout == "multi" else 1, args.threads)
+                            result["samples"].append({"layout": layout, "ranks": ranks, "round": repeat,
+                                                      "variant": variant, "audit": checked})
+                        except ValueError as error:
+                            # A reference failure must not hide the matching candidate run.
+                            result["failures"].append({"layout": layout, "ranks": ranks, "round": repeat,
+                                                      "variant": variant, "error": str(error), "log": str(log)})
+        if not result["failures"]:
+            result["comparisons"] = compare(result["samples"])
         if run.verify_snapshot(args.source) != result["source_manifest_sha256"] or run.verify_snapshot(args.reference) != result["reference_manifest_sha256"]:
             raise ValueError("Source changed during performance run")
         if run.driver_files() != result["driver_files"]:
             raise ValueError("Performance drivers changed during run")
         result["binaries"] = {str(p): run.digest(p) for p in binaries.values()}
-        result["status"] = "PASS" if all(x["pass"] for x in result["comparisons"]) else "TIMING_REJECTED"
+        if not result["failures"]:
+            result["status"] = "PASS" if all(x["pass"] for x in result["comparisons"]) else "TIMING_REJECTED"
     except Exception as error:
         result["error"] = str(error)
         raise
