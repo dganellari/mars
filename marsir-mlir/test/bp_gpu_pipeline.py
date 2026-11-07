@@ -33,6 +33,10 @@ import hl_gpu_pipeline as hl
 # elements per block). Those two keep the forms measured fastest.
 NO_REUSE = {("bp3", 1)}
 FIRST_FIT = {("bp3", 1), ("bp1", 7)}
+# The even-odd split (--mir-even-odd) is faster at p = 7 (BP3 10%, BP1 32%, BP3 trilinear
+# 12%) and for bp3_tri p = 3 (3%), but bp3 p = 3 is 6% slower with it and p = 1 gains
+# nothing (same doc). bp1_tri is not timed; it follows bp1.
+EVEN_ODD = {(s, 7) for s in ("bp1", "bp3", "bp1_tri", "bp3_tri")} | {("bp3_tri", 3)}
 
 
 def main():
@@ -80,7 +84,7 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
         # space steers which dimension a thread keeps, so the CPU gate schedules with it too
         # and only drops it before the CPU build.
         sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
-        even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if "--no-even-odd" not in sys.argv else []
+        even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if (spec, p) in EVEN_ODD and "--no-even-odd" not in sys.argv else []
         ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
                      "--mir-fuse-phases", "--canonicalize", "--cse",
                      f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'}", "--canonicalize", "--cse", "--loop-invariant-code-motion"],

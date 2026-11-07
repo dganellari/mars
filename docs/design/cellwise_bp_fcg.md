@@ -359,8 +359,43 @@ layout, not measured. BP1 p = 7 with C goes from 2 to 4 elements per block and i
 So `test/bp_gpu_pipeline.py` keeps the measured fastest form for those two (BP3 p = 1 none, BP1
 p = 7 A+B); every stored-geometry BP kernel now matches PTX timed above byte for byte. The
 p-multigrid solve with A+B+C everywhere: 1039.6 -> 998.2 ms at p = 3 and 1406.3 -> 1052.5 ms at
-p = 7, the same iterations (14, 15); the solve with the final per-kernel choice has not run yet.
-The trilinear kernels use all three rewrites and have not been timed against the old form.
+p = 7, the same iterations (14, 15). With the per-kernel choice (f6 below, PTX of 97334ab2)
+the p = 3 solve is 996.2 ms. The trilinear BP3 kernels, all three rewrites against none:
+p = 1 1.470 -> 1.396, p = 3 7.054 -> 6.752, p = 7 10.757 -> 6.974 ms.
+
+### Even-odd sweeps
+
+GLL nodes and Gauss points are symmetric about the element centre, so the 1D matrices are
+mirror-symmetric (B, Bt) or antisymmetric (D, Dt): M[r-1-i][c-1-j] = s M[i][j].
+`--mir-even-odd` (`lib/EvenOdd.cpp`) rewrites each unrolled sweep y = M x into sums and
+differences of mirrored inputs, two half-size products and a recombination, about half the
+multiply-adds; the kernel reads folded coefficients that the launcher forms on the device from
+M (`mars_marsir_fold.hpp`). BP3 p = 7 per thread: 933 -> 695 floating-point operations, 922 ->
+466 constant loads, 216 -> 128 registers. Shared memory and launch shapes do not change.
+
+One GH200, the same binary (f0509285), base = scratch reuse as above (97334ab2), three rounds in
+rotated order, operator ms (median; max/min of the rounds at most 1.017):
+
+| | none | base | base + even-odd |
+|---|---|---|---|
+| BP3 p = 1 (128^3) | 1.520 | 1.523 | 1.521 |
+| BP3 p = 3 (128^3) | 6.463 | 5.611 | 5.955 |
+| BP3 p = 7 (64^3) | 11.356 | 6.792 | 6.144 |
+| BP1 p = 1 (128^3) | 0.417 | 0.387 | 0.388 |
+| BP1 p = 3 (128^3) | 1.830 | 1.765 | 1.796 |
+| BP1 p = 7 (64^3) | 4.426 | 4.457 | 3.034 |
+| BP3 trilinear p = 1 | 1.470 | 1.396 | 1.416 |
+| BP3 trilinear p = 3 | 7.054 | 6.752 | 6.576 |
+| BP3 trilinear p = 7 | 10.757 | 6.974 | 6.106 |
+
+The direct-quadrature check on the first four elements agrees to 1e-16 relative in every
+variant. Even-odd wins at p = 7 (10%, 32%, 12%) and on trilinear p = 3; BP3 p = 3 is 6% slower
+with it although its registers fall 80 -> 56 (cause not measured), and p = 1 has little to fold.
+`test/bp_gpu_pipeline.py` applies it to p = 7 and bp3_tri p = 3 only (bp1_tri, not timed, follows
+bp1); every generated BP kernel is byte-identical to one timed here. The p-multigrid solve
+(V-cycle p -> 3 -> 1, AMG x3, tol 3e-13, 64^3) at p = 7: 1407.9 (none) -> 1049.9 (base) -> 1004.4 ms
+(even-odd at every level), 15 iterations each; with even-odd only on the p = 7 level, as now
+generated, it has not run.
 
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
