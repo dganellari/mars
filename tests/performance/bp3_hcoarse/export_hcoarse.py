@@ -10,7 +10,10 @@ import export
 from common import digest, save, verify_bundle
 
 
-def freeze(repo, deps, accepted, target):
+def freeze(repo, deps, accepted, target, current_operators=False):
+    loader = repo / 'backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp'
+    if not current_operators and digest(loader) != '4da3b16e875be8e589ab7bf5fef6de89dce930a6512a2e5d9f9c5a5a441898fd':
+        raise ValueError('The historical reference needs its original loader/PTX; use export_compat.py for current operators')
     export.NEW += tuple('backend/distributed/unstructured/solvers/' + n for n in
                         ('mars_cellwise_h_transfer.hpp', 'mars_cellwise_h_coarse.hpp'))
     export.NEW += ('tests/bp3_coarse/integration/cli_stubs.hpp',)

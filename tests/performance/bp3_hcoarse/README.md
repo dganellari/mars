@@ -3,6 +3,7 @@
 The normal `mars_marsir_bp` driver now includes the validated geometric
 hierarchy below p=1. Native integration passed jobs 5281137/5281138 on base
 35085f9e. The algorithm passed jobs 5278195/5278196; both results are recorded below.
+Compatibility with the newer operator interface passed job 5281607.
 The accepted Hypre consolidation adapter and its 50,000-row cap are unchanged.
 
 ## Numerical contract
@@ -215,6 +216,45 @@ peak-memory measurement. A single solve or a different local problem size
 therefore needs its own choice rather than a blanket new default.
 
 These are MARS-versus-MARS comparisons with a changed preconditioner. They do
-not update the historical equal-algorithm MFEM comparison. The normal-build integration below is pending its native gate. These results do
-not establish performance outside the measured degrees, sizes, rank counts,
+not update the historical equal-algorithm MFEM comparison. Normal-build integration
+and the current operator compatibility checks pass. These results do not establish
+performance outside the measured degrees, sizes, rank counts,
 geometry and environment.
+
+## Compatibility with the current operator interface
+
+While the integration jobs ran, bf087b34 changed the generated operator's launch
+arguments and moved the one-dimensional matrices to module constants. Its loader
+and twelve BP PTX files must travel together. The public C++ `apply` signature is
+unchanged, and the coarse code still supplies fixed matrices on one stream, but
+the older frozen binary/old PTX test does not execute this new interface.
+
+The h implementation was committed locally and rebased over those three incoming
+commits without changing their files. Local CUDA syntax passes with the newer
+loader. A separate two-node check builds only the normal and instrumented drivers
+and runs 24 solves on 1/4/8 GPUs, including eight direct hierarchy checks, p=1 and
+small-problem fallbacks, and automatic versus explicit depth selection. It uses
+the current loader and its matching twelve PTX files with the same Hypre/image.
+It does not repeat the completed 64-GPU equivalence benchmark or claim new scaling
+numbers. Current-source performance must remain distinct from the older measurements.
+
+After transfer, the user runs:
+
+```bash
+bash /capstor/scratch/cscs/gandanie/bp3-hcoarse-compat-kit-20261106/hcoarse/submit-compat.sh
+```
+
+One two-node job has a two-hour limit and writes under
+`/capstor/scratch/cscs/gandanie/bp3-hcoarse-compat/<job-id>/`. Native combined-source
+compatibility passed job 5281607. The historical exporter rejects the new loader
+with old PTX; `export_compat.py` freezes the matching current pair.
+
+All 24 solves and eight direct hierarchy checks pass on 1/4/8 GH200 GPUs.
+The largest true residual is `2.098e-11` (limit `1e-10`), relative FCG measure
+`9.835e-14` (limit `1e-13`), and direct hierarchy error `2.649236e-16`.
+The two downloaded binary hashes, sealed artifacts, exact commands, process
+receipts and rank audits were independently verified, and every summary was
+reproduced from raw output. Automatic and explicit selections agree; normal
+and instrumented runs agree after accounting for the four diagnostic applies.
+The builds have no compiler warnings or unused CMake options. This closes the
+combined-source correctness gate; it does not remeasure 64-GPU performance.
