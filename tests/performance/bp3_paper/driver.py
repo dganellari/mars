@@ -1,4 +1,5 @@
 """Build and measure a frozen MARS/MFEM pair; failed samples remain in the report."""
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -40,6 +41,14 @@ def mfem_parse(out):
     return result
 
 
+def generated_digest(bundle):
+    files = {str(p.relative_to(bundle / 'generated')): digest(p)
+             for p in sorted((bundle / 'generated').rglob('*')) if p.is_file()}
+    if not files:
+        raise ValueError('Missing generated operators')
+    return hashlib.sha256(json.dumps(files, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def executable(prepared, variant, checked=False):
     if variant == 'mfem':
         return prepared / 'mfem/mfem_bp3'
@@ -51,6 +60,10 @@ def solve(bundle, prepared, root, name, variant, ranks, p, ne, checked=False):
     out.mkdir()
     exe = executable(prepared, variant, checked)
     args = mfem_args(p, ne) if variant == 'mfem' else mars_args(bundle, variant, p, ne, checked)
+    ptx_sha = None if variant == 'mfem' else generated_digest(bundle)
+    save(out / 'inputs.json', dict(generated_sha256=ptx_sha,
+                                  manifest_sha256=digest(bundle / 'manifest.json'), arguments=args))
+    print('RUN %s generated_sha256=%s' % (name, ptx_sha or 'unused'), flush=True)
     command(step(ranks, 20) + ['/usr/bin/python3', bundle / 'kit/rank.py', out,
             'no' if variant == 'mfem' else 'yes', exe] + args, out / 'solver.log', timeout=1250)
     if variant == 'mfem':
@@ -76,7 +89,8 @@ def solve(bundle, prepared, root, name, variant, ranks, p, ne, checked=False):
         hosts.append(process['hostname'])
     if len(set(hosts)) != (ranks + 3) // 4:
         raise ValueError('Unexpected node placement')
-    row.update(hosts=hosts, variant=variant, ranks=ranks, p=p, ne=ne, h_depth=depth(variant, p), checked=checked)
+    row.update(hosts=hosts, variant=variant, ranks=ranks, p=p, ne=ne, h_depth=depth(variant, p), checked=checked,
+               generated_sha256=ptx_sha)
     save(out / 'summary.json', row)
     print('PASS ' + name, flush=True)
     return row
@@ -130,14 +144,32 @@ def prepare(bundle, root):
     binaries['mfem/mfem_bp3'] = digest(root / 'mfem/mfem_bp3')
     save(root / 'paper-build.json', dict(binaries=binaries, manifest_sha256=digest(bundle / 'manifest.json'),
                                       hypre_sha256=HYPRE_SHA, config_sha256=CONFIG_SHA))
-    # Small checks include every new baseline setting before any large allocation.
+    baseline_checks(bundle, root)
+    verify_bundle(bundle)
+    seal(root, bundle, 'prepared.json')
+    print('PASS required preparation; optional MFEM four-rank failures are retained separately', flush=True)
+
+
+def baseline_checks(bundle, root):
+    optional_failures = []
     for ranks in (1, 4):
         for p in (3, 7):
             for variant in VARIANTS:
-                solve(bundle, root, root, 'baseline_%s_p%d_r%d' % (variant, p, ranks), variant, ranks, p, 32)
-    verify_bundle(bundle)
-    seal(root, bundle, 'prepared.json')
-    print('PASS preparation: combined operators and matched MFEM baseline', flush=True)
+                name = 'baseline_%s_p%d_r%d' % (variant, p, ranks)
+                try:
+                    solve(bundle, root, root, name, variant, ranks, p, 32)
+                except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+                    # Historical four-rank MFEM shutdown failures must not block unrelated runs.
+                    # They remain failed results: a printed PASS alone cannot prove a clean solve.
+                    if variant != 'mfem' or ranks != 4:
+                        raise
+                    optional_failures.append(dict(name=name, error=str(error), timing_accepted=False))
+                    save(root / 'optional-baseline-failures.json', optional_failures)
+                    print('RETAINED OPTIONAL FAILURE ' + name + ': ' + str(error), flush=True)
+    # Require a clean distributed MFEM run even if the optional four-rank run failed.
+    for p in (3, 7):
+        solve(bundle, root, root, 'baseline_mfem_p%d_r8' % p, 'mfem', 8, p, 32)
+    save(root / 'optional-baseline-failures.json', optional_failures)
 
 
 def sample_set(bundle, prepared, root, workload, ranks, p, ne):

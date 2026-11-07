@@ -47,13 +47,13 @@ scaling would require a separate numerical change and validation in both drivers
 After the kit is transferred, on Daint:
 
 ```bash
-bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107/paper/submit.sh
+bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v2/paper/submit.sh
 ```
 
 This submits three jobs:
 
 1. Two nodes, four-hour limit: MARS normal/instrumented builds, all 24 combined
-   operator checks, MFEM library/driver build, then 16 baseline checks on 1/4 GPUs.
+   operator checks, MFEM library/driver build, then 18 baseline checks on 1/4/8 GPUs.
 2. Sixteen nodes, four-hour limit, after preparation passes: 168 invocations
    covering the weak and strong cases above through 64 GPUs.
 3. Sixty-four nodes, 90-minute limit, after preparation passes and the preceding
@@ -76,3 +76,23 @@ comparison tables. It refuses mixed manifests or duplicate cases. Efficiencies
 use each configuration's own one-GPU baseline; explicitly label a curve assembled
 from the fastest configuration at each scale if the paper also shows one. This
 prevents a slower h-enabled one-GPU baseline from disguising a scaling cost.
+
+## Four-rank MFEM failure handling
+
+The old MFEM batch reported a shutdown assertion on four ranks. The exact raw
+signature has not been verified here, so a printed PASS followed by a nonzero exit
+is never promoted to success. Only the two four-rank MFEM preparation checks are
+optional: any failure is retained in `optional-baseline-failures.json`, with raw
+logs and process receipts, and has no accepted timing. One- and eight-rank MFEM
+preparation checks must finish cleanly, as must every MARS check. This lets the
+independent scaling work proceed without pretending that a crash was validated.
+The standard timed runs and the 256-rank pilot still require clean exits.
+
+The v2 kit has a separate immutable directory; it does not alter a previously
+submitted job. It supersedes the original submission command. No numerical source,
+compiler recipe, stopping tolerance or timing acceptance rule changed.
+
+Each MARS paper-run invocation prints and stores `generated_sha256`: SHA-256 of the compact,
+sorted JSON map from relative filenames under `generated/` to their SHA-256 values.
+MFEM records null/unused because it does not load these operators. The manifest
+continues to seal every individual PTX file.

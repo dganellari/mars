@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-bundle=/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107
+bundle=/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v2
 export PYTHONDONTWRITEBYTECODE=1
 [[ $# -eq 0 ]] || { printf 'Usage: submit.sh\n' >&2; exit 2; }
 /usr/bin/python3 "$bundle/kit/check_bundle.py" "$bundle"

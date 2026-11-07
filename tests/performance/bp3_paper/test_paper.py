@@ -119,6 +119,41 @@ class PaperChecks(unittest.TestCase):
         self.assertEqual(sum(c[4] for c in calls), 2)
         self.assertEqual(sample.call_count, 2)
 
+    def test_optional_four_rank_mfem_failures(self):
+        calls = []
+        def solve(bundle, prepared, root, name, variant, ranks, p, ne):
+            calls.append((variant, ranks, p))
+            if variant == 'mfem' and ranks == 4:
+                raise RuntimeError('nonzero exit after printed result; not accepted')
+            return {}
+        with mock.patch.object(driver, 'solve', solve):
+            driver.baseline_checks(self.root, self.root)
+        self.assertEqual(len(calls), 18)
+        self.assertEqual(calls[-2:], [('mfem', 8, 3), ('mfem', 8, 7)])
+        failures = json.loads((self.root / 'optional-baseline-failures.json').read_text())
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(f['timing_accepted'] is False for f in failures))
+
+    def test_required_baseline_failures_remain_fatal(self):
+        for variant, ranks, degree in (('matched', 4, 3), ('best_h', 4, 7), ('mfem', 1, 3), ('mfem', 8, 7)):
+            def solve(bundle, prepared, root, name, v, r, p, ne):
+                if (v, r, p) == (variant, ranks, degree):
+                    raise ValueError('required gate failed')
+                return {}
+            with mock.patch.object(driver, 'solve', solve):
+                with self.assertRaisesRegex(ValueError, 'required gate'):
+                    driver.baseline_checks(self.root, self.root)
+
+    def test_generated_hash_changes_with_operator(self):
+        folder = self.root / 'generated'
+        folder.mkdir()
+        (folder / 'a.ptx').write_text('first')
+        (folder / 'b.ptx').write_text('second')
+        before = driver.generated_digest(self.root)
+        self.assertEqual(before, driver.generated_digest(self.root))
+        (folder / 'a.ptx').write_text('changed')
+        self.assertNotEqual(before, driver.generated_digest(self.root))
+
     def test_summary_seals_and_scaling(self):
         case = dict(workload='weak', ranks=1, p=3, summary={
             'matched': dict(median_ms=100, min_ms=99, max_ms=101, iterations=[14]*3),
@@ -148,7 +183,7 @@ class PaperChecks(unittest.TestCase):
             p.chmod(0o755)
         env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'], CAPTURE=str(capture), SLURM_JOB_ID='12345')
         for name in ('submit.sh', 'job.sh'):
-            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python'))
+            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v2', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python'))
             p = self.root / name
             p.write_text(text)
             subprocess.run(['bash', '-n', str(p)], check=True)
