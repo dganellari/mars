@@ -331,6 +331,37 @@ p = 7 16.76 -> 11.35).
 The 12 BP gates pass and TSan is clean at bp1 p = 7 and bp3 p = 3; the trilinear kernels are
 regenerated the same way but have not run on a GPU yet.
 
+### Scratch reuse
+
+Three rewrites cut shared memory per element: (A) a pointwise result is written into the
+buffer of the input that dies there (`--convert-mir-to-linalg=reuse-buffers`); (B) with it, a
+transposed sweep accumulates into the sum of the sweeps instead of a buffer of its own, which
+also removes the separate sum; (C) scratch is packed largest first when that needs fewer slots
+(`--mir-warp-per-element=largest-first`). BP3 p = 7 falls 39600 -> 23328 B per element, so two
+elements share a block instead of one; BP3 p = 3 goes from 4 to 8 elements per block.
+
+Less scratch is not always faster. Same binary, PTX from the generator with each rewrite left
+out in turn, three rounds in rotated order on one GH200, operator ms (median; the three rounds
+agree within 0.1 ms):
+
+| | none | A+B+C | B+C | A+C | A+B |
+|---|---|---|---|---|---|
+| BP3 p = 1 (128^3) | 1.524 | 1.907 | 1.957 | 1.927 | 1.907 |
+| BP3 p = 3 (128^3) | 6.469 | 5.574 | 6.539 | 6.325 | 6.060 |
+| BP3 p = 7 (64^3) | 11.404 | 6.891 | 9.588 | 8.514 | 7.562 |
+| BP1 p = 7 (64^3) | 4.432 | 4.653 | 4.640 | 4.654 | 4.447 |
+
+An earlier run with one allocation per case (15 nodes) gave the same picture and BP1 p = 1 0.416 ->
+0.386, p = 3 1.81 -> 1.74 ms with all three. At p = 3 and 7 every rewrite helps. BP3 p = 1 keeps
+its launch shape (32 elements per block) and the same instruction mix (90 FMAs, 11 barriers,
+36-40 shared loads) with any two of them and is 26% slower; the likely cause is the shared-memory
+layout, not measured. BP1 p = 7 with C goes from 2 to 4 elements per block and is 5% slower.
+So `test/bp_gpu_pipeline.py` keeps the measured fastest form for those two (BP3 p = 1 none, BP1
+p = 7 A+B); every stored-geometry BP kernel now matches PTX timed above byte for byte. The
+p-multigrid solve with A+B+C everywhere: 1039.6 -> 998.2 ms at p = 3 and 1406.3 -> 1052.5 ms at
+p = 7, the same iterations (14, 15); the solve with the final per-kernel choice has not run yet.
+The trilinear kernels use all three rewrites and have not been timed against the old form.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form

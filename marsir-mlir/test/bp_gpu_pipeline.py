@@ -27,6 +27,13 @@ import sys
 
 import hl_gpu_pipeline as hl
 
+# Less scratch is not always faster. Measured on GH200 (docs/design/cellwise_bp_fcg.md,
+# "Scratch reuse"): bp3 p = 1 is 26% slower with any two of the three rewrites at the same
+# launch shape, and bp1 p = 7 5% slower with largest-first packing (4 instead of 2
+# elements per block). Those two keep the forms measured fastest.
+NO_REUSE = {("bp3", 1)}
+FIRST_FIT = {("bp3", 1), ("bp1", 7)}
+
 
 def main():
     spec = sys.argv[1]
@@ -40,7 +47,8 @@ from marsir.backends import mlir_ir
 ga = synthesize(parse_spec_file({os.path.join(hl.ROOT, '..', 'marsir-compiler', 'specs', spec + '.op')!r}))
 sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
 """], "")
-    ir = hl.run([hl.MIROPT, "-", "--convert-mir-to-linalg",
+    reuse = "false" if (spec, p) in NO_REUSE else "true"
+    ir = hl.run([hl.MIROPT, "-", f"--convert-mir-to-linalg=reuse-buffers={reuse}",
                  "--one-shot-bufferize=bufferize-function-boundaries=true "
                  "function-boundary-type-conversion=identity-layout-map"], src)
     ir = hl.run([hl.MLIROPT, "-", "--canonicalize", "--buffer-results-to-out-params=hoist-static-allocs=true"], ir)
@@ -72,7 +80,7 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
         sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space={space}"
         ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse",
                      "--mir-fuse-phases", "--canonicalize", "--cse",
-                     "--mir-warp-per-element", "--canonicalize", "--cse", "--loop-invariant-code-motion"],
+                     f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'}", "--canonicalize", "--cse", "--loop-invariant-code-motion"],
                     bufferized)
         if "--emulate" in sys.argv:
             grad = "%D:" in src

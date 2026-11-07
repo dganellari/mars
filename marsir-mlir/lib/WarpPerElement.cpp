@@ -405,7 +405,7 @@ Layout chooseLayout(memref::AllocaOp alloca, Block *body, int64_t lanes) {
 // body has none in between. Each buffer becomes a view at group * S + its offset
 // (`group` null: one element per block, offset static).
 LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::AllocaOp> allocas, Value group,
-                          int64_t G, int64_t lanes, bool pad) {
+                          int64_t G, int64_t lanes, bool pad, bool largestFirstAllowed) {
   DenseMap<Operation *, int> pos;
   int k = 0;
   for (Operation &op : *body) pos[&op] = k++;
@@ -488,7 +488,7 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
     // has to go around (a Galerkin operator's interpolated u after a dead sweep).
     SmallVector<int> bySize(idx);
     llvm::stable_sort(bySize, [&](int x, int y) { return items[x].size > items[y].size; });
-    const bool largestFirst = pack(bySize) < pack(idx);
+    const bool largestFirst = largestFirstAllowed && pack(bySize) < pack(idx);
     ArrayRef<int> order = largestFirst ? ArrayRef<int>(bySize) : ArrayRef<int>(idx);
     int64_t S = pack(order);   // leaves the chosen order's offsets
     for (int n = 0; n < (int)order.size(); ++n) {   // reused slots: is there a barrier between the two lifetimes?
@@ -545,7 +545,7 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
   return success();
 }
 
-LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padScratch) {
+LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padScratch, bool largestFirst) {
   if (elements.getNumLoops() != 1 || !elements.getInitVals().empty())
     return elements.emitOpError("{mir.elements} must be a one-dimensional loop without reductions");
   if (getConstantIntValue(elements.getLowerBound()[0]) != 0 || getConstantIntValue(elements.getStep()[0]) != 1)
@@ -736,7 +736,7 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
       alloca.replaceAllUsesWith(func.getArgument(at));
       alloca.erase();
     }
-  } else if (failed(packScratch(func, body, allocas, single ? Value() : group, G, L, padScratch))) {
+  } else if (failed(packScratch(func, body, allocas, single ? Value() : group, G, L, padScratch, largestFirst))) {
     return failure();
   }
   if (anyScratch)   // the next element must not overwrite scratch a slower lane still reads
@@ -758,6 +758,9 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   Option<bool> padScratch{*this, "pad-scratch",
                           llvm::cl::desc("choose each scratch buffer's padding by its bank conflicts"),
                           llvm::cl::init(true)};
+  Option<bool> largestFirst{*this, "largest-first",
+                            llvm::cl::desc("pack scratch largest first when that needs fewer slots"),
+                            llvm::cl::init(true)};
 
   StringRef getArgument() const final { return "mir-warp-per-element"; }
   StringRef getDescription() const final {
@@ -781,7 +784,7 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
         return signalPassFailure();
       }
       for (scf::ParallelOp p : loops)
-        if (failed(mapElements(func, p, padScratch)))
+        if (failed(mapElements(func, p, padScratch, largestFirst)))
           return signalPassFailure();
     }
   }

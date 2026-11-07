@@ -310,7 +310,8 @@ struct SimplexContractLowering
 // iterators are parallel. The flux's own region (the authored pointwise math) is
 // cloned into the linalg body.
 struct FluxLowering : public OpRewritePattern<mir::FluxOp> {
-  using OpRewritePattern<mir::FluxOp>::OpRewritePattern;
+  FluxLowering(MLIRContext *ctx, bool inPlace) : OpRewritePattern(ctx), inPlace(inPlace) {}
+  bool inPlace;
 
   LogicalResult matchAndRewrite(mir::FluxOp op,
                                 PatternRewriter &rewriter) const override {
@@ -353,7 +354,7 @@ struct FluxLowering : public OpRewritePattern<mir::FluxOp> {
       Value init;
       for (unsigned k = 0; k < op.getInputs().size() && !init; ++k) {
         Value in = op.getInputs()[k];
-        if (taken[k] || maps[k] != id || in.getType() != resType || !computedHere(in) ||
+        if (!inPlace || taken[k] || maps[k] != id || in.getType() != resType || !computedHere(in) ||
             llvm::count(op.getInputs(), in) != 1 || !in.hasOneUse())
           continue;
         taken[k] = true;
@@ -399,10 +400,18 @@ struct ConvertMirToLinalgPass
     registry.insert<linalg::LinalgDialect, tensor::TensorDialect, scf::SCFDialect,
                     arith::ArithDialect>();
   }
+  ConvertMirToLinalgPass() = default;
+  ConvertMirToLinalgPass(const ConvertMirToLinalgPass &other) : PassWrapper(other) {}
+  Option<bool> reuseBuffers{*this, "reuse-buffers",
+                            llvm::cl::desc("write pointwise results in place and accumulate transposed "
+                                           "sweeps into their sum (less scratch, not always faster)"),
+                            llvm::cl::init(true)};
+
   void runOnOperation() override {
-    accumulateContractions(getOperation());
+    if (reuseBuffers) accumulateContractions(getOperation());
     RewritePatternSet patterns(&getContext());
-    patterns.add<ContractLowering, FluxLowering, SimplexContractLowering>(&getContext());
+    patterns.add<ContractLowering, SimplexContractLowering>(&getContext());
+    patterns.add<FluxLowering>(&getContext(), reuseBuffers);
     if (failed(applyPatternsAndFoldGreedily(getOperation(),
                                             std::move(patterns))))
       signalPassFailure();
