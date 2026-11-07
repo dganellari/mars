@@ -29,11 +29,9 @@ using namespace mlir;
 
 namespace {
 
-struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
-  using OpRewritePattern<mir::ContractOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(mir::ContractOp op,
-                                PatternRewriter &rewriter) const override {
+// The contraction of `op` as linalg, added to `acc` when given (acc + contraction,
+// accumulated in place of acc's buffer), else to zero. Null when the types do not fit.
+Value lowerContract(mir::ContractOp op, Value acc, OpBuilder &rewriter) {
     Location loc = op.getLoc();
     MLIRContext *ctx = op.getContext();
     Value input = op.getInput();
@@ -42,12 +40,12 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
     auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
     auto inType = dyn_cast<RankedTensorType>(input.getType());
     if (!resType || !inType)
-      return failure();
+      return {};
 
     const int64_t rank = inType.getRank();
     const int64_t axis = op.getAxis();
     if (axis < 0 || axis >= rank)
-      return op.emitOpError("axis out of range");
+      return {};
 
     // Axis-0 static case: emit the UNFOLDED MATMUL form instead of a rank-N
     // generic. out[i,(jk)] = sum_p D[i,p] * U[p,(jk)] -- collapse the
@@ -61,22 +59,25 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
       int64_t rows = resType.getDimSize(0);
       int64_t cols = resType.getDimSize(1) * resType.getDimSize(2);
       Value u2 = rewriter.create<tensor::CollapseShapeOp>(loc, input, reassoc);
-      Value zero = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getZeroAttr(elemTy));
-      Value empty2 = rewriter.create<tensor::EmptyOp>(
-          loc, ArrayRef<int64_t>{rows, cols}, elemTy);
-      Value init2 = rewriter
-                        .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                ValueRange{empty2})
-                        .getResult(0);
+      Value init2;
+      if (acc) {
+        init2 = rewriter.create<tensor::CollapseShapeOp>(loc, acc, reassoc);
+      } else {
+        Value zero = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getZeroAttr(elemTy));
+        Value empty2 = rewriter.create<tensor::EmptyOp>(
+            loc, ArrayRef<int64_t>{rows, cols}, elemTy);
+        init2 = rewriter
+                    .create<linalg::FillOp>(loc, ValueRange{zero},
+                                            ValueRange{empty2})
+                    .getResult(0);
+      }
       Value mm = rewriter
                      .create<linalg::MatmulOp>(loc, TypeRange{init2.getType()},
                                                ValueRange{opMatrix, u2},
                                                ValueRange{init2})
                      .getResult(0);
-      rewriter.replaceOpWithNewOp<tensor::ExpandShapeOp>(op, resType, mm,
-                                                         reassoc);
-      return success();
+      return rewriter.create<tensor::ExpandShapeOp>(loc, resType, mm, reassoc);
     }
 
     const int64_t nLoops = rank + 1;  // R parallel output dims + 1 reduction (p)
@@ -99,14 +100,16 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
     SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
     iters.push_back(utils::IteratorType::reduction);
 
-    // Zero-initialized output (the reduction accumulates into it).
-    Value zero = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getZeroAttr(resType.getElementType()));
-    Value empty = rewriter.create<tensor::EmptyOp>(
-        loc, resType.getShape(), resType.getElementType());
-    Value init =
-        rewriter.create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{empty})
-            .getResult(0);
+    // The reduction accumulates into the output: zero, or the given accumulator.
+    Value init = acc;
+    if (!init) {
+      Value zero = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getZeroAttr(resType.getElementType()));
+      Value empty = rewriter.create<tensor::EmptyOp>(
+          loc, resType.getShape(), resType.getElementType());
+      init = rewriter.create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{empty})
+                 .getResult(0);
+    }
 
     auto generic = rewriter.create<linalg::GenericOp>(
         loc, TypeRange{resType}, ValueRange{input, opMatrix}, ValueRange{init},
@@ -124,11 +127,74 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
     // that axis by 1 and each tile becomes a plain 2-D contraction.
     if (rank == 3 && axis != 0)
       generic->setAttr("mir.batch_contract", rewriter.getUnitAttr());
+    return generic.getResult(0);
+}
 
-    rewriter.replaceOp(op, generic.getResults());
+struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
+  using OpRewritePattern<mir::ContractOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(mir::ContractOp op,
+                                PatternRewriter &rewriter) const override {
+    Value result = lowerContract(op, {}, rewriter);
+    if (!result)
+      return op.emitOpError("unsupported contraction");
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
+
+// True when `v` is a tensor this function computes (not an argument or a slice of
+// one), so its buffer is scratch that a later op may overwrite.
+bool computedHere(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (isa<tensor::ExtractSliceOp>(def))
+      return false;
+    if (isa<tensor::ExpandShapeOp, tensor::CollapseShapeOp>(def)) {
+      v = def->getOperand(0);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+// w + contraction, written as a two-input mir.flux that adds its arguments, becomes
+// one contraction accumulating into w (the sum of transposed sweeps in a Galerkin
+// operator). The separate result buffer and the pass adding it are gone, and the
+// sweeps share one buffer. Runs before the patterns, which would lower the
+// contraction on its own first.
+void accumulateContractions(func::FuncOp func) {
+  SmallVector<mir::FluxOp> fluxes;
+  func.walk([&](mir::FluxOp f) { fluxes.push_back(f); });
+  for (mir::FluxOp flux : fluxes) {
+    if (flux.getDims() || flux.getInputs().size() != 2 || flux.getResults().size() != 1)
+      continue;
+    Block &body = flux.getBody().front();
+    if (body.getOperations().size() != 2)
+      continue;
+    auto add = dyn_cast<arith::AddFOp>(&body.front());
+    if (!add || add.getResult() != body.getTerminator()->getOperand(0) ||
+        !llvm::is_contained(add->getOperands(), body.getArgument(0)) ||
+        !llvm::is_contained(add->getOperands(), body.getArgument(1)) ||
+        add.getLhs() == add.getRhs())
+      continue;
+    for (int k = 0; k < 2; ++k) {
+      auto contract = flux.getInputs()[k].getDefiningOp<mir::ContractOp>();
+      Value acc = flux.getInputs()[1 - k];
+      if (!contract || !contract->hasOneUse() || acc.getType() != flux.getResult(0).getType() ||
+          !computedHere(acc) || !acc.hasOneUse())
+        continue;
+      OpBuilder b(flux);
+      Value result = lowerContract(contract, acc, b);
+      if (!result)
+        continue;
+      flux.getResult(0).replaceAllUsesWith(result);
+      flux.erase();
+      contract.erase();
+      break;
+    }
+  }
+}
 
 // mir.simplex_contract -> explicit scf.for nest. The triangular bounds
 // (q <= D-p, r <= D-p-q) do NOT fit linalg's hyperrectangular model, so this
@@ -278,9 +344,23 @@ struct FluxLowering : public OpRewritePattern<mir::FluxOp> {
     maps.append(op.getResults().size(), id);
     SmallVector<utils::IteratorType> iters(rank, utils::IteratorType::parallel);
 
+    // A result takes the buffer of an input that dies here (same type, read at the
+    // same point, computed in this function): it is written in place, so the input's
+    // and the output's scratch are never live together. Others get a new tensor.
     SmallVector<Value> inits;
-    for (unsigned i = 0; i < op.getResults().size(); ++i)
-      inits.push_back(rewriter.create<tensor::EmptyOp>(loc, resType.getShape(), resType.getElementType()));
+    SmallVector<bool> taken(op.getInputs().size(), false);
+    for (unsigned i = 0; i < op.getResults().size(); ++i) {
+      Value init;
+      for (unsigned k = 0; k < op.getInputs().size() && !init; ++k) {
+        Value in = op.getInputs()[k];
+        if (taken[k] || maps[k] != id || in.getType() != resType || !computedHere(in) ||
+            llvm::count(op.getInputs(), in) != 1 || !in.hasOneUse())
+          continue;
+        taken[k] = true;
+        init = in;
+      }
+      inits.push_back(init ? init : rewriter.create<tensor::EmptyOp>(loc, resType.getShape(), resType.getElementType()));
+    }
 
     Block &fluxBody = op.getBody().front();
     auto generic = rewriter.create<linalg::GenericOp>(
@@ -320,6 +400,7 @@ struct ConvertMirToLinalgPass
                     arith::ArithDialect>();
   }
   void runOnOperation() override {
+    accumulateContractions(getOperation());
     RewritePatternSet patterns(&getContext());
     patterns.add<ContractLowering, FluxLowering, SimplexContractLowering>(&getContext());
     if (failed(applyPatternsAndFoldGreedily(getOperation(),

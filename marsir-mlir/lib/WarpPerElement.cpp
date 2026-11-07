@@ -456,11 +456,11 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
   SmallVector<Operation *> needBarrier;
   DenseMap<Type, SmallVector<int>> byType;
   for (int i = 0; i < (int)items.size(); ++i) byType[items[i].alloca.getType().getElementType()].push_back(i);
-  for (auto &[type, idx] : byType) {
-    llvm::stable_sort(idx, [&](int x, int y) { return items[x].first < items[y].first; });
+  // First fit of the buffers in the given order; returns the slots it needs.
+  auto pack = [&](ArrayRef<int> order) {
     SmallVector<int> placed;
     int64_t S = 0;
-    for (int i : idx) {
+    for (int i : order) {
       Item &it = items[i];
       SmallVector<int64_t> candidates{0};
       for (int j : placed)
@@ -476,16 +476,31 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
           break;
         }
       }
-      for (int j : placed) {   // reused slots: is there a barrier between the two lifetimes?
-        const Item &prev = items[j];
+      placed.push_back(i);
+      S = std::max(S, it.offset + it.size);
+    }
+    return S;
+  };
+  for (auto &[type, idx] : byType) {
+    llvm::stable_sort(idx, [&](int x, int y) { return items[x].first < items[y].first; });
+    // Order of first access, or largest first when that needs fewer slots: a
+    // buffer placed by first access can sit on slots a larger, later one then
+    // has to go around (a Galerkin operator's interpolated u after a dead sweep).
+    SmallVector<int> bySize(idx);
+    llvm::stable_sort(bySize, [&](int x, int y) { return items[x].size > items[y].size; });
+    const bool largestFirst = pack(bySize) < pack(idx);
+    ArrayRef<int> order = largestFirst ? ArrayRef<int>(bySize) : ArrayRef<int>(idx);
+    int64_t S = pack(order);   // leaves the chosen order's offsets
+    for (int n = 0; n < (int)order.size(); ++n) {   // reused slots: is there a barrier between the two lifetimes?
+      const Item &it = items[order[n]];
+      for (int m = 0; m < n; ++m) {
+        const Item &prev = items[order[m]];
         if (live(prev, it) || !(it.offset < prev.offset + prev.size && prev.offset < it.offset + it.size))
           continue;
         const int from = std::min(prev.last, it.last), to = std::max(prev.first, it.first);
         if (!llvm::any_of(barriers, [&](int p) { return from < p && p < to; }))
           needBarrier.push_back(prev.last < it.first ? it.firstOp : prev.firstOp);
       }
-      placed.push_back(i);
-      S = std::max(S, it.offset + it.size);
     }
     // Several elements' lanes are served in one pass over the 32 banks (a warp for
     // 4-byte values, a half warp for 8-byte ones) when lanes x words < 32. Their
