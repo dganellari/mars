@@ -2,7 +2,8 @@
 
 This freezes a merged MARS revision, its matching generated operators, MFEM 4.8
 (`a01719101027383954b69af1777dc828bf795d62`), the same CUDA image and Hypre 2.33
-library. Both drivers are rebuilt in an isolated result directory. Existing paper
+library. Fresh preparation builds both drivers in an isolated result directory; the current
+resume reuses the verified binaries and library described below. Existing paper
 builds and prior benchmark results are untouched. Native results are pending.
 
 ## Comparisons
@@ -47,13 +48,14 @@ scaling would require a separate numerical change and validation in both drivers
 After the kit is transferred, on Daint:
 
 ```bash
-bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v2/paper/submit.sh
+bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v3/paper/submit.sh
 ```
 
 This submits three jobs:
 
-1. Two nodes, four-hour limit: MARS normal/instrumented builds, all 24 combined
-   operator checks, MFEM library/driver build, then 18 baseline checks on 1/4/8 GPUs.
+1. Two nodes, one-hour limit: resume preparation 5286400, reuse the MARS
+   binaries and 24 completed checks, reuse the installed MFEM library, build only
+   the MFEM driver, then run the 18 remaining baseline checks on 1/4/8 GPUs.
 2. Sixteen nodes, four-hour limit, after preparation passes: 168 invocations
    covering the weak and strong cases above through 64 GPUs.
 3. Sixty-four nodes, 90-minute limit, after preparation passes and the preceding
@@ -88,11 +90,33 @@ preparation checks must finish cleanly, as must every MARS check. This lets the
 independent scaling work proceed without pretending that a crash was validated.
 The standard timed runs and the 256-rank pilot still require clean exits.
 
-The v2 kit has a separate immutable directory; it does not alter a previously
-submitted job. It supersedes the original submission command. No numerical source,
-compiler recipe, stopping tolerance or timing acceptance rule changed.
+The kits use separate immutable directories; they do not alter a previously
+submitted job. The v3 command supersedes the earlier submission commands. Numerical source, stopping tolerances and timing acceptance rules are unchanged.
+The MFEM consumer build is corrected below.
 
 Each MARS paper-run invocation prints and stores `generated_sha256`: SHA-256 of the compact,
 sorted JSON map from relative filenames under `generated/` to their SHA-256 values.
 MFEM records null/unused because it does not load these operators. The manifest
 continues to seal every individual PTX file.
+
+## Resume after preparation 5286400
+
+The current-operator MARS builds, 24 solves and eight direct hierarchy checks pass.
+Their two executable hashes, 280 sealed artifacts, 97 process receipts and 97 rank
+audits were independently verified. The largest true residual is 2.098e-11 and
+the direct hierarchy error is 2.649236e-16. The MFEM library built and installed,
+but its driver's Makefile invocation omitted the CUDA include directory and failed
+on `cusparse.h`; no MFEM solve or scaling comparison ran.
+
+The driver now uses an installed-package CMake consumer linked to CUDA targets,
+which supply the missing public headers and runtime libraries. The source and
+compiler remain the same; this is a build-recipe fix, not a numerical change.
+A local compiled regression checks include propagation and reproduces the error
+when the CUDA targets are removed. GPU compilation of the corrected driver is
+still pending.
+
+The v3 kit includes a receipt sealing the previous binaries, installation and raw
+checks. Resume verifies it and unchanged production source, dependencies and PTX,
+then copies the completed work into its new result directory. It does not rebuild
+MARS or MFEM's library or rerun the completed 24 solves. The failed logs remain
+unchanged. Only a passing resumed preparation enables the dependent scaling jobs.

@@ -109,8 +109,17 @@ def build_mfem(bundle, root):
              '-DMFEM_ENABLE_MINIAPPS=NO', '-DMFEM_ENABLE_TESTING=NO'], out / 'configure.log', timeout=600)
     command(['cmake', '--build', out / 'build', '--parallel', '8'], out / 'compile.log', timeout=6000)
     command(['cmake', '--install', out / 'build'], out / 'install.log', timeout=600)
-    command(['cmake', '-E', 'chdir', out, 'make', '-f', bundle / 'source/tests/performance/mfem_bp3/Makefile',
-             'MFEM_DIR=' + str(prefix)], out / 'driver.log', timeout=600)
+    build_mfem_driver(bundle, root)
+
+
+def build_mfem_driver(bundle, root):
+    out = root / 'mfem'
+    build = out / 'driver-build'
+    command(['cmake', '-S', bundle / 'source/tests/performance/mfem_bp3', '-B', build,
+             '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_CXX_COMPILER=' + str(shutil.which('mpicxx')),
+             '-DMFEM_DIR=' + str(out / 'install/lib/cmake/mfem'),
+             '-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=' + str(out)], out / 'driver-configure.log', timeout=300)
+    command(['cmake', '--build', build, '--parallel', '4'], out / 'driver-compile.log', timeout=600)
     link = command(['ldd', '-r', out / 'mfem_bp3'], out / 'linkage.txt')
     libs = re.findall(r'libHYPRE[^\s]*\s+=>\s+(\S+)', link)
     if 'not found' in link or 'undefined symbol:' in link or len(libs) != 1 or Path(libs[0]).resolve() != HYPRE.resolve():
@@ -136,9 +145,15 @@ def verify_prepared(prepared, bundle):
     verify_files(prepared, json.loads((prepared / 'paper-build.json').read_text())['binaries'])
 
 
-def prepare(bundle, root):
-    compat.check(bundle, root)
-    command(step(1, 115) + ['/usr/bin/python3', HERE / 'driver.py', 'build-mfem', bundle, root], root / 'mfem-build.log')
+def prepare(bundle, root, previous=None):
+    if previous is not None:
+        from resume_paper import restore
+        restore(bundle, previous, root)
+        command(step(1, 15) + ['/usr/bin/python3', HERE / 'driver.py', 'build-mfem-driver', bundle, root],
+                root / 'mfem-driver-build.log')
+    else:
+        compat.check(bundle, root)
+        command(step(1, 115) + ['/usr/bin/python3', HERE / 'driver.py', 'build-mfem', bundle, root], root / 'mfem-build.log')
     built = json.loads((root / 'build/build.json').read_text())
     binaries = {'build/' + n: sha for n, sha in built['binaries'].items()}
     binaries['mfem/mfem_bp3'] = digest(root / 'mfem/mfem_bp3')
@@ -231,18 +246,20 @@ def benchmark(bundle, prepared, root, phase):
 
 if __name__ == '__main__':
     clean_environment()
-    if len(sys.argv) not in (4, 5) or sys.argv[1] not in ('prepare', 'standard', 'large', 'build-mfem'):
-        raise SystemExit('usage: driver.py prepare|standard|large|build-mfem bundle results [prepared]')
+    if len(sys.argv) not in (4, 5) or sys.argv[1] not in ('prepare', 'resume', 'standard', 'large', 'build-mfem', 'build-mfem-driver'):
+        raise SystemExit('usage: driver.py prepare|resume|standard|large|build-mfem|build-mfem-driver bundle results [prepared]')
     phase, bundle, root = sys.argv[1], Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
     verify_bundle(bundle)
-    if phase == 'build-mfem':
-        build_mfem(bundle, root)
+    if phase in ('build-mfem', 'build-mfem-driver'):
+        (build_mfem if phase == 'build-mfem' else build_mfem_driver)(bundle, root)
     else:
         root.mkdir(parents=True, exist_ok=False)
         save(root / 'inputs.json', dict(phase=phase, manifest_sha256=digest(bundle / 'manifest.json'),
                                        prepared=sys.argv[4] if len(sys.argv) == 5 else None))
-        if phase == 'prepare':
-            prepare(bundle, root)
+        if phase in ('prepare', 'resume'):
+            if phase == 'resume' and len(sys.argv) != 5:
+                raise SystemExit('resume needs the previous result directory')
+            prepare(bundle, root, Path(sys.argv[4]).resolve() if phase == 'resume' else None)
         else:
             if len(sys.argv) != 5:
                 raise SystemExit('benchmark phase needs a prepared result directory')

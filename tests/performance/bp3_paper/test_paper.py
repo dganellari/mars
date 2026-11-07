@@ -154,6 +154,65 @@ class PaperChecks(unittest.TestCase):
         (folder / 'a.ptx').write_text('changed')
         self.assertNotEqual(before, driver.generated_digest(self.root))
 
+    def test_cmake_consumer_supplies_cuda_headers(self):
+        source = self.root / 'consumer'
+        source.mkdir()
+        cmake = (REPO / 'tests/performance/mfem_bp3/CMakeLists.txt').read_text()
+        (source / 'CMakeLists.txt').write_text(cmake)
+        (source / 'mfem_bp3.cpp').write_text('#include <mfem.hpp>\nint main(){return cuda_header_value != 7;}\n')
+        mfem = self.root / 'mfem'
+        mfem.mkdir()
+        headers = mfem / 'include'
+        headers.mkdir()
+        (headers / 'mfem.hpp').write_text('#include <cusparse.h>\n')
+        (mfem / 'MFEMConfigVersion.cmake').write_text('set(PACKAGE_VERSION 4.8.0)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\n')
+        (mfem / 'MFEMConfig.cmake').write_text('set(MFEM_USE_MPI YES)\nset(MFEM_USE_CUDA YES)\n'
+            'add_library(mfem INTERFACE IMPORTED)\nset_target_properties(mfem PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "' + str(headers) + '")\n')
+        modules = self.root / 'modules'
+        modules.mkdir()
+        cuda = self.root / 'cuda'
+        cuda.mkdir()
+        (cuda / 'cusparse.h').write_text('constexpr int cuda_header_value = 7;\n')
+        (modules / 'FindMPI.cmake').write_text('set(MPI_FOUND TRUE)\nadd_library(MPI::MPI_CXX INTERFACE IMPORTED)\n')
+        (modules / 'FindCUDAToolkit.cmake').write_text('set(CUDAToolkit_FOUND TRUE)\n' + ''.join(
+            'add_library(CUDA::%s INTERFACE IMPORTED)\nset_target_properties(CUDA::%s PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "%s")\n' % (t, t, cuda)
+            for t in ('cudart', 'cusparse', 'cublas', 'curand')))
+        def run(args):
+            return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        good = self.root / 'good'
+        configured = run(['cmake', '-S', str(source), '-B', str(good), '-DMFEM_DIR=' + str(mfem), '-DCMAKE_MODULE_PATH=' + str(modules)])
+        self.assertEqual(configured.returncode, 0, configured.stdout)
+        built = run(['cmake', '--build', str(good)])
+        self.assertEqual(built.returncode, 0, built.stdout)
+        self.assertEqual(run([str(good / 'mfem_bp3')]).returncode, 0)
+        # Removing the CUDA targets reproduces the missing-header compile failure.
+        (source / 'CMakeLists.txt').write_text(cmake.replace(' CUDA::cudart CUDA::cusparse CUDA::cublas CUDA::curand', ''))
+        bad = self.root / 'bad'
+        configured = run(['cmake', '-S', str(source), '-B', str(bad), '-DMFEM_DIR=' + str(mfem), '-DCMAKE_MODULE_PATH=' + str(modules)])
+        self.assertEqual(configured.returncode, 0, configured.stdout)
+        built = run(['cmake', '--build', str(bad)])
+        self.assertNotEqual(built.returncode, 0)
+        self.assertIn('cusparse.h', built.stdout)
+
+    def test_resume_skips_completed_work(self):
+        previous = self.root / 'previous'
+        calls = []
+        def restore(bundle, before, root):
+            self.assertEqual(before, previous)
+            (root / 'build').mkdir()
+            save(root / 'build/build.json', dict(binaries={'normal': 'kept'}))
+        def command(args, log, **kw):
+            calls.append(args)
+            self.assertIn('build-mfem-driver', args)
+        import resume_paper
+        with mock.patch.object(resume_paper, 'restore', restore), mock.patch.object(driver, 'command', command), \
+             mock.patch.object(driver, 'digest', return_value='test'), mock.patch.object(driver, 'baseline_checks'), \
+             mock.patch.object(driver, 'verify_bundle'), mock.patch.object(driver, 'seal'), \
+             mock.patch.object(driver.compat, 'check') as completed:
+            driver.prepare(self.root, self.root, previous)
+            completed.assert_not_called()
+        self.assertEqual(len(calls), 1)
+
     def test_summary_seals_and_scaling(self):
         case = dict(workload='weak', ranks=1, p=3, summary={
             'matched': dict(median_ms=100, min_ms=99, max_ms=101, iterations=[14]*3),
@@ -183,7 +242,7 @@ class PaperChecks(unittest.TestCase):
             p.chmod(0o755)
         env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'], CAPTURE=str(capture), SLURM_JOB_ID='12345')
         for name in ('submit.sh', 'job.sh'):
-            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v2', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python'))
+            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v3', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python'))
             p = self.root / name
             p.write_text(text)
             subprocess.run(['bash', '-n', str(p)], check=True)
@@ -194,6 +253,8 @@ class PaperChecks(unittest.TestCase):
         lines = capture.read_text().splitlines()
         self.assertEqual(len(lines), 5)
         self.assertIn('-N2 -n8', lines[1])
+        self.assertIn('resume /capstor/scratch/cscs/gandanie/bp3-paper/5286400', lines[1])
+        self.assertIn('--time=01:00:00', lines[1])
         self.assertIn('-N16 -n64', lines[2])
         self.assertIn('--dependency=afterok:12345,afterany:12345', lines[3])
         self.assertIn('-N64 -n256', lines[3])

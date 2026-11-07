@@ -14,7 +14,7 @@ import export as base_export
 MFEM_REVISION = 'a01719101027383954b69af1777dc828bf795d62'
 
 
-def freeze(repo, deps, accepted, mfem, target):
+def freeze(repo, deps, accepted, mfem, target, resume_receipt=None):
     revision = subprocess.check_output(['git', '-C', str(mfem), 'rev-parse', 'v4.8^{commit}'], universal_newlines=True).strip()
     if revision != MFEM_REVISION:
         raise ValueError('Wrong MFEM release')
@@ -37,6 +37,8 @@ def freeze(repo, deps, accepted, mfem, target):
     for source in HERE.iterdir():
         if source.suffix in ('.py', '.sh', '.md'):
             base_export.copy(source, target / 'paper' / source.name)
+    if resume_receipt is not None:
+        base_export.copy(resume_receipt, target / 'paper/resume-receipt.json')
     record = json.loads((target / 'manifest.json').read_text())
     record['scope'] = 'Current-operator BP3/MFEM paper comparison; 256 ranks are a pilot, not validated scaling'
     record['dependencies']['mfem'] = MFEM_REVISION
@@ -50,5 +52,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('repo', 'deps', 'accepted', 'mfem', 'target'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--resume-receipt', type=Path)
     a = parser.parse_args()
-    freeze(*(getattr(a, n).resolve() for n in ('repo', 'deps', 'accepted', 'mfem', 'target')))
+    freeze(*(getattr(a, n).resolve() for n in ('repo', 'deps', 'accepted', 'mfem', 'target')),
+           resume_receipt=a.resume_receipt.resolve() if a.resume_receipt else None)
