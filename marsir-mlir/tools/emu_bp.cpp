@@ -9,6 +9,8 @@
 //   y[i,j,k]   = sum_abc Bt[i,a] Bt[j,b] Bt[k,c] w[a,b,c]
 // Defines: BP_NAME (kernel), BP_SPEC_BP1 | BP_SPEC_BP3, BP_Q, BP_K (geometry components),
 // BP_GRAD (D and Dt are used), MIR_EMU_REAL (float for the f32 kernel).
+// BP_EVEN_ODD (--mir-even-odd): the random matrices are made mirror-symmetric (B[Q-1-a][n-1-i]
+// = B[a][i], D[Q-1-a][Q-1-b] = -D[a][b]) and the kernel gets them folded.
 // BP_TRILINEAR (geometry = trilinear): the kernel takes gq (random points in [-1, 1]), wq
 // (random positive weights) and the corners X (a perturbed unit cube per element) instead
 // of G; the oracle forms G from them by direct sums over the corners (w det J, or the
@@ -22,6 +24,9 @@
 #include <vector>
 
 #include "emu_warp_runtime.h"
+#ifdef BP_EVEN_ODD
+#include "../../backend/distributed/unstructured/marsir/mars_marsir_fold.hpp"
+#endif
 
 #ifndef MIR_EMU_REAL
 #define MIR_EMU_REAL double
@@ -66,6 +71,18 @@ int main(int argc, char** argv)
     };
     std::vector<double> u = rand(E * n3), B = rand((long long)Q * n), D = rand((long long)Q * Q);
     std::vector<double> G = rand(E * (K > 0 ? K : 1) * q3), Bt(n * Q), Dt(Q * Q);
+#ifdef BP_EVEN_ODD
+    auto mirror = [](std::vector<double>& M, int r, int c, double s) {
+        for (int i = 0; i < r; ++i)
+            for (int j = 0; j < c; ++j) {
+                const int k = i * c + j, m = (r - 1 - i) * c + (c - 1 - j);
+                if (m < k) M[k] = s * M[m];
+                if (m == k && s < 0) M[k] = 0;
+            }
+    };
+    mirror(B, Q, n, 1);
+    mirror(D, Q, Q, -1);
+#endif
     for (int i = 0; i < Q; ++i)
         for (int j = 0; j < n; ++j) Bt[j * Q + i] = B[i * n + j];
     for (int i = 0; i < Q; ++i)
@@ -142,11 +159,18 @@ int main(int argc, char** argv)
 
     D4 du{ru.data(), ru.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
     D4 dy{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
-    std::copy(rB.begin(), rB.end(), BP_CAT(BP_NAME, __m0));
-    std::copy(rBt.begin(), rBt.end(), BP_CAT(BP_NAME, __m1));
+#ifdef BP_EVEN_ODD
+    auto fill = [](const std::vector<Real>& M, long long r, long long c, Real* out) {
+        for (long long k = 0; k < mars::marsir::folded_size(r, c); ++k) out[k] = mars::marsir::folded_entry(M.data(), r, c, k);
+    };
+#else
+    auto fill = [](const std::vector<Real>& M, long long, long long, Real* out) { std::copy(M.begin(), M.end(), out); };
+#endif
+    fill(rB, Q, n, BP_CAT(BP_NAME, __m0));
+    fill(rBt, n, Q, BP_CAT(BP_NAME, __m1));
 #ifdef BP_GRAD
-    std::copy(rD.begin(), rD.end(), BP_CAT(BP_NAME, __m2));
-    std::copy(rDt.begin(), rDt.end(), BP_CAT(BP_NAME, __m3));
+    fill(rD, Q, Q, BP_CAT(BP_NAME, __m2));
+    fill(rDt, Q, Q, BP_CAT(BP_NAME, __m3));
 #endif
     D5 dG{rG.data(), rG.data(), 0, {E, K, Q, Q, Q}, {K * q3, q3, (int64_t)Q * Q, Q, 1}};
     (void)dG;

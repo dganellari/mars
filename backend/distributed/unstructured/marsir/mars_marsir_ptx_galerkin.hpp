@@ -11,8 +11,11 @@
 // spec (bp1_tri.op, bp3_tri.op) takes gq, wq (q: the Gauss points and weights) and X (E x
 // 3 x 2 x 2 x 2: the corners by component, then corner bit along each reference axis)
 // instead of G, and forms the geometry in registers. The launch shape is the published
-// {kernel}__launch, or one warp per element.
+// {kernel}__launch, or one warp per element. A matrix with a published {symbol}__fold =
+// {rows, cols, sign} is read in the even-odd folded form (marsir-mlir --mir-even-odd,
+// mars_marsir_fold.hpp), which is formed here on the device from the matrix given.
 
+#include "backend/distributed/unstructured/marsir/mars_marsir_fold.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 
 #include <string>
@@ -20,6 +23,13 @@
 
 namespace mars {
 namespace marsir {
+
+template <typename Real>
+__global__ void fold_kernel(const Real* __restrict__ M, Real* __restrict__ out, long long r, long long c)
+{
+    const long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (k < folded_size(r, c)) out[k] = folded_entry(M, r, c, k);
+}
 
 class GalerkinPtx {
 public:
@@ -38,11 +48,28 @@ public:
             threads_ = (unsigned)v[0];
             per_block_ = v[1];
         }
-        for (int k = 0; k < (grad ? 4 : 2); ++k)
-            MARS_MARSIR_CU(cuModuleGetGlobal(&matrix_[k], &matrix_bytes_[k], module_,
-                                             (kernel + "__m" + std::to_string(k)).c_str()));
+        for (int k = 0; k < (grad ? 4 : 2); ++k) {
+            const std::string name = kernel + "__m" + std::to_string(k);
+            MARS_MARSIR_CU(cuModuleGetGlobal(&matrix_[k], &matrix_bytes_[k], module_, name.c_str()));
+            // Setup only: three integers, like __launch above.
+            if (cuModuleGetGlobal(&global, &bytes, module_, (name + "__fold").c_str()) == CUDA_SUCCESS &&
+                bytes == sizeof(long long[3])) {
+                MARS_MARSIR_CU(cuMemcpyDtoH(fold_[k], global, sizeof(fold_[k])));
+                if (folded_size(fold_[k][0], fold_[k][1]) * (long long)sizeof(double) != (long long)matrix_bytes_[k]) {
+                    fprintf(stderr, "%s: %zu bytes, not the folded size of its __fold record\n", name.c_str(),
+                            matrix_bytes_[k]);
+                    std::abort();
+                }
+                MARS_MARSIR_CU(cuMemAlloc(&folded_[k], matrix_bytes_[k]));
+            }
+        }
     }
-    ~GalerkinPtx() { cuModuleUnload(module_); }
+    ~GalerkinPtx()
+    {
+        for (CUdeviceptr f : folded_)
+            if (f) cuMemFree(f);
+        cuModuleUnload(module_);
+    }
     GalerkinPtx(const GalerkinPtx&) = delete;
     GalerkinPtx& operator=(const GalerkinPtx&) = delete;
 
@@ -92,7 +119,18 @@ private:
         const double* source[4] = {B, Bt, D, Dt};
         for (int k = 0; k < (grad_ ? 4 : 2); ++k)
             if (source[k] != copied_[k]) {
-                MARS_MARSIR_CU(cuMemcpyDtoDAsync(matrix_[k], (CUdeviceptr)source[k], matrix_bytes_[k], (CUstream)stream));
+                CUdeviceptr from = (CUdeviceptr)source[k];
+                if (folded_[k]) {
+                    const long long size = folded_size(fold_[k][0], fold_[k][1]);
+                    fold_kernel<<<(unsigned)((size + 127) / 128), 128, 0, stream>>>(source[k], (double*)folded_[k],
+                                                                                    fold_[k][0], fold_[k][1]);
+                    if (cudaError_t e = cudaGetLastError(); e != cudaSuccess) {
+                        fprintf(stderr, "fold_kernel: %s\n", cudaGetErrorString(e));
+                        std::abort();
+                    }
+                    from = folded_[k];
+                }
+                MARS_MARSIR_CU(cuMemcpyDtoDAsync(matrix_[k], from, matrix_bytes_[k], (CUstream)stream));
                 copied_[k] = source[k];
             }
         std::vector<Desc> descs{make(u, {E, n, n, n})};
@@ -120,6 +158,8 @@ private:
     CUdeviceptr matrix_[4] = {};
     size_t matrix_bytes_[4] = {};
     mutable const double* copied_[4] = {};   // the matrices last copied into matrix_
+    long long fold_[4][3] = {};               // {rows, cols, sign} of a folded matrix
+    CUdeviceptr folded_[4] = {};              // its folded form, before the copy into matrix_
 };
 
 }  // namespace marsir

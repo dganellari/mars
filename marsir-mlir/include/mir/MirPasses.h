@@ -46,6 +46,8 @@ void registerNoaliasDescriptorsPass();
 void registerCellwiseSchedulePass();
 void registerFusePhasesPass();
 void registerTraceSharedPass();
+// Registers --mir-even-odd (even-odd split of mirror-symmetric 1D sweeps).
+void registerEvenOddPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

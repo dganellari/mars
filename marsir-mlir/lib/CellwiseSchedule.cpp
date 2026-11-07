@@ -347,8 +347,11 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
         auto gt = MemRefType::get(t.getShape(), t.getElementType(), MemRefLayoutAttrInterface(),
                                   gb.getI64IntegerAttr(constSpace));
         const std::string name = (func.getName() + "__m" + Twine(k)).str();
-        gb.create<memref::GlobalOp>(loc, gb.getStringAttr(name), /*sym_visibility=*/StringAttr(), TypeAttr::get(gt),
-                                    /*initial_value=*/gb.getUnitAttr(), /*constant=*/UnitAttr(), IntegerAttr());
+        auto global = gb.create<memref::GlobalOp>(loc, gb.getStringAttr(name), /*sym_visibility=*/StringAttr(),
+                                                  TypeAttr::get(gt), /*initial_value=*/gb.getUnitAttr(),
+                                                  /*constant=*/UnitAttr(), IntegerAttr());
+        if (Attribute reflect = func.getArgAttr(i, "mir.reflect"))   // for --mir-even-odd
+          global->setAttr("mir.reflect", reflect);
         Value g = fb.create<memref::GetGlobalOp>(loc, gt, name);
         func.getArgument(i).replaceAllUsesWith(g);
         erase.set(i);

@@ -63,9 +63,11 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     args[-1] += ' {mir.element}'
     if "%G:" in src or "%X:" in src:   # stored geometry, or the corners (geometry = trilinear)
         args[-2] += " {mir.element}"
-    # The 1D matrices B, Bt [, D, Dt] follow u: constant memory, filled by the host.
+    # The 1D matrices B, Bt [, D, Dt] follow u: constant memory, filled by the host. GLL
+    # nodes and Gauss points are symmetric, so B and Bt are mirror-symmetric and D, Dt
+    # antisymmetric (mir.reflect, for --mir-even-odd).
     for i in range(1, 5 if "%D:" in src else 3):
-        args[i] += " {mir.constant}"
+        args[i] += f" {{mir.constant, mir.reflect = {1 if i <= 2 else -1} : i64}}"
     ir = ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {" + ir[m.end(3):]
 
     # Warps per block: the CVFEM operator's measured default, halved (fewer elements
@@ -74,11 +76,12 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     warps = given or (4 if p >= 3 else 8)
     bufferized = ir
     while True:
-        # One thread per 1D line (max-block = q), unrolled; on the CPU the matrices stay in
-        # address space 0.
-        space = 0 if "--emulate" in sys.argv else 4
-        sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space={space}"
-        ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse",
+        # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
+        # space steers which dimension a thread keeps, so the CPU gate schedules with it too
+        # and only drops it before the CPU build.
+        sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
+        even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if "--no-even-odd" not in sys.argv else []
+        ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
                      "--mir-fuse-phases", "--canonicalize", "--cse",
                      f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'}", "--canonicalize", "--cse", "--loop-invariant-code-motion"],
                     bufferized)
@@ -88,10 +91,12 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
             k = re.search(r"%G: tensor<(\d+)x", src)
             # The pointwise action of bp1_tri / bp3_tri is that of bp1 / bp3 on the geometry
             # the harness forms from the corners.
+            ir = re.sub(r"(memref<[0-9x]*f(?:32|64)), 4>", r"\1>", ir)
             return hl.emulate(ir, p, harness="emu_bp.cpp",
                               defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.split('_')[0].upper()}",
                                        f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
-                              + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else []))
+                              + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else [])
+                              + (["-DBP_EVEN_ODD"] if "__fold" in ir else []))
         suffix = "_f32" if real == "f32" else ""
         named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(").replace(
             f"@{spec}_apply__m", f"@{spec}_apply_p{p}{suffix}__m")
