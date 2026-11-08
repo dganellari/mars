@@ -53,6 +53,10 @@ public:
     {
     }
 
+    // A resumed run (a restart): time.txt is kept and appended to, not started afresh. The mesh is
+    // written again on the first writeFields (the same mesh: the same files).
+    void appendTimes() { time_started_ = true; }
+
     // Writes <dir>/out/<field>[.c].<step>.<type> for every field, and appends t to time.txt.
     void writeFields(int step, double t, const DomainT& domain, const std::vector<Field>& fields)
     {
