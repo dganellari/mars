@@ -56,59 +56,21 @@ including element numberings that are not aligned with the coordinate axes.
 
 ## Module status
 The unstructured GPU backend (`backend/distributed/unstructured/`) is the active,
-supported path. Other modules are present but build-OFF by default and not actively
-developed for v0.1:
+supported path. The Kokkos structured backend is also supported:
+- Kokkos structured-mesh / SFC backend — optional, enabled with `MARS_ENABLE_KOKKOS`
+  (OFF by default). It covers Quad4/Hex8 generation, Morton/Hilbert ordering,
+  Q1/Q2 scalar/two-component DOFs, field gather/additive scatter and periodic cell
+  halos, with direct and host-staged MPI. Its gates pass on Linux CPU, AMD MI300A
+  and NVIDIA GH200 at 1/2/4 ranks over two nodes (2026-11-08); see
+  [Structured Kokkos](docs/Structured-Kokkos.md#release-status). Not established:
+  old PDE applications, staggered discretizations, periodic DOF identification,
+  arbitrary polynomial orders and large-scale performance.
+
+Other modules are present but build-OFF by default and not actively developed for v0.1:
 - `backend/serial/` — reference CPU backend, legacy (kept for debugging).
-- Kokkos structured-mesh / SFC path — optional, enabled with `MARS_ENABLE_KOKKOS`.
-  Quad4/Hex8 generation, Morton/Hilbert ordering, Q1/Q2 scalar/two-component DOFs,
-  scalar/two-component field gather/additive scatter and periodic cell halos have
-  bounded CPU, CUDA and HIP checks with MPI.
-  Public-header and test-configuration failures from the baseline review are fixed.
-  See [Structured Kokkos](docs/Structured-Kokkos.md) for the exact capability gates.
 - `backend/adios2/` — optional ADIOS2 I/O, off by default.
 - `backend/vtk/`, `moonolith_adapter/` — optional/experimental extensions, off by default.
-
-Structured validation on 2026-11-04 uses macOS arm64, Open MPI 5.0.5 and Kokkos
-4.4.01 at 1/2/4 ranks: final AppleClang 21 Debug builds use its Serial execution
-space with direct and host-staged MPI; LLVM 19/libomp Release uses two OpenMP
-threads with direct MPI. Installed consumers pass in both communication modes.
-Each full configuration passes 11 CTests and 168 case/rank-count combinations.
-Native CUDA 12.9/GH200 and HIP/ROCm 7.2.3/MI300A builds also pass all 11 structured
-and 3 installed-consumer CTests in both direct and host-staged MPI modes. These
-one-node tests use 1/2/4 ranks with a distinct GPU per rank and cover the final
-full-Hilbert and shallow-manager-copy changes. The source, jobs and checked
-receipts are identified in [Structured Kokkos](docs/Structured-Kokkos.md).
-Release requires every applicable gate on CPU, AMD GPUs and NVIDIA GPUs from the
-same candidate source. On 2026-11-05, Linux CPU Serial/OpenMP passes both MPI
-modes, each with 11 structured and 3 installed-consumer CTests; its Kokkos-OFF
-core build also passes. Both GPUs pass the 48 existing release tests in each
-single-node and two-node launch layout. Subsequent structured multi-node
-capability/install tests pass in all eight configurations. HIP passes its
-180 setup/halo timing comparisons. CPU confirmation722701 passes the full90
-OpenMP/direct comparisons, completing the preceding CPU gate while retaining the
-earlier rejected result. CUDA5267897/5267898 confirms the MPI failure comes from
-pooled CUDA allocations on this stack; rebuilding Kokkos with malloc_async OFF
-passes all correctness gates and100 benchmark invocations without MPI failure.
-That candidate retains ten NVIDIA setup timing rejections across direct and
-staged modes. The private buffer-lifetime trial5269247 still rejects eight setup
-comparisons and is not adopted. Fenced profiles did not reproduce the large
-multi-node delays. Their cause remains unresolved, with no new implementation
-accepted for release. Unfenced diagnostic5269661 narrows the repeatable
-single-rank cost to sort-time CUDA allocations/frees; its untouched
-controls do not reproduce the large multi-node stalls on a different node pair.
-The optimization removes the second sort when the owned/local candidate lists
-are provably identical. Native validation completed on2026-11-06: all eight
-CPU/HIP/CUDA configurations pass correctness/install checks, including minimum
-valid meshes and one/two-node MPI. All400 benchmark invocations pass correctness
-and all240 halo comparisons pass. HIP passes180/180 timing comparisons; CPU
-passes359/360 and CUDA172/180. One CPU and eight CUDA setup comparisons still
-block timing acceptance. CUDA's large direct multi-node delays recur on the
-earlier failing node pair. The diagnostic observer changes the MPI_Waitall
-status argument, so the absence of stalls in its profiles does not explain
-them. A locally checked observer correction preserves this argument; it is not
-a proven native performance fix. No full matrix rerun is required merely for
-that diagnostic-only change.
-See the [release matrix](docs/Structured-Kokkos.md#release-gate). The
+See the [release status](docs/Structured-Kokkos.md#release-status). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.
 The current candidate removes the full-Hilbert shortcut after diagnostic job 5290537

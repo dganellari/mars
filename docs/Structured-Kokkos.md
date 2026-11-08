@@ -38,8 +38,7 @@ path. See the [Kokkos compatibility note](https://kokkos.org/kokkos-core-wiki/kn
 The validation dependency builder sets this option explicitly. Native allocation
 comparisons confirm this failure on the tested GH200/Cray MPI stack: pooled
 allocations fail across nodes, while ordinary CUDA allocations and corrected
-Views pass. The corrected MARS correctness gates pass; setup timing gates remain
-open as detailed below.
+Views pass.
 Keep the C++ host compiler separate from the GPU compiler:
 
 | Setting | NVIDIA CUDA | AMD HIP |
@@ -137,180 +136,48 @@ and consumer in both modes using LLVM 19, CUDA 12.4 headers and Kokkos 4.4.01.
 These use a private macOS compatibility configuration; they are not native
 compilation, linking or GPU execution.
 
-The subsequent native builds and tests pass with CUDA 12.9 on NVIDIA GH200
-and HIP/ROCm 7.2.3 on AMD MI300A, using Kokkos 4.4.01. Both direct and host-staged
-MPI pass all 11 structured and 3 installed-consumer CTests at 1/2/4 ranks on one
-node, with a distinct GPU per rank. Each mode covers 168 GoogleTest
-case/rank-count combinations, including full-Hilbert direct partitioning and
-shallow manager copies. CUDA jobs are 5259527 (direct) and 5259528 (staged);
-HIP jobs are 720226 (direct) and 720227 (staged). Their JUnit results, runtime
-receipts and retrieved artifact hashes were independently checked against the
-same frozen source snapshot, whose manifest SHA256 is
-`14eb4f9f7030292f51a392bcd195c6957a7da6a3ff50e421b6c603258ac9976b`.
+Native results on CPU, AMD and NVIDIA are in [Release status](#release-status).
 
 These tests do not establish old PDE application correctness, staggered
 discretizations, periodic DOF identification, arbitrary
 polynomial orders, empty partitions, large-scale performance or GPU race freedom.
 
-## Release gate
+## Release status
 
-All applicable checks must pass on **CPU, AMD GPUs and NVIDIA GPUs** before
-release. Use the same candidate source on all three platforms and retain its
-hashes, build configuration and runtime receipts. A pass on one platform does
-not cover another. Required tests that fail, are skipped or have no evidence
-keep the release blocked.
+The structured backend is supported. Commit `409a3c87` passed every correctness
+gate on CPU, AMD and NVIDIA on 2026-11-08, from one frozen kit (SHA256
+`2b97166aa35310f4c1fcedc1cd04093e8b228f8373ee6d4d3523616dcc4aca50`):
 
-The current candidate removes the full-Hilbert partition shortcut. In NVIDIA
-diagnostic job 5290537, removing only that shortcut eliminates the four large
-candidate-specific setup stalls and the full-Hilbert DOF regressions in the
-tested contexts; restoring the earlier temporary-buffer lifetime does not.
-All 450 workload checks pass. The no-shortcut variant passes 51/54 timing
-comparisons; its three rejected phases also stall in the reference, with
-overlapping sample ranges. Those failures remain rejected. Vendor preload in
-5290358 did not repair the stalls. This identifies a trigger in the shortcut,
-not an internal MPI defect or a complete performance fix. Full native validation
-of the revised source on CPU, AMD and NVIDIA is pending. The matrix below records
-the preceding source, including its failures.
-
-The DOF optimization sorts identical owned/local candidate lists once, while
-retaining independent final key arrays. The completed 2026-11-06 native matrix
-passes correctness and installation checks on all three platforms. The suite
-includes minimum valid partitions and171 case/rank-count combinations. Setup
-timing acceptance remains incomplete, as recorded below.
-
-| Required check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
+| Check | Linux CPU | AMD HIP / MI300A | NVIDIA CUDA / GH200 |
 | --- | --- | --- | --- |
-| Native build, 11 structured CTests and 3 installed-consumer CTests at 1/2/4 ranks | Pass, Serial/OpenMP and both MPI modes | Pass, both MPI modes | Pass, both MPI modes |
-| MPI across at least two nodes, including ownership, partition and halo checks | Pass, all four configurations | Pass, both MPI modes | Pass, both MPI modes |
-| Bounded mesh setup and repeated halo performance checks | 359/360 pass; one OpenMP DOF setup rejection | Pass, 180/180 | 172/180 pass; eight setup rejections; MPI abort resolved |
-| Kokkos-OFF build and existing applicable release regressions | Core build passes | Pass, 48 tests in each launch layout | Pass, 48 tests in each launch layout |
+| 11 structured and 3 installed-consumer CTests at 1/2/4 ranks; the 2- and 4-rank cases span two nodes | Pass: Serial and OpenMP, direct and staged MPI | Pass: direct and staged MPI | Pass: direct and staged MPI |
+| Kokkos-OFF build | Pass | — | — |
+| Existing unstructured GPU release suite (48 tests, Kokkos OFF) | — | Pass | Pass |
+| Setup and halo timing against the reference snapshot (diagnostic) | 360/360 | 180/180 | 176/180 |
 
-Current preparation/validation jobs are724562/724563 (CPU),724564/724565 (HIP)
-and5275808/5275809 (CUDA), with structured source manifest
-`79b112f4813a5244a8a2166b522017e91832a9bd76430d90ff79f1cda19738d4`.
-All eight configurations pass11 structured and3 installed-consumer CTests in
-both launch layouts. All400 benchmark invocations pass correctness; all240 halo
-comparisons pass. Independent review verifies781 downloaded artifact hashes,
-all720 comparison verdicts and16 CUDA diagnostic invocations plus3 preflights.
-Binary/install hashes not downloaded remain runner-recorded.
+Jobs (preparation/validation): CPU 727102/727103, HIP 727104/727105, CUDA
+5295845/5295846. The unstructured suite ran on 2026-11-05 (HIP 721522, CUDA
+5262346). Later commits change only structured sources, tests and documentation.
 
-CPU's remaining rejection is four-rank/two-node OpenMP/direct Hilbert Quad4
-full-grid DOF setup:10.425ms reference versus12.200ms candidate. CUDA has six
-direct and two staged rejections. Four direct multi-node setup medians increase
-from2.991–5.707ms to40.509–58.983ms; the other four CUDA rejections are13–21%
-DOF setup increases. The single-GPU CUDA DOF medians improve by11–16% across
-the six direct-mode workloads. These bounded results do not establish scaling.
+The timing comparison is a diagnostic, not a release gate. It compares each
+case with snapshot `7c0684ad` of the same backend, a regression reference
+rather than a performance target. It reports a case when the candidate median
+exceeds 1.10 times the reference plus a small absolute allowance. The four
+rejected CUDA cases all use direct MPI:
+- Three multi-node setups of 40 to 55 ms. Their candidate and reference samples
+  overlap: for example, four-rank Hilbert Hex8 rectangular mesh setup has
+  reference 26–50 ms and candidate 27–67 ms.
+- One single-node DOF setup near 8 ms. Its samples fall on two values, 7.9 and
+  8.9 ms.
+All four cases pass with host-staged MPI. Three of them use rectangular meshes,
+which the last change (the full-Hilbert partition) does not touch. None of this
+is a scaling result.
 
-The large delays recur on the earlier failing node pair nid005463/nid005500.
-They do not recur in the subsequent MPI-only or unfenced host profiles in the
-same allocation. That observer replaces `MPI_STATUSES_IGNORE` with a status
-array, so its absence of stalls cannot establish their cause. The diagnostic
-wrapper now preserves that argument by default and timing audits reject status
-replacement. This local diagnostic correction has not established a native
-timing fix; the original eight CUDA failures remain rejected.
-
-### Earlier native results
-
-Results checked on 2026-11-05 use structured source manifest
-`1518a67c6efe04f184adf6c1487fb9dd7392f95ded360235745d20b4e8a58270`.
-Preparation jobs 721518 (CPU), 721520 (HIP) and 5262344 (CUDA) pass all 11+3
-single-node CTests in each configuration. Linux CPU uses GCC 13.4 and Kokkos
-4.4.01, with four OpenMP threads. Each configuration covers 168 GoogleTest
-case/rank-count combinations. GPU regression jobs 721522 (HIP) and 5262346
-(CUDA) pass all 48 existing release tests in each single-node and two-node
-launch layout, with Kokkos OFF.
-
-Validation jobs 721898 (CPU), 721899 (HIP) and 5264408 (CUDA) reuse those
-prepared binaries and pass the 11+3 CTest matrix in every configuration, with
-two/four-rank cases spanning two nodes. The earlier allocation and batch-path
-launch failures are resolved. Runtime receipts, driver hashes, JUnit results
-and raw benchmark samples were independently checked.
-
-HIP passes all 180 setup/halo performance comparisons. CPU Serial/direct,
-Serial/staged and OpenMP/staged pass; OpenMP/direct rejects one of 90 comparisons:
-four-rank single-node Morton Quad4 mesh setup has candidate/reference medians
-2.084/1.810 ms, above the predefined limit of 2.041 ms.
-
-CUDA/staged rejects eight of 90 comparisons. CUDA/direct completes its
-single-node samples, with four of 54 comparisons rejected, then the reference
-binary aborts in MPI during its first two-node, two-rank Morton Quad4 warmup.
-No candidate multi-node benchmark runs in that mode. The largest observed setup
-slowdown is four-rank single-node Hilbert Hex8 rectangular mesh generation:
-4.793/2.688 ms candidate/reference with direct MPI, and 4.963/2.889 ms staged.
-These earlier failures are retained. Later allocator validation resolves the MPI
-abort, while setup timing regressions still block release.
-
-The follow-up diagnostics (CPU 722241, CUDA 5265708) retain all failures and
-independently verified 338 log/trace hashes. CPU passes all 18 focused control
-comparisons; the subsequent full confirmation is recorded below.
-CUDA reproduces 12 focused setup rejections and four failed launches. The MPI
-error is `MPI_Irecv` reporting an OFI tagged receive failure (`Invalid argument`).
-One failing trace allocates a 64 KiB receive buffer, accepts same-node receives,
-and fails on the first remote-node receive. The original Kokkos build enables
-`cudaMallocAsync`; this motivated the isolated allocation comparison below.
-
-CPU confirmation 722701 passes all 90 OpenMP/direct comparisons, using the exact
-original binaries and limits. Combined with the other three passing CPU
-configurations, this closes the current CPU gate without deleting the earlier
-rejection.
-
-CUDA preparation 5267897 and validation 5267898 use the same MARS implementation
-with Kokkos asynchronous allocation disabled (source/runner manifest
-`018c79d35bc4bd2d761f98a40a3147628889b3220771a31271cca22288dad135`).
-Both modes pass all 11+3 CTests on one/two nodes. All 100 benchmark invocations
-complete with correct results and no MPI failure, but direct/staged reject six
-and four of their 90 timing comparisons respectively. All halo timing comparisons
-pass. Direct multi-node setup has 35–60 ms candidate medians in several cases;
-the reference has similarly large delays in different cases. Their timing cause
-is still under investigation.
-
-The independent 60-launch allocation probe passes all ordinary-CUDA and corrected
-View cases. All six cross-node raw `cudaMallocAsync` cases fail in OFI receive,
-as do four original-View cases above Kokkos's allocation threshold. Smaller
-original Views and every single-node case pass. CUDA pointer attributes confirm
-the pooled/device allocation types. Payload, padding, synchronization and buffer
-lifetime checks separate this MPI allocation issue from MARS mesh code.
-The review independently verifies 271 downloaded artifacts and reparses all
-150 CPU/CUDA benchmark invocations and allocator outcomes.
-
-The private partition-buffer lifetime trial (5269246/5269247) passes correctness
-but still rejects eight setup comparisons. It is not adopted. Its 24 diagnostic
-profiles add global GPU fences and do not reproduce the large multi-node delays,
-so they cannot establish the cause of the uninstrumented stalls. The unfenced
-follow-up below uses the exact original binaries; production timing acceptance
-remains blocked. The trial audit independently verifies 338
-downloaded artifacts, 100 benchmark invocations and all 24 profiles.
-
-Unfenced diagnostic5269661 passes all126 invocations and3 activation preflights;
-609 downloaded artifact hashes and the reconstructed timers were independently
-checked. Three of126 focused control comparisons reject. The repeatable
-single-rank Morton Quad4 DOF slowdown is concentrated in CUDA temporary allocation
-and free calls around the two sorts. The large multi-node stalls do not recur in
-these untouched controls on a different node pair; their cause remains unresolved.
-Full validation5275809 uses the earlier failing CUDA node pair and retains
-unfenced diagnostic traces after the uninstrumented gate; its results and the
-observer limitation are recorded above.
-
-CPU validation includes Kokkos Serial and OpenMP execution, with direct and
-host-staged communication paths. Both use host-accessible buffers on CPU;
-they do not establish GPU-aware MPI. The MARS serial backend stays excluded.
-Both GPU platforms require direct device MPI and host-staged MPI, including
-the multi-node checks. The single-node results above do not cover inter-node
-communication.
-
-Measure setup and repeated halo exchanges on each platform with fixed workloads,
-rank/thread counts and source versions. Define the comparison and acceptance
-criteria before running; include correctness checks with the timings. A
-correctness pass alone does not establish acceptable performance or scaling.
-
-For regressions, validate the supported CPU/core configuration on CPU and the
-existing unstructured release suite on both GPUs. The unstructured GPU backend
-has no CPU release configuration. Keep the backend's optional, OFF-by-default
-behavior and verify supported build combinations. The cluster kit prepares CPU/GPU capability and installed-package checks,
-multi-node checks and paired setup/halo measurements; a separate runner audits
-the existing 48-test unstructured GPU release suite. CPU and NVIDIA performance
-gates still need resolution and passing cluster receipts.
-AMR remains a separate release scope.
+Earlier candidates, their timing rejections and the pooled CUDA allocation
+diagnosis (2026-11-04 to 2026-11-06) are in the history of this file.
+For regressions, rerun the [cluster validation kit](../tests/structured/cluster/README.md)
+on all three platforms with one candidate source. A pass on one platform does
+not cover another. AMR is a separate release scope.
 
 ## Device views and layout lifetime
 
