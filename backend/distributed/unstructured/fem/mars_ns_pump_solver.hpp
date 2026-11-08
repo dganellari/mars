@@ -3434,6 +3434,12 @@ struct NSStepper
     // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
     RealType pumpDp = 0;
 
+    // Prescribed outlet pressures (velocity-driven pump, do-nothing outlets): the caller fills
+    // d_pPhiTargetDof (size numOwnedDofs) with each masked outlet DOF's pressure, and the pressure
+    // solve clamps p^{n+1} there to it (rhs = target - p^n, FIX B's lift) instead of to p^n. None
+    // of FIX B's pressure-driven inlet: the inlet keeps its velocity. Off: the outlets at p = 0.
+    bool outletPressureLift = false;
+
     // Flux-consistent Neumann openings (--flux-neumann). The openings keep their
     // ASSEMBLED pressure rows instead of being masked Dirichlet, and the target flux
     // enters the pressure RHS as S_i = sum_j (A_f/12)(1+delta_ij) Un_j -- which the
@@ -8203,7 +8209,7 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         // rhs=0 default would freeze phi=0 -> p^{n+1}=p^n, killing the
         // inlet->outlet gradient. Lift instead: b[i]=target-p^n -> phi=target-p^n
         // -> p^{n+1}=target EXACTLY (steady clamp, not an additive ramp).
-        const bool lift         = (s.pumpDp > RealType(0)
+        const bool lift         = ((s.pumpDp > RealType(0) || s.outletPressureLift)
                                    && s.d_pPhiTargetDof.size() == (size_t)numOwnedDofs);
         const RealType* tgtPtr  = lift ? s.d_pPhiTargetDof.data() : nullptr;
         const RealType* pPtr    = lift ? s.d_p.data() : nullptr;
@@ -10031,7 +10037,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
             // FIX B clamps p^{n+1} to the head (rhs=target-p^n); the rhs=0 path
             // would instead freeze p, killing the inlet->outlet gradient.
-            if (s.pumpDp > RealType(0))
+            if ((s.pumpDp > RealType(0) || s.outletPressureLift)
+                && s.d_pPhiTargetDof.size() == (size_t)s.numOwnedDofs)
                 enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
                     s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
                     s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
@@ -10172,7 +10179,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
                 // FIX B lift (assembled-CG diagnostic path): clamp p^{n+1} to the
                 // head so the assembled-CG A/B matches the matrix-free pump.
-                if (s.pumpDp > RealType(0))
+                if ((s.pumpDp > RealType(0) || s.outletPressureLift)
+                    && s.d_pPhiTargetDof.size() == (size_t)s.numOwnedDofs)
                     enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
                         s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
                         s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
