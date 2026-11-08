@@ -73,7 +73,7 @@ inline Integer cell_index(const Cell& cell, const Cell& shape)
 }
 
 template<Integer Type, class SfcKey>
-void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false, bool direct_partition = false)
+void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false)
 {
     auto context = make_context(proc_allocation{}, MPI_COMM_WORLD);
     DistributedMesh<SfcKey, Type> mesh(context);
@@ -96,7 +96,7 @@ void check_mesh(Integer nx, Integer ny, Integer nz, bool periodic = false, bool 
     const Integer expected_end = count / ranks * (rank_id + 1) + std::min<Integer>(rank_id + 1, count % ranks);
     EXPECT_EQ(local.size(), expected_end - expected_begin);
     EXPECT_EQ(mesh.partition_generated_keys(), expected_end - expected_begin);
-    EXPECT_EQ(mesh.partition_received_keys(), direct_partition ? 0 : expected_end - expected_begin);
+    EXPECT_EQ(mesh.partition_received_keys(), expected_end - expected_begin);
     using Key = typename SfcKey::ValueType;
     std::vector<Key> reference_keys;
     for (Integer z = 0; z < shape[2]; ++z)

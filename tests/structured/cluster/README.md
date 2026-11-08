@@ -9,9 +9,12 @@ release. See the current [release matrix](../../../docs/Structured-Kokkos.md#rel
 The subsequent partition-buffer lifetime trial did not resolve those timings and
 is excluded. Unfenced diagnostics reuse the original executables; their traced
 timings cannot replace uninstrumented release acceptance samples.
-The subsequent DOF optimization avoids sorting identical owned/local candidate
-lists twice. It has local validation; the changed implementation requires fresh
-CPU, AMD and NVIDIA native gates before release.
+The DOF optimization avoids sorting identical owned/local candidate lists twice;
+it passed native correctness checks on CPU, AMD and NVIDIA. Diagnostic job 5290537
+then isolated the optional full-Hilbert partition shortcut as a trigger for the
+remaining candidate-specific setup regressions. The current source removes that
+shortcut and retains the DOF optimization. Revised-source CPU, AMD and NVIDIA
+validation remains required; diagnostic timing passes cannot replace those gates.
 
 This kit builds and checks the optional structured backend using CPU Kokkos
 Serial/OpenMP, NVIDIA CUDA or AMD HIP. The MARS serial and bisection backends
@@ -85,7 +88,7 @@ binaries when only orchestration changes.
 ## Performance comparison
 
 The reference is the separately frozen, previously native-validated `7c0684ad`
-snapshot. This measures the full-Hilbert/copy follow-up against that version;
+snapshot. This measures the subsequent structured changes against that version;
 it does not measure the whole redesign against the original legacy code.
 The same benchmark source is compiled against both installed libraries.
 

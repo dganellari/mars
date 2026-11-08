@@ -47,12 +47,12 @@ TEST(StructuredMesh, HilbertHex8Rectangular) { test::check_mesh<ElementType::Hex
 
 TEST(StructuredMesh, HilbertQuad4FullCurve) {
     for (Integer width : {2, 4, 8})
-        test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(width, width, 0, false, true);
+        test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(width, width, 0);
 }
 
 TEST(StructuredMesh, HilbertHex8FullCurve) {
     for (Integer width : {2, 4, 8})
-        test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(width, width, width, false, true);
+        test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(width, width, width);
 }
 
 template<Integer Type>
@@ -77,7 +77,7 @@ void check_full_hilbert_subcommunicators() {
             offset += total / ranks + (peer < total % ranks);
         }
         EXPECT_EQ(keys.extent(0), total / ranks + (rank_id < total % ranks));
-        EXPECT_EQ(mesh.partition_received_keys(), 0);
+        EXPECT_EQ(mesh.partition_received_keys(), keys.extent(0));
         std::vector<int> counts(total, 0), global(total, 0);
         for (std::size_t i = 0; i < keys.extent(0); ++i) {
             EXPECT_LT(keys(i), total);

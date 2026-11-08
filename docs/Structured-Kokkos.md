@@ -160,6 +160,18 @@ hashes, build configuration and runtime receipts. A pass on one platform does
 not cover another. Required tests that fail, are skipped or have no evidence
 keep the release blocked.
 
+The current candidate removes the full-Hilbert partition shortcut. In NVIDIA
+diagnostic job 5290537, removing only that shortcut eliminates the four large
+candidate-specific setup stalls and the full-Hilbert DOF regressions in the
+tested contexts; restoring the earlier temporary-buffer lifetime does not.
+All 450 workload checks pass. The no-shortcut variant passes 51/54 timing
+comparisons; its three rejected phases also stall in the reference, with
+overlapping sample ranges. Those failures remain rejected. Vendor preload in
+5290358 did not repair the stalls. This identifies a trigger in the shortcut,
+not an internal MPI defect or a complete performance fix. Full native validation
+of the revised source on CPU, AMD and NVIDIA is pending. The matrix below records
+the preceding source, including its failures.
+
 The DOF optimization sorts identical owned/local candidate lists once, while
 retaining independent final key arrays. The completed 2026-11-06 native matrix
 passes correctness and installation checks on all three platforms. The suite
@@ -335,14 +347,12 @@ new kernels to keep host control state out of their captures.
 
 ## Partition construction
 
-Full Hilbert squares/cubes with power-of-two side lengths directly generate each
-rank's consecutive key interval and partition offsets on device. This path skips
-sorting, splitter searches and key redistribution. Rank sizes differ by at most
-one cell, including uneven rank counts. Map construction and collective input/map
-validation remain. Tests compare against Cartesian reference keys and exercise
-three-rank subcommunicators inside the four-rank gate.
+Full Hilbert squares/cubes use the same distributed partition algorithm as
+rectangular meshes. The direct-interval shortcut was removed after it triggered
+setup regressions in the native comparison. Tests still compare against Cartesian
+reference keys and exercise three-rank subcommunicators inside the four-rank gate.
 
-The general case uses the same distributed algorithm for both curves. Each rank generates and sorts
+Both curves use the same distributed algorithm. Each rank generates and sorts
 only its Cartesian share, with at most `ceil(global_cells / ranks)` keys. Parallel
 binary searches and reductions of rank-sized counts select exact SFC split points.
 A sparse MPI distributed graph discovers the destinations' incoming peers, and

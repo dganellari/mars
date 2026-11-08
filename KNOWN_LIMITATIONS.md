@@ -111,6 +111,12 @@ that diagnostic-only change.
 See the [release matrix](docs/Structured-Kokkos.md#release-gate). The
 [structured cluster kit](tests/structured/cluster/README.md) reproduces the native
 builds and capability gates with pinned Kokkos 4.4.01.
+The current candidate removes the full-Hilbert shortcut after diagnostic job 5290537
+isolated it as the trigger for the candidate-specific setup regressions. All 450
+workload checks pass, but the no-shortcut variant still rejects three of 54 timing
+comparisons in phases where the reference also stalls. These are retained failures,
+not evidence of a complete MPI/runtime repair. Full CPU/AMD/NVIDIA validation of
+the revised source is pending; earlier native results apply to their frozen source.
 Old PDE applications, staggered layouts, periodic DOF identification
 and scaling are outside these checks. The shared `MARS_ENABLE_DISTRIBUTED_BACKEND`
 option defaults to ON; Kokkos itself defaults to OFF.

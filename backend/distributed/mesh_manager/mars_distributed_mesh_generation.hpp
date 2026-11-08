@@ -33,17 +33,6 @@ namespace mars {
         return (total / ranks) * rank + (rank < remainder ? rank : remainder);
     }
 
-    template <Integer Dim, Integer Type, class SfcKey>
-    bool is_full_hilbert_curve(Unsigned nx, Unsigned ny, Unsigned nz) {
-        return IsHilbert<SfcKey>::value && nx > 0 && (nx & (nx - 1)) == 0 && nx == ny &&
-               (Type == ElementType::Quad4 ? nz == 0 : nx == nz);
-    }
-
-    template <Integer Dim, Integer ManifoldDim, Integer Type, class SfcKey>
-    bool is_full_hilbert_curve(const DMesh<Dim, ManifoldDim, Type, SfcKey>& mesh) {
-        return is_full_hilbert_curve<Dim, Type, SfcKey>(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
-    }
-
     template <Integer Dim, Integer ManifoldDim, Integer Type, class SfcKey>
     void set_structured_partition(DMesh<Dim, ManifoldDim, Type, SfcKey>& mesh,
                                   const ViewVectorType<typename SfcKey::ValueType>& keys,
@@ -97,20 +86,6 @@ namespace mars {
         const Integer count = partition_offset(total, rank + 1, ranks) - first;
         const Integer nx = mesh.get_XDim(), ny = mesh.get_YDim();
         ViewVectorType<Key> keys("partition_local_keys", count);
-        if (is_full_hilbert_curve(mesh)) {
-            // An origin-aligned power-of-two cube occupies the Hilbert interval [0, total).
-            Kokkos::parallel_for("partition_full_hilbert_keys", Policy(0, count), KOKKOS_LAMBDA(Integer i) {
-                keys(i) = first + i;
-            });
-            ViewVectorType<Key> partition("global_static_partition", 2 * (ranks + 1));
-            Kokkos::parallel_for("partition_full_hilbert_offsets", ranks + 1, KOKKOS_LAMBDA(int p) {
-                const auto offset = partition_offset(total, p, ranks);
-                partition(2 * p) = offset;
-                partition(2 * p + 1) = offset;
-            });
-            set_structured_partition(mesh, keys, partition, rank, count, 0);
-            return;
-        }
         Kokkos::parallel_for("partition_generate_local_keys", Policy(0, count), KOKKOS_LAMBDA(Integer i) {
             const Integer linear = first + i;
             const Integer x = linear % nx;
