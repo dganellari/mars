@@ -24,6 +24,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/MapVector.h"
@@ -92,9 +93,21 @@ struct EvenOddPass : public PassWrapper<EvenOddPass, OperationPass<ModuleOp>> {
   std::optional<SmallVector<Chain>> chains(ModuleOp module, StringRef name, int64_t r, int64_t c) {
     llvm::DenseMap<Operation *, Term> terms;
     bool other = false;
+    // The table changes layout, so every access must be one this pass rewrites: the symbol
+    // only reached through get_global, each of those only read by loads (an alias such as
+    // reinterpret_cast would read folded coefficients as M), each load used.
+    auto uses = SymbolTable::getSymbolUses(StringAttr::get(module.getContext(), name), module);
+    if (!uses) return std::nullopt;
+    for (const SymbolTable::SymbolUse &use : *uses) {
+      auto get = dyn_cast<memref::GetGlobalOp>(use.getUser());
+      if (!get) return std::nullopt;
+      for (Operation *user : get->getUsers())
+        if (!isa<memref::LoadOp>(user)) return std::nullopt;
+    }
     module.walk([&](memref::LoadOp load) {
       auto get = load.getMemRef().getDefiningOp<memref::GetGlobalOp>();
       if (!get || get.getName() != name) return;
+      if (load->use_empty()) { other = true; return; }
       for (Operation *user : load->getUsers()) {
         auto fma = dyn_cast<math::FmaOp>(user);
         std::optional<Term> t = fma ? asTerm(fma, name) : std::nullopt;

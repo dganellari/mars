@@ -357,7 +357,7 @@ its launch shape (32 elements per block) and the same instruction mix (90 FMAs, 
 36-40 shared loads) with any two of them and is 26% slower; the likely cause is the shared-memory
 layout, not measured. BP1 p = 7 with C goes from 2 to 4 elements per block and is 5% slower.
 So `test/bp_gpu_pipeline.py` keeps the measured fastest form for those two (BP3 p = 1 none, BP1
-p = 7 A+B); every stored-geometry BP kernel now matches PTX timed above byte for byte. The
+p = 7 A+B); before even-odd, every stored-geometry BP kernel matched PTX timed above byte for byte. The
 p-multigrid solve with A+B+C everywhere: 1039.6 -> 998.2 ms at p = 3 and 1406.3 -> 1052.5 ms at
 p = 7, the same iterations (14, 15). With the per-kernel choice (f6 below, PTX of 97334ab2)
 the p = 3 solve is 996.2 ms. The trilinear BP3 kernels, all three rewrites against none:
@@ -391,8 +391,12 @@ rotated order, operator ms (median; max/min of the rounds at most 1.017):
 The direct-quadrature check on the first four elements agrees to 1e-16 relative in every
 variant. Even-odd wins at p = 7 (10%, 32%, 12%) and on trilinear p = 3; BP3 p = 3 is 6% slower
 with it although its registers fall 80 -> 56 (cause not measured), and p = 1 has little to fold.
-`test/bp_gpu_pipeline.py` applies it to p = 7 and bp3_tri p = 3 only (bp1_tri, not timed, follows
-bp1); every generated BP kernel is byte-identical to one timed here. The p-multigrid solve
+`test/bp_gpu_pipeline.py` applies it to p = 7 and bp3_tri p = 3 only, a choice tuned on GH200, not
+shown optimal in general. The nine BP1, BP3 and BP3 trilinear kernels are byte-identical to ones
+timed here. The three bp1_tri kernels were not timed; their choice follows bp1 and is unmeasured.
+`--mir-even-odd` folds a table only when every access to it is a load inside a recognized sweep;
+anything else (an alias such as reinterpret_cast, a read outside a sweep, an unused load) keeps
+the table unfolded (`test/even_odd_gate.py`). The p-multigrid solve
 (V-cycle p -> 3 -> 1, AMG x3, tol 3e-13, 64^3) at p = 7: 1407.9 (none) -> 1049.9 (base) -> 1004.4 ms
 (even-odd at every level), 15 iterations each; with even-odd only on the p = 7 level, as now
 generated, it has not run.
