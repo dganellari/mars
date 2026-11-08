@@ -28,6 +28,17 @@
 // Relayouts (register-only, gpu.shuffle idx width 32):
 //   C->A slab s: src=(L&28)|(2s)|((L&3)>>1),          elem=L&1
 //   C->B std   s: src=16s+4*(L&3)+(L>>3),             elem=(L>>2)&1
+//
+// direct-handoff (opt-in): no relayout at all. Lane L's component s of the
+// C-fragment of V, V[i][2k+s], is used as the operand entry at reduction index
+// 4s+k, which makes it the A-fragment of V (and the B-fragment of V^T) under the
+// reduction order pi(4s+k) = 2k+s. The other operand must then use the same
+// order: a leaf is read at column 2k+s instead of 4s+k. This only contracts V's
+// COLUMN index. A contract that needs V's row (V as a standard B operand) gets
+// V^T from its producer instead: since the A- and B-fragment layouts coincide
+// (lane L holds X[i][k] and X[k][i]), swapping the two mma operands computes
+// (A B)^T = B^T A^T in C layout. So y = L (X R^T) runs as T = R X^T, y = L T^T,
+// both hand-offs direct. Gate: test/chain_handoff_gate.py.
 
 #include "mir/MirPasses.h"
 
@@ -86,6 +97,14 @@ static Value colOf(OpBuilder &b, Location loc, Lane &L, int slab) {
     return L.k;
   Value c = b.create<arith::ConstantIndexOp>(loc, 4 * slab);
   return b.create<arith::AddIOp>(loc, L.k, c);
+}
+
+// col = pi(4*slab + k) = 2k + slab: the reduction order of direct hand-offs.
+static Value permColOf(OpBuilder &b, Location loc, Lane &L, int slab) {
+  Value c = b.create<arith::MulIOp>(loc, L.k, L.c2idx);
+  if (slab == 0)
+    return c;
+  return b.create<arith::AddIOp>(loc, c, b.create<arith::ConstantIndexOp>(loc, slab));
 }
 
 // Index list for a fragment access through a minor-identity transfer on a
@@ -319,6 +338,12 @@ struct ChainContractsPass
       llvm::cl::init(true)};
   Option<bool> memAcc{*this, "mem-acc",
       llvm::cl::desc("accept an accumulator read from memory"), llvm::cl::init(true)};
+  // Off by default: on only where it was measured faster (hl_gpu_pipeline.py's
+  // tensor-core schedule, the p = 7 operator: 6% on GH200).
+  Option<bool> directHandoff{*this, "direct-handoff",
+      llvm::cl::desc("hand 8x8x8 C-fragments to the next contract without "
+                     "shuffles, with permuted reduction order"),
+      llvm::cl::init(false)};
 
   StringRef getArgument() const final { return "mir-chain-contracts"; }
   StringRef getDescription() const final {
@@ -415,6 +440,31 @@ struct ChainContractsPass
       // B stored [k,n]: read [4s+k, 8t+i]; n is the COLUMN here
       return readFrag1(b, loc, L, rd.getSource(),
                        fragIdx(b, loc, rd.getIndices(), col, nIdx), true, nIB);
+    };
+    // An operand of a direct contract, at reduction index pi(4s+k) = 2k+s. A
+    // lowered value contributes its own component s; which orientation it must
+    // be held in was settled with `direct`. A leaf is read at the permuted column.
+    auto directFrag = [&](Value v, int slab, bool asB, bool transp,
+                          int tile) -> Value {
+      Location loc = v.getLoc();
+      if (auto it = frag.find(v); it != frag.end()) {
+        Value e = b.create<vector::ExtractOp>(loc, it->second[0],
+                                              ArrayRef<int64_t>{0, slab});
+        return b.create<vector::InsertOp>(loc, e, L.zc1, ArrayRef<int64_t>{0, 0});
+      }
+      auto rd = v.getDefiningOp<vector::TransferReadOp>();
+      if (!rd || !isPlain2D(rd))
+        return Value();
+      Value col = permColOf(b, loc, L, slab);
+      if (!asB)   // A[i, pi]
+        return readFrag1(b, loc, L, rd.getSource(),
+                         fragIdx(b, loc, rd.getIndices(), L.i, col));
+      Value nIdx = addCol(loc, L.i, tile);
+      if (transp)   // B stored [n,k]: [8t+i, pi]
+        return readFrag1(b, loc, L, rd.getSource(),
+                         fragIdx(b, loc, rd.getIndices(), nIdx, col));
+      return readFrag1(b, loc, L, rd.getSource(),   // B stored [k,n]: [pi, 8t+i]
+                       fragIdx(b, loc, rd.getIndices(), col, nIdx));
     };
 
     // Shape of a value in column tiles, or 0 if no tile layout fits it. Rows
@@ -530,6 +580,61 @@ struct ChainContractsPass
       }
     }
 
+    // ---- direct hand-off: which contracts read fragments in place, and which
+    // produce their result transposed. Decided in program order, so a fragment
+    // operand's orientation is known when its consumer is reached. Only full
+    // 8x8x8 contracts take part; everything else keeps the shuffle path, which
+    // needs normal orientation -- so a transposed result is produced only for a
+    // single consumer that is itself guaranteed direct.
+    DenseSet<Value> heldT;                 // fragment holds V^T, not V
+    DenseSet<Operation *> direct, outT;
+    if (directHandoff) {
+      auto isFrag = [&](Value v) {
+        Operation *d = v.getDefiningOp();
+        return d && inCand.count(d);
+      };
+      auto full = [](Value v) {
+        auto t = dyn_cast<VectorType>(v.getType());
+        return t && t.getRank() == 2 && t.getDimSize(0) == 8 && t.getDimSize(1) == 8;
+      };
+      auto zeroSplat = [](Value v) {
+        if (auto cst = v.getDefiningOp<arith::ConstantOp>())
+          if (auto d = dyn_cast<DenseElementsAttr>(cst.getValue()))
+            return d.isSplat() && d.getSplatValue<APFloat>().isZero();
+        return false;
+      };
+      for (Operation *op : cand) {
+        auto c = dyn_cast<vector::ContractionOp>(op);
+        if (!c || !inCand.count(op))
+          continue;
+        Value A, B; bool bt; int64_t K, N, m;
+        if (!classify(c, M, A, B, bt, K, N, m) || m != 8 || K != 8 || N != 8)
+          continue;
+        // A and a transposed B contract their value's column: held as V. A
+        // standard B contracts its row: held as V^T.
+        bool ok = isFrag(A) || isFrag(B);
+        if (isFrag(A))
+          ok = ok && full(A) && !heldT.count(A);
+        if (isFrag(B))
+          ok = ok && full(B) && heldT.count(B) == !bt;
+        if (ok)
+          direct.insert(op);
+        // Transposed result: one consumer, a contract that takes it as a
+        // standard B next to a leaf A, so that consumer is direct by the rule
+        // above. A nonzero accumulator would have to be transposed too.
+        Value r = c.getResult();
+        if (!full(r) || !zeroSplat(c.getAcc()) || !r.hasOneUse())
+          continue;
+        auto c2 = dyn_cast<vector::ContractionOp>(*r.getUsers().begin());
+        Value A2, B2; bool bt2; int64_t K2, N2, m2;
+        if (c2 && inCand.count(c2) && classify(c2, M, A2, B2, bt2, K2, N2, m2) &&
+            m2 == 8 && K2 == 8 && N2 == 8 && B2 == r && !bt2 && isLeafRead(A2)) {
+          outT.insert(op);
+          heldT.insert(r);
+        }
+      }
+    }
+
     // One in-order pass per block: within a block the chain is straight-line, so
     // lowering each op as it is reached keeps `frag` populated before any
     // consumer needs it.
@@ -563,6 +668,13 @@ struct ChainContractsPass
         };
         if (!usable(A) || !usable(B))
           continue;
+        const bool dir = direct.count(op), tOut = outT.count(op);
+        if (!dir && (heldT.count(A) || heldT.count(B))) {
+          c.emitOpError("mir-chain-contracts: a transposed fragment reached a "
+                        "contract that relayouts by shuffle");
+          signalPassFailure();
+          return;
+        }
         {
           Value av = c.getAcc();
           bool accOk = frag.count(av) || av.getDefiningOp<vector::TransferReadOp>();
@@ -621,14 +733,19 @@ struct ChainContractsPass
         for (int t = 0; t < nTiles; ++t) {
           Value cfrag = accFrags[t];
           for (int s2 = 0; s2 < nSlabs; ++s2) {
-            Value af = operandFragA(A, s2, rowIB);
-            Value bf = operandFragB(B, s2, bt, t, colIB);
+            Value af = dir ? directFrag(A, s2, /*asB=*/false, false, t)
+                           : operandFragA(A, s2, rowIB);
+            Value bf = dir ? directFrag(B, s2, /*asB=*/true, bt, t)
+                           : operandFragB(B, s2, bt, t, colIB);
             if (!af || !bf) {   // pre-checked above; defensive
               c.emitOpError("mir-chain-contracts: operand became unfragmentable");
               signalPassFailure();
               return;
             }
-            cfrag = mma(b, c.getLoc(), L, af, bf, cfrag);
+            // Swapped operands: the mma reads B's fragment as an A-fragment of
+            // B^T and A's as a B-fragment of A^T, so it computes (A B)^T.
+            cfrag = tOut ? mma(b, c.getLoc(), L, bf, af, cfrag)
+                         : mma(b, c.getLoc(), L, af, bf, cfrag);
           }
           out.push_back(cfrag);
         }
@@ -651,6 +768,12 @@ struct ChainContractsPass
         // term built from two metric reads) while its CONSUMER is on the chain.
         // Skipping it would strand that consumer with one fragment operand and
         // one full vector.
+        if (llvm::any_of(op->getOperands(), [&](Value v) { return heldT.count(v); })) {
+          op->emitOpError("mir-chain-contracts: a transposed fragment reached a "
+                          "pointwise op");
+          signalPassFailure();
+          return;
+        }
         b.setInsertionPoint(op);
         const int nTiles = tilesOf(op->getResult(0));
         SmallVector<Value> out;
@@ -686,6 +809,11 @@ struct ChainContractsPass
         auto it = frag.find(w.getVector());
         if (it == frag.end())
           continue;
+        if (heldT.count(w.getVector())) {
+          w.emitOpError("mir-chain-contracts: a transposed fragment reached a write");
+          signalPassFailure();
+          return;
+        }
         // A tile list that does not cover the value would read past its end
         // below -- in a release build that silently picks up unrelated Values.
         if ((int)it->second.size() != tilesOf(w.getVector())) {

@@ -30,6 +30,11 @@ legalisation with "'llvm.cond_br' op operand #1 ... got 'index'". Adding
 
 Numerics are gated on the GPU by tools/run_hl_mma.cpp against the Knaus oracle.
 
+The chain pass hands C-fragments to the next contract without shuffles
+(--mir-chain-contracts=direct-handoff=true; rules gated by test/chain_handoff_gate.py):
+measured on GH200 at 64^3, p = 7, 5.64 ms per apply against 6.00 with the shuffle
+relayout. --shuffle: the relayout instead, as a control (hl_full_p{p}_shuffle_sm90.ptx).
+
 --cellwise: the schedule for small elements (low degree, the p-multigrid's coarse
 levels) instead of the tensor-core one. After the same lowering to bufferized linalg:
       --mir-cellwise-schedule      element loop, U staged in and Y out of shared
@@ -159,9 +164,10 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
     # Forwarding first (it keys on allocs), then what is left of the scratch
     # moves to workgroup memory, so fragments are stored there piecewise.
     ir = run([MIROPT, "-", "--mir-forward-transfers", "--mir-workgroup-buffers"], ir)
+    direct = "--shuffle" not in sys.argv
     if not no_chain:
-        flag = "--mir-chain-contracts" + (
-            "=" + " ".join(chain_opts.split(",")) if chain_opts else "")
+        opts = (chain_opts.split(",") if chain_opts else []) + (["direct-handoff=true"] if direct else [])
+        flag = "--mir-chain-contracts" + ("=" + " ".join(opts) if opts else "")
         ir = run([MIROPT, "-", flag, "--canonicalize", "--cse"], ir)
     mma_ir = ir.count("nvgpu.mma.sync")
     shfl_ir = ir.count("gpu.shuffle")
@@ -194,14 +200,14 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
     if "--emulate" in sys.argv:
         return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
 
-    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
+    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "" if direct else "_shuffle")
     return finish(run([MIROPT, "-", "--mir-batch-elements"], ir), p, tag, no_chain,
-                  stats=(mma_ir, shfl_ir, barriers))
+                  stats=(mma_ir, shfl_ir, barriers), direct=direct and not no_chain)
 
 
 
 
-def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
+def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False):
     """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels {",
@@ -229,7 +235,8 @@ def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None):
         ("element index (ctaid.x)", "ctaid.x" in ptx),
         ("lane index (tid.x)", no_chain or "tid.x" in ptx),
         ("fp64 tensor-core mma", no_chain or ptx.count("mma.sync.aligned.m8n8k4") > 0),
-        ("register relayout (shfl)", no_chain or ptx.count("shfl.sync") > 0),
+        ("register relayout (shfl)", no_chain or direct or ptx.count("shfl.sync") > 0),
+        ("no relayout shuffles", not direct or ptx.count("shfl.sync") == 0),
         ("no local memory", no_chain or ptx.count(".local") == 0),
         # every mma/shfl/barrier reached by all 32 lanes (see ptx_convergence.py)
         ("warp collectives convergent", subprocess.run(
