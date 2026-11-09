@@ -20,6 +20,7 @@
 #include "backend/distributed/unstructured/domain.hpp"   // HexTag, TetTag
 #include "mars_amr_tet_refine.hpp"
 #include "mars_amr_solution_transfer.hpp"   // SolutionTransfer::transferByParentageTet
+#include "mars_amr_lepp.hpp"
 
 namespace mars
 {
@@ -247,14 +248,17 @@ struct OctreeAlignedRefine
         size_t numNodes    = 0;
         size_t numElements = 0;
 
-        // Reserved for tet parentage-based solution transfer (mars_amr_tet_refine).
-        // Hex path leaves these empty.
+        // Tet parentage; bisection records actual parent edges in midpoint order.
+        // The red path also keeps marks and a marked-prefix array; hex leaves these empty.
         cstone::DeviceVector<uint64_t> d_edgeKeys;
         cstone::DeviceVector<uint64_t> d_markedPrefix;
         cstone::DeviceVector<uint8_t>  d_marks;
         size_t numUniqueEdges = 0;
         size_t numMarked      = 0;
         size_t oldNumNodes    = 0;
+        bool transfer_from_parent_edges = false;
+        std::vector<size_t> parent_birth_offsets;
+        LeppDeviceExecution::Vector<LeppTaggedFace> d_tagged_faces;
     };
 
     // Hex entry: takes 8 conn pointers, drives emitChildHexesKernel.
@@ -411,6 +415,13 @@ struct OctreeAlignedRefine
         cstone::DeviceVector<RealType>& newSolution,
         int blockSize = 256)
     {
+        if (refined.transfer_from_parent_edges)
+        {
+            newSolution = transfer_lepp_field<LeppDeviceExecution>(oldSolution, refined.oldNumNodes,
+                                                                   refined.d_edgeKeys.data(), refined.numUniqueEdges,
+                                                                   refined.parent_birth_offsets, MPI_COMM_WORLD);
+            return;
+        }
         newSolution = SolutionTransfer<KeyType, RealType>::transferByParentageTet(
             conn0, conn1, conn2, conn3,
             refined.d_marks.data(), numElements,

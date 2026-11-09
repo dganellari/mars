@@ -388,35 +388,37 @@ namespace mars {
                       CombView cmbs)
                 : mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(lo), combs(cmbs) {}
 
-            MARS_INLINE_FUNCTION
-            bool is_terminal(const Integer map_index, const Edge& edge, const ElementVector& incidents) const {
-                bool terminal =
-                    true;  // in case the elements share the longest edge or there is only one incident (itself)
-                           // - meaning the longest edge is on the boundary.
+            struct IncidentSelection
+            {
+                const CountLepp* state;
+                const ElementVector* incidents;
+                Edge requested;
+                Integer dependency_index;
 
-                for (auto i = 0; i < incidents.index; ++i) {
-                    if (mesh->is_active(incidents[i])) {
-                        Edge new_edge;
-
-                        EdgeSelect_ es;
-                        const Integer edge_num = es.stable_select(*mesh, incidents[i]);
-                        // const Integer edge_num = es.select(*mesh, edge, incidents[i]);
-
-                        mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
-                        new_edge.fix_ordering();
-
-                        //	if(edge != tree.edges[i]){
-                        if (edge != new_edge) {
-                            terminal = false;
-                            // insert child in tree
-                            auto result = tree.insert(incidents[i]);
-                            if (result.failed()) printf("Exceeded UnorderedMap: tree capacity\n");
-                            tree.value_at(map_index).insert(incidents[i]);
-                        }
+                MARS_INLINE_FUNCTION Edge operator()(int i) const
+                {
+                    const Integer element = (*incidents)[i];
+                    if (!state->mesh->is_active(element)) return requested;
+                    Edge selected;
+                    EdgeSelect_ selector;
+                    const Integer edge_num = selector.stable_select(*state->mesh, element);
+                    state->mesh->elem(element).edge(edge_num, selected.nodes[0], selected.nodes[1]);
+                    selected.fix_ordering();
+                    if (dependency_index >= 0 && requested != selected)
+                    {
+                        auto result = state->tree.insert(element);
+                        if (result.failed()) printf("Exceeded UnorderedMap: tree capacity\n");
+                        state->tree.value_at(dependency_index).insert(element);
                     }
+                    return selected;
                 }
+            };
 
-                return terminal;
+            MARS_INLINE_FUNCTION
+            bool is_terminal(const Integer map_index, const Edge& edge, const ElementVector& incidents) const
+            {
+                return bisection::terminal_edge(edge, int(incidents.index),
+                                                IncidentSelection{this, &incidents, edge, map_index});
             }
 
             MARS_INLINE_FUNCTION
@@ -502,29 +504,9 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             bool is_terminal(const Edge& edge, const ElementVector& incidents) const {
-                bool terminal =
-                    true;  // in case the elements share the longest edge or there is only one incident (itself)
-                           // - meaning the longest edge is on the boundary.
-
-                for (auto i = 0; i < incidents.index; ++i) {
-                    if (this->mesh->is_active(incidents[i])) {
-                        Edge new_edge;
-
-                        EdgeSelect_ es;
-                        const Integer edge_num = es.stable_select(*this->mesh, incidents[i]);
-                        // const Integer edge_num = es.select(*mesh, edge, incidents[i]);
-
-                        this->mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
-                        new_edge.fix_ordering();
-
-                        //	if(edge != tree.edges[i]){
-                        if (edge != new_edge) {
-                            terminal = false;
-                        }
-                    }
-                }
-
-                return terminal;
+                return bisection::terminal_edge(
+                    edge, int(incidents.index),
+                    typename CountLepp::IncidentSelection{this, &incidents, edge, INVALID_INDEX});
             }
 
             MARS_INLINE_FUNCTION
@@ -704,13 +686,7 @@ namespace mars {
                 Elem new_el = mesh->elem(elem_new_id);
                 new_el.set_parent_id(old_el.id);
 
-                // in order to keep the counterclockwise ordering of the element nodes.
-                for (Integer i = 0; i < ManifoldDim + 1; ++i) {
-                    if (i == index)
-                        new_el.nodes[i] = nodes_new_id;
-                    else
-                        new_el.nodes[i] = old_el.nodes[i];
-                }
+                bisection::child_connectivity<ManifoldDim + 1>(old_el.nodes, int(index), nodes_new_id, new_el.nodes);
 
                 mesh->set_active(elem_new_id);
                 ParallelEdgeElementMap::update_elem(edge_element_map, new_el, combs);

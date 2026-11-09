@@ -11,6 +11,8 @@
 #include "mars_amr_hex_refine.hpp"
 #include "mars_amr_tet_refine.hpp"
 #include "mars_amr_octree_refine.hpp"
+#include "mars_amr_tet_bisection.hpp"
+#include "mars_amr_field_migration.hpp"
 #include "mars_amr_solution_transfer.hpp"
 #include "mars_amr_error_indicator.hpp"
 #include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
@@ -48,6 +50,12 @@ enum class MarkingStrategy
 {
     Doerfler,     // Error-driven Doerfler marking + 1-irregular enforcement
     OctreeNative  // Cstone octree leaf-level split/merge decisions drive element marks
+};
+
+enum class TetRefinement
+{
+    Red,
+    ConformingBisection
 };
 
 // Refiner traits: selects the right refiner + transfer for each element type
@@ -209,6 +217,8 @@ public:
         int blockSize            = 256;
         int irregularityIters    = 3;
         MarkingStrategy strategy = MarkingStrategy::OctreeNative;
+        TetRefinement tet_refinement   = TetRefinement::Red;
+        bool stage_refinement_messages = false;
         // Opt-in: keep the Exodus side sets on-device in the Domain so FEM/FSI/viz
         // can query local boundary node lists without re-reading the mesh file.
         bool storeSideSets       = false;
@@ -336,6 +346,30 @@ public:
                                   const std::vector<const RealType*>& oldFields,
                                   const std::vector<DevVector*>& newFields)
     {
+        if (config_.tet_refinement == TetRefinement::ConformingBisection)
+        {
+            const char* reuse = std::getenv("MARS_AMR_REUSE_DOMAIN");
+            int invalid       = !std::is_same_v<ElementTag, TetTag> || domain_->numBlocks() != 1 ||
+                          domain_->hasBoundaryInfo() || domain_->getPeriodicAxesMask() != 0 ||
+                          (reuse && std::string(reuse) != "0") || (numRanks_ > 1 && !domain_->sfcOwnership());
+            MPI_Allreduce(MPI_IN_PLACE, &invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if (invalid)
+                throw std::runtime_error("Conforming bisection requires single-block, nonperiodic tetrahedra with face "
+                                         "labels, SFC ownership and fresh domain rebuilds.");
+            uint64_t fields = oldFields.size(), min_fields = fields, max_fields = fields;
+            MPI_Allreduce(MPI_IN_PLACE, &min_fields, 1, MPI_UINT64_T, MPI_MIN, MPI_COMM_WORLD);
+            MPI_Allreduce(MPI_IN_PLACE, &max_fields, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
+            invalid = min_fields != max_fields || oldFields.size() != newFields.size() ||
+                      (!d_errorPerElement && domain_->getElementCount());
+            for (const RealType* field : oldFields)
+                if (!field && domain_->getNodeCount()) invalid = 1;
+            for (const DevVector* field : newFields)
+                if (!field) invalid = 1;
+            MPI_Allreduce(MPI_IN_PLACE, &invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if (invalid)
+                throw std::runtime_error(
+                    "Conforming AMR field lists must be valid and have the same length on every rank.");
+        }
         AmrStats stats;
         stats.level = currentLevel_;
         auto totalStart = std::chrono::high_resolution_clock::now();
@@ -375,8 +409,9 @@ public:
             // Cross-rank consistency comes from the octree itself - all ranks
             // see the same leaf decisions because they reduce leaf errors via
             // MPI_Allreduce on the assigned slice, then run cstone's
-            // computeNodeOpsGpu identically. Per-leaf split conformity is the
-            // octree's invariant; no extra mark exchange or 1-irregular needed.
+            // computeNodeOpsGpu identically. Tet face conformity, when requested,
+            // is enforced by edge closure after marking; octree leaf balance
+            // alone does not provide it.
             d_marks = octreeNativeAmr_.markFromOctree(d_errorPerElement, *domain_);
             std::cerr << "ADAPT r" << rank_ << " markFromOctree returned" << std::endl; std::cerr.flush();
         }
@@ -413,22 +448,28 @@ public:
                                    [] __device__(int m) -> uint8_t { return uint8_t(m); });
             };
 
-            exchangeMarks();
-            amrOctree_.enforce1Irregular(d_marks, *domain_);
+            if (config_.tet_refinement != TetRefinement::ConformingBisection)
+            {
+                exchangeMarks();
+                amrOctree_.enforce1Irregular(d_marks, *domain_);
+            }
 
             if (startIdx > 0)
                 cudaMemset(d_marks.data(), 0, startIdx * sizeof(uint8_t));
             if (endIdx < numElements)
                 cudaMemset(d_marks.data() + endIdx, 0, (numElements - endIdx) * sizeof(uint8_t));
 
-            exchangeMarks();
+            if (config_.tet_refinement != TetRefinement::ConformingBisection) exchangeMarks();
         }
         stats.markTimeMs = phaseLap();
 
-        auto marks_b = thrust::device_pointer_cast(d_marks.data());
-        auto marks_e = thrust::device_pointer_cast(d_marks.data() + d_marks.size());
+        size_t mark_start = config_.tet_refinement == TetRefinement::ConformingBisection ? startIdx : 0;
+        size_t mark_end   = config_.tet_refinement == TetRefinement::ConformingBisection ? endIdx : d_marks.size();
+        auto marks_b      = thrust::device_pointer_cast(d_marks.data() + mark_start);
+        auto marks_e      = thrust::device_pointer_cast(d_marks.data() + mark_end);
+        bool conforming   = config_.tet_refinement == TetRefinement::ConformingBisection;
         size_t localRefined =
-            mars::countIf(marks_b, marks_e, [] __device__(uint8_t m) { return m > 0; });
+            mars::countIf(marks_b, marks_e, [conforming] __device__(uint8_t m) { return conforming ? m == 1 : m > 0; });
         MPI_Allreduce(&localRefined, &stats.elementsRefined, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
 
         // Copy error to a DevVector so globalErrorNorm can iterate it
@@ -466,6 +507,8 @@ public:
         size_t localCount = endIdx - startIdx;
         typename Refine::Result refined =
             doRefineLocal(d_conn, d_x, d_y, d_z, d_marks, startIdx, localCount, numNodes);
+        if (config_.tet_refinement == TetRefinement::ConformingBisection)
+            MPI_Allreduce(&refined.numMarked, &stats.elementsRefined, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
         stats.refineTimeMs = phaseLap();
 
         // Solution transfer onto the pre-cstone-sync node layout. Hex uses
@@ -478,21 +521,70 @@ public:
         std::vector<cstone::DeviceVector<RealType>> transferred(oldFields.size());
         for (size_t f = 0; f < oldFields.size(); ++f)
         {
-            doTransferSolution(d_conn, oldFields[f], d_marks, refined,
-                                startIdx, localCount, numNodes, transferred[f]);
+            const RealType* old_field = oldFields[f];
+            DevVector synchronized_field;
+            if (config_.tet_refinement == TetRefinement::ConformingBisection)
+            {
+                synchronized_field.resize(numNodes);
+                if (numNodes)
+                    cudaCheckCall(cudaMemcpy(synchronized_field.data(), old_field, numNodes * sizeof(RealType),
+                                             cudaMemcpyDeviceToDevice));
+                domain_->exchangeNodeHalo(synchronized_field);
+                old_field = synchronized_field.data();
+            }
+            doTransferSolution(d_conn, old_field, d_marks, refined, startIdx, localCount, numNodes, transferred[f]);
         }
 
         // Save pre-sync coords before they're moved into cstone by rebuild.
         // We need them after rebuild to re-encode SFC keys with the NEW box that
-        // cstone derives from the refined geometry. Encoding keys after rebuild
-        // (rather than pinning the box) keeps cstone fully autonomous.
+        // cstone derives from the refined geometry. LEPP checks that encoding
+        // before rebuild, using the constructor's exact box policy.
         size_t preNumNodes = refined.numNodes;
+        std::vector<std::string> boundary_names;
+        LeppDeviceExecution::Vector<LeppFaceRecord<KeyType>> saved_faces;
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+            if (conforming)
+            {
+                boundary_names = domain_->sideSetNames();
+                saved_faces    = save_lepp_boundary<KeyType>(refined);
+            }
+
+        cstone::DeviceVector<uint8_t> migration_sources;
+        if (config_.tet_refinement == TetRefinement::ConformingBisection)
+        {
+            // Deep halo nodes may have stale fields. Their old owner supplies
+            // the value; every locally emitted midpoint has current endpoints.
+            migration_sources = cstone::DeviceVector<uint8_t>(preNumNodes, uint8_t(1));
+            if (numNodes)
+                cudaCheckCall(cudaMemcpy(migration_sources.data(), domain_->getNodeOwnershipMap().data(),
+                                         numNodes * sizeof(uint8_t), cudaMemcpyDeviceToDevice));
+        }
         cstone::DeviceVector<RealType> d_preX(preNumNodes), d_preY(preNumNodes), d_preZ(preNumNodes);
-        cudaMemcpy(d_preX.data(), refined.d_x.data(), preNumNodes * sizeof(RealType), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_preY.data(), refined.d_y.data(), preNumNodes * sizeof(RealType), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_preZ.data(), refined.d_z.data(), preNumNodes * sizeof(RealType), cudaMemcpyDeviceToDevice);
+        if (preNumNodes)
+            cudaCheckCall(cudaMemcpy(d_preX.data(), refined.d_x.data(), preNumNodes * sizeof(RealType),
+                                     cudaMemcpyDeviceToDevice));
+        if (preNumNodes)
+            cudaCheckCall(cudaMemcpy(d_preY.data(), refined.d_y.data(), preNumNodes * sizeof(RealType),
+                                     cudaMemcpyDeviceToDevice));
+        if (preNumNodes)
+            cudaCheckCall(cudaMemcpy(d_preZ.data(), refined.d_z.data(), preNumNodes * sizeof(RealType),
+                                     cudaMemcpyDeviceToDevice));
         stats.transferTimeMs = phaseLap();
 
+        cstone::DeviceVector<KeyType> d_preKeys(preNumNodes);
+        if (conforming)
+        {
+            auto rebuilt_box =
+                device_mesh_box(d_preX.data(), d_preY.data(), d_preZ.data(), preNumNodes, MPI_COMM_WORLD);
+            generateSfcKeys<KeyType, RealType>(d_preX.data(), d_preY.data(), d_preZ.data(), d_preKeys.data(),
+                                               preNumNodes, rebuilt_box);
+            auto node_owner    = domain_->sfcNodeOwner();
+            node_owner.meshBox = rebuilt_box;
+            auto route = AmrNodeOwner<KeyType, decltype(node_owner)>{node_owner, node_owner.numRanks};
+            validate_lepp_node_keys<LeppDeviceExecution>(d_preKeys.data(), d_preX.data(), d_preY.data(), d_preZ.data(),
+                                                         preNumNodes, route, MPI_COMM_WORLD,
+                                                         config_.stage_refinement_messages);
+        }
         rebuildDomainFromDevice(refined);
         amrOctree_.initialize(*domain_);
         stats.rebuildTimeMs = phaseLap();
@@ -501,17 +593,20 @@ public:
         // Same physical coords -> same keys cstone computed during sync, so the
         // post-sync local nodes will find their pre-sync match by key lookup.
         const cstone::Box<RealType>& newBox = domain_->getBoundingBox();
-        cstone::DeviceVector<KeyType> d_preKeys(preNumNodes);
-        generateSfcKeys<KeyType, RealType>(
-            d_preX.data(), d_preY.data(), d_preZ.data(),
-            d_preKeys.data(), preNumNodes, newBox);
+        if (!conforming)
+            generateSfcKeys<KeyType, RealType>(d_preX.data(), d_preY.data(), d_preZ.data(), d_preKeys.data(),
+                                               preNumNodes, newBox);
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+            if (conforming)
+                restore_lepp_boundary<KeyType>(*domain_, boundary_names, saved_faces, d_preKeys.data(),
+                                               config_.stage_refinement_messages);
 
         // Sort (preKey, value) pairs by key for binary search post-sync.
         // Sort each field's value array against a fresh copy of the keys, since
         // sort_by_key permutes both. For the keys, capture once.
         cstone::DeviceVector<KeyType> d_sortedKeys;
         std::vector<cstone::DeviceVector<RealType>> d_sortedVals(oldFields.size());
-        for (size_t f = 0; f < oldFields.size(); ++f)
+        for (size_t f = 0; config_.tet_refinement != TetRefinement::ConformingBisection && f < oldFields.size(); ++f)
         {
             cstone::DeviceVector<KeyType> kCopy = d_preKeys;
             d_sortedVals[f] = transferred[f];
@@ -529,8 +624,25 @@ public:
         // by exchangeNodeHalo below.
         size_t newNumNodes = domain_->getNodeCount();
         const auto& d_newKeys = domain_->getLocalToGlobalSfcMap();
+        std::unique_ptr<AmrFieldMigration<LeppDeviceExecution, KeyType, RealType>> migration;
+        if (config_.tet_refinement == TetRefinement::ConformingBisection && !oldFields.empty())
+        {
+            auto owner = domain_->sfcNodeOwner();
+            int ranks  = numRanks_;
+            migration  = std::make_unique<AmrFieldMigration<LeppDeviceExecution, KeyType, RealType>>(
+                d_preKeys.data(), preNumNodes, migration_sources.data(), d_newKeys.data(),
+                domain_->getNodeOwnershipMap().data(), newNumNodes,
+                AmrNodeOwner<KeyType, decltype(owner)>{owner, ranks}, MPI_COMM_WORLD,
+                config_.stage_refinement_messages);
+        }
         for (size_t f = 0; f < oldFields.size(); ++f)
         {
+            if (config_.tet_refinement == TetRefinement::ConformingBisection)
+            {
+                migration->apply(transferred[f].data(), transferred[f].size(), *newFields[f]);
+                domain_->exchangeNodeHalo(*newFields[f]);
+                continue;
+            }
             newFields[f]->resize(newNumNodes);
 
             const KeyType*  sortedKeys = thrust::raw_pointer_cast(d_sortedKeys.data());
@@ -701,6 +813,9 @@ private:
         }
         else if constexpr (std::tuple_size_v<ConnTupleT> == 4)
         {
+            if (config_.tet_refinement == TetRefinement::ConformingBisection)
+                return TetBisectionRefiner<KeyType, RealType>::refine(*domain_, d_marks.data(),
+                                                                      config_.stage_refinement_messages);
             return Refine::refineLocal(
                 std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
                 std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
