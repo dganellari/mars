@@ -15,12 +15,13 @@ config.storeSideSets = true; // Preserve triangle side sets when reading Exodus.
 Manager manager(config);
 ```
 
-The candidate passes the maintained CPU, NVIDIA GH200 and AMD MI300A validation
+The optional policy passes the maintained CPU, NVIDIA GH200 and AMD MI300A validation
 matrix at one, two and four ranks, with the multi-rank cases spanning two nodes.
 The GPU cases exercise the actual cornerstone rebuild, boundary matching and
 field migration. The tested Cornerstone correction is published and pinned at
-`c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. The policy remains experimental until
-the integrated release regressions pass.
+`c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. Integrated release checks also pass:
+10 CPU tests and all 50 release tests in both single-node and two-node layouts
+on each GPU platform. This validates the scope below; it does not establish scaling.
 See [the results and validation instructions](../tests/amr/README.md).
 
 ## Refinement and conformity
@@ -92,7 +93,7 @@ messages through host buffers. This does not change cornerstone or node-halo
 transport: the integrated GPU path still requires GPU-aware MPI. Peer counts,
 side-set names, convergence scalars and allocation sizes are host control data.
 
-## Supported scope and remaining gates
+## Validated scope and limitations
 
 The maintained GPU fixture uses 64-bit keys and double precision. Other type
 instantiations passing a syntax check are not native validation. Local midpoint

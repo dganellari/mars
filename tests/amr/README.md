@@ -192,8 +192,49 @@ claimed. The cause of the count difference has not been isolated.
 
 These gates do not establish coarsening, periodic/multiblock support, mesh-quality
 bounds, geometric generation limits, Exodus file-ingestion coverage or scaling.
-The tested dependency correction is published and pinned. The final integrated
-release regressions remain required before release.
+The tested dependency correction is published and pinned. The integrated release
+checks below complete the validation matrix for this scope.
+
+## Integrated release results
+
+The integrated numerical/runtime source is commit
+`2ee88f1fc84b2fdd634bbc7aaf01631780d07002`, with the same Cornerstone pin as above.
+Commit `a4ece5961307c5f3e81de6a5657c30c12b675239` changes only the validation
+runner, its tests and instructions. Results audited on 2026-11-09:
+
+| Platform | Job | Result |
+| --- | --- | --- |
+| Daint CPU | 5307495 | 9 AMR checks plus red-tet geometry: 10/10 |
+| Daint NVIDIA GH200 | 5307505 | Single-node release suite: 50/50 |
+| Daint NVIDIA GH200 | 5310365 | Two-node release suite: 50/50, batch exit 0 |
+| Beverin AMD MI300A | 729339 | Single-node release suite: 50/50 |
+| Beverin AMD MI300A | 729814 | Two-node release suite: 50/50, batch exit 0 |
+
+The release suite includes the existing unstructured solver/assembly checks,
+red-tet orientation and single-rank halo access. Four-rank cases in the two-node
+layout span both nodes. All expected cases ran, with no skips or failed tests.
+
+Both original GPU jobs exited 1 after their single-node suites passed: the
+auditor expected a GoogleTest footer that CTest had truncated from JUnit output.
+The matching full logs establish that the named halo test ran and passed. The
+corrected auditor rechecked those results, and the continuation jobs ran only
+the missing two-node suites using the original executables. No numerical test
+or tolerance changed; the original failure records are retained.
+
+The continuation verifies source/dependency manifests and 37 original files,
+including all 17 executables per platform, before and after execution. It
+preserves test commands and properties while relocating output directories.
+Executable hashes were first recorded after the original jobs completed, before
+continuation; they were not captured during those original executions. Result
+audits also checked exact inventories, artifact hashes and rank placement.
+
+The integrated bundle manifest is
+`ca2379b65dcccef25447e72aa0194fae86bcd7adeaaa5fc984404dc5c48fd492`;
+its full source manifest is
+`5c0b857cea04f017c9a0db16da361a6ac92acca06ae657ada8f1988f13aee526`.
+The continuation manifest is
+`0a1535a97ef8fcb770eae14098103ed74895bd563565f06429437b928eb6fb77`.
+These are correctness results, not scaling measurements.
 
 ## Cornerstone halo-depth correction
 
