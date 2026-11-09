@@ -96,9 +96,13 @@ median plus 50 microseconds for mesh/DOF setup or 5 microseconds per halo exchan
 The absolute allowance prevents tiny timings from dominating the decision.
 Missing/invalid correctness receipts fail the run; a timing regression returns
 `TIMING_REJECTED`, with raw samples retained. Other configurations still run.
-PASS needs every comparison to pass. Timing is a diagnostic, not a release gate:
-when correctness passes, check whether a rejected case's candidate and reference
-samples overlap before treating it as a regression.
+The runner reports PASS only when every comparison passes. For optional
+structured support, the four documented CUDA timing rejections are accepted as
+non-blocking; their original `TIMING_REJECTED` status and raw samples remain.
+Overlapping sample ranges alone do not establish noise or rule out a regression.
+A nonzero aggregate result requires checking correctness separately from timing;
+a correctness failure still blocks release. See the measured exceptions and
+scope of this decision in the [release status](../../../docs/Structured-Kokkos.md#release-status).
 
 ## Existing GPU release regressions
 

@@ -159,19 +159,31 @@ Jobs (preparation/validation): CPU 727102/727103, HIP 727104/727105, CUDA
 5295845/5295846. The unstructured suite ran on 2026-11-05 (HIP 721522, CUDA
 5262346). Later commits change only structured sources, tests and documentation.
 
-The timing comparison is a diagnostic, not a release gate. It compares each
-case with snapshot `7c0684ad` of the same backend, a regression reference
-rather than a performance target. It reports a case when the candidate median
-exceeds 1.10 times the reference plus a small absolute allowance. The four
-rejected CUDA cases all use direct MPI:
-- Three multi-node setups of 40 to 55 ms. Their candidate and reference samples
-  overlap: for example, four-rank Hilbert Hex8 rectangular mesh setup has
-  reference 26–50 ms and candidate 27–67 ms.
-- One single-node DOF setup near 8 ms. Its samples fall on two values, 7.9 and
-  8.9 ms.
-All four cases pass with host-staged MPI. Three of them use rectangular meshes,
-which the last change (the full-Hilbert partition) does not touch. None of this
-is a scaling result.
+For this optional structured release, the timing comparison is reported as a
+diagnostic. The original acceptance rule and its four CUDA rejections are
+retained; those rejections are accepted as non-blocking, rather than reclassified
+as passing measurements. The reference is snapshot `7c0684ad` of the same backend.
+The threshold is 1.10 times the reference median plus 50 microseconds for setup
+or 5 microseconds for halo exchange.
+
+The four rejected comparisons all use direct MPI. These are maximum-rank elapsed
+medians over five paired rounds:
+
+| Layout | Case | Phase | Reference (ms) | Candidate (ms) | Change |
+| --- | --- | --- | ---: | ---: | ---: |
+| Two nodes, 2 ranks | Hilbert Quad4 full | DOF setup | 42.425 | 49.321 | +16.3% |
+| Two nodes, 4 ranks | Morton Quad4 rectangular | Mesh setup | 41.290 | 51.117 | +23.8% |
+| Two nodes, 4 ranks | Hilbert Hex8 rectangular | Mesh setup | 36.171 | 54.682 | +51.2% |
+| One node, 4 ranks | Morton Hex8 rectangular | DOF setup | 7.949 | 8.881 | +11.7% |
+
+Candidate and reference ranges overlap, and all four cases pass the timing rule
+with host-staged MPI. These observations do not establish noise as the cause or
+rule out a performance regression. The rectangular paths are unchanged by the
+last full-Hilbert patch, but the comparison includes earlier changes since
+`7c0684ad`. The four timing exceptions therefore remain unresolved. All halo
+comparisons pass; this release makes no general performance-parity or scaling claim.
+The original CUDA aggregate status remains `FAILED_OR_TIMING_REJECTED` because
+its direct-MPI timing stage returned `TIMING_REJECTED`; its correctness tests pass.
 
 Earlier candidates, their timing rejections and the pooled CUDA allocation
 diagnosis (2026-11-04 to 2026-11-06) are in the history of this file.
