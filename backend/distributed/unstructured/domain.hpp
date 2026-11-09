@@ -90,6 +90,35 @@ struct QuadTag
     static constexpr const char* Name    = "Quadrilateral";
 };
 
+template<class RealType>
+cstone::Box<RealType>
+device_mesh_box(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm)
+{
+    RealType lower[3], upper[3];
+    const RealType* coordinates[3] = {x, y, z};
+    for (int d = 0; d < 3; ++d)
+    {
+        lower[d] = std::numeric_limits<RealType>::max();
+        upper[d] = std::numeric_limits<RealType>::lowest();
+        if (nodes)
+        {
+            auto begin = thrust::device_pointer_cast(coordinates[d]);
+            lower[d]   = mars::reduce(begin, begin + nodes, lower[d], thrust::minimum<RealType>());
+            upper[d]   = mars::reduce(begin, begin + nodes, upper[d], thrust::maximum<RealType>());
+        }
+    }
+    auto datatype = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(MPI_IN_PLACE, lower, 3, datatype, MPI_MIN, comm);
+    MPI_Allreduce(MPI_IN_PLACE, upper, 3, datatype, MPI_MAX, comm);
+    for (int d = 0; d < 3; ++d)
+    {
+        RealType padding = RealType(0.05) * (upper[d] - lower[d]);
+        lower[d] -= padding;
+        upper[d] += padding;
+    }
+    return cstone::Box<RealType>(lower[0], upper[0], lower[1], upper[1], lower[2], upper[2]);
+}
+
 // Forward declarations of CUDA kernels
 template<typename ElementTag, typename KeyType, typename RealType>
 __global__ void findRepresentativeNodesKernel(const KeyType* indices0,
@@ -1641,8 +1670,7 @@ public:
     bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
     // ---- Optional side-set storage (lazy, opt-in via the file ctor) ----
-    // Each named side set is kept as two device vectors: d_keys (SFC keys, the
-    // AMR-stable partition-independent identity) and d_local (the runtime local
+    // Each named side set keeps d_keys (SFC keys in the current box) and d_local (the runtime local
     // node ids the hot path uses). Both hold only the nodes this rank actually
     // resolves (hits); misses are dropped. A name present in the mesh but with
     // zero local hits on this rank still has an entry, with empty vectors, so
@@ -1686,10 +1714,73 @@ public:
         return sideSets_.at(name).d_keys;
     }
 
+    bool has_side_set_face_keys(const std::string& name) const
+    {
+        ensureSideSetFaces();
+        return sideSets_.at(name).has_faces;
+    }
+
+    // Three keys per tetrahedron face. Node-only sets cannot define face ancestry.
+    const DeviceVector<KeyType>& side_set_face_keys(const std::string& name) const
+    {
+        ensureSideSetFaces();
+        return sideSets_.at(name).d_face_keys;
+    }
+
+    void set_side_set_from_face_keys(const std::string& name, DeviceVector<KeyType> faces)
+        requires(std::is_same_v<ElementTag, TetTag>)
+    {
+        if (numBlocks_ != 1 || faces.size() % 3)
+            throw std::invalid_argument("Face-key side sets require single-block triangle triples");
+        ensureSfcMap();
+        SideSetEntry entry;
+        entry.has_faces   = true;
+        entry.d_face_keys = std::move(faces);
+        if (entry.d_face_keys.empty())
+        {
+            sideSets_[name] = std::move(entry);
+            storeSideSets_ = sideSetsBuilt_ = true;
+            return;
+        }
+        if (d_localToGlobalSfcMap_.size() > size_t(std::numeric_limits<int>::max()))
+            throw std::overflow_error("Side-set node indices exceed int capacity");
+        entry.d_keys = entry.d_face_keys;
+        auto begin   = thrust::device_pointer_cast(entry.d_keys.data());
+        auto end     = begin + entry.d_keys.size();
+        thrust::sort(thrust::device, begin, end);
+        auto unique_end = thrust::unique(thrust::device, begin, end);
+        entry.d_keys.resize(unique_end - begin);
+        entry.d_local.resize(entry.d_keys.size());
+        auto keys        = entry.d_keys.data();
+        auto local       = entry.d_local.data();
+        auto domain_keys = d_localToGlobalSfcMap_.data();
+        size_t nodes     = d_localToGlobalSfcMap_.size();
+        thrust::for_each_n(thrust::device, thrust::counting_iterator<size_t>(0), entry.d_keys.size(),
+                           [=] __device__(size_t i)
+                           {
+                               size_t lo = 0, hi = nodes;
+                               while (lo < hi)
+                               {
+                                   size_t mid = lo + (hi - lo) / 2;
+                                   if (domain_keys[mid] < keys[i])
+                                       lo = mid + 1;
+                                   else
+                                       hi = mid;
+                               }
+                               local[i] = lo < nodes && domain_keys[lo] == keys[i] ? int(lo) : -1;
+                           });
+        if (mars::countIf(thrust::device_pointer_cast(local), thrust::device_pointer_cast(local) + entry.d_local.size(),
+                          [] __device__(int i) { return i < 0; }))
+            throw std::invalid_argument("Face-key side set contains a node absent from this domain");
+        sideSets_[name] = std::move(entry);
+        storeSideSets_  = true;
+        sideSetsBuilt_  = true;
+    }
+
     //! Re-inject a side set from its SFC keys onto the CURRENT domain. AMR carry-through: adaptMesh
     //! rebuilds a fresh DEVICE-constructed domain (no Exodus file, so ensureSideSets can't rebuild the
-    //! sets); the SFC key is the AMR-stable node identity, so resolve each key against this domain's SFC
-    //! map -> local id (keep hits; a key not owned here is dropped, exactly like the coord resolver).
+    //! sets). Keys must already use this domain's current box; a box change requires re-encoding.
+    //! Resolve each key to a local id, dropping misses as in the coordinate resolver.
     //! Marks storage built so ensureSideSets() (which reads meshFile_) does not clobber the injected set.
     // block >= 0 (multi-block domain): resolve each key to the node on THAT block by scanning the
     // consecutive (key, block) run in the sorted map (mirrors resolveSideSetNodesToLocalKeepMisses).
@@ -1754,16 +1845,19 @@ private:
     bool storeSideSets_ = false;
     std::string meshFile_;
 
-    // Per named side set we keep both the SFC keys (the partition-independent,
-    // AMR-stable identity / source of truth) and the derived runtime local node
-    // ids (the hot-path index). Coords are dropped after resolve.
+    // Keys identify nodes in the current box. Face triples preserve tetrahedral
+    // boundary ancestry; AMR re-encodes them when the bounding box changes.
     struct SideSetEntry
     {
         DeviceVector<KeyType> d_keys;
         DeviceVector<int>     d_local;
+        DeviceVector<KeyType> d_face_keys;
+        bool has_faces = false;
+        bool faces_pending = false;
     };
     mutable std::map<std::string, SideSetEntry> sideSets_;
     mutable bool sideSetsBuilt_ = false;
+    mutable bool sideSetFacesBuilt_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -1906,6 +2000,7 @@ private:
     void ensureNodeHaloTopo() const;
     void ensureCoordinateCache() const;
     void ensureSideSets() const;
+    void ensureSideSetFaces() const;
 
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
@@ -2535,51 +2630,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     nodeCount_    = d_x.size();
     elementCount_ = std::get<0>(d_conn).size();
 
-    // Bounding box on GPU + MPI
-    RealType lxmin, lxmax, lymin, lymax, lzmin, lzmax;
-    {
-        auto xb = thrust::device_pointer_cast(d_x.data());
-        auto yb = thrust::device_pointer_cast(d_y.data());
-        auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-    }
-
-    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
-    RealType gxmin, gxmax, gymin, gymax, gzmin, gzmax;
-    MPI_Allreduce(&lxmin, &gxmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lxmax, &gxmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&lymin, &gymin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lymax, &gymax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&lzmin, &gzmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lzmax, &gzmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-
-    RealType pad   = RealType(0.05);
-    RealType rx    = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
-    {
-        using BT = cstone::BoundaryType;
-        const bool px = (periodicAxesMask_ & 1) != 0;
-        const bool py = (periodicAxesMask_ & 2) != 0;
-        const bool pz = (periodicAxesMask_ & 4) != 0;
-        // Preserve the periodic extent across this rebuild. For periodic axes
-        // reuse the box bounds already established by the file ctor (the
-        // periodic period must stay fixed -- it is NOT the coord min/max,
-        // which after collapse excludes the max face). Open axes re-pad.
-        RealType xlo = px ? box_.xmin() : (gxmin - pad * rx);
-        RealType xhi = px ? box_.xmax() : (gxmax + pad * rx);
-        RealType ylo = py ? box_.ymin() : (gymin - pad * ry);
-        RealType yhi = py ? box_.ymax() : (gymax + pad * ry);
-        RealType zlo = pz ? box_.zmin() : (gzmin - pad * rz);
-        RealType zhi = pz ? box_.zmax() : (gzmax + pad * rz);
-        box_ = cstone::Box<RealType>(xlo, xhi, ylo, yhi, zlo, zhi,
-                                     px ? BT::periodic : BT::open,
-                                     py ? BT::periodic : BT::open,
-                                     pz ? BT::periodic : BT::open);
-    }
+    box_ = device_mesh_box(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD);
 
     RealType theta = 0.5;
 
@@ -3396,10 +3447,44 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSet
         if (!h_local.empty())
             thrust::copy(h_local.begin(), h_local.end(),
                          thrust::device_pointer_cast(entry.d_local.data()));
+        entry.faces_pending = std::is_same_v<ElementTag, TetTag>;
         sideSets_[name] = std::move(entry);
     }
 
     sideSetsBuilt_ = true;
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSetFaces() const
+{
+    ensureSideSets();
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        if (sideSetFacesBuilt_ || !storeSideSets_ || meshFile_.empty()) return;
+        // Existing node-only consumers pay no face resolution or device storage cost.
+        auto ss = readExodusSideSetsTet4(meshFile_, rank_);
+        std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
+        thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
+                     thrust::device_pointer_cast(d_localToGlobalSfcMap_.data() + d_localToGlobalSfcMap_.size()),
+                     hostSfc.begin());
+        for (auto& [name, entry] : sideSets_)
+        {
+            if (!entry.faces_pending) continue;
+            entry.faces_pending = false;
+            entry.has_faces     = true;
+            auto found          = ss.triangleCoordsByName.find(name);
+            if (found == ss.triangleCoordsByName.end()) continue;
+            auto face_nodes = resolveSideSetNodesToLocalKeepMisses(found->second);
+            std::vector<KeyType> face_keys;
+            for (size_t i = 0; i + 2 < face_nodes.size(); i += 3)
+                if (face_nodes[i] >= 0 && face_nodes[i + 1] >= 0 && face_nodes[i + 2] >= 0)
+                    for (int c = 0; c < 3; ++c)
+                        face_keys.push_back(hostSfc[face_nodes[i + c]]);
+            entry.d_face_keys.resize(face_keys.size());
+            thrust::copy(face_keys.begin(), face_keys.end(), thrust::device_pointer_cast(entry.d_face_keys.data()));
+        }
+        sideSetFacesBuilt_ = true;
+    }
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -3448,8 +3533,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureNodeHal
 {
     if (!nodeHaloTopo_)
     {
-        // ensureHalo() builds both halo_ and nodeHaloTopo_ in one shot.
         ensureHalo();
+        // Single-rank ownership needs no halo, but the public accessor still returns an empty topology.
+        if (!nodeHaloTopo_)
+            nodeHaloTopo_ = std::make_unique<NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
 }
 
@@ -3903,6 +3990,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     // lower_bound into the new d_localToGlobalSfcMap_, so AMR avoids the re-read.
     sideSets_.clear();
     sideSetsBuilt_ = false;
+    sideSetFacesBuilt_ = false;
 
     // Clear per-instance device vectors that depend on element/node counts.
     // The actual storage will be re-allocated by sync() / lazy init.

@@ -43,6 +43,11 @@ def output(ranks, backend="CUDA", transport="direct", tests=3):
     return "\n".join(lines)
 
 
+def halo_output():
+    return ("[ RUN      ] MarsNodeHaloTopologyTest.SingleRankAccessor\n" + "diagnostic\n" * 200 +
+            "[       OK ] MarsNodeHaloTopologyTest.SingleRankAccessor\n[  PASSED  ] 1 test.")
+
+
 class KitTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -202,19 +207,48 @@ class KitTests(unittest.TestCase):
 
     def test_release_regression_matrix_rejects_missing_and_skipped(self):
         import regression
-        self.assertEqual(len(regression.NAMES), 48)
+        self.assertEqual(len(regression.NAMES), 50)
         root = ET.Element("testsuite")
         for name in regression.NAMES:
-            ET.SubElement(root, "testcase", name=name, status="run")
+            case = ET.SubElement(root, "testcase", name=name, status="run")
+            if name == "release_node_halo_single_rank":
+                ET.SubElement(case, "system-out").text = halo_output()
         path = self.root / "release.xml"
         ET.ElementTree(root).write(path)
-        self.assertEqual(len(regression.audit_junit(path)), 48)
+        self.assertEqual(len(regression.audit_junit(path)), 50)
+        halo = root.find("testcase[@name='release_node_halo_single_rank']/system-out")
+        for text in ("", "[  PASSED  ] 0 tests.", "[  SKIPPED ] 1 test. [ PASSED ] 1 test."):
+            halo.text = text
+            ET.ElementTree(root).write(path)
+            with self.assertRaises(ValueError): regression.audit_junit(path)
+        halo.text = halo_output()
         ET.SubElement(root.find("testcase"), "skipped")
         ET.ElementTree(root).write(path)
         with self.assertRaises(ValueError): regression.audit_junit(path)
         root.remove(root.find("testcase"))
         ET.ElementTree(root).write(path)
         with self.assertRaises(ValueError): regression.audit_junit(path)
+
+    def test_release_truncated_halo_uses_full_case_log(self):
+        import regression
+        root = ET.Element("testsuite")
+        for name in regression.NAMES:
+            case = ET.SubElement(root, "testcase", name=name, status="run")
+            if name == "release_node_halo_single_rank":
+                ET.SubElement(case, "system-out").text = halo_output()[:1024]
+        path, log = self.root / "release.xml", self.root / "release.log"
+        ET.ElementTree(root).write(path)
+        text = "Start 52: release_node_halo_single_rank\n" + "\n".join(
+            "52: " + line for line in halo_output().splitlines())
+        log.write_text(text)
+        with self.assertRaises(ValueError): regression.audit_junit(path)
+        self.assertEqual(len(regression.audit_junit(path, log)), 50)
+        for broken in (text.replace("Start 52:", "Start 53:"), text + text,
+                       text.replace("SingleRankAccessor", "DifferentCase"),
+                       text.replace("[       OK ]", "[  SKIPPED ]"),
+                       text.replace("[  PASSED  ] 1 test.", "[  PASSED  ] 0 tests.")):
+            log.write_text(broken)
+            with self.assertRaises(ValueError): regression.audit_junit(path, log)
 
     def test_performance_retains_failure_and_runs_remaining_pairs(self):
         import performance

@@ -12,30 +12,46 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 import run
 
-CSTONE = "2a95e63b0ca5454712ab83f27505055c078887dc"
+CSTONE = "c13b9a9a6c0f5897ec4f23283e4ff53716303c5e"
 TARGETS = ("mars_cvfem_graph", "mars_cvfem_graph_tet", "mars_cvfem_ho_matfree_test", "mars_cvfem_poisson",
            "mars_ex1_poisson", "mars_ho_dist_apply_test", "mars_lid_driven_cavity", "mars_poiseuille_flow",
            "mars_step01_mesh", "mars_step02_volume", "mars_step03_poisson", "mars_step04_cvfem",
-           "mars_step05_galerkin", "mars_step06_heat", "mars_tgv")
+           "mars_step05_galerkin", "mars_step06_heat", "mars_tgv",
+           "mars_domain_adjacency_and_halo_test", "mars_tet_red_host_test")
 NAMES = {"marsReleaseMeshHex", "marsReleaseMeshTet", "marsReleaseMeshHexScaled", "marsReleaseMeshHexCycled",
          "marsReleaseMeshHex32", "marsReleaseMeshTet16", "marsReleaseHexAssembly", "marsReleaseHexAssemblyScaled",
          "marsReleaseHexNumbering", "marsReleaseTetAssembly", "marsReleasePoisson", "marsReleasePoissonCycled",
          "marsReleasePoisson_np4", "marsReleaseCavity", "marsReleaseChannel", "marsReleaseTgv", "marsReleaseHoMatfree",
-         "marsReleaseHoDistApply_np4"}
+         "marsReleaseHoDistApply_np4", "release_tet_red_host", "release_node_halo_single_rank"}
 for name in ("Ex1Poisson", "TgvDecay", "Poiseuille", "Step01", "Step02Volume", "Step02Moment", "Step03Poisson8",
              "Step03Poisson16", "Step04Cvfem16", "Step04Cvfem32", "Step05Hex16", "Step05Hex32", "Step05Tet8",
              "Step06Heat10", "Step06Heat20"):
     NAMES.update("marsRelease" + name + "_np" + str(rank) for rank in (1, 4))
 
 
-def audit_junit(path):
+def audit_junit(path, log=None):
     cases = list(ET.parse(path).getroot().iter("testcase"))
-    if len(cases) != 48 or {case.get("name") for case in cases} != NAMES:
-        raise ValueError("Release suite must contain exactly the existing 48 tests, including Hypre and netCDF cases")
+    if len(cases) != len(NAMES) or {case.get("name") for case in cases} != NAMES:
+        raise ValueError("Release suite must contain all 50 tests, including Hypre and netCDF cases")
     for case in cases:
         if (case.get("status", "run") not in ("run", "passed") or
                 any(case.find(tag) is not None for tag in ("failure", "error", "skipped"))):
             raise ValueError("Required release test failed/skipped: " + case.get("name", "unknown"))
+        if case.get("name") == "release_node_halo_single_rank":
+            output = "\n".join(node.text or "" for node in case.iter("system-out"))
+            if log is not None:
+                # CTest can truncate successful-test output in JUnit before the GoogleTest summary.
+                text = Path(log).read_text()
+                starts = re.findall(r"^\s*Start\s+(\d+): release_node_halo_single_rank\s*$", text, re.M)
+                if len(starts) != 1:
+                    raise ValueError("Missing or repeated single-rank halo test in the full CTest log")
+                output = "\n".join(re.findall(r"^" + starts[0] + r": ?(.*)$", text, re.M))
+            name = r"MarsNodeHaloTopologyTest\.SingleRankAccessor"
+            if (re.search(r"\[ *SKIPPED *\]", output) or
+                    len(re.findall(r"\[ *RUN *\] " + name + r"\b", output)) != 1 or
+                    len(re.findall(r"\[ *OK *\] " + name + r"\b", output)) != 1 or
+                    len(re.findall(r"\[ *PASSED *\] 1 test\.", output)) != 1):
+                raise ValueError("Single-rank halo regression did not execute its test")
     return sorted(NAMES)
 
 
@@ -110,17 +126,18 @@ def main():
         execute(command, args.work / "build.log", env)
         execute(["ctest", "--test-dir", str(build), "-L", "release", "--show-only=json-v1"], args.work / "inventory.json", env)
         inventory = json.loads((args.work / "inventory.json").read_text())
-        if len(inventory["tests"]) != 48 or {t["name"] for t in inventory["tests"]} != NAMES:
+        if len(inventory["tests"]) != len(NAMES) or {t["name"] for t in inventory["tests"]} != NAMES:
             raise ValueError("Required release tests not registered")
         result["tests"] = {}
         for layout in (("single", "multi") if args.multi_node else ("single",)):
             env["MARS_GATE_LAYOUT"] = layout
             xml = args.work / ("release-" + layout + ".xml")
             command = ["ctest", "--test-dir", str(build), "-L", "release", "--parallel", "1", "--no-tests=error",
+                       "--test-output-size-passed", "1048576", "--test-output-size-failed", "1048576",
                        "--output-on-failure", "--verbose", "--output-junit", str(xml)]
             result["commands"].append(command)
             execute(command, args.work / ("release-" + layout + ".log"), env)
-            result["tests"][layout] = audit_junit(xml)
+            result["tests"][layout] = audit_junit(xml, args.work / ("release-" + layout + ".log"))
         binaries = [path for path in build.rglob("*") if path.is_file() and path.name in TARGETS]
         if {path.name for path in binaries} != set(TARGETS):
             raise ValueError("Missing release driver binaries")

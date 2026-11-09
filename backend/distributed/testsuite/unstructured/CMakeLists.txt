@@ -233,6 +233,22 @@ addMarsGpuMpiTest(
     MarsDomainAdjacencyAndHaloTest
 )
 
+# This generated fixture must run even when the optional file-based halo tests skip.
+add_test(NAME release_node_halo_single_rank
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:mars_domain_adjacency_and_halo_test> ${MPIEXEC_POSTFLAGS}
+        --gtest_filter=MarsNodeHaloTopologyTest.SingleRankAccessor)
+set_tests_properties(release_node_halo_single_rank PROPERTIES
+    LABELS "release;gpu;node-halo" TIMEOUT 60 FAIL_REGULAR_EXPRESSION "\\[ *SKIPPED *\\]")
+
+add_executable(mars_tet_red_host_test ${CMAKE_SOURCE_DIR}/tests/reference/tet_red/tet_red_host.cpp)
+target_compile_features(mars_tet_red_host_test PRIVATE cxx_std_20)
+target_include_directories(mars_tet_red_host_test PRIVATE ${CMAKE_SOURCE_DIR})
+add_test(NAME release_tet_red_host COMMAND mars_tet_red_host_test)
+set_tests_properties(release_tet_red_host PROPERTIES LABELS "release;amr;host" TIMEOUT 60)
+set_property(GLOBAL APPEND PROPERTY MARS_TEST_TARGETS mars_tet_red_host_test)
+set_property(GLOBAL APPEND PROPERTY MARS_TESTS release_node_halo_single_rank release_tet_red_host)
+
 addMarsGpuMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_mfem_mesh.cu
     mars_domain_mfem_mesh_test

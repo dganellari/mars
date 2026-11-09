@@ -79,7 +79,7 @@ struct FaceKey
     }
 };
 
-__global__ void countChildElementsKernel(const uint8_t* marks, uint64_t* childCounts, size_t numElements)
+static __global__ void countChildElementsKernel(const uint8_t* marks, uint64_t* childCounts, size_t numElements)
 {
     size_t e = blockIdx.x * blockDim.x + threadIdx.x;
     if (e >= numElements) return;
