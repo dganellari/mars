@@ -1,6 +1,8 @@
 include(CMakeFindDependencyMacro)
 if (@MARS_ENABLE_KOKKOS@)
-    find_dependency(Kokkos HINTS @Kokkos_DIR@)
+    find_dependency(Kokkos CONFIG HINTS "@Kokkos_DIR@")
+    include("${CMAKE_CURRENT_LIST_DIR}/MarsKokkos.cmake")
+    mars_check_kokkos_backend("@MARS_GPU_LANGUAGE@")
 endif()
 
 if (@MARS_ENABLE_KOKKOS_KERNELS@)
@@ -15,6 +17,9 @@ endif()
 # must recreate them before MarsTargets.cmake (below) references them.
 if (@MARS_ENABLE_CUDA@)
     find_dependency(CUDAToolkit)
+endif()
+if (@MARS_ENABLE_HIP@)
+    find_dependency(hip CONFIG)
 endif()
 
 if (@MARS_ENABLE_MPI@)
@@ -44,18 +49,18 @@ set(MARS_GPU_ARCHITECTURES "@MARS_GPU_ARCHITECTURES@")
 # the Mars::mars / Mars::mars_unstructured references in MarsTargets resolve without a
 # separate cornerstone install. Guarded by NOT TARGET so an in-tree build (where the
 # real targets already exist) is left untouched.
-if (NOT TARGET cornerstone::cornerstone)
+if (@MARS_ENABLE_UNSTRUCTURED@ AND NOT TARGET cornerstone::cornerstone)
     add_library(cornerstone::cornerstone INTERFACE IMPORTED)
     set_target_properties(cornerstone::cornerstone PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
 endif()
 
 # mars_unstructured links the ROCm libraries through mars::rocmlibs; build it the same way here.
-if (@MARS_ENABLE_HIP@)
+if (@MARS_ENABLE_HIP@ AND @MARS_ENABLE_UNSTRUCTURED@)
     include("${CMAKE_CURRENT_LIST_DIR}/rocmlibs_target.cmake")
 endif()
 
-if ((@MARS_ENABLE_CUDA@ OR @MARS_ENABLE_HIP@) AND NOT TARGET cstone_gpu)
+if (@MARS_ENABLE_UNSTRUCTURED@ AND (@MARS_ENABLE_CUDA@ OR @MARS_ENABLE_HIP@) AND NOT TARGET cstone_gpu)
     add_library(cstone_gpu STATIC IMPORTED)
     set_target_properties(cstone_gpu PROPERTIES
         IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libcstone_gpu.a")
@@ -66,7 +71,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/MarsTargets.cmake")
 # The in-tree build links cstone_gpu through BUILD_INTERFACE so that install(EXPORT)
 # can generate, which means the installed interface carries no reference to it.
 # Put it back, now that both the imported target and Mars::* exist.
-if (TARGET cstone_gpu)
+if (@MARS_ENABLE_UNSTRUCTURED@ AND TARGET cstone_gpu)
     foreach (_mars_tgt Mars::mars Mars::mars_unstructured)
         if (TARGET ${_mars_tgt})
             set_property(TARGET ${_mars_tgt} APPEND PROPERTY INTERFACE_LINK_LIBRARIES cstone_gpu)

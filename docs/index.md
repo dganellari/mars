@@ -37,6 +37,7 @@ releases.
 
 ## Reference
 
+- **[Structured Kokkos](Structured-Kokkos.md)**: optional Cartesian meshes, DOFs and checked field exchange.
 - **[Conforming tetrahedral AMR](Conforming-Tet-AMR.md)**: legacy LEPP integration, face labels and validation status.
 - **[FEM Assembly](FEM-Assembly.md)**: mesh → DOF map → sparsity → assembled CSR, on the GPU.
 - **[CVFEM Kernels](CVFEM-Kernels.md)**: the hex assembly kernel variants and how to choose one.

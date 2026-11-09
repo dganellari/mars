@@ -9,15 +9,27 @@
 // so any element can be regenerated on the host without a full mirror.
 //
 // Build:  g++ -O2 run_hl_mma.cpp -o run_hl_mma -ldl
-// Run:    ./run_hl_mma ../generated/hl_full_sm90.ptx [E] [p]
+// Run:    ./run_hl_mma ../generated/hl_full_sm90.ptx [E] [p] [kernel] [max registers]
+// kernel: laplacian_apply (default) or e.g. laplacian_apply_p7 for the cell-wise
+// schedule (hl_gpu_pipeline.py --cellwise), launched with the shape it publishes as
+// <kernel>__launch = {threads per block, elements per block}. max registers > 0 caps the
+// registers per thread at JIT time, to trade registers for occupancy.
 #include <dlfcn.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 #include "knaus_oracle.h"
+
+// fmax(e, NaN) is e, so a NaN entry would pass a plain fmax reduction.
+static double entry_error(double out, double ref)
+{
+    return std::isfinite(out) && std::isfinite(ref) ? fabs(out - ref) : INFINITY;
+}
 
 typedef int CUresult;
 typedef int CUdevice;
@@ -32,7 +44,9 @@ static CUresult (*p_cuInit)(unsigned);
 static CUresult (*p_cuDeviceGet)(CUdevice*, int);
 static CUresult (*p_cuCtxCreate)(CUcontext*, unsigned, CUdevice);
 static CUresult (*p_cuModuleLoadData)(CUmodule*, const void*);
+static CUresult (*p_cuModuleLoadDataEx)(CUmodule*, const void*, unsigned, int*, void**);
 static CUresult (*p_cuModuleGetFunction)(CUfunction*, CUmodule, const char*);
+static CUresult (*p_cuModuleGetGlobal)(CUdeviceptr*, size_t*, CUmodule, const char*);
 static CUresult (*p_cuMemAlloc)(CUdeviceptr*, size_t);
 static CUresult (*p_cuMemcpyHtoD)(CUdeviceptr, const void*, size_t);
 static CUresult (*p_cuMemcpyDtoH)(void*, CUdeviceptr, size_t);
@@ -70,7 +84,9 @@ int main(int argc, char** argv)
     *(void**)&p_cuDeviceGet         = must_sym(lib, "cuDeviceGet");
     *(void**)&p_cuCtxCreate         = must_sym(lib, "cuCtxCreate_v2");
     *(void**)&p_cuModuleLoadData    = must_sym(lib, "cuModuleLoadData");
+    *(void**)&p_cuModuleLoadDataEx  = must_sym(lib, "cuModuleLoadDataEx");
     *(void**)&p_cuModuleGetFunction = must_sym(lib, "cuModuleGetFunction");
+    *(void**)&p_cuModuleGetGlobal   = must_sym(lib, "cuModuleGetGlobal_v2");
     *(void**)&p_cuMemAlloc          = must_sym(lib, "cuMemAlloc_v2");
     *(void**)&p_cuMemcpyHtoD        = must_sym(lib, "cuMemcpyHtoD_v2");
     *(void**)&p_cuMemcpyDtoH        = must_sym(lib, "cuMemcpyDtoH_v2");
@@ -86,10 +102,12 @@ int main(int argc, char** argv)
     *(void**)&p_cuOccupancyMaxActiveBlocksPerMultiprocessor =
         must_sym(lib, "cuOccupancyMaxActiveBlocksPerMultiprocessor");
 
+    if (!(entry_error(std::nan(""), 1.0) > 1e-11)) { fprintf(stderr, "spot check accepts NaN\n"); return 1; }
     const char* ptxPath = argc > 1 ? argv[1] : "../generated/hl_full_sm90.ptx";
     const long long E = argc > 2 ? atoll(argv[2]) : (1LL << 20);
     const int p = argc > 3 ? atoi(argv[3]) : 7;
-    const unsigned WARP = 32;   // one warp per element; grid = E
+    const char* kernel = argc > 4 ? argv[4] : "laplacian_apply";
+    const int maxRegs = argc > 5 ? atoi(argv[5]) : 0;
     const int n = p + 1, nn = n * n, n3 = nn * n;
     const long long gElem = 3LL * p * nn * 3;
 
@@ -103,17 +121,39 @@ int main(int argc, char** argv)
     CK(p_cuInit(0));
     CUdevice dev; CK(p_cuDeviceGet(&dev, 0));
     CUcontext ctx; CK(p_cuCtxCreate(&ctx, 0, dev));
-    CUmodule mod; CK(p_cuModuleLoadData(&mod, ptx.data()));
-    CUfunction fn; CK(p_cuModuleGetFunction(&fn, mod, "laplacian_apply"));
+    CUmodule mod;
+    if (maxRegs > 0) {
+        int opt[1] = {0};   // CU_JIT_MAX_REGISTERS
+        void* val[1] = {(void*)(uintptr_t)maxRegs};
+        CK(p_cuModuleLoadDataEx(&mod, ptx.data(), 1, opt, val));
+    } else {
+        CK(p_cuModuleLoadData(&mod, ptx.data()));
+    }
+    CUfunction fn; CK(p_cuModuleGetFunction(&fn, mod, kernel));
+    // One warp per element unless the kernel publishes another launch shape.
+    unsigned threads = 32;
+    long long perBlock = 1;
+    {
+        CUdeviceptr g = 0;
+        size_t bytes = 0;
+        if (p_cuModuleGetGlobal(&g, &bytes, mod, (std::string(kernel) + "__launch").c_str()) == 0 &&
+            bytes == sizeof(long long[2])) {
+            long long v[2];
+            CK(p_cuMemcpyDtoH(v, g, sizeof(v)));
+            threads = (unsigned)v[0];
+            perBlock = v[1];
+        }
+    }
     {   // What ptxas made of the PTX: register count and local memory (spills)
         // are invisible in the PTX itself, and they decide occupancy.
         int regs = 0, local = 0, shared = 0, blocks = 0;
         CK(p_cuFuncGetAttribute(&regs, 4 /*NUM_REGS*/, fn));
         CK(p_cuFuncGetAttribute(&local, 3 /*LOCAL_SIZE_BYTES*/, fn));
         CK(p_cuFuncGetAttribute(&shared, 1 /*SHARED_SIZE_BYTES*/, fn));
-        CK(p_cuOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, fn, 32, 0));
-        printf("  kernel: %d regs/thread, %d B local/thread (spills), %d B shared/block, "
-               "%d blocks (= warps) per SM\n", regs, local, shared, blocks);
+        CK(p_cuOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, fn, (int)threads, 0));
+        printf("  kernel %s: %d regs/thread, %d B local/thread (spills), %d B shared/block, "
+               "%u threads and %lld elements per block, %d blocks per SM\n", kernel, regs, local, shared,
+               threads, perBlock, blocks);
     }
 
     // Btil/Dtil are n x n with a zero last row (the kernel pads the face
@@ -191,8 +231,8 @@ int main(int argc, char** argv)
                            &uSt[0], &uSt[1], &uSt[2], &uSt[3],
     };
 
-    const unsigned grid = (unsigned)E;
-    CK(p_cuLaunchKernel(fn, grid, 1, 1, WARP, 1, 1, 0, 0, args, nullptr));
+    const unsigned grid = (unsigned)((E + perBlock - 1) / perBlock);
+    CK(p_cuLaunchKernel(fn, grid, 1, 1, threads, 1, 1, 0, 0, args, nullptr));
     CK(p_cuCtxSynchronize());
 
     double err = 0;
@@ -211,7 +251,7 @@ int main(int argc, char** argv)
                hW.data(), elemG.data(), ref.data());
         double eo = 0, mo = 0, mr = 0;
         for (int i = 0; i < n3; ++i) {
-            eo = fmax(eo, fabs(out[i] - ref[i]));
+            eo = fmax(eo, entry_error(out[i], ref[i]));
             mo = fmax(mo, fabs(out[i]));
             mr = fmax(mr, fabs(ref[i]));
         }
@@ -219,17 +259,17 @@ int main(int argc, char** argv)
                e, mo, mr, eo, out[0], out[1], out[2], ref[0], ref[1], ref[2]);
         err = fmax(err, eo);
     }
-    printf("HIGH-LEVEL mir -> mma gate (p=%d, E=%lld, warp/elem): spot max|err| = %.3e  %s\n",
-           p, E, err, err < 1e-11 ? "PASS" : "FAIL");
+    printf("HIGH-LEVEL mir gate (%s, p=%d, E=%lld): spot max|err| = %.3e  %s\n",
+           kernel, p, E, err, err < 1e-11 ? "PASS" : "FAIL");
 
     CUevent t0, t1; CK(p_cuEventCreate(&t0, 0)); CK(p_cuEventCreate(&t1, 0));
     const int iters = 20;
     for (int w = 0; w < 3; ++w)
-        CK(p_cuLaunchKernel(fn, grid, 1, 1, WARP, 1, 1, 0, 0, args, nullptr));
+        CK(p_cuLaunchKernel(fn, grid, 1, 1, threads, 1, 1, 0, 0, args, nullptr));
     CK(p_cuCtxSynchronize());
     CK(p_cuEventRecord(t0, 0));
     for (int i = 0; i < iters; ++i)
-        CK(p_cuLaunchKernel(fn, grid, 1, 1, WARP, 1, 1, 0, 0, args, nullptr));
+        CK(p_cuLaunchKernel(fn, grid, 1, 1, threads, 1, 1, 0, 0, args, nullptr));
     CK(p_cuEventRecord(t1, 0)); CK(p_cuEventSynchronize(t1));
     float ms = 0; CK(p_cuEventElapsedTime(&ms, t0, t1));
     const double msApply = ms / iters;

@@ -1,3 +1,4 @@
+#include "mars_structured_gtest.hpp"
 /*
  * MIT License
  *
@@ -194,6 +195,5 @@ TEST(HilbertCode, inversion)
 }
 
 int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    return mars::test::run_structured_tests(argc, argv, 5);
 }

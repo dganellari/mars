@@ -164,7 +164,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_label(const Integer i, const Integer label) const  // override
         {
-            element_labels_(i) = label;
+            // Incident cells can assign the same node label concurrently.
+            Kokkos::atomic_exchange(&element_labels_(i), label);
         }
 
         MARS_INLINE_FUNCTION
@@ -191,7 +192,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const UnorderedMap<KeyType, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
 
-        void generate_sfc_to_local_map() {
+        [[nodiscard]] bool generate_sfc_to_local_map() {
             sfc_to_local_map_ = UnorderedMap<KeyType, Integer>(get_elem_size());
             // copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
             auto element_view = elements_;
@@ -200,6 +201,7 @@ namespace mars {
                 "generate_sfc_to_local_map", get_elem_size(), MARS_LAMBDA(const Integer i) {
                     sfc_map.insert(element_view(i), i);
                 });
+            return !sfc_map.failed_insert() && sfc_map.size() == get_elem_size();
         }
 
         // this function is used to print the sfc_to_local_map_ for debugging purposes using kokkos and unordered_map key at value at valid at device functions
@@ -248,12 +250,12 @@ namespace mars {
         ViewVectorType<KeyType> elements_;
         ViewVectorType<Integer> element_labels_;
         ViewVectorType<Integer> element_orientations_;
-        Integer elements_size_;
+        Integer elements_size_ = 0;
 
         UnorderedMap<KeyType, Integer> sfc_to_local_map_;
-        KeyType all_range_;
+        KeyType all_range_ = 0;
 
-        Integer xDim, yDim, zDim;
+        Integer xDim = 0, yDim = 0, zDim = 0;
     };
 }  // namespace mars
 #endif

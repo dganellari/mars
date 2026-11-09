@@ -470,6 +470,36 @@ The FP32 kernel is limited by L1/TEX throughput. With DRAM and L2 low, that is m
 its shared-memory traffic between the sum-factorization phases, not memory bandwidth or
 occupancy.
 
+**FP64 tensor-core kernel without shuffles** (`--mir-chain-contracts=direct-handoff=true`,
+the default of `hl_gpu_pipeline.py` since 2026-11-08; `--shuffle` gives the old kernel). A
+C-fragment feeds the next mma as it is, with the other operand read in the permuted
+reduction order 2k+s; a contraction whose result is a standard B operand is computed
+transposed (swapped mma operands). The p = 7 kernel keeps its 264 mma and drops all 336
+shuffles. GH200, 64^3, same data, three rounds:
+
+| p = 7 operator, FP64 | ms per apply | registers | spills |
+|---|---|---|---|
+| tensor cores, shuffle relayout (old) | 6.00 | 96 | 0 |
+| tensor cores, direct hand-off | 5.64 | 90 | 0 |
+| CUDA cores, cell-wise schedule (`--cellwise`, 1 warp per block) | 8.46 | 255 | 284 B |
+
+In the FP64 p-multigrid solve (64^3, deform 0.05, rotated frames, tol 1e-10) the
+iterations and errors do not change, on 1 and 4 ranks: Chebyshev coarse 6 iterations,
+2.3e-11, solve 799 -> 784 ms; BoomerAMG 10 iterations, 3.2e-11, 967 -> 937 ms (one rank).
+ncu: 82% of the stall cycles wait on global loads, mostly the metric that the flux
+multiplies use, with issue slots 8% busy, so the kernel is latency-bound; the relayout
+was 6% of the time.
+
+**Register cap** (`.maxnreg 83` on that kernel, since 2026-11-09): 5.62 -> 4.03 ms per apply,
+no spills, the same 20 blocks per SM. The PTX differs only in the cap; under it the driver
+(595.91.07) compiles a kernel that reaches 74% of DRAM bandwidth instead of 60% and waits
+28 instead of 47 cycles on loads per instruction (ncu at cap 84, base clocks), with the same
+instruction mix. Caps 80 to 87 give 4.03 to 4.77 ms, not monotonically (82 and 86 spill and
+are slow), so the best cap belongs to this compiler. In the same job as cap 84 (3.95 ms) the
+old shuffle kernel took 5.98 ms. Same solve as above: iterations and errors unchanged;
+Chebyshev coarse 796 -> 744 ms on one rank, 276 -> 254 ms on 4; BoomerAMG 947 -> 863 ms,
+316 -> 289 ms.
+
 ## Validation
 
 1. Numpy spec: both kernel shapes and the multi-rank exchange, on structured blocks with
