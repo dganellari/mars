@@ -18,6 +18,7 @@ from common import (CONFIG_SHA, HYPRE, HYPRE_SHA, clean_environment, command, di
                     step, verify_bundle, verify_files)
 from receipts import parse_h
 from plan import VARIANTS, cases, depth, mars_args, mfem_args, validate_case
+import runtime
 
 
 def mfem_parse(out):
@@ -153,7 +154,7 @@ def prepare(bundle, root, previous=None):
                 root / 'mfem-driver-build.log')
     else:
         compat.check(bundle, root)
-        command(step(1, 115) + ['/usr/bin/python3', HERE / 'driver.py', 'build-mfem', bundle, root], root / 'mfem-build.log')
+        command(step(1, 140) + ['/usr/bin/python3', HERE / 'driver.py', 'build-mfem', bundle, root], root / 'mfem-build.log')
     built = json.loads((root / 'build/build.json').read_text())
     binaries = {'build/' + n: sha for n, sha in built['binaries'].items()}
     binaries['mfem/mfem_bp3'] = digest(root / 'mfem/mfem_bp3')
@@ -256,11 +257,16 @@ if __name__ == '__main__':
         root.mkdir(parents=True, exist_ok=False)
         save(root / 'inputs.json', dict(phase=phase, manifest_sha256=digest(bundle / 'manifest.json'),
                                        prepared=sys.argv[4] if len(sys.argv) == 5 else None))
+        prepared = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
+        if phase in ('standard', 'large'):
+            if prepared is None:
+                raise SystemExit('benchmark phase needs a prepared result directory')
+            verify_prepared(prepared, bundle)
+        runtime.capture(bundle, root, {'prepare': 2, 'resume': 2, 'standard': 16, 'large': 64}[phase],
+                        prepared if phase in ('standard', 'large') else None)
         if phase in ('prepare', 'resume'):
             if phase == 'resume' and len(sys.argv) != 5:
                 raise SystemExit('resume needs the previous result directory')
             prepare(bundle, root, Path(sys.argv[4]).resolve() if phase == 'resume' else None)
         else:
-            if len(sys.argv) != 5:
-                raise SystemExit('benchmark phase needs a prepared result directory')
-            benchmark(bundle, Path(sys.argv[4]).resolve(), root, phase)
+            benchmark(bundle, prepared, root, phase)

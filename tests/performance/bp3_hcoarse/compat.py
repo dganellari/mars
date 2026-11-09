@@ -20,12 +20,14 @@ def build(bundle, root):
     command(i.standard_build.configure_args(bundle, directory, True) +
             ['-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=' + str(bundle / 'hcoarse/extra.cmake')],
             out / 'configure.log', timeout=600)
-    command(['cmake', '--build', directory, '--parallel', '4', '--target', 'mars_marsir_bp', 'bp3_h_solver'],
-            out / 'compile.log', timeout=5400)
+    command(['cmake', '--build', directory, '--parallel', '4', '--target',
+             'mars_marsir_bp', 'bp3_h_solver', 'mars_marsir_cellwise_solve'],
+            out / 'compile.log', timeout=6600)
     files = {}
-    for mode in ('on', 'check'):
-        executable = i.binary(root, mode)
-        link = command(['ldd', '-r', executable], out / (mode + '-linkage.txt'))
+    executables = dict(on=i.binary(root, 'on'), check=i.binary(root, 'check'),
+                       cvfem=directory / 'examples/distributed/unstructured/mars_marsir_cellwise_solve')
+    for name, executable in executables.items():
+        link = command(['ldd', '-r', executable], out / (name + '-linkage.txt'))
         libs = re.findall(r'libHYPRE[^\s]*\s+=>\s+(\S+)', link)
         if 'not found' in link or 'undefined symbol:' in link or len(libs) != 1 or Path(libs[0]).resolve() != HYPRE.resolve():
             raise ValueError('Unexpected runtime linkage')
@@ -41,7 +43,7 @@ def build(bundle, root):
 
 
 def check(bundle, root):
-    command(step(1, 100) + ['/usr/bin/python3', HERE / 'compat.py', 'build', bundle, root], root / 'build.log')
+    command(step(1, 125) + ['/usr/bin/python3', HERE / 'compat.py', 'build', bundle, root], root / 'build.log')
     rows = []
     for ranks, p, ne in ((1, 1, 8), (4, 1, 8), (1, 3, 16), (1, 7, 16), (4, 3, 32), (4, 7, 32)):
         rows.append(i.solve(bundle, root, root, 'fallback_p%d_r%d' % (p, ranks), 'on', ranks, p, ne, automatic=True))
