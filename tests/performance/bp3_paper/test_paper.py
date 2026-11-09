@@ -11,6 +11,8 @@ import driver
 from plan import VARIANTS, cases, depth, dimensions, mars_args, mfem_args, validate_case
 from common import save, digest
 import analyze
+import export_paper
+import runtime
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -18,7 +20,9 @@ REPO = HERE.parents[2]
 
 class PaperChecks(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir=REPO / '.review/bp3-paper-20261107')
+        parent = REPO / '.review/bp3-paper-tests'
+        parent.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.root = Path(self.temp.name)
 
     def tearDown(self):
@@ -154,6 +158,118 @@ class PaperChecks(unittest.TestCase):
         (folder / 'a.ptx').write_text('changed')
         self.assertNotEqual(before, driver.generated_digest(self.root))
 
+    def test_source_pin_and_cleanliness(self):
+        with mock.patch.object(export_paper.subprocess, 'check_output', side_effect=['wrong\n']):
+            with self.assertRaisesRegex(ValueError, 'source must be at'):
+                export_paper.require_source(self.root)
+        with mock.patch.object(export_paper.subprocess, 'check_output',
+                               side_effect=[export_paper.MARS_REVISION, ' M kernel.ptx\n']):
+            with self.assertRaisesRegex(ValueError, 'must be clean'):
+                export_paper.require_source(self.root)
+
+    def test_runtime_requires_every_node_and_same_driver(self):
+        from copy import deepcopy
+        rows = [dict(rank=r, hostname='node%d' % r, tools={'nvcc': {'version': '12.9'}},
+                     image=runtime.IMAGE, hypre_sha256=runtime.HYPRE_SHA, config_sha256=runtime.CONFIG_SHA,
+                     gpus=[dict(name='GH200', uuid='gpu%d' % (4*r + i), driver='595.91.07') for i in range(4)])
+                for r in range(2)]
+        expected = runtime.validate(rows, 2)
+        runtime.validate(rows, 2, expected)
+        bad = deepcopy(rows)
+        bad[1]['gpus'][0]['driver'] = 'different'
+        with self.assertRaises(ValueError):
+            runtime.validate(bad, 2)
+        bad = deepcopy(rows)
+        for row in bad:
+            for gpu in row['gpus']:
+                gpu['driver'] = 'other allocation'
+        with self.assertRaises(ValueError):
+            runtime.validate(bad, 2, expected)
+        with self.assertRaises(ValueError):
+            runtime.validate(rows[:1], 2)
+        bad = deepcopy(rows)
+        bad[1]['hostname'] = bad[0]['hostname']
+        with self.assertRaises(ValueError):
+            runtime.validate(bad, 2)
+        bad = deepcopy(rows)
+        bad[1]['hypre_sha256'] = 'different'
+        with self.assertRaises(ValueError):
+            runtime.validate(bad, 2)
+
+    def test_runtime_probe_has_one_task_per_node(self):
+        calls = []
+        def command(args, log, **kwargs):
+            calls.append(args)
+            for rank in range(16):
+                save(self.root / 'runtime' / ('node%d.json' % rank), dict(rank=rank))
+        with mock.patch.dict(os.environ, SLURM_JOB_NUM_NODES='16', SLURM_JOB_ID='123'), \
+                mock.patch.object(runtime, 'command', command), \
+                mock.patch.object(runtime, 'validate', return_value={'driver': 'test'}), \
+                mock.patch.object(runtime, 'digest', return_value='sealed'):
+            runtime.capture(self.root, self.root, 16)
+        self.assertIn('--nodes=16', calls[0])
+        self.assertIn('-n16', calls[0])
+        self.assertIn('--ntasks-per-node=1', calls[0])
+
+    def test_runtime_node_receipt(self):
+        hypre = self.root / 'install/lib/libHYPRE.so'
+        hypre.parent.mkdir(parents=True)
+        hypre.write_text('library')
+        header = hypre.parent.parent / 'include/HYPRE_config.h'
+        header.parent.mkdir()
+        header.write_text('config')
+        def command(args, log, **kwargs):
+            if args[0] == 'nvidia-smi':
+                return '\n'.join('GH200, gpu%d, 595.91.07' % i for i in range(4))
+            return 'compiler 12.9\n'
+        with mock.patch.dict(os.environ, SLURM_PROCID='0'), \
+                mock.patch.object(runtime, 'HYPRE', hypre), \
+                mock.patch.object(runtime, 'HYPRE_SHA', digest(hypre)), \
+                mock.patch.object(runtime, 'CONFIG_SHA', digest(header)), \
+                mock.patch.object(runtime, 'command', command), \
+                mock.patch.object(runtime.shutil, 'which', side_effect=lambda n: '/tools/' + n):
+            runtime.node(self.root)
+            row = json.loads((self.root / 'node0.json').read_text())
+            self.assertEqual(runtime.validate([row], 1)['driver'], '595.91.07')
+            hypre.write_text('different library')
+            with self.assertRaisesRegex(ValueError, 'Runtime Hypre changed'):
+                runtime.node(self.root)
+
+    def test_shared_build_records_cvfem(self):
+        compat = driver.compat
+        hypre = self.root / 'install/lib/libHYPRE.so'
+        hypre.parent.mkdir(parents=True)
+        hypre.write_text('library')
+        header = hypre.parent.parent / 'include/HYPRE_config.h'
+        header.parent.mkdir()
+        header.write_text('config')
+        (self.root / 'manifest.json').write_text('{}')
+        def command(args, log, **kwargs):
+            directory = self.root / 'build/on'
+            if args[:2] == ['cmake', '--build']:
+                for target in ('mars_marsir_bp', 'bp3_h_solver', 'mars_marsir_cellwise_solve'):
+                    self.assertIn(target, args)
+                for relative in ('hcoarse/bp3_h_solver', 'examples/distributed/unstructured/mars_marsir_bp',
+                                 'examples/distributed/unstructured/mars_marsir_cellwise_solve'):
+                    binary = directory / relative
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.write_text(relative)
+                save(directory / 'compile_commands.json', [
+                    dict(file=str(self.root / 'hcoarse/private/mars_marsir_bp.cu'), command='-DMARS_BP3_HCOARSE_CHECK'),
+                    dict(file='mars_marsir_cellwise_solve.cu', command='nvcc')])
+            if args[0] == 'ldd':
+                return 'libHYPRE.so => ' + str(hypre)
+            return ''
+        with mock.patch.object(compat, 'HYPRE', hypre), \
+                mock.patch.object(compat, 'HYPRE_SHA', digest(hypre)), \
+                mock.patch.object(compat, 'CONFIG_SHA', digest(header)), \
+                mock.patch.object(compat, 'command', command):
+            compat.build(self.root, self.root)
+        binaries = json.loads((self.root / 'build/build.json').read_text())['binaries']
+        self.assertEqual(len(binaries), 3)
+        cvfem = 'on/examples/distributed/unstructured/mars_marsir_cellwise_solve'
+        self.assertEqual(binaries[cvfem], digest(self.root / 'build' / cvfem))
+
     def test_cmake_consumer_supplies_cuda_headers(self):
         source = self.root / 'consumer'
         source.mkdir()
@@ -213,6 +329,23 @@ class PaperChecks(unittest.TestCase):
             completed.assert_not_called()
         self.assertEqual(len(calls), 1)
 
+    def test_final_prepare_builds_fresh(self):
+        def check(bundle, root):
+            (root / 'build').mkdir()
+            save(root / 'build/build.json', dict(binaries={'bp': 'bp-sha', 'cvfem': 'cvfem-sha'}))
+        with mock.patch.object(driver.compat, 'check', check), \
+                mock.patch.object(driver, 'command') as command, \
+                mock.patch.object(driver, 'digest', return_value='test'), \
+                mock.patch.object(driver, 'baseline_checks') as checks, \
+                mock.patch.object(driver, 'verify_bundle'), mock.patch.object(driver, 'seal'):
+            driver.prepare(self.root, self.root)
+        self.assertIn('build-mfem', command.call_args[0][0])
+        self.assertIn('--time=02:20:00', command.call_args[0][0])
+        checks.assert_called_once_with(self.root, self.root)
+        record = json.loads((self.root / 'paper-build.json').read_text())
+        self.assertIn('build/cvfem', record['binaries'])
+        self.assertIn('mfem/mfem_bp3', record['binaries'])
+
     def test_summary_seals_and_scaling(self):
         case = dict(workload='weak', ranks=1, p=3, summary={
             'matched': dict(median_ms=100, min_ms=99, max_ms=101, iterations=[14]*3),
@@ -235,6 +368,8 @@ class PaperChecks(unittest.TestCase):
         bindir = self.root / 'bin'
         bindir.mkdir()
         capture = self.root / 'calls'
+        image = self.root / 'store.squashfs'
+        image.touch()
         for name in ('sbatch', 'python'):
             p = bindir / name
             p.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$CAPTURE"\n' +
@@ -242,7 +377,7 @@ class PaperChecks(unittest.TestCase):
             p.chmod(0o755)
         env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'], CAPTURE=str(capture), SLURM_JOB_ID='12345')
         for name in ('submit.sh', 'job.sh'):
-            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v3', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python'))
+            text = (HERE / name).read_text().replace('/capstor/scratch/cscs/gandanie/bp3-paper-kit-20261109-final', str(bundle)).replace('/usr/bin/python3', str(bindir / 'python')).replace(runtime.IMAGE, str(image))
             p = self.root / name
             p.write_text(text)
             subprocess.run(['bash', '-n', str(p)], check=True)
@@ -253,12 +388,26 @@ class PaperChecks(unittest.TestCase):
         lines = capture.read_text().splitlines()
         self.assertEqual(len(lines), 5)
         self.assertIn('-N2 -n8', lines[1])
-        self.assertIn('resume /capstor/scratch/cscs/gandanie/bp3-paper/5286400', lines[1])
-        self.assertIn('--time=01:00:00', lines[1])
+        self.assertTrue(lines[1].endswith('paper/job.sh prepare'))
+        self.assertNotIn('resume', lines[1])
+        self.assertIn('--time=05:00:00', lines[1])
         self.assertIn('-N16 -n64', lines[2])
         self.assertIn('--dependency=afterok:12345,afterany:12345', lines[3])
         self.assertIn('-N64 -n256', lines[3])
         self.assertIn(str(bundle / 'paper/driver.py') + ' standard', lines[4])
+        capture.unlink()
+        image.unlink()
+        failed = subprocess.run(['bash', str(self.root / 'submit.sh')], env=env, capture_output=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b'Missing pinned CUDA image', failed.stderr)
+        self.assertEqual(len(capture.read_text().splitlines()), 1)
+        capture.unlink()
+        image.touch()
+        (bindir / 'sbatch').write_text('#!/bin/bash\nprintf "sbatch\\n" >> "$CAPTURE"\nprintf "invalid\\n"\n')
+        failed = subprocess.run(['bash', str(self.root / 'submit.sh')], env=env, capture_output=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b'Invalid preparation ID', failed.stderr)
+        self.assertEqual(len(capture.read_text().splitlines()), 2)
 
 
 if __name__ == '__main__':

@@ -1,10 +1,19 @@
-# BP3 paper comparison with the current operators
+# Final BP3 paper comparison
 
-This freezes a merged MARS revision, its matching generated operators, MFEM 4.8
+This freezes MARS `ea1c0ef923246f7489ece4b847a11e43f78ebe4c`, all its tracked
+generated operators, MFEM 4.8
 (`a01719101027383954b69af1777dc828bf795d62`), the same CUDA image and Hypre 2.33
-library. Fresh preparation builds both drivers in an isolated result directory; the current
-resume reuses the verified binaries and library described below. Existing paper
-builds and prior benchmark results are untouched. Native results are pending.
+library. Preparation builds MARS and MFEM from scratch in a new result directory.
+It also builds `mars_marsir_cellwise_solve` for the separate CVFEM campaign.
+No historical executable, build directory or result is reused. Native results
+for this final revision are pending.
+
+The source checkout must be clean and at that exact revision. `export_paper.py
+--repo SOURCE --reference V3_BUNDLE --target NEW_BUNDLE` verifies the sealed v3
+reference before reusing its public dependency sources. Every generated file
+comes from the clean source checkout, including CVFEM and DSS support kernels.
+The manifest records production source and generated revisions separately from
+the reviewed runner files, which may contain uncommitted harness changes.
 
 ## Comparisons
 
@@ -48,14 +57,15 @@ scaling would require a separate numerical change and validation in both drivers
 After the kit is transferred, on Daint:
 
 ```bash
-bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261107-v3/paper/submit.sh
+bash /capstor/scratch/cscs/gandanie/bp3-paper-kit-20261109-final/paper/submit.sh
 ```
 
 This submits three jobs:
 
-1. Two nodes, one-hour limit: resume preparation 5286400, reuse the MARS
-   binaries and 24 completed checks, reuse the installed MFEM library, build only
-   the MFEM driver, then run the 18 remaining baseline checks on 1/4/8 GPUs.
+1. Two nodes, five-hour limit: fresh MARS and MFEM builds, 24 hierarchy solves
+   including eight direct checks, then 18 baseline checks on 1/4/8 GPUs.
+   The MARS build step permits 125 minutes and MFEM 140 minutes; the remaining
+   allocation time is for the runtime probes and small validation solves.
 2. Sixteen nodes, four-hour limit, after preparation passes: 168 invocations
    covering the weak and strong cases above through 64 GPUs.
 3. Sixty-four nodes, 90-minute limit, after preparation passes and the preceding
@@ -67,11 +77,18 @@ pilot. No build occurs in the large allocations. Logs are `bp3_paper_*_<job>.log
 results are `/capstor/scratch/cscs/gandanie/bp3-paper/<job>/`. Pass the printed job IDs
 when returning the results. The user submits and manages every cluster job.
 
-The kit manifest seals source, PTX, scripts and public dependency inputs. Build
+The submission checks the bundle and pinned image's presence before submitting
+anything. The kit manifest seals source, PTX, scripts and public dependency inputs. Build
 records seal executables and runtime linkage; rank wrappers record executable
 hashes, exit status, host placement and adapter audits. The parsers check numerical
 receipts and timing fields. A final analysis must also verify the raw hashes and
 commands, and distinguish pending, failed, and accepted measurements.
+
+Before builds or measurements, one probe on every allocated node records all four
+GPU UUIDs/models, the driver, compiler versions, image path and Hypre hashes.
+Preparation and both comparison allocations must have the same driver/toolchain
+signature. A mismatch stops that phase before timing. `runtime.json` and the raw
+per-node receipts remain in the evidence seal; these are not profiler runs.
 
 After retrieving the results, `analyze.py` checks the evidence seal and writes the
 comparison tables. It refuses mixed manifests or duplicate cases. Efficiencies
@@ -91,32 +108,27 @@ independent scaling work proceed without pretending that a crash was validated.
 The standard timed runs and the 256-rank pilot still require clean exits.
 
 The kits use separate immutable directories; they do not alter a previously
-submitted job. The v3 command supersedes the earlier submission commands. Numerical source, stopping tolerances and timing acceptance rules are unchanged.
-The MFEM consumer build is corrected below.
+submitted job. This final command supersedes v3 for new measurements. The frozen
+operators are newer; workload definitions, tolerances and acceptance rules stay
+the same. Keep v3's accepted results and failed samples under their old manifest.
 
 Each MARS paper-run invocation prints and stores `generated_sha256`: SHA-256 of the compact,
 sorted JSON map from relative filenames under `generated/` to their SHA-256 values.
 MFEM records null/unused because it does not load these operators. The manifest
 continues to seal every individual PTX file.
 
-## Resume after preparation 5286400
+## Shared build for CVFEM and BP1
 
-The current-operator MARS builds, 24 solves and eight direct hierarchy checks pass.
-Their two executable hashes, 280 sealed artifacts, 97 process receipts and 97 rank
-audits were independently verified. The largest true residual is 2.098e-11 and
-the direct hierarchy error is 2.649236e-16. The MFEM library built and installed,
-but its driver's Makefile invocation omitted the CUDA include directory and failed
-on `cusparse.h`; no MFEM solve or scaling comparison ran.
+`paper-build.json` seals the normal BP driver, diagnostic BP driver, CVFEM driver
+and MFEM driver. The normal MARS executables are under
+`build/on/examples/distributed/unstructured/` in the preparation result directory;
+generated kernels are under `generated/` in the bundle. No later job should
+reconfigure or rebuild that directory.
 
-The driver now uses an installed-package CMake consumer linked to CUDA targets,
-which supply the missing public headers and runtime libraries. The source and
-compiler remain the same; this is a build-recipe fix, not a numerical change.
-A local compiled regression checks include propagation and reproduces the error
-when the CUDA targets are removed. GPU compilation of the corrected driver is
-still pending.
-
-The v3 kit includes a receipt sealing the previous binaries, installation and raw
-checks. Resume verifies it and unchanged production source, dependencies and PTX,
-then copies the completed work into its new result directory. It does not rebuild
-MARS or MFEM's library or rerun the completed 24 solves. The failed logs remain
-unchanged. Only a passing resumed preparation enables the dependent scaling jobs.
+The separate CVFEM/BP1 runner must call `driver.verify_prepared(prepared, bundle)`
+before using these inputs and retain the manifest, binary and PTX hashes. It can
+call `runtime.capture(bundle, results, node_count, prepared)` to require the same
+driver/toolchain, with a new, empty result directory. Keep its outcomes separate:
+building CVFEM does not validate a CVFEM solve, and the BP3 jobs do not exercise
+`hl_full_p7_sm90.ptx`. CVFEM solve checks, wing scaling and BP1 Table 7 remain in
+their own campaign.
