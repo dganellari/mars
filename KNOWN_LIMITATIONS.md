@@ -27,8 +27,10 @@ including element numberings that are not aligned with the coordinate axes.
   and on several ranks; no linear solver uses it yet. On several ranks its high-order numbering
   (p > 1) needs the older vote node ownership, which `mars_ho_dist_apply_test` selects itself
   (`MARS_OWNERSHIP=vote`). Interfaces may change. See [the tutorial](docs/Matrix-Free-Tutorial.md).
-- **Adaptive mesh refinement (AMR).** Single-rank mark/refine/rebuild/transfer works;
-  multi-rank AMR is under development.
+- **Adaptive mesh refinement (AMR).** Mark/refine/rebuild/transfer works on one rank and runs
+  distributed on cornerstone (hexahedra, red-refined tetrahedra). The refined solution has not
+  been compared across rank counts, multi-rank tetrahedral AMR is only partly tested, and
+  conforming tetrahedral bisection is not released.
 - **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
   sum-factorization). Interfaces may change.
 - **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
@@ -48,7 +50,8 @@ including element numberings that are not aligned with the coordinate axes.
   constrain yet. The solver is validated on box-shaped hexahedra. On distorted hexahedra the CVFEM
   matrices are not symmetric, but both systems are solved with PCG, which assumes symmetry; the
   solver prints a warning when it finds such a matrix.
-- **Triangle and quadrilateral meshes.** Only tetrahedra and hexahedra are supported. A 2D problem
+- **Triangle and quadrilateral meshes.** The unstructured GPU backend supports only tetrahedra and
+  hexahedra; the structured Kokkos backend has Quad4. A 2D problem
   can run as one layer of hexahedra, as the Poiseuille example does.
 - **Example-level restrictions.** `mars_cvfem_poisson` and `mars_ex1_poisson` set u = 0 on the
   faces of the mesh's bounding box, so they solve the intended problem only on box-shaped domains.
@@ -108,8 +111,9 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   netCDF 4.9.3 built for it: the production-integration run builds all examples and passes 48
   release tests plus 40 other tests; 12 other tests are skipped. The suite includes 1/4-rank checks.
   The FP64 tensor-core kernels (`wmma_tensor`, `wgmma_tensor` and the
-  high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). Not
-  tested on AMD: more than one node, and performance beyond single kernels. Kernels tuned for
+  high-order DMMA operator) run on the AMD matrix cores (MFMA, two elements per wavefront). On AMD,
+  two-node runs are correctness checks only (the 48 release tests in a two-node layout, and the
+  structured suite); performance beyond single kernels is not tested. Kernels tuned for
   NVIDIA can be slower. With the same P7 plane schedule on both, the high-order operator is
   1.3-1.6 times slower on MI300A than on H100, and 1.15-1.18 times without its atomic scatter
   (timing-only ablation): on MI300A every FP64 atomic goes past the L2. Its measured timings are
