@@ -119,6 +119,19 @@ skipped or missing cases and requires the halo GoogleTest to execute its case.
 multi-rank runs spanning two nodes. Keep these receipts separate from the
 structured capability/performance results.
 
+The release audit reads the halo case from the full verbose CTest log because
+JUnit output can be truncated before GoogleTest's summary. Fresh runs also raise
+CTest's output limit. Missing, skipped or failed cases still fail validation.
+
+`resume_regression.py --expected RECEIPT.json --work NEW_DIRECTORY` completes
+the missing two-node suite after that specific audit failure. The receipt pins
+the existing source/dependency manifests, logs, executables and external-library
+hashes. The continuation rechecks the original single-node result, verifies those
+files before and after execution, and uses a separate CTest directory for all new
+output. It preserves the registered commands and test properties, builds nothing,
+and records both layouts in its result. A different failure requires investigation
+before using this continuation.
+
 ## Prepare an offline source snapshot
 
 Use clean source checkouts of these exact public dependencies:

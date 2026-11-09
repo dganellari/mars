@@ -29,7 +29,7 @@ for name in ("Ex1Poisson", "TgvDecay", "Poiseuille", "Step01", "Step02Volume", "
     NAMES.update("marsRelease" + name + "_np" + str(rank) for rank in (1, 4))
 
 
-def audit_junit(path):
+def audit_junit(path, log=None):
     cases = list(ET.parse(path).getroot().iter("testcase"))
     if len(cases) != len(NAMES) or {case.get("name") for case in cases} != NAMES:
         raise ValueError("Release suite must contain all 50 tests, including Hypre and netCDF cases")
@@ -39,7 +39,18 @@ def audit_junit(path):
             raise ValueError("Required release test failed/skipped: " + case.get("name", "unknown"))
         if case.get("name") == "release_node_halo_single_rank":
             output = "\n".join(node.text or "" for node in case.iter("system-out"))
-            if re.search(r"\[ *SKIPPED *\]", output) or not re.search(r"\[ *PASSED *\] 1 test\.", output):
+            if log is not None:
+                # CTest can truncate successful-test output in JUnit before the GoogleTest summary.
+                text = Path(log).read_text()
+                starts = re.findall(r"^\s*Start\s+(\d+): release_node_halo_single_rank\s*$", text, re.M)
+                if len(starts) != 1:
+                    raise ValueError("Missing or repeated single-rank halo test in the full CTest log")
+                output = "\n".join(re.findall(r"^" + starts[0] + r": ?(.*)$", text, re.M))
+            name = r"MarsNodeHaloTopologyTest\.SingleRankAccessor"
+            if (re.search(r"\[ *SKIPPED *\]", output) or
+                    len(re.findall(r"\[ *RUN *\] " + name + r"\b", output)) != 1 or
+                    len(re.findall(r"\[ *OK *\] " + name + r"\b", output)) != 1 or
+                    len(re.findall(r"\[ *PASSED *\] 1 test\.", output)) != 1):
                 raise ValueError("Single-rank halo regression did not execute its test")
     return sorted(NAMES)
 
@@ -122,10 +133,11 @@ def main():
             env["MARS_GATE_LAYOUT"] = layout
             xml = args.work / ("release-" + layout + ".xml")
             command = ["ctest", "--test-dir", str(build), "-L", "release", "--parallel", "1", "--no-tests=error",
+                       "--test-output-size-passed", "1048576", "--test-output-size-failed", "1048576",
                        "--output-on-failure", "--verbose", "--output-junit", str(xml)]
             result["commands"].append(command)
             execute(command, args.work / ("release-" + layout + ".log"), env)
-            result["tests"][layout] = audit_junit(xml)
+            result["tests"][layout] = audit_junit(xml, args.work / ("release-" + layout + ".log"))
         binaries = [path for path in build.rglob("*") if path.is_file() and path.name in TARGETS]
         if {path.name for path in binaries} != set(TARGETS):
             raise ValueError("Missing release driver binaries")
