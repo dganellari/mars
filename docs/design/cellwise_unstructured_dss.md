@@ -490,6 +490,16 @@ ncu: 82% of the stall cycles wait on global loads, mostly the metric that the fl
 multiplies use, with issue slots 8% busy, so the kernel is latency-bound; the relayout
 was 6% of the time.
 
+**Register cap** (`.maxnreg 83` on that kernel, since 2026-11-09): 5.62 -> 4.03 ms per apply,
+no spills, the same 20 blocks per SM. The PTX differs only in the cap; under it the driver
+(595.91.07) compiles a kernel that reaches 74% of DRAM bandwidth instead of 60% and waits
+28 instead of 47 cycles on loads per instruction (ncu at cap 84, base clocks), with the same
+instruction mix. Caps 80 to 87 give 4.03 to 4.77 ms, not monotonically (82 and 86 spill and
+are slow), so the best cap belongs to this compiler. In the same job as cap 84 (3.95 ms) the
+old shuffle kernel took 5.98 ms. Same solve as above: iterations and errors unchanged;
+Chebyshev coarse 796 -> 744 ms on one rank, 276 -> 254 ms on 4; BoomerAMG 947 -> 863 ms,
+316 -> 289 ms.
+
 ## Validation
 
 1. Numpy spec: both kernel shapes and the multi-rank exchange, on structured blocks with

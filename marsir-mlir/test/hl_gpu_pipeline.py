@@ -34,6 +34,13 @@ The chain pass hands C-fragments to the next contract without shuffles
 (--mir-chain-contracts=direct-handoff=true; rules gated by test/chain_handoff_gate.py):
 measured on GH200 at 64^3, p = 7, 5.64 ms per apply against 6.00 with the shuffle
 relayout. --shuffle: the relayout instead, as a control (hl_full_p{p}_shuffle_sm90.ptx).
+The kernel is capped at 83 registers (.maxnreg). GH200 (driver 595.91.07), 64^3, p = 7, ms
+per apply: no cap (90 registers) 5.62; caps 80 4.77, 81 4.10, 82 4.63, 83 4.03, 84 4.04,
+85 4.08, 86 4.55, 87 4.06. From 81 up the occupancy is the same 20 blocks per SM as without a
+cap, and the PTX differs only in the cap: the driver compiles it differently (ncu at 84: DRAM
+74% instead of 60%, 28 instead of 47 cycles waiting on loads per instruction, same instruction
+mix). Why is not known, so a new driver may move the best cap. --maxnreg=N sets another cap,
+0 none; the --shuffle and --no-chain controls have none unless given.
 
 --cellwise: the schedule for small elements (low degree, the p-multigrid's coarse
 levels) instead of the tensor-core one. After the same lowering to bufferized linalg:
@@ -201,15 +208,20 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
         return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
 
     tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "" if direct else "_shuffle")
+    maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")),
+                   83 if direct and not no_chain else 0)
     return finish(run([MIROPT, "-", "--mir-batch-elements"], ir), p, tag, no_chain,
-                  stats=(mma_ir, shfl_ir, barriers), direct=direct and not no_chain)
+                  stats=(mma_ir, shfl_ir, barriers), direct=direct and not no_chain, maxnreg=maxnreg)
 
 
 
 
-def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False):
+def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
     """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
+    if maxnreg:   # .maxnreg on the entry; --mir-gpu-wrap emits `kernel {` without attributes
+        m = re.search(r"gpu\.func @\w+\(.*?\) workgroup\(.*?\) kernel(?= \{)|gpu\.func @\w+\(.*?\) kernel(?= \{)", ir, re.S)
+        ir = ir[:m.end()] + f" attributes {{nvvm.maxnreg = {maxnreg} : i32}}" + ir[m.end():]
     ir = ir.replace("gpu.module @mir_kernels {",
                     'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
     ir = run([MLIROPT, "-",
@@ -238,6 +250,7 @@ def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False):
         ("register relayout (shfl)", no_chain or direct or ptx.count("shfl.sync") > 0),
         ("no relayout shuffles", not direct or ptx.count("shfl.sync") == 0),
         ("no local memory", no_chain or ptx.count(".local") == 0),
+        (f".maxnreg {maxnreg}", not maxnreg or f".maxnreg {maxnreg}" in ptx),
         # every mma/shfl/barrier reached by all 32 lanes (see ptx_convergence.py)
         ("warp collectives convergent", subprocess.run(
             [sys.executable, os.path.join(HERE, "ptx_convergence.py"), out],

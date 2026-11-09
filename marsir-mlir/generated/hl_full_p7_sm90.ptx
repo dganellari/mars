@@ -77,6 +77,7 @@
 	.param .u64 laplacian_apply_param_63,
 	.param .u64 laplacian_apply_param_64
 )
+.maxnreg 83
 {
 	.reg .b32 	%r<3>;
 	.reg .b64 	%rd<180>;
