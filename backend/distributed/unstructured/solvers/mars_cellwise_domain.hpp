@@ -54,16 +54,19 @@ Corners<KeyType> corner_keys(const Domain& d, std::index_sequence<I...>)
     return {{thrust::raw_pointer_cast(d.template indices<I>().data())...}};
 }
 
+// mirror (optional): elements listed left-handed; swapping corners 1 <-> 3 and 5 <-> 7
+// lists the same element right-handed. The id below does not change (sorted keys).
 template <class KeyType>
-__global__ void local_records_kernel(Corners<KeyType> corners, long long first, long long n, int rank,
-                                     KeyType* __restrict__ rec)
+__global__ void local_records_kernel(Corners<KeyType> corners, const unsigned char* __restrict__ mirror,
+                                     long long first, long long n, int rank, KeyType* __restrict__ rec)
 {
     const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     KeyType* r = rec + i * kRecord;
     KeyType sorted[8];
+    const bool flip = mirror && mirror[i];
     for (int c = 0; c < 8; ++c) {
-        r[2 + c] = corners.key[c][first + i];
+        r[2 + c] = corners.key[flip && (c & 1) ? c ^ 2 : c][first + i];
         sorted[c] = r[2 + c];
         for (int j = c; j > 0 && sorted[j] < sorted[j - 1]; --j) {
             const KeyType t = sorted[j];
@@ -217,7 +220,8 @@ inline void sort_unique_pairs(thrust::device_vector<int>& dest, thrust::device_v
 
 // The tables of one rank, its exchange at p = 7 (null on one rank), where its elements
 // sit in the domain (local element i is domain element first + i), and the element ids
-// and owners of the tables' elements, for exchanges at other degrees.
+// and owners of the tables' elements, for exchanges at other degrees. `mirror`: null, or
+// one flag per local element (device memory) for the elements to list right-handed.
 struct DomainTables {
     UnstructuredTopology topo;
     std::unique_ptr<UnstructuredHalo> halo;
@@ -228,7 +232,7 @@ struct DomainTables {
 
 template <class RealType, class KeyType>
 DomainTables build_tables(const ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
-                          MPI_Comm comm)
+                          MPI_Comm comm, const unsigned char* mirror = nullptr)
 {
     using namespace domain_detail;
     int rank = 0, size = 1;
@@ -241,7 +245,7 @@ DomainTables build_tables(const ElementDomain<HexTag, RealType, KeyType, cstone:
     thrust::device_vector<KeyType> local(L * kRecord);
     if (L > 0)
         local_records_kernel<<<blocks(L), kThreads>>>(corner_keys<KeyType>(domain, std::make_index_sequence<8>{}),
-                                                      out.first, L, rank, raw(local));
+                                                      mirror, out.first, L, rank, raw(local));
     MARS_CELLWISE_CK(cudaGetLastError());
 
     thrust::device_vector<KeyType> ghosts;

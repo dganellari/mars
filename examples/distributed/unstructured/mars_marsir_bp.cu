@@ -78,6 +78,12 @@
 // centroids, equal chunks) and keeps the elements that share a vertex with its chunk as
 // ghosts, the closure the DSS needs. u is the same sin product at the nodes, zero on the
 // boundary copies, b = A u.
+// --mesh <file.e> --domain: the mesh read and distributed by MARS's ElementDomain instead
+// (cornerstone's SFC partition, with the file's exact coordinates, as the step-01 and
+// Poiseuille examples use it), the tables and ghost layer built from the domain
+// (solvers/mars_cellwise_domain.hpp). Left-handed elements are listed right-handed as above.
+// The discrete problem is the same, so DSS-Jacobi histories must match the Morton partition
+// to rounding, and the unique DoF counts exactly (a merged vertex would change them).
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -111,6 +117,8 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_lines.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
+#include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_raw.hpp"
 
 #ifdef MARS_ENABLE_HYPRE
@@ -124,6 +132,7 @@ namespace bp3_h = mars::cellwise::h_coarse;
 
 #include <cuda_profiler_api.h>
 #include <mpi.h>
+#include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 
@@ -690,6 +699,89 @@ cellwise::UnstructuredTopology mesh_file_topology(const MeshTables& t)
                                     count, t.local);
 }
 
+// --mesh --domain: this rank's elements as MARS's ElementDomain reads and distributes them.
+using MeshDomain = ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu>;
+
+// Corners of this rank's elements (corners_kernel's layout) from the domain's exact file
+// coordinates, and their corner keys for the node lines. A left-handed element is listed
+// right-handed (corners 1 <-> 3 and 5 <-> 7, as mesh_tables) and flagged in `mirror`.
+__global__ void domain_corners_kernel(cellwise::domain_detail::Corners<uint64_t> ids,
+                                      cellwise::domain_detail::Corners<uint64_t> keys, const double* __restrict__ x,
+                                      const double* __restrict__ y, const double* __restrict__ z, long long first,
+                                      long long n, double* __restrict__ X, unsigned char* __restrict__ mirror,
+                                      unsigned long long* __restrict__ vkey)
+{
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    double c[8][3];
+    for (int k = 0; k < 8; ++k) {
+        const uint64_t v = ids.key[k][first + i];
+        c[k][0] = x[v];
+        c[k][1] = y[v];
+        c[k][2] = z[v];
+    }
+    double d[3][3];
+    for (int a = 0; a < 3; ++a) {
+        d[0][a] = c[1][a] + c[2][a] + c[5][a] + c[6][a] - c[0][a] - c[3][a] - c[4][a] - c[7][a];
+        d[1][a] = c[2][a] + c[3][a] + c[6][a] + c[7][a] - c[0][a] - c[1][a] - c[4][a] - c[5][a];
+        d[2][a] = c[4][a] + c[5][a] + c[6][a] + c[7][a] - c[0][a] - c[1][a] - c[2][a] - c[3][a];
+    }
+    const double det = d[0][0] * (d[1][1] * d[2][2] - d[1][2] * d[2][1]) -
+                       d[0][1] * (d[1][0] * d[2][2] - d[1][2] * d[2][0]) +
+                       d[0][2] * (d[1][0] * d[2][1] - d[1][1] * d[2][0]);
+    const bool flip = det < 0.0;
+    mirror[i] = flip;
+    for (int k = 0; k < 8; ++k) {
+        const int s = flip && (k & 1) ? k ^ 2 : k;
+        int b[3];
+        cellwise::corner_bits(k, b[0], b[1], b[2]);
+        for (int a = 0; a < 3; ++a) X[i * 24 + a * 8 + b[0] * 4 + b[1] * 2 + b[2]] = c[s][a];
+        if (vkey) vkey[i * 8 + k] = keys.key[s][first + i];
+    }
+}
+
+// The counts and (with `keys`, for the node lines) corner keys of this rank's elements; the
+// tables and corners stay on the device. The domain is needed only here, so it is freed on
+// return.
+MeshTables domain_mesh_tables(const std::string& path, MPI_Comm comm, cellwise::DomainTables& tables,
+                              thrust::device_vector<double>& X, bool keys)
+{
+    int rank = 0, size = 1;
+    MARS_CELLWISE_MPI(MPI_Comm_rank(comm, &rank));
+    MARS_CELLWISE_MPI(MPI_Comm_size(comm, &size));
+    MeshDomain domain(path, rank, size, /*storeOriginalCoords=*/true);
+    MeshTables t;
+    t.local = (long long)domain.localElementCount();
+    const long long first = (long long)domain.startIndex();
+    const auto& local_ids = domain.getElementToNodeConnectivity();
+    cellwise::domain_detail::Corners<uint64_t> ids, ckeys;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+        ((ids.key[I] = thrust::raw_pointer_cast(std::get<I>(local_ids).data()),
+          ckeys.key[I] = thrust::raw_pointer_cast(domain.indices<I>().data())), ...);
+    }(std::make_index_sequence<8>{});
+    X.resize(t.local * 24);
+    thrust::device_vector<unsigned char> mirror(t.local);
+    thrust::device_vector<unsigned long long> vkey(keys ? t.local * 8 : 0);
+    if (t.local > 0)
+        domain_corners_kernel<<<blocks_for(t.local), cellwise::kThreads>>>(
+            ids, ckeys, thrust::raw_pointer_cast(domain.getNodeX().data()),
+            thrust::raw_pointer_cast(domain.getNodeY().data()), thrust::raw_pointer_cast(domain.getNodeZ().data()),
+            first, t.local, thrust::raw_pointer_cast(X.data()), thrust::raw_pointer_cast(mirror.data()),
+            keys ? thrust::raw_pointer_cast(vkey.data()) : nullptr);
+    BP_CK(cudaGetLastError());
+    tables = cellwise::build_tables(domain, comm, thrust::raw_pointer_cast(mirror.data()));
+    tables.halo.reset();   // its p = 7 exchange; run() makes one per degree from gid and owner
+    long long counts[2] = {t.local, (long long)thrust::count(thrust::device, mirror.begin(), mirror.end(), 1)};
+    MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_LONG_LONG, MPI_SUM, comm));
+    t.global = counts[0];
+    t.mirrored = counts[1];
+    if (keys) {
+        t.key.resize(vkey.size());
+        thrust::copy(vkey.begin(), vkey.end(), t.key.begin());
+    }
+    return t;
+}
+
 template <int P>
 void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, bool nodes, cudaStream_t st)
 {
@@ -823,6 +915,7 @@ struct Options {
     bool consolidate_explicit = false;
     int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
+    bool domain = false;         // --mesh through ElementDomain instead of the Morton chunks
     bool p1_assembled = false;   // set from the others after parsing
     bool lines_ptx = false;      // --smoother lines with the MARSIR-generated passes
     std::string cheb_interval = "mars", rhs = "discrete", mesh, smoother = "jacobi";
@@ -863,10 +956,13 @@ int run(const Options& o)
     const cellwise::Block& box = dec.local;
     const bool meshed = !o.mesh.empty();
     MeshTables mt;
+    cellwise::DomainTables dtables;          // --domain: the tables, built from the domain
+    thrust::device_vector<double> domain_X;  // --domain: the corners, already on the device
     double read_s = 0.0;
     if (meshed) {
         const auto m0 = std::chrono::steady_clock::now();
-        mt = mesh_tables(o.mesh, MPI_COMM_WORLD);
+        mt = o.domain ? domain_mesh_tables(o.mesh, MPI_COMM_WORLD, dtables, domain_X, o.smoother == "lines")
+                      : mesh_tables(o.mesh, MPI_COMM_WORLD);
         read_s = all_max(std::chrono::duration<double>(std::chrono::steady_clock::now() - m0).count());
     }
     const long long E = meshed ? mt.local : box.elements(), N = E * n3;   // this rank's elements and copies
@@ -888,7 +984,8 @@ int run(const Options& o)
     BP_CK(cudaMemcpyToSymbol(c_rotation, rotations.data(), rotations.size() * sizeof(int)));
     thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB), dgq(gq), dwq(wq);
     auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
-    thrust::device_vector<double> mesh_X(mt.X.begin(), mt.X.end());
+    thrust::device_vector<double> mesh_X =
+        o.domain ? std::move(domain_X) : thrust::device_vector<double>(mt.X.begin(), mt.X.end());
     {
         const double* p = meshed ? raw(mesh_X) : nullptr;
         BP_CK(cudaMemcpyToSymbol(c_mesh_X, &p, sizeof(p)));
@@ -919,7 +1016,10 @@ int run(const Options& o)
     // layout of its elements; with --block-dss also of the blocks.
     thrust::device_vector<unsigned long long> gid;
     thrust::device_vector<int> owner;
-    if (meshed) {
+    if (meshed && o.domain) {
+        gid = std::move(dtables.gid);
+        owner = std::move(dtables.owner);
+    } else if (meshed) {
         gid.assign(mt.gid.begin(), mt.gid.end());
         owner.assign(mt.owner.begin(), mt.owner.end());
     } else if (!blocked) {
@@ -927,7 +1027,8 @@ int run(const Options& o)
     }
     const unsigned long long* d_gid = blocked ? nullptr : thrust::raw_pointer_cast(gid.data());
     const cellwise::UnstructuredTopology topo =
-        meshed ? mesh_file_topology(mt) : mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
+        meshed ? (o.domain ? std::move(dtables.topo) : mesh_file_topology(mt))
+               : mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
     if (meshed) {   // every node once (its counting copy), Dirichlet ones included
         const double c = counted_norm<P>(raw(ones), topo, stream);
         unique = std::llround(c * c);
@@ -1414,8 +1515,9 @@ int run(const Options& o)
             printf("  read and partitioned in %.1f s; %lld elements mirrored to a right-handed corner order\n",
                    read_s, mt.mirrored);
             if (dec.size > 1)
-                printf("  %d ranks (Morton chunks); rank 0: %lld elements, %lld ghosts, %d peers\n", dec.size, E,
-                       topo.elements - topo.local, h->peers());
+                printf("  %d ranks (%s); rank 0: %lld elements, %lld ghosts, %d peers\n", dec.size,
+                       o.domain ? "ElementDomain SFC partition" : "Morton chunks", E, topo.elements - topo.local,
+                       h->peers());
         } else {
             printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
                    o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
@@ -1548,6 +1650,11 @@ int main(int argc, char** argv)
             --i;
             continue;
         }
+        if (!strcmp(argv[i], "--domain")) {
+            o.domain = true;
+            --i;
+            continue;
+        }
         if (i + 1 >= argc) error = "an option needs a value";
         else if (!strcmp(argv[i], "--ptx-dir")) o.ptx_dir = argv[i + 1];
         else if (!strcmp(argv[i], "--spec")) o.spec = argv[i + 1];
@@ -1664,6 +1771,7 @@ int main(int argc, char** argv)
     if (!error && !o.mesh.empty() &&
         (o.spec.rfind("bp3", 0) != 0 || o.rhs == "pde" || o.block || o.rotate || !o.block_dss.empty()))
         error = "--mesh is for bp3 and bp3_tri, without --rhs pde, --block, --rotate or --block-dss";
+    if (!error && o.domain && o.mesh.empty()) error = "--domain goes with --mesh";
     if (!error && !(o.stretch >= 1.0)) error = "--stretch is at least 1";
     if (!error && o.stretch != 1.0 && (!o.mesh.empty() || o.rhs == "pde"))
         error = "--stretch is for the cube, without --mesh or --rhs pde";
@@ -1694,7 +1802,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e [--domain]] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
