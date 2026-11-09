@@ -23,7 +23,7 @@
 #endif //MARS_ENABLE_MPI
 
 #ifndef MARS_ENABLE_RDMA
-#cmakedefine MARS_NO_RDMA
+#define MARS_NO_RDMA
 #endif
 
 #cmakedefine MARS_ENABLE_AMR_BACKEND

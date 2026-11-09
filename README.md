@@ -43,8 +43,8 @@ The main features of MARS are:
    to reduce GPU memory use and startup time.
 
 The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A),
-including the Navier–Stokes examples. The older Kokkos backend
-covers the structured-mesh path and also runs on multi-core CPUs. Because the mesh stays on the
+including the Navier–Stokes examples. The optional [structured Kokkos backend](docs/Structured-Kokkos.md)
+has bounded CPU/MPI checks; native GPU release validation is pending. With the unstructured backend's mesh on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
 

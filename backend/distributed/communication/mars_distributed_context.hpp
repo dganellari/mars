@@ -36,6 +36,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <vector>
 
 #include "mars_base.hpp"
+#ifdef MARS_ENABLE_MPI
+#include <mpi.h>
+#endif
 
 #include <mars_pp_util.hpp>
 
@@ -237,6 +240,10 @@ namespace mars {
 
         std::string name() const { return impl_->name(); }
 
+#ifdef MARS_ENABLE_MPI
+        MPI_Comm mpi_comm() const { return impl_->mpi_comm(); }
+#endif
+
         // MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
         GENERATE_COLLECTIVE_PUBLIC
 
@@ -253,6 +260,9 @@ namespace mars {
             virtual int size() const = 0;
             virtual void barrier() const = 0;
             virtual std::string name() const = 0;
+#ifdef MARS_ENABLE_MPI
+            virtual MPI_Comm mpi_comm() const = 0;
+#endif
 
             virtual gathered_vector<Integer> gather_gids(const gid_vector &local_gids) const = 0;
 
@@ -302,6 +312,12 @@ namespace mars {
             int size() const override { return wrapped.size(); }
             void barrier() const override { wrapped.barrier(); }
             std::string name() const override { return wrapped.name(); }
+#ifdef MARS_ENABLE_MPI
+            MPI_Comm mpi_comm() const override {
+                if constexpr (requires { wrapped.mpi_comm(); }) return wrapped.mpi_comm();
+                else return MPI_COMM_NULL;
+            }
+#endif
 
             // MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
             GENERATE_COLLECTIVE_WRAP

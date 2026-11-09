@@ -6,7 +6,7 @@
 #include "mars_execution_context.hpp"
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
-#include "mars_distributed_mesh_management.hpp"
+#include "mars_sparse_exchange.hpp"
 #include "mars_utils_kokkos.hpp"
 
 namespace mars {
@@ -25,102 +25,22 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        UserData(Mesh m) : mesh(m) {
+        UserData(Mesh m)
+            : mesh(m), h_exchanges_(Kokkos::view_alloc("cell_halo_owner", Kokkos::SequentialHostInit)) {
             const Integer size = get_mesh().get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }
 
-        MARS_INLINE_FUNCTION UserData(Mesh m, const user_tuple &data) : mesh(m), user_data_(data) {}
+        UserData(Mesh m, const user_tuple &data)
+            : mesh(m), user_data_(data),
+              h_exchanges_(Kokkos::view_alloc("cell_halo_owner", Kokkos::SequentialHostInit)) {}
 
         void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
             apply_impl(resize_view_functor(view_desc, size), tuple);
         }
 
-        template <typename ElementType>
-        struct FillBufferData {
-            ElementType buffer_data;
-            ElementType user_data;
-            ViewVectorType<KeyType> boundary_lsfc_index;
-
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<KeyType> bd)
-                : buffer_data(bf), user_data(ud), boundary_lsfc_index(bd) {}
-
-            MARS_INLINE_FUNCTION
-            void operator()(Integer i) const {
-                const auto lsfc_index = boundary_lsfc_index(i);
-                buffer_data(i) = user_data(lsfc_index);
-            }
-        };
-
-        struct fill_buffer_data_functor {
-            fill_buffer_data_functor(std::string d, size_t s, ViewVectorType<KeyType> b)
-                : desc(d), size(s), boundary_lsfc_index(b) {}
-
-            template <typename ElementType>
-            void operator()(ElementType &el_1, ElementType &el_2) const {
-                Kokkos::parallel_for(desc, size, FillBufferData<ElementType>(el_1, el_2, boundary_lsfc_index));
-            }
-
-            std::string desc;
-            size_t size;
-
-            ViewVectorType<KeyType> boundary_lsfc_index;
-        };
-
-        void fill_buffer_data(user_tuple &buffer_data) {
-            const Integer size = get_mesh().get_view_boundary().extent(0);
-
-            reserve_user_data(buffer_data, "buffer_data", size);
-
-            auto boundary_lsfc_index = get_mesh().get_view_boundary_sfc_index();
-            apply_impl(
-                fill_buffer_data_functor("fill_buffer_data", size, boundary_lsfc_index), buffer_data, user_data_);
-        }
-
-        struct exchange_ghost_data_functor {
-            exchange_ghost_data_functor(const context &c,
-                                        ViewVectorType<Integer>::HostMirror sr,
-                                        ViewVectorType<Integer>::HostMirror ss)
-                : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
-
-            template <typename ElementType>
-            void operator()(ElementType &el_1, ElementType &el_2) const {
-                con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(), el_2, sc_snd_mirror.data());
-            }
-
-            ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
-            ViewVectorType<Integer>::HostMirror sc_snd_mirror;
-
-            const context &con;
-        };
-
-        void exchange_ghost_data(const context &context) {
-            using namespace Kokkos;
-
-            Kokkos::Timer timer;
-
-            // exchange the ghost layer first since it will be used to find the address
-            // of the userdata based on the sfc code.
-            /* exchange_ghost_layer(context); */
-
-            int proc_num = rank(context);
-            int size = num_ranks(context);
-
-            auto scan_send_mirror = get_mesh().get_view_scan_send_mirror();
-            auto scan_recv_mirror = get_mesh().get_view_scan_recv_mirror();
-            Integer ghost_size = scan_recv_mirror(size);
-            reserve_user_data(ghost_user_data_, "ghost_user_data", ghost_size);
-
-            user_tuple buffer_data;
-            fill_buffer_data(buffer_data);
-
-            Kokkos::fence();
-
-            apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror, scan_send_mirror),
-                       ghost_user_data_,
-                       buffer_data);
-
-            /* print_nth_tuple<1>(proc_num); */
+        void exchange_ghost_data(const context& context) {
+            exchange_fields(context, std::index_sequence_for<T...>{});
         }
 
         template <Integer I, typename H = typename std::tuple_element<I, tuple>::type>
@@ -237,16 +157,16 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_ghost_elem(const Integer i) const { return get_mesh().get_ghost_sfc(i); }
 
-        const ViewVectorType<Integer> &get_view_boundary() const {
-            return get_mesh().get_view_boundary();
+        ViewVectorType<KeyType> get_view_boundary() const {
+            return mesh.get_view_boundary();
         }
 
-        const ViewVectorType<Integer> &get_view_ghost() const {
-            return get_mesh().get_view_ghost();
+        ViewVectorType<KeyType> get_view_ghost() const {
+            return mesh.get_view_ghost();
         }
 
-        const ViewVectorType<Integer> &get_view_scan_ghost() const {
-            return get_mesh().get_view_scan_ghost();
+        ViewVectorType<Integer> get_view_scan_ghost() const {
+            return mesh.get_view_scan_ghost();
         }
 
         MARS_INLINE_FUNCTION
@@ -292,12 +212,50 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Mesh get_mesh() const { return mesh; }
 
+        struct DeviceView {
+            typename Mesh::DeviceView mesh;
+            user_tuple local, ghosts;
+            MARS_INLINE_FUNCTION auto get_mesh() const { return mesh; }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto get_data() const { return std::get<i>(local); }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto get_ghost_data() const { return std::get<i>(ghosts); }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto& get_elem_data(Integer j) const { return std::get<i>(local)(j); }
+            template<std::size_t i> MARS_INLINE_FUNCTION auto& get_ghost_elem_data(Integer j) const { return std::get<i>(ghosts)(j); }
+        };
+        DeviceView device_view() const { return {mesh.device_view(), user_data_, ghost_user_data_}; }
+
     private:
-        /* MM mesh_manager_; */
+        template<std::size_t I>
+        void prepare_field(const context& context) {
+            auto& exchange = std::get<I>(h_exchanges_());
+            if (!exchange) {
+                const auto comm = context->distributed->mpi_comm();
+                const auto ranks = num_ranks(context);
+                using Scalar = typename std::tuple_element<I, tuple>::type;
+                exchange = std::make_unique<mpi::SparseExchange<Scalar>>(
+                    comm, I, mpi::sparse_segments(mesh.get_view_scan_send_mirror().data(), ranks, 1, comm),
+                    mpi::sparse_segments(mesh.get_view_scan_recv_mirror().data(), ranks, 1, comm),
+                    mesh.get_boundary_size(), mesh.get_ghost_size());
+            }
+            // A copy made before the first exchange has not acquired this buffer yet.
+            std::get<I>(ghost_user_data_) = exchange->recv_buffer();
+            const auto buffer = exchange->send_buffer();
+            const auto values = std::get<I>(user_data_);
+            const auto indices = mesh.get_view_boundary_sfc_index();
+            mpi::pack_indexed("cell_halo_pack", values, buffer, indices);
+        }
+        template<std::size_t... I>
+        void exchange_fields(const context& context, std::index_sequence<I...>) {
+            (prepare_field<I>(context), ...);
+            (std::get<I>(h_exchanges_())->start(), ...);
+            (std::get<I>(h_exchanges_())->wait(), ...);
+        }
+
         Mesh mesh;
         // ghost data layer
         user_tuple user_data_;
         user_tuple ghost_user_data_;
+        // Only host exchange methods access the shared plans, including their MPI cleanup.
+        Kokkos::View<std::tuple<std::unique_ptr<mpi::SparseExchange<T>>...>, Kokkos::HostSpace> h_exchanges_;
     };
 
     template <class UserData>
