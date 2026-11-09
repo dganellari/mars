@@ -202,13 +202,21 @@ class KitTests(unittest.TestCase):
 
     def test_release_regression_matrix_rejects_missing_and_skipped(self):
         import regression
-        self.assertEqual(len(regression.NAMES), 48)
+        self.assertEqual(len(regression.NAMES), 50)
         root = ET.Element("testsuite")
         for name in regression.NAMES:
-            ET.SubElement(root, "testcase", name=name, status="run")
+            case = ET.SubElement(root, "testcase", name=name, status="run")
+            if name == "release_node_halo_single_rank":
+                ET.SubElement(case, "system-out").text = "[  PASSED  ] 1 test."
         path = self.root / "release.xml"
         ET.ElementTree(root).write(path)
-        self.assertEqual(len(regression.audit_junit(path)), 48)
+        self.assertEqual(len(regression.audit_junit(path)), 50)
+        halo = root.find("testcase[@name='release_node_halo_single_rank']/system-out")
+        for text in ("", "[  PASSED  ] 0 tests.", "[  SKIPPED ] 1 test. [ PASSED ] 1 test."):
+            halo.text = text
+            ET.ElementTree(root).write(path)
+            with self.assertRaises(ValueError): regression.audit_junit(path)
+        halo.text = "[  PASSED  ] 1 test."
         ET.SubElement(root.find("testcase"), "skipped")
         ET.ElementTree(root).write(path)
         with self.assertRaises(ValueError): regression.audit_junit(path)

@@ -109,11 +109,13 @@ scope of this decision in the [release status](../../../docs/Structured-Kokkos.m
 `export_release.py` starts from the structured manifest's committed base and
 overlays only the structured snapshot. It excludes uncommitted AMR work, private
 documents and geometry; the shipped Poiseuille mesh is the sole included data
-fixture. Export Cornerstone at `2a95e63b0ca5454712ab83f27505055c078887dc` and the same
+fixture. Export Cornerstone at `c13b9a9a6c0f5897ec4f23283e4ff53716303c5e` and the same
 pinned GoogleTest into its dependencies directory. `regression.py` builds the
 existing Kokkos-OFF GPU drivers using GPU-enabled Hypre, netCDF and NumPy. It
-requires exactly all 48 existing release tests, including flow/Poiseuille tests,
-and rejects skipped or missing cases. `--multi-node` repeats this suite with
+requires all 50 release tests: the original 48, including flow/Poiseuille, plus
+red-tetrahedron orientation and one-rank halo-access regressions. It rejects
+skipped or missing cases and requires the halo GoogleTest to execute its case.
+`--multi-node` repeats this suite with
 multi-rank runs spanning two nodes. Keep these receipts separate from the
 structured capability/performance results.
 

@@ -10,6 +10,40 @@
 namespace mars {
 namespace testing {
 
+TEST(MarsNodeHaloTopologyTest, SingleRankAccessor) {
+    int rank = 0, ranks = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+    if (ranks != 1) GTEST_SKIP() << "This accessor regression requires one rank";
+
+    using Domain = ElementDomain<TetTag, double, uint64_t, cstone::execution::Gpu>;
+    Domain::HostCoordsTuple coords;
+    std::get<0>(coords) = {0., 1., 0., 0.};
+    std::get<1>(coords) = {0., 0., 1., 0.};
+    std::get<2>(coords) = {0., 0., 0., 1.};
+    Domain::HostConnectivityTuple conn;
+    std::get<0>(conn) = {0};
+    std::get<1>(conn) = {1};
+    std::get<2>(conn) = {2};
+    std::get<3>(conn) = {3};
+
+    // Both access orders must create the same valid, empty topology without a mesh file.
+    for (bool ownership_first : {false, true}) {
+        Domain domain(coords, conn, rank, ranks, 8, false, 1);
+        if (ownership_first) (void)domain.getNodeOwnershipMap();
+        const auto& topology = domain.getNodeHaloTopology();
+        EXPECT_TRUE(topology.peers_.empty());
+        EXPECT_EQ(topology.sendOffsets_, std::vector<int>{0});
+        EXPECT_EQ(topology.recvOffsets_, std::vector<int>{0});
+        EXPECT_TRUE(topology.sendNodeIds_.empty());
+        EXPECT_TRUE(topology.recvNodeIds_.empty());
+        EXPECT_TRUE(topology.sendBuf_.empty());
+        EXPECT_TRUE(topology.recvBuf_.empty());
+        EXPECT_EQ(&topology, &domain.getNodeHaloTopology());
+        EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    }
+}
+
 // Test fixture for domain adjacency and halo tests
 class MarsDomainAdjacencyAndHaloTest : public ::testing::Test {
 protected:

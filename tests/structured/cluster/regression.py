@@ -12,16 +12,17 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 import run
 
-CSTONE = "2a95e63b0ca5454712ab83f27505055c078887dc"
+CSTONE = "c13b9a9a6c0f5897ec4f23283e4ff53716303c5e"
 TARGETS = ("mars_cvfem_graph", "mars_cvfem_graph_tet", "mars_cvfem_ho_matfree_test", "mars_cvfem_poisson",
            "mars_ex1_poisson", "mars_ho_dist_apply_test", "mars_lid_driven_cavity", "mars_poiseuille_flow",
            "mars_step01_mesh", "mars_step02_volume", "mars_step03_poisson", "mars_step04_cvfem",
-           "mars_step05_galerkin", "mars_step06_heat", "mars_tgv")
+           "mars_step05_galerkin", "mars_step06_heat", "mars_tgv",
+           "mars_domain_adjacency_and_halo_test", "mars_tet_red_host_test")
 NAMES = {"marsReleaseMeshHex", "marsReleaseMeshTet", "marsReleaseMeshHexScaled", "marsReleaseMeshHexCycled",
          "marsReleaseMeshHex32", "marsReleaseMeshTet16", "marsReleaseHexAssembly", "marsReleaseHexAssemblyScaled",
          "marsReleaseHexNumbering", "marsReleaseTetAssembly", "marsReleasePoisson", "marsReleasePoissonCycled",
          "marsReleasePoisson_np4", "marsReleaseCavity", "marsReleaseChannel", "marsReleaseTgv", "marsReleaseHoMatfree",
-         "marsReleaseHoDistApply_np4"}
+         "marsReleaseHoDistApply_np4", "release_tet_red_host", "release_node_halo_single_rank"}
 for name in ("Ex1Poisson", "TgvDecay", "Poiseuille", "Step01", "Step02Volume", "Step02Moment", "Step03Poisson8",
              "Step03Poisson16", "Step04Cvfem16", "Step04Cvfem32", "Step05Hex16", "Step05Hex32", "Step05Tet8",
              "Step06Heat10", "Step06Heat20"):
@@ -30,12 +31,16 @@ for name in ("Ex1Poisson", "TgvDecay", "Poiseuille", "Step01", "Step02Volume", "
 
 def audit_junit(path):
     cases = list(ET.parse(path).getroot().iter("testcase"))
-    if len(cases) != 48 or {case.get("name") for case in cases} != NAMES:
-        raise ValueError("Release suite must contain exactly the existing 48 tests, including Hypre and netCDF cases")
+    if len(cases) != len(NAMES) or {case.get("name") for case in cases} != NAMES:
+        raise ValueError("Release suite must contain all 50 tests, including Hypre and netCDF cases")
     for case in cases:
         if (case.get("status", "run") not in ("run", "passed") or
                 any(case.find(tag) is not None for tag in ("failure", "error", "skipped"))):
             raise ValueError("Required release test failed/skipped: " + case.get("name", "unknown"))
+        if case.get("name") == "release_node_halo_single_rank":
+            output = "\n".join(node.text or "" for node in case.iter("system-out"))
+            if re.search(r"\[ *SKIPPED *\]", output) or not re.search(r"\[ *PASSED *\] 1 test\.", output):
+                raise ValueError("Single-rank halo regression did not execute its test")
     return sorted(NAMES)
 
 
@@ -110,7 +115,7 @@ def main():
         execute(command, args.work / "build.log", env)
         execute(["ctest", "--test-dir", str(build), "-L", "release", "--show-only=json-v1"], args.work / "inventory.json", env)
         inventory = json.loads((args.work / "inventory.json").read_text())
-        if len(inventory["tests"]) != 48 or {t["name"] for t in inventory["tests"]} != NAMES:
+        if len(inventory["tests"]) != len(NAMES) or {t["name"] for t in inventory["tests"]} != NAMES:
             raise ValueError("Required release tests not registered")
         result["tests"] = {}
         for layout in (("single", "multi") if args.multi_node else ("single",)):
