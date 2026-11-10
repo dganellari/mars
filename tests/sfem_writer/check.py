@@ -17,10 +17,7 @@ result = subprocess.run(
 )
 print(result.stdout, end="")
 if mode == "pass":
-    valid = result.returncode == 0 and any(
-        marker in result.stdout
-        for marker in ("PASS: SFEM host/MPI check", "PASS: SFEM GPU/MPI check")
-    )
+    valid = result.returncode == 0 and "PASS: SFEM GPU/MPI check" in result.stdout
 else:
     valid = (
         result.returncode != 0
