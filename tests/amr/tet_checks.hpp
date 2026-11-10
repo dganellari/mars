@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -43,6 +44,7 @@ Face tet_face(const Tet& tet, int opposite);
 int boundary_plane(const Face& face);
 void select_device(int rank);
 void run_gpu_checks(int rank, int ranks, bool staged);
+void check_exodus_manager(const std::string& path, int rank, int ranks, bool staged);
 
 template<class T>
 std::vector<T> gather(const std::vector<T>& local)

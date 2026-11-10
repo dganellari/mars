@@ -25,7 +25,7 @@ void label_boundary(Domain& domain, int rank)
         domain.set_side_set_from_face_keys("boundary" + std::to_string(tag), upload(keys[tag]));
 }
 
-void check_boundary(Domain& domain, const std::vector<Tet>& global)
+void check_boundary(Domain& domain, const std::vector<Tet>& global, bool imported)
 {
     auto keys = read_device(domain.getLocalToGlobalSfcMap().data(), domain.getNodeCount());
     auto x    = read_device(domain.getNodeX().data(), keys.size());
@@ -55,6 +55,14 @@ void check_boundary(Domain& domain, const std::vector<Tet>& global)
             local.push_back(face);
         }
         auto node_ids = read_device(domain.sideSetNodes(name).data(), domain.sideSetNodes(name).size());
+        if (imported)
+        {
+            // A file-loaded rank can hold a boundary node without holding a complete incident boundary face.
+            expected_nodes.clear();
+            int plane = tag == 6 ? 0 : tag;
+            for (const auto& [key, point] : coordinates)
+                if (std::abs(point[plane / 2] - plane % 2) < 2.e-6) expected_nodes.insert(key);
+        }
         std::set<KeyType> actual_nodes;
         for (int i : node_ids)
             actual_nodes.insert(keys.at(i));
@@ -71,7 +79,7 @@ void check_boundary(Domain& domain, const std::vector<Tet>& global)
     }
 }
 
-void check_manager(std::unique_ptr<Domain> domain, int rank, int ranks, bool staged)
+Manager::Config manager_config(bool staged)
 {
     Manager::Config config;
     config.tet_refinement            = mars::amr::TetRefinement::ConformingBisection;
@@ -82,13 +90,13 @@ void check_manager(std::unique_ptr<Domain> domain, int rank, int ranks, bool sta
     config.bucketSize      = 8;
     config.refineFraction  = 0.5;
     config.coarsenFraction = 0;
-    Manager manager(config);
-    manager.initialize(std::move(domain), rank, ranks);
+    return config;
+}
+
+void check_manager_rounds(Manager& manager, int rank)
+{
     auto fields = initial_fields(manager.domain());
     (void)check_identity(manager.domain(), rank);
-
-    label_boundary(manager.domain(), rank);
-    check_boundary(manager.domain(), gather(snapshot(manager.domain(), rank)));
 
     RealType affine_tolerance = 1.e-12;
     for (int round = 0; round < 3; ++round)
@@ -128,6 +136,33 @@ void check_manager(std::unique_ptr<Domain> domain, int rank, int ranks, bool sta
             std::cout << "Manager round " << round + 1 << ": " << before.size() << " -> " << after.size()
                       << " tets, affine bound=" << affine_tolerance << ", conformity/volume/identity/fields PASS\n";
     }
+}
+
+void check_manager(std::unique_ptr<Domain> domain, int rank, int ranks, bool staged)
+{
+    Manager manager(manager_config(staged));
+    manager.initialize(std::move(domain), rank, ranks);
+    label_boundary(manager.domain(), rank);
+    check_boundary(manager.domain(), gather(snapshot(manager.domain(), rank)));
+    check_manager_rounds(manager, rank);
+}
+
+void check_exodus_manager(const std::string& path, int rank, int ranks, bool staged)
+{
+#ifndef MARS_HAVE_NETCDF
+    throw std::runtime_error("The Exodus AMR gate requires netCDF in the installed MARS package");
+#else
+    auto config          = manager_config(staged);
+    config.storeSideSets = true;
+    Manager manager(config);
+    manager.initialize(path, rank, ranks);
+    auto global = gather(snapshot(manager.domain(), rank));
+    require(global.size() == 384, "Imported mesh has the wrong tetrahedron count");
+    check_mesh(global);
+    check_boundary(manager.domain(), global, true);
+    check_manager_rounds(manager, rank);
+    cudaCheckCall(cudaDeviceSynchronize());
+#endif
 }
 
 } // namespace amr_test

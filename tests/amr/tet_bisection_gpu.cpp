@@ -13,19 +13,27 @@ int main(int argc, char** argv)
     {
         select_device(rank);
         bool full_halo = false, staged = false;
+        std::string exodus;
         for (int i = 1; i < argc; ++i)
         {
             if (std::string(argv[i]) == "--full-halo")
                 full_halo = true;
             else if (std::string(argv[i]) == "--staged")
                 staged = true;
+            else if (std::string(argv[i]) == "--exodus" && i + 1 < argc)
+                exodus = argv[++i];
             else
                 require(false, "Unknown test argument");
         }
         setenv("MARS_HALO_EXCHANGE", full_halo ? "full" : "needed", 1);
         if (rank == 0) std::cout << "Node halo mode: " << (full_halo ? "full" : "default one-layer") << "\n";
-        run_gpu_checks(rank, ranks, staged);
-        if (rank == 0) std::cout << "Conforming tetrahedral AMR GPU/MPI gate PASS on " << ranks << " ranks\n";
+        if (exodus.empty())
+            run_gpu_checks(rank, ranks, staged);
+        else
+            check_exodus_manager(exodus, rank, ranks, staged);
+        if (rank == 0)
+            std::cout << "Conforming tetrahedral AMR " << (exodus.empty() ? "" : "Exodus ") << "GPU/MPI gate PASS on "
+                      << ranks << " ranks\n";
     }
     catch (const std::exception& error)
     {

@@ -19,6 +19,9 @@ common=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_EXPORT_CO
 checks=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
         -DCMAKE_PREFIX_PATH="$work/install"
         -DMPIEXEC_EXECUTABLE="${MARS_AMR_MPI_LAUNCHER:-mpiexec}" -DMPIEXEC_NUMPROC_FLAG=-n)
+if [[ ${MARS_AMR_EXODUS_CHECKS:-OFF} == ON ]]; then
+    checks+=(-DMARS_AMR_EXODUS_CHECKS=ON -DMARS_CSTONE_INCLUDE_DIR="$cornerstone/include")
+fi
 case $backend in
     cpu)
         [[ $# -eq 4 ]] || { echo 'CPU validation also needs the pinned Kokkos source.' >&2; exit 2; }

@@ -236,6 +236,43 @@ The continuation manifest is
 `0a1535a97ef8fcb770eae14098103ed74895bd563565f06429437b928eb6fb77`.
 These are correctness results, not scaling measurements.
 
+## Exodus import extension
+
+Set `MARS_AMR_EXODUS_CHECKS=ON` when preparing the tests to enable the additional
+`tet-exodus` label. The installed MARS GPU package must have netCDF support;
+configuration fails if it is absent. The CPU reader also requires netCDF.
+
+```bash
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cpu /absolute/results/cpu /path/to/cornerstone /path/to/kokkos
+# On each GPU platform, use its matching toolchain:
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cuda /absolute/results/cuda /path/to/cornerstone
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh hip /absolute/results/hip /path/to/cornerstone
+ctest --test-dir /absolute/results/cuda/checks -L tet-exodus --no-tests=error \
+  --output-on-failure -V --test-output-size-passed 1048576 \
+  --output-junit /absolute/results/cuda/exodus.xml
+```
+
+The fixture writer creates a public unit cube with 125 vertices and 384 Tet4
+elements. Node and element numbering are shuffled; positive vertex permutations
+exercise the four Exodus side ordinals. Seven named side sets cover the six
+planes plus an overlapping label, with nonsequential block and side-set IDs.
+Coordinates use the split `coordx/coordy/coordz` layout in classic netCDF.
+
+CPU checks read the actual file at one, two and four MPI ranks and verify exact
+geometry/connectivity, orientation, volume, block indexing, face labels and
+boundary-node lists. Together with fixture generation these are four CTests.
+Each GPU configuration adds nine cases: needed/full halos and staged AMR messages
+at one, two and four ranks. They call the manager's file initializer with side-set
+storage enabled, then reuse the three-round conformity, identity, constant/affine
+transfer and boundary-ancestry checks. They never replace imported labels with
+procedural ones. Imported ranks may hold a tagged node without holding a complete
+incident boundary face; after rebuild, boundary nodes are derived from tagged faces.
+
+This is a separate extension to the accepted procedural matrix. CPU import tests
+pass locally; native CUDA/HIP results are pending. CPU reading does not exercise
+GPU domain rebuilding or manager field transfer. The fixture does not establish
+general Exodus, multiblock, periodic or arbitrary-mesh coverage.
+
 ## Cornerstone halo-depth correction
 
 CUDA job 5304289 compiled all seven native units successfully (peak child RSS
