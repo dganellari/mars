@@ -12,68 +12,11 @@
 #include <cstdint>
 #include <utility>
 #include <mpi.h>
-#include "mars.hpp"
 
-#if defined(__CUDACC__) || defined(__HIPCC__)
-#include <thrust/device_vector.h>
-#include <thrust/sort.h>
-#include <thrust/unique.h>
-#include <thrust/copy.h>
-#endif
-
+#include "mars_mesh_io_utils.hpp"
 
 namespace mars
 {
-
-template<int N, typename KeyType = unsigned>
-auto createNVectors(size_t size)
-{
-    if constexpr (N == 3)
-    {
-        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
-            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
-    }
-    else if constexpr (N == 4)
-    {
-        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
-            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
-    }
-    else if constexpr (N == 8)
-    {
-        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>,
-                          std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
-            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size),
-            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
-    }
-}
-
-// GPU-accelerated sort+unique for the node-dedup step. Only enabled when this
-// header is compiled by nvcc (CUDA TU); plain C++ TUs (e.g. host-only unit
-// tests) fall back to serial std::sort. The GPU path saves several seconds per
-// rank at 100M+ keys.
-template<typename KeyType>
-inline std::vector<KeyType> dedupNodes(std::vector<KeyType>& allNodes)
-{
-#if defined(__CUDACC__) || defined(__HIPCC__)
-    constexpr size_t cpuThreshold = 1ull << 20;  // ~1M keys: H2D round-trip not worth it
-    if (allNodes.size() >= cpuThreshold)
-    {
-        thrust::device_vector<KeyType> d_keys(allNodes.size());
-        thrust::copy(allNodes.begin(), allNodes.end(), d_keys.begin());
-        thrust::sort(d_keys.begin(), d_keys.end());
-        auto newEnd = thrust::unique(d_keys.begin(), d_keys.end());
-        size_t uniqueCount = newEnd - d_keys.begin();
-
-        std::vector<KeyType> result(uniqueCount);
-        thrust::copy(d_keys.begin(), d_keys.begin() + uniqueCount, result.begin());
-        return result;
-    }
-#endif
-    std::sort(allNodes.begin(), allNodes.end());
-    auto last = std::unique(allNodes.begin(), allNodes.end());
-    allNodes.erase(last, allNodes.end());
-    return std::move(allNodes);
-}
 
 // Header info the reader needs across ranks. Rank 0 detects from disk; all
 // ranks receive via a single MPI_Bcast to avoid metadata-server pile-ups.

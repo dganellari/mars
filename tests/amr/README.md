@@ -268,10 +268,39 @@ transfer and boundary-ancestry checks. They never replace imported labels with
 procedural ones. Imported ranks may hold a tagged node without holding a complete
 incident boundary face; after rebuild, boundary nodes are derived from tagged faces.
 
-This is a separate extension to the accepted procedural matrix. CPU import tests
-pass locally; native CUDA/HIP results are pending. CPU reading does not exercise
-GPU domain rebuilding or manager field transfer. The fixture does not establish
-general Exodus, multiblock, periodic or arbitrary-mesh coverage.
+The integration of distributed volume and boundary reads with AMR passed on all
+three platforms on 2026-11-10:
+
+| Platform | Job | Result |
+|---|---:|---|
+| CPU (Daint) | 5321270 | 13/13 |
+| NVIDIA GH200 | 5321275 | 13/13 |
+| AMD MI300A | 732594 | 13/13 |
+
+The CPU campaign includes the four import checks above and nine bisection, LEPP
+and domain-layout references. Every job exited zero with no skipped tests.
+Multi-rank cases span two nodes, with distinct devices for GPU ranks. All eighteen
+GPU cases completed three manager rounds each. Independent audits verified all
+39 cases, 81 rank records, source and executable hashes, native compiler commands,
+mode flags and 46 sealed result artifacts.
+
+The final source is based on `f6224a9b` plus reader patch
+`71dc9dec086bc297d98b0883384c6e0e06962db7c366c50ae769b7686f5ae948`.
+The AMR bundle manifest is
+`3b603d5b9ecad761a783e43bf5944bd72580e15a59ca5852575a8fe53c48ebea`.
+It reuses the installations accepted by reader jobs 5320689 (CUDA) and 732474
+(HIP). The continuation checked 633 CPU, 346 CUDA and 347 HIP installation and
+receipt files before and after execution. AMR fixtures, assertions and tolerances
+are unchanged from the predecessor checks; only the reader snapshot changed.
+
+Earlier import jobs 5317462/5316393/731385 and AMR jobs
+5320346/5320350/732380 validate preceding reader snapshots. They do not replace
+this final check of distributed boundary-list reads and routing. Reader-specific
+coverage and limits are documented in [the reader tests](../mesh_io/README.md).
+
+CPU reading does not exercise GPU domain rebuilding or manager field transfer.
+The fixture does not establish general Exodus, multiblock, periodic,
+arbitrary-mesh or scaling coverage.
 
 ## Cornerstone halo-depth correction
 
