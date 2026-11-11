@@ -19,10 +19,19 @@ The optional policy passes the maintained CPU, NVIDIA GH200 and AMD MI300A valid
 matrix at one, two and four ranks, with the multi-rank cases spanning two nodes.
 The GPU cases exercise the actual cornerstone rebuild, boundary matching and
 field migration. The tested Cornerstone correction is published and pinned at
-`c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. Integrated release checks also pass:
+`c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. The earlier procedural release checks passed:
 10 CPU tests and all 50 release tests in both single-node and two-node layouts
 on each GPU platform. This validates the scope below; it does not establish scaling.
 See [the results and validation instructions](../tests/amr/README.md).
+
+The distributed Exodus reader and AMR integration pass thirteen checks on each
+platform, including CPU import and LEPP references. Volume and side-set entries
+are read in disjoint rank slices; boundary records are routed to candidate holders
+and matched against their local and ghost nodes. A generated single-block Tet4
+cube uses shuffled file numbering, split coordinates and seven triangle side sets,
+including an overlapping label. The GPU manager loads the file and preserves its labels and
+P1 fields through three refinement and redistribution rounds at one, two and four
+ranks. This does not establish support for every Exodus layout or arbitrary meshes.
 
 ## Refinement and conformity
 

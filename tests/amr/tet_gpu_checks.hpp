@@ -55,7 +55,7 @@ void check_coarsening_ignored(Domain& domain, int rank);
 void check_single_request(Domain& domain, int rank, int ranks, bool staged);
 void check_default_red(Domain& domain, int rank, int ranks);
 void label_boundary(Domain& domain, int rank);
-void check_boundary(Domain& domain, const std::vector<Tet>& global);
+void check_boundary(Domain& domain, const std::vector<Tet>& global, bool imported = false);
 void check_manager(std::unique_ptr<Domain> domain, int rank, int ranks, bool staged);
 void check_dependent_device_lepp(int rank, int ranks, bool staged);
 } // namespace amr_test

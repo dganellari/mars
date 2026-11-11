@@ -236,6 +236,72 @@ The continuation manifest is
 `0a1535a97ef8fcb770eae14098103ed74895bd563565f06429437b928eb6fb77`.
 These are correctness results, not scaling measurements.
 
+## Exodus import extension
+
+Set `MARS_AMR_EXODUS_CHECKS=ON` when preparing the tests to enable the additional
+`tet-exodus` label. The installed MARS GPU package must have netCDF support;
+configuration fails if it is absent. The CPU reader also requires netCDF.
+
+```bash
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cpu /absolute/results/cpu /path/to/cornerstone /path/to/kokkos
+# On each GPU platform, use its matching toolchain:
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cuda /absolute/results/cuda /path/to/cornerstone
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh hip /absolute/results/hip /path/to/cornerstone
+ctest --test-dir /absolute/results/cuda/checks -L tet-exodus --no-tests=error \
+  --output-on-failure -V --test-output-size-passed 1048576 \
+  --output-junit /absolute/results/cuda/exodus.xml
+```
+
+The fixture writer creates a public unit cube with 125 vertices and 384 Tet4
+elements. Node and element numbering are shuffled; positive vertex permutations
+exercise the four Exodus side ordinals. Seven named side sets cover the six
+planes plus an overlapping label, with nonsequential block and side-set IDs.
+Coordinates use the split `coordx/coordy/coordz` layout in classic netCDF.
+
+CPU checks read the actual file at one, two and four MPI ranks and verify exact
+geometry/connectivity, orientation, volume, block indexing, face labels and
+boundary-node lists. Together with fixture generation these are four CTests.
+Each GPU configuration adds nine cases: needed/full halos and staged AMR messages
+at one, two and four ranks. They call the manager's file initializer with side-set
+storage enabled, then reuse the three-round conformity, identity, constant/affine
+transfer and boundary-ancestry checks. They never replace imported labels with
+procedural ones. Imported ranks may hold a tagged node without holding a complete
+incident boundary face; after rebuild, boundary nodes are derived from tagged faces.
+
+The integration of distributed volume and boundary reads with AMR passed on all
+three platforms on 2026-11-10:
+
+| Platform | Job | Result |
+|---|---:|---|
+| CPU (Daint) | 5321270 | 13/13 |
+| NVIDIA GH200 | 5321275 | 13/13 |
+| AMD MI300A | 732594 | 13/13 |
+
+The CPU campaign includes the four import checks above and nine bisection, LEPP
+and domain-layout references. Every job exited zero with no skipped tests.
+Multi-rank cases span two nodes, with distinct devices for GPU ranks. All eighteen
+GPU cases completed three manager rounds each. Independent audits verified all
+39 cases, 81 rank records, source and executable hashes, native compiler commands,
+mode flags and 46 sealed result artifacts.
+
+The final source is based on `f6224a9b` plus reader patch
+`71dc9dec086bc297d98b0883384c6e0e06962db7c366c50ae769b7686f5ae948`.
+The AMR bundle manifest is
+`3b603d5b9ecad761a783e43bf5944bd72580e15a59ca5852575a8fe53c48ebea`.
+It reuses the installations accepted by reader jobs 5320689 (CUDA) and 732474
+(HIP). The continuation checked 633 CPU, 346 CUDA and 347 HIP installation and
+receipt files before and after execution. AMR fixtures, assertions and tolerances
+are unchanged from the predecessor checks; only the reader snapshot changed.
+
+Earlier import jobs 5317462/5316393/731385 and AMR jobs
+5320346/5320350/732380 validate preceding reader snapshots. They do not replace
+this final check of distributed boundary-list reads and routing. Reader-specific
+coverage and limits are documented in [the reader tests](../mesh_io/README.md).
+
+CPU reading does not exercise GPU domain rebuilding or manager field transfer.
+The fixture does not establish general Exodus, multiblock, periodic,
+arbitrary-mesh or scaling coverage.
+
 ## Cornerstone halo-depth correction
 
 CUDA job 5304289 compiled all seven native units successfully (peak child RSS

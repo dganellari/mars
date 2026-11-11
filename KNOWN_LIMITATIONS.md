@@ -101,12 +101,17 @@ shares the legacy bisection core and adds sparse distributed closure, face-label
 ancestry and dependent P1 transfer through cornerstone rebuilds. The policy
 passes its CPU, NVIDIA GH200 and AMD MI300A gates at 1/2/4 ranks, including
 two-node integration, with the published and pinned Cornerstone halo-depth
-correction. Integrated release checks also pass: 10 CPU tests and all 50 GPU
+correction. Earlier procedural release checks passed: 10 CPU tests and all 50 GPU
 release tests in both single-node and two-node layouts on each platform. It
 supports single-block nonperiodic meshes with explicit triangle side sets;
 node-only tags, multiblock/periodic meshes and coarsening are unsupported. GPU
-validation uses procedural face labels, 64-bit keys and double precision;
-Exodus ingestion, scaling and cross-vendor identical topology are not established.
+validation uses 64-bit keys and double precision. Procedural labels and imported
+Exodus triangle side sets pass on both GPU platforms. The Exodus fixture is a
+single-block Tet4 cube with split coordinates in classic netCDF. The distributed
+volume and boundary reader passes the combined AMR gate: thirteen checks on each
+platform at 1/2/4 ranks, with CPU import/LEPP references and three GPU refinement
+rounds per case. General Exodus layout coverage, scaling and cross-vendor
+identical topology are not established.
 
 ## Assembly kernel variants
 `fem/` ships several CVFEM assembly kernels. The canonical paths are the **hex tensor**

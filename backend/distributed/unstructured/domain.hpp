@@ -35,6 +35,7 @@ using std::get;
 #include <thrust/scan.h>
 #include <thrust/fill.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/tuple.h>
@@ -61,9 +62,23 @@ using std::get;
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
 #include "mars_read_exodus_mesh.hpp"
+#include "utils/mars_sideset_lookup.hpp"
+#include "utils/mars_sideset_distribution.hpp"
 
 namespace mars
 {
+
+template<typename RealType, typename KeyType>
+struct SideSetNodeKey
+{
+    cstone::Box<RealType> box;
+
+    __host__ __device__ KeyType operator()(const ExodusSideSetNode& node) const
+    {
+        return cstone::sfc3D<cstone::HilbertKey<KeyType>>(RealType(node.x), RealType(node.y), RealType(node.z), box)
+            .value();
+    }
+};
 
 // Element type tags
 struct TetTag
@@ -1669,7 +1684,7 @@ public:
     //! Returns true if boundary information is available.
     bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
-    // ---- Optional side-set storage (lazy, opt-in via the file ctor) ----
+    // ---- Optional side-set storage (distributed during file construction) ----
     // Each named side set keeps d_keys (SFC keys in the current box) and d_local (the runtime local
     // node ids the hot path uses). Both hold only the nodes this rank actually
     // resolves (hits); misses are dropped. A name present in the mesh but with
@@ -1716,14 +1731,14 @@ public:
 
     bool has_side_set_face_keys(const std::string& name) const
     {
-        ensureSideSetFaces();
+        ensureSideSets();
         return sideSets_.at(name).has_faces;
     }
 
     // Three keys per tetrahedron face. Node-only sets cannot define face ancestry.
     const DeviceVector<KeyType>& side_set_face_keys(const std::string& name) const
     {
-        ensureSideSetFaces();
+        ensureSideSets();
         return sideSets_.at(name).d_face_keys;
     }
 
@@ -1778,10 +1793,10 @@ public:
     }
 
     //! Re-inject a side set from its SFC keys onto the CURRENT domain. AMR carry-through: adaptMesh
-    //! rebuilds a fresh DEVICE-constructed domain (no Exodus file, so ensureSideSets can't rebuild the
-    //! sets). Keys must already use this domain's current box; a box change requires re-encoding.
+    //! rebuilds a fresh DEVICE-constructed domain without an Exodus file.
+    //! Keys must already use this domain's current box; a box change requires re-encoding.
     //! Resolve each key to a local id, dropping misses as in the coordinate resolver.
-    //! Marks storage built so ensureSideSets() (which reads meshFile_) does not clobber the injected set.
+    //! Injected sets are ready for local getters without another file read or MPI exchange.
     // block >= 0 (multi-block domain): resolve each key to the node on THAT block by scanning the
     // consecutive (key, block) run in the sorted map (mirrors resolveSideSetNodesToLocalKeepMisses).
     // block < 0 (default) is the original key-only behavior -- byte-identical for single-block domains.
@@ -1825,7 +1840,7 @@ public:
         }
         sideSets_[name] = std::move(e);
         storeSideSets_ = true;
-        sideSetsBuilt_ = true;   // injected -> ensureSideSets() must not re-read Exodus and overwrite this
+        sideSetsBuilt_ = true;
     }
 
 private:
@@ -1840,8 +1855,8 @@ private:
 
     // Opt-in: keep the Exodus side sets as device-resident members so consumers
     // (FEM/FSI/viz) get the local boundary node lists without re-reading the
-    // file. meshFile_ is retained only by the file ctor for the on-demand read;
-    // it is empty for the device/host ctors, which disables the feature there.
+    // file. The file ctor retains meshFile_ for collective reload after resync;
+    // device/host ctors leave it empty and receive boundary sets by injection.
     bool storeSideSets_ = false;
     std::string meshFile_;
 
@@ -1853,11 +1868,9 @@ private:
         DeviceVector<int>     d_local;
         DeviceVector<KeyType> d_face_keys;
         bool has_faces = false;
-        bool faces_pending = false;
     };
-    mutable std::map<std::string, SideSetEntry> sideSets_;
-    mutable bool sideSetsBuilt_ = false;
-    mutable bool sideSetFacesBuilt_ = false;
+    std::map<std::string, SideSetEntry> sideSets_;
+    bool sideSetsBuilt_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -2000,7 +2013,7 @@ private:
     void ensureNodeHaloTopo() const;
     void ensureCoordinateCache() const;
     void ensureSideSets() const;
-    void ensureSideSetFaces() const;
+    void loadSideSets();
 
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
@@ -2486,6 +2499,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t6 = clk::now();
     syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
 
+    loadSideSets();
+
     if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
                   << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -2918,6 +2933,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
     catch (const std::exception& e)
     {
         std::cerr << "Error reading mesh from " << meshFile << ": " << e.what() << std::endl;
+        if (numRanks > 1) MPI_Abort(MPI_COMM_WORLD, 1);
         throw;
     }
 }
@@ -3394,96 +3410,118 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSfcMap(
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSets() const
 {
-    // Only the file ctor sets meshFile_; the device/host ctors leave it empty,
-    // which is how the feature stays off for those paths.
-    if (sideSetsBuilt_ || !storeSideSets_ || meshFile_.empty()) return;
-    ensureSfcMap();
-
-    // Read the Exodus side sets (host-side, transient). Tag-dispatch the reader.
-    ExodusSideSets ss;
-    if constexpr (std::is_same_v<ElementTag, HexTag>)
-        ss = readExodusSideSetsHex8(meshFile_, rank_);
-    else
-        ss = readExodusSideSetsTet4(meshFile_, rank_);
-
-    // The SFC map is the same sorted host array resolveSideSetNodesToLocalKeepMisses
-    // searches; copy it once here so the key for a hit can be read back for free.
-    std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
-    thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
-                 thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
-                                             + d_localToGlobalSfcMap_.size()),
-                 hostSfc.begin());
-
-    for (auto& kv : ss.nodeCoordsByName)
-    {
-        const auto& name   = kv.first;
-        const auto& coords = kv.second;
-
-        // KeepMisses keeps 1:1 alignment with coords, so local[i] < 0 means
-        // this rank does not hold that node -- drop it.
-        std::vector<int> localWithMiss = resolveSideSetNodesToLocalKeepMisses(coords);
-
-        std::vector<int>     h_local;
-        std::vector<KeyType> h_keys;
-        h_local.reserve(localWithMiss.size());
-        h_keys.reserve(localWithMiss.size());
-        for (size_t i = 0; i < localWithMiss.size(); ++i)
-        {
-            int loc = localWithMiss[i];
-            if (loc < 0) continue;
-            h_local.push_back(loc);
-            // The key of a resolved node equals d_localToGlobalSfcMap_[loc].
-            h_keys.push_back(hostSfc[loc]);
-        }
-
-        // Always create the entry, even with 0 hits, so the getters return a
-        // valid (empty) reference for a known name this rank holds none of.
-        SideSetEntry entry;
-        entry.d_keys.resize(h_keys.size());
-        entry.d_local.resize(h_local.size());
-        if (!h_keys.empty())
-            thrust::copy(h_keys.begin(), h_keys.end(),
-                         thrust::device_pointer_cast(entry.d_keys.data()));
-        if (!h_local.empty())
-            thrust::copy(h_local.begin(), h_local.end(),
-                         thrust::device_pointer_cast(entry.d_local.data()));
-        entry.faces_pending = std::is_same_v<ElementTag, TetTag>;
-        sideSets_[name] = std::move(entry);
-    }
-
-    sideSetsBuilt_ = true;
+    // Getters stay local: the file constructor and resync finish distribution first.
+    if (storeSideSets_ && !meshFile_.empty() && !sideSetsBuilt_)
+        throw std::logic_error("File-domain side sets were not prepared collectively");
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSetFaces() const
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::loadSideSets()
 {
-    ensureSideSets();
-    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    try
     {
-        if (sideSetFacesBuilt_ || !storeSideSets_ || meshFile_.empty()) return;
-        // Existing node-only consumers pay no face resolution or device storage cost.
-        auto ss = readExodusSideSetsTet4(meshFile_, rank_);
-        std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
-        thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
-                     thrust::device_pointer_cast(d_localToGlobalSfcMap_.data() + d_localToGlobalSfcMap_.size()),
-                     hostSfc.begin());
-        for (auto& [name, entry] : sideSets_)
+        unsigned enabled = storeSideSets_ && !meshFile_.empty() ? 1 : 2, flags = enabled;
+        if (numRanks_ > 1 && MPI_Allreduce(&enabled, &flags, 1, MPI_UNSIGNED, MPI_BOR, MPI_COMM_WORLD) != MPI_SUCCESS)
+            throw std::runtime_error("Side-set setup agreement failed");
+        if (flags == 3) throw std::invalid_argument("Side-set storage must be enabled on every rank or none");
+        if (flags == 2) return;
+        if constexpr (!std::is_same_v<ElementTag, TetTag> && !std::is_same_v<ElementTag, HexTag>)
+            throw std::invalid_argument("Exodus side sets require Tet4 or Hex8 elements");
+        else
         {
-            if (!entry.faces_pending) continue;
-            entry.faces_pending = false;
-            entry.has_faces     = true;
-            auto found          = ss.triangleCoordsByName.find(name);
-            if (found == ss.triangleCoordsByName.end()) continue;
-            auto face_nodes = resolveSideSetNodesToLocalKeepMisses(found->second);
-            std::vector<KeyType> face_keys;
-            for (size_t i = 0; i + 2 < face_nodes.size(); i += 3)
-                if (face_nodes[i] >= 0 && face_nodes[i + 1] >= 0 && face_nodes[i + 2] >= 0)
-                    for (int c = 0; c < 3; ++c)
-                        face_keys.push_back(hostSfc[face_nodes[i + c]]);
-            entry.d_face_keys.resize(face_keys.size());
-            thrust::copy(face_keys.begin(), face_keys.end(), thrust::device_pointer_cast(entry.d_face_keys.data()));
+            ensureSfcMap();
+            if (d_localToGlobalSfcMap_.size() > size_t(std::numeric_limits<int>::max()))
+                throw std::runtime_error("Side-set local node index exceeds int capacity");
+
+            auto prefix = side_set_prefix<KeyType>(numRanks_);
+            std::vector<uint64_t> prefixes;
+            if (!d_localToGlobalSfcMap_.empty())
+            {
+                // Sorted node keys give sorted prefixes. Download only their compact directory.
+                const size_t capacity =
+                    std::min(d_localToGlobalSfcMap_.size(),
+                             size_t(uint64_t(1) << (std::numeric_limits<KeyType>::digits - prefix.shift)));
+                thrust::device_vector<KeyType> d_prefixes(capacity);
+                auto begin =
+                    thrust::make_transform_iterator(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()), prefix);
+                auto end = thrust::unique_copy(thrust::device, begin, begin + d_localToGlobalSfcMap_.size(),
+                                               d_prefixes.begin());
+                prefixes.resize(end - d_prefixes.begin());
+                thrust::copy(d_prefixes.begin(), end, prefixes.begin());
+            }
+            SideSetDistribution distribution(prefixes, MPI_COMM_WORLD);
+            SideSetNodeKey<RealType, KeyType> encode{box_};
+            SideSetBatchPrefixes batch_prefixes(encode, prefix);
+            SideSetBatchLookup<KeyType, decltype(encode)> batches(
+                {d_localToGlobalSfcMap_.data(), numBlocks_ > 1 ? d_localToGlobalBlock_.data() : nullptr,
+                 d_localToGlobalSfcMap_.size(), encode});
+            using Hit = SideSetHit<KeyType>;
+            std::map<std::string, std::map<std::pair<uint64_t, int>, Hit>> local_sets;
+            std::map<std::string, std::map<uint64_t, std::array<KeyType, 3>>> local_faces;
+            visitExodusSideSets<NodesPerElement>(
+                meshFile_,
+                [&](const std::string& name, const ExodusSideSetBatch& input)
+                {
+                    constexpr int corners = NodesPerElement == 4 ? 3 : 4;
+                    auto& local           = local_sets[name];
+                    auto routing          = batch_prefixes(input);
+                    auto batch            = distribution.route<corners>(input, routing);
+                    auto hits             = batches.resolve(batch, std::is_same_v<ElementTag, TetTag>);
+                    cudaCheckCall(cudaGetLastError());
+                    for (const auto& hit : hits)
+                        if (hit.local >= 0) local.emplace(std::make_pair(hit.id, hit.block), hit);
+                    if constexpr (std::is_same_v<ElementTag, TetTag>)
+                    {
+                        auto& faces = local_faces[name];
+                        for (size_t f = 0; f < batch.face_ids.size(); ++f)
+                        {
+                            const auto& a = hits[batch.face_nodes[f * 3]];
+                            const auto& b = hits[batch.face_nodes[f * 3 + 1]];
+                            const auto& c = hits[batch.face_nodes[f * 3 + 2]];
+                            if (a.local >= 0 && b.local >= 0 && c.local >= 0)
+                                faces.emplace(batch.face_ids[f], std::array<KeyType, 3>{a.key, b.key, c.key});
+                        }
+                    }
+                },
+                rank_, numRanks_);
+
+            std::map<std::string, SideSetEntry> built;
+            for (const auto& [name, local] : local_sets)
+            {
+                std::vector<int> h_local;
+                std::vector<KeyType> h_keys;
+                for (const auto& [identity, hit] : local)
+                {
+                    h_local.push_back(hit.local);
+                    h_keys.push_back(hit.key);
+                }
+                auto& entry = built[name];
+                entry.d_keys.resize(h_keys.size());
+                entry.d_local.resize(h_local.size());
+                if (!h_keys.empty())
+                {
+                    thrust::copy(h_keys.begin(), h_keys.end(), thrust::device_pointer_cast(entry.d_keys.data()));
+                    thrust::copy(h_local.begin(), h_local.end(), thrust::device_pointer_cast(entry.d_local.data()));
+                }
+                if constexpr (std::is_same_v<ElementTag, TetTag>)
+                {
+                    std::vector<KeyType> keys;
+                    for (const auto& [id, face] : local_faces[name])
+                        keys.insert(keys.end(), face.begin(), face.end());
+                    entry.d_face_keys.resize(keys.size());
+                    if (!keys.empty())
+                        thrust::copy(keys.begin(), keys.end(), thrust::device_pointer_cast(entry.d_face_keys.data()));
+                    entry.has_faces = true;
+                }
+            }
+            sideSets_      = std::move(built);
+            sideSetsBuilt_ = true;
         }
-        sideSetFacesBuilt_ = true;
+    }
+    catch (const std::exception&)
+    {
+        if (numRanks_ > 1) MPI_Abort(MPI_COMM_WORLD, 1);
+        throw;
     }
 }
 
@@ -3983,14 +4021,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     coordCache_.reset();
     originalCoords_.reset();
 
-    // Side-set SFC keys are AMR-stable, but the derived LOCAL ids go stale after
-    // re-partition. Simplest correct reset: drop the cache and rebuild lazily on
-    // next access. The rebuild re-reads the file, which is acceptable for now.
-    // TODO: re-resolve LOCAL ids on the GPU directly from the stored d_keys via
-    // lower_bound into the new d_localToGlobalSfcMap_, so AMR avoids the re-read.
+    // Boundary local IDs change with the partition. File domains reload their
+    // distributed boundary slices after sync; device AMR domains receive transferred sets.
     sideSets_.clear();
     sideSetsBuilt_ = false;
-    sideSetFacesBuilt_ = false;
 
     // Clear per-instance device vectors that depend on element/node counts.
     // The actual storage will be re-allocated by sync() / lazy init.
@@ -4038,6 +4072,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     // a successful first sync, firstCall_=false on entry → converge skipped.
     sync(d_conn_local, d_coords_local);
     logGpuMemAroundSync(rank_, "post-resync");
+    loadSideSets();
 
     if (rank_ == 0)
     {
