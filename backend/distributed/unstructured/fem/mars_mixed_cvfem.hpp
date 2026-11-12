@@ -64,7 +64,7 @@ MARS_MIXED_HD inline bool evaluate(int count,const double* xyz,const double* ref
     if(determinant) *determinant=det;
     return true;
 }
-MARS_MIXED_HD inline bool geometry(int count,const double* xyz,Geometry& g) {
+MARS_MIXED_HD inline bool geometry(int count,const double* xyz,Geometry& g,bool shifted_gradients=false) {
     g={};
     if(count==4) {
         segregated::TetGeometry<double> tet;
@@ -90,6 +90,12 @@ MARS_MIXED_HD inline bool geometry(int count,const double* xyz,Geometry& g) {
                 if(match) p.right=l;
             }
             cross(j+3*((axis+1)%3),j+3*((axis+2)%3),p.area);
+            if(shifted_gradients) {
+                // Flow derivatives use the edge midpoint; interpolation and areas stay at the subface point.
+                for(int a=0;a<3;++a) r[a]=.5*(sign(p.left,a)+sign(p.right,a));
+                Point derivative;if(!evaluate(8,xyz,r,derivative)) return false;
+                for(int k=0;k<24;++k) p.gradient[k]=derivative.gradient[k];
+            }
         }
         // Integrate each median-dual subvolume, including trilinear Jacobian variation.
         constexpr double abscissa=.57735026918962576451;
@@ -102,7 +108,7 @@ MARS_MIXED_HD inline bool geometry(int count,const double* xyz,Geometry& g) {
     } else return false;
     return true;
 }
-MARS_MIXED_HD inline bool face_point(int count,const double* xyz,int face,int sample,bool shifted,Point& p) {
+MARS_MIXED_HD inline bool face_point(int count,const double* xyz,int face,int sample,bool shifted,Point& p,bool shifted_gradients=false) {
     if(face<0 || face>=face_count(count) || sample<0 || sample>=face_size(count)) return false;
     int node=face_node(count,face,sample);
     if(count==4) {
@@ -127,6 +133,12 @@ MARS_MIXED_HD inline bool face_point(int count,const double* xyz,int face,int sa
         Point area_point;if(!evaluate(count,xyz,r,area_point,j)) return false;
         cross(j+3*((axis+1)%3),j+3*((axis+2)%3),p.area);
         for(int a=0;a<3;++a) p.area[a]*=normal;
+        if(shifted_gradients && !shifted) {
+            // The boundary derivative is evaluated at the nearest vertex independently of interpolation.
+            for(int a=0;a<3;++a) r[a]=sign(node,a);
+            Point derivative;if(!evaluate(8,xyz,r,derivative)) return false;
+            for(int k=0;k<24;++k) p.gradient[k]=derivative.gradient[k];
+        }
     }
     p.left=node;return true;
 }

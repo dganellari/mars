@@ -41,6 +41,41 @@ static void geometry_checks(int count,bool warped) {
     for(int k=0;k<count;++k) for(int j=0;j<3;++j) near(closure[k][j],0,2e-14,"dual-cell area closure");
     for(int k=0;k<count;++k) x[3*k]=-x[3*k];require(!geometry(count,x,g),"inverted geometry rejected");
 }
+static void shifted_gradient_checks() {
+    for(int count:{4,8}) for(bool warped:{false,true}) {
+        double x[24]{};coordinates(count,x,warped);Geometry ordinary,shifted;
+        require(geometry(count,x,ordinary)&&geometry(count,x,shifted,true),"shifted derivative geometry");
+        auto compare=[&](const Point& base,const Point& point,const double* reference) {
+            Point target;require(evaluate(count,x,reference,target),"shifted reference point");
+            for(int j=0;j<3;++j) {
+                near(point.position[j],base.position[j],0,"derivative shift preserves point");
+                near(point.area[j],base.area[j],0,"derivative shift preserves area");
+                Point plus,minus;double xp[3],xm[3];std::copy(reference,reference+3,xp);std::copy(reference,reference+3,xm);xp[j]+=1e-6;xm[j]-=1e-6;
+                require(evaluate(count,x,xp,plus)&&evaluate(count,x,xm,minus),"shifted derivative perturbation");
+                for(int k=0;k<count;++k) {
+                    double derivative=0;for(int a=0;a<3;++a) derivative+=point.gradient[3*k+a]*(plus.position[a]-minus.position[a])/2e-6;
+                    near(derivative,(plus.shape[k]-minus.shape[k])/2e-6,2e-9,"shifted derivative chain rule");
+                }
+                if(count==8&&!warped) {
+                    double gradient=0;for(int k=0;k<8;++k) gradient+=point.gradient[3*k+j]*x[3*k]*x[3*k+1]*x[3*k+2];
+                    near(gradient,target.position[(j+1)%3]*target.position[(j+2)%3],1e-13,"trilinear field at shifted point");
+                }
+            }
+            for(int k=0;k<count;++k) near(point.shape[k],base.shape[k],0,"derivative shift preserves interpolation");
+        };
+        for(int q=0;q<ordinary.samples;++q) {
+            const auto& point=shifted.interior[q];double reference[3];
+            for(int j=0;j<3;++j) reference[j]=count==8?.5*(sign(point.left,j)+sign(point.right,j)):.5*((point.left==j+1)+(point.right==j+1));
+            compare(ordinary.interior[q],point,reference);
+        }
+        for(int f=0;f<face_count(count);++f) for(int q=0;q<face_size(count);++q) {
+            Point base,point;require(face_point(count,x,f,q,false,base)&&face_point(count,x,f,q,false,point,true),"shifted boundary derivative geometry");
+            double reference[3];for(int j=0;j<3;++j) reference[j]=count==8?sign(point.left,j):(point.left==j+1);
+            compare(base,point,reference);
+        }
+        for(int k=0;k<count;++k) near(ordinary.volume[k],shifted.volume[k],0,"derivative shift preserves volume");
+    }
+}
 template<class Function> static void jacobian_checks(State* state,int count,Function flux) {
     const auto base=flux();constexpr double eps=1e-5;
     for(int k=0;k<count;++k) {
@@ -61,7 +96,7 @@ static void initialize(State* state,int count) {
 }
 static void flux_checks(int count) {
     double x[24]{};coordinates(count,x);Cell c;c.count=count;for(int k=0;k<count;++k) c.node[k]=k;
-    Geometry g;geometry(count,x,g);State state[12];initialize(state,count);Controls controls;
+    Geometry g;geometry(count,x,g,true);State state[12];initialize(state,count);Controls controls;
     // With viscosity zero, only the chosen upwind value and reconstruction remain.
     for(double mass:{-2.,0.,3.}) for(int q=0;q<g.samples;++q) {
         const auto& point=g.interior[q];Controls inviscid;inviscid.mu=0;
@@ -82,7 +117,7 @@ static void flux_checks(int count) {
     for(double mass:{-2.,0.,3.}) {
         for(int q=0;q<g.samples;++q) jacobian_checks(state,count,[&]{return interior_flux(c,g.interior[q],state,x,controls,mass);});
         for(int kind=0;kind<3;++kind) for(int f=0;f<face_count(count);++f) {
-            Point p;face_point(count,x,f,0,false,p);
+            Point p;face_point(count,x,f,0,false,p,true);
             jacobian_checks(state,count,[&]{return boundary_flux(c,f,p,state,x,controls,kind,mass,false,true);});
         }
     }
@@ -126,6 +161,6 @@ static void interface_checks() {
     near(interface_flux(reverse,state,controls,0).mass,-f.mass,1e-14,"reversing both sides reverses the same-point flux");
 }
 int main() {
-    geometry_checks(4,false);geometry_checks(8,false);geometry_checks(8,true);flux_checks(4);flux_checks(8);interface_checks();
+    geometry_checks(4,false);geometry_checks(8,false);geometry_checks(8,true);shifted_gradient_checks();flux_checks(4);flux_checks(8);interface_checks();
     std::printf("PASS: %d mixed geometry, flux, Jacobian and tetrahedral oracle checks\n",checks);
 }

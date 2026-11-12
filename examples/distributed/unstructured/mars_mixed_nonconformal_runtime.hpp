@@ -45,12 +45,12 @@ struct View {
     MARS_FS_FN void coordinates(int e,double* x) const {for(int k=0;k<cells[e].count;++k) for(int j=0;j<3;++j) x[3*k+j]=xyz[3*cells[e].node[k]+j];}
     MARS_FS_FN Point facepoint(int f,int q,bool shifted=false) const {
         double x[24];coordinates(faces[f].cell,x);Point p;
-        face_point(cells[faces[f].cell].count,x,faces[f].ordinal,q,shifted,p);return p;
+        face_point(cells[faces[f].cell].count,x,faces[f].ordinal,q,shifted,p,true);return p;
     }
 };
 struct BuildGeometry {
     View v;Geometry* geometry;int* valid;
-    MARS_FS_FN void operator()(int e) const {double x[24];v.coordinates(e,x);valid[e]=mars::mixed::geometry(v.cells[e].count,x,geometry[e]);}
+    MARS_FS_FN void operator()(int e) const {double x[24];v.coordinates(e,x);valid[e]=mars::mixed::geometry(v.cells[e].count,x,geometry[e],true);}
 };
 struct BuildInterface {
     View v;int* valid;
