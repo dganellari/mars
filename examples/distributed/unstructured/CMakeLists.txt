@@ -76,6 +76,11 @@ endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
 
 if(MARS_ENABLE_MPI)
+    if(MARS_ENABLE_HYPRE)
+        add_executable(mars_mixed_nonconformal_flow mars_mixed_nonconformal_flow.cu)
+        target_link_libraries(mars_mixed_nonconformal_flow PRIVATE mars MPI::MPI_CXX)
+        install(TARGETS mars_mixed_nonconformal_flow RUNTIME DESTINATION bin/examples)
+    endif()
     add_executable(mars_nonconformal_flow mars_nonconformal_flow.cu)
     target_link_libraries(mars_nonconformal_flow PRIVATE mars MPI::MPI_CXX)
     install(TARGETS mars_nonconformal_flow RUNTIME DESTINATION bin/examples)
@@ -83,6 +88,7 @@ if(MARS_ENABLE_MPI)
     target_link_libraries(mars_nonconformal_mesh PRIVATE mars MPI::MPI_CXX)
     install(TARGETS mars_nonconformal_mesh RUNTIME DESTINATION bin/examples)
     install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/prepare_nonconformal_mesh.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/prepare_mixed_nonconformal_mesh.py
                      ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/partition_nonconformal_mesh.py
             DESTINATION bin/examples)
 endif()
