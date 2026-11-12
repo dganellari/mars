@@ -28,6 +28,9 @@ static_assert(std::is_same<HYPRE_Int, int>::value, "32-bit local indices require
 
 namespace bp3 {
 
+constexpr int root_row_limit = 300000;
+constexpr int root_entry_limit = 30000000;
+
 [[noreturn]] void fail(const char* message)
 {
     std::fprintf(stderr, "BP3 consolidation: %s\n", message);
@@ -121,9 +124,10 @@ Destroy original_destroy() { return &HYPRE_BoomerAMGDestroy; }
 // Collapse when the distributed rows become too few per rank; cap root memory.
 int selected_threshold(int requested, int ranks)
 {
-    check(ranks>0 && (requested==-1 || requested==0 || (requested>9 && requested<=50000)),
-          "consolidation must be off, adaptive, or between 10 and 50000 rows");
+    check(ranks>0 && (requested==-2 || requested==-1 || requested==0 || (requested>9 && requested<=50000)),
+          "consolidation must be off, adaptive, whole-root, or between 10 and 50000 rows");
     if (ranks==1 || requested==0) return 0;
+    if (requested==-2) return root_row_limit;
     if (requested>0) return requested;
     return ranks>=50 ? 50000 : (ranks<5 ? 5000 : ranks*1000);
 }
@@ -135,7 +139,7 @@ int threshold()
     if (!value) return 0;
     char* end=nullptr;
     const long result=std::strtol(value,&end,10);
-    check(end!=value && *end=='\0' && result>=0 && result<=50000,"invalid fixture cutoff");
+    check(end!=value && *end=='\0' && (result==-2 || (result>=0 && result<=50000)),"invalid fixture cutoff");
     return int(result);
 }
 #endif
@@ -143,6 +147,7 @@ int threshold()
 struct Audit {
     long long setups = 0, destroyed = 0, cycles = 0, empty_setups = 0, skipped_setups = 0;
     int level = -1, rows = 0, nnz = 0, threshold_rows = 0;
+    long long root_calls = 0;
     void write() const {
         const char* path = std::getenv("BP3_CONSOLIDATION_AUDIT");
         if (!path) return;
@@ -151,6 +156,7 @@ struct Audit {
         out << "{\"version\":1,\"setups\":" << setups << ",\"destroyed\":" << destroyed
             << ",\"cycles\":" << cycles << ",\"empty_setups\":" << empty_setups
             << ",\"skipped_setups\":" << skipped_setups
+            << ",\"root_calls\":" << root_calls
             << ",\"threshold_rows\":" << threshold_rows << ",\"level\":" << level << ",\"rows\":" << rows << ",\"nnz\":" << nnz << "}\n";
         out.close(); check(bool(out),"cannot write audit file");
     }
@@ -166,18 +172,25 @@ struct State {
     double* bound_f = nullptr;
     double* bound_u = nullptr;
     bool bound = false;
+    const bool whole;
+    const int cycles_per_call;
+    hypre_ParCSRMatrix* source = nullptr; // Borrowed until the parent is destroyed.
     hypre_ParCSRMatrix* matrix = nullptr;
     hypre_ParVector* rhs = nullptr;
     hypre_ParVector* solution = nullptr;
     HYPRE_Solver solver = nullptr;
 
-    State(hypre_ParAMGData* parent, int selected, int limit) : level(selected)
+    State(hypre_ParAMGData* parent, int selected, int limit, hypre_ParCSRMatrix* input = nullptr)
+        : level(selected), whole(input != nullptr),
+          cycles_per_call(whole ? hypre_ParAMGDataMaxIter(parent) : 1)
     {
-        auto* a = hypre_ParAMGDataAArray(parent)[level];
+        auto* a = input ? input : hypre_ParAMGDataAArray(parent)[level];
+        source = a;
+        check(cycles_per_call > 0, "root correction needs a positive fixed cycle count");
         check(hypre_ParCSRMatrixMemoryLocation(a)==location,"unexpected matrix memory location");
         check(hypre_ParCSRMatrixGlobalNumRows(a)==hypre_ParCSRMatrixGlobalNumCols(a),"matrix is not square");
         check(hypre_ParCSRMatrixFirstRowIndex(a)==hypre_ParCSRMatrixFirstColDiag(a),"row/column ownership differs");
-        check(hypre_ParCSRMatrixGlobalNumRows(a)>0 && hypre_ParCSRMatrixGlobalNumRows(a)<=limit && limit<=50000,
+        check(hypre_ParCSRMatrixGlobalNumRows(a)>0 && hypre_ParCSRMatrixGlobalNumRows(a)<=limit && limit<=(whole ? root_row_limit : 50000),
               "selected matrix exceeds the configured coarse limit");
         mpi(MPI_Comm_dup(hypre_ParCSRMatrixComm(a),&comm));
         mpi(MPI_Comm_rank(comm,&rank)); mpi(MPI_Comm_size(comm,&size));
@@ -206,6 +219,7 @@ struct State {
                 row+=counts[peer]; total_nnz+=nnz_counts[peer];
             }
             check(row==rows,"coarse rows do not cover the matrix");
+            check(!whole || total_nnz <= root_entry_limit, "root matrix exceeds the entry limit");
             HYPRE_BigInt starts[2]={0,rows};
             matrix=hypre_ParCSRMatrixCreate(MPI_COMM_SELF,rows,rows,starts,starts,0,total_nnz,0);
             hypre(hypre_ParCSRMatrixInitialize_v2(matrix,location));
@@ -274,13 +288,15 @@ struct State {
             hypre(HYPRE_BoomerAMGSetCycleNumSweeps(solver,4,3));
             hypre(HYPRE_BoomerAMGSetMaxLevels(solver,25-level));
             hypre(HYPRE_BoomerAMGSetTol(solver,0));
-            hypre(HYPRE_BoomerAMGSetMaxIter(solver,1));
+            hypre(HYPRE_BoomerAMGSetMaxIter(solver,cycles_per_call));
             hypre(original_setup()(solver,reinterpret_cast<HYPRE_ParCSRMatrix>(matrix),
                                   reinterpret_cast<HYPRE_ParVector>(rhs),reinterpret_cast<HYPRE_ParVector>(solution)));
         }
         ++audit.setups; audit.empty_setups+=(local==0);
         audit.level=level; audit.rows=rows; audit.nnz=total_nnz;
         if (rank==0) {
+            if (whole) std::printf("BP3 root correction: %d rows, %d entries, %d ranks -> 1, %d cycles per exchange\n",
+                                   rows,total_nnz,size,cycles_per_call);
             std::printf("BP3 consolidation: level %d, %d rows, %d entries, %d ranks -> 1\n",level,rows,total_nnz,size);
             auto* child=reinterpret_cast<hypre_ParAMGData*>(solver);
             std::printf("BP3 consolidated hierarchy rows:");
@@ -313,11 +329,20 @@ struct State {
     }
     void apply(hypre_ParVector* f,hypre_ParVector* u)
     {
+        check(hypre_ParVectorFirstIndex(f)==first && hypre_ParVectorFirstIndex(u)==first &&
+              hypre_ParVectorGlobalSize(f)==rows && hypre_ParVectorGlobalSize(u)==rows,
+              "coarse vector ownership changed");
         check(hypre_ParVectorNumVectors(f)==1 && hypre_ParVectorNumVectors(u)==1,"multiple vectors are unsupported");
         check(hypre_VectorSize(hypre_ParVectorLocalVector(f))==local &&
               hypre_VectorSize(hypre_ParVectorLocalVector(u))==local,"coarse vector size changed");
         auto* fd=hypre_VectorData(hypre_ParVectorLocalVector(f));
         auto* ud=hypre_VectorData(hypre_ParVectorLocalVector(u));
+        // The assembled p=1 interface may wrap different Krylov vectors on each call.
+        if (whole && bound && (fd != bound_f || ud != bound_u)) {
+            for (auto& request : gather) mpi(MPI_Request_free(&request));
+            for (auto& request : scatter) mpi(MPI_Request_free(&request));
+            gather.clear(); scatter.clear(); bound = false;
+        }
         if (!bound) bind(fd,ud);
         check(fd==bound_f && ud==bound_u,"coarse vector storage changed after request binding");
         auto start=[](std::vector<MPI_Request>& r) {if (!r.empty()) mpi(MPI_Startall(int(r.size()),r.data()));};
@@ -328,7 +353,7 @@ struct State {
         if (rank==0 && local) copy(hypre_VectorData(hypre_ParVectorLocalVector(rhs))+first,fd,local*sizeof(double));
         wait(gather);
         if (rank==0) {
-            // This is a coarse correction from zero, once per outer AMG V-cycle.
+            // A complete root solve keeps all its cycles between one gather and scatter.
             hypre(hypre_ParVectorSetConstantValues(solution,0));
             hypre(HYPRE_BoomerAMGSolve(solver,reinterpret_cast<HYPRE_ParCSRMatrix>(matrix),
                                      reinterpret_cast<HYPRE_ParVector>(rhs),reinterpret_cast<HYPRE_ParVector>(solution)));
@@ -337,7 +362,8 @@ struct State {
             if (local) copy(ud,hypre_VectorData(hypre_ParVectorLocalVector(solution))+first,local*sizeof(double));
         }
         wait(scatter);
-        ++audit.cycles;
+        audit.cycles += cycles_per_call;
+        if (whole) ++audit.root_calls;
     }
     ~State()
     {
@@ -366,7 +392,7 @@ void begin(HYPRE_Solver solver, int limit)
 {
     end(solver);
     auto* data=reinterpret_cast<hypre_ParAMGData*>(solver);
-    check(limit==0 || (limit>9 && limit<=50000),"invalid selected coarse limit");
+    check(limit==0 || (limit>9 && limit<=50000) || limit==root_row_limit,"invalid selected coarse limit");
     audit.threshold_rows=limit;
     limits[data]=limit;
     hypre(HYPRE_BoomerAMGSetSeqThreshold(solver,limit));
@@ -425,9 +451,33 @@ extern "C" HYPRE_Int mars_bp3_amg_setup(HYPRE_Solver solver,HYPRE_ParCSRMatrix a
     int ranks=0;
     bp3::mpi(MPI_Comm_size(hypre_ParCSRMatrixComm(reinterpret_cast<hypre_ParCSRMatrix*>(a)),&ranks));
     bp3::begin(solver,bp3::selected_threshold(requested,ranks));
+    if (requested == -2 && ranks > 1) {
+        auto* data = reinterpret_cast<hypre_ParAMGData*>(solver);
+        auto* matrix = reinterpret_cast<hypre_ParCSRMatrix*>(a);
+        // Assemble the same matrix on one device before constructing any AMG level.
+        bp3::states.emplace(data,std::make_unique<bp3::State>(data,0,bp3::root_row_limit,matrix));
+        return 0;
+    }
     return bp3::original_setup()(solver,a,f,u);
     } catch (...) { bp3::fail("exception in explicit coarse setup"); }
 }
+extern "C" HYPRE_Int mars_bp3_amg_solve(HYPRE_Solver solver,HYPRE_ParCSRMatrix a,
+                                        HYPRE_ParVector f,HYPRE_ParVector u)
+{
+    try {
+    auto* data = reinterpret_cast<hypre_ParAMGData*>(solver);
+    auto found = bp3::states.find(data);
+    if (found != bp3::states.end() && found->second->whole) {
+        bp3::check(found->second->source == reinterpret_cast<hypre_ParCSRMatrix*>(a),
+                   "root matrix changed without setup");
+        found->second->apply(reinterpret_cast<hypre_ParVector*>(f),reinterpret_cast<hypre_ParVector*>(u));
+        return 0;
+    }
+    bp3::hypre(HYPRE_BoomerAMGSolve(solver,a,f,u));
+    return 0;
+    } catch (...) { bp3::fail("exception in explicit coarse solve"); }
+}
+
 extern "C" HYPRE_Int mars_bp3_amg_destroy(HYPRE_Solver solver)
 {
     try {

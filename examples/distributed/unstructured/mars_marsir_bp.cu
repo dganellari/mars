@@ -97,7 +97,7 @@
 // Run: mars_marsir_bp --ptx-dir <marsir-mlir/generated> --spec bp3 --p 3 [--ne 32]
 //                     [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--reps 20] [--dss-ptx file]
 //                     [--block B] [--rotate] [--block-dss passes|nodes|generated]
-//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t]
+//                     [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t]
 //                     [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]
 
 #include "mars_config.hpp"   // MARS_ENABLE_HYPRE, before it is tested below
@@ -1581,11 +1581,15 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--amg-theta")) o.amg_theta = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-agg")) o.amg_agg = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--amg-coarse-size")) o.amg_coarse_size = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--amg-consolidate") && i + 1 < argc && !strcmp(argv[i + 1], "root")) {
+            o.consolidate_rows = -2;
+            o.consolidate_explicit = true;
+        }
         else if (!strcmp(argv[i], "--amg-consolidate")) {
             o.consolidate_explicit = true;
             char* end = nullptr;
             const long rows = std::strtol(argv[i + 1], &end, 10);
-            if (end == argv[i + 1] || *end || rows < -1 || rows > 50000)
+            if (end == argv[i + 1] || *end || rows < -2 || rows > 50000)
                 error = "invalid --amg-consolidate row limit";
             else o.consolidate_rows = (int)rows;
         }
@@ -1646,8 +1650,8 @@ int main(int argc, char** argv)
 #ifdef MARS_BP3_HCOARSE_CHECK
     if (!error && o.h_check && !o.h_levels) error = "--h-check needs --h-levels 1..3";
 #endif
-    if (!error && (o.consolidate_rows < -1 || o.consolidate_rows > 50000 || (o.consolidate_rows > 0 && o.consolidate_rows <= 9)))
-        error = "--amg-consolidate expects -1 (adaptive), 0 (off), or 10..50000";
+    if (!error && (o.consolidate_rows < -2 || o.consolidate_rows > 50000 || (o.consolidate_rows > 0 && o.consolidate_rows <= 9)))
+        error = "--amg-consolidate expects root (whole bottom, at most 300000 rows), -1 (adaptive), 0 (off), or 10..50000";
     if (!error && o.consolidate_rows != 0 && !o.amg) error = "--amg-consolidate needs --amg";
 #ifndef MARS_BP3_COARSE_CONSOLIDATION
     if (!error && o.consolidate_rows != 0)
@@ -1694,7 +1698,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate -1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }

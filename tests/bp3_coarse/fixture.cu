@@ -235,7 +235,7 @@ void check_matrix(HYPRE_Solver solver)
     auto found=bp3::states.find(parent);
     if (found==bp3::states.end()) return;
     auto& s=*found->second;
-    auto* a=hypre_ParAMGDataAArray(parent)[s.level];
+    auto* a=s.source;
     HYPRE_BigInt starts[2]={s.first,s.first+s.local};
     auto* v=hypre_ParVectorCreate(s.comm,s.rows,starts);
     auto* y=hypre_ParVectorCreate(s.comm,s.rows,starts);
@@ -346,12 +346,12 @@ int main(int argc,char** argv)
         bp3::hypre(HYPRE_BoomerAMGSetCycleRelaxType(amg,18,3));
         bp3::hypre(HYPRE_BoomerAMGSetCycleNumSweeps(amg,4,3));
         bp3::hypre(HYPRE_BoomerAMGSetTol(amg,0));
-        bp3::hypre(HYPRE_BoomerAMGSetMaxIter(amg,1));
+        bp3::hypre(HYPRE_BoomerAMGSetMaxIter(amg,bp3::threshold()==-2 ? 3 : 1));
         bp3::hypre(HYPRE_ParCSRPCGCreate(MPI_COMM_WORLD,&pcg));
         bp3::hypre(HYPRE_ParCSRPCGSetMaxIter(pcg,200));
         bp3::hypre(HYPRE_ParCSRPCGSetTol(pcg,1e-11));
         bp3::hypre(HYPRE_ParCSRPCGSetTwoNorm(pcg,1));
-        bp3::hypre(HYPRE_ParCSRPCGSetPrecond(pcg,HYPRE_BoomerAMGSolve,fixture_setup,amg));
+        bp3::hypre(HYPRE_ParCSRPCGSetPrecond(pcg,mars_bp3_amg_solve,fixture_setup,amg));
         auto pa=reinterpret_cast<HYPRE_ParCSRMatrix>(a);
         auto pb=reinterpret_cast<HYPRE_ParVector>(rhs),px=reinterpret_cast<HYPRE_ParVector>(x);
         bp3::hypre(HYPRE_ParCSRPCGSetup(pcg,pa,pb,px));
@@ -359,13 +359,13 @@ int main(int argc,char** argv)
         // A fixed symmetric correction must not depend on a previous right-hand side.
         fill(exact,0);
         bp3::hypre(hypre_ParVectorSetConstantValues(x,0));
-        bp3::hypre(HYPRE_BoomerAMGSolve(amg,pa,reinterpret_cast<HYPRE_ParVector>(exact),px));
+        bp3::hypre(mars_bp3_amg_solve(amg,pa,reinterpret_cast<HYPRE_ParVector>(exact),px));
         bp3::hypre(hypre_ParVectorCopy(x,residual));
         const double positive0=hypre_ParVectorInnerProd(exact,residual);
         const double correction_norm=hypre_ParVectorInnerProd(residual,residual);
         fill(rhs,1);
         bp3::hypre(hypre_ParVectorSetConstantValues(x,0));
-        bp3::hypre(HYPRE_BoomerAMGSolve(amg,pa,pb,px));
+        bp3::hypre(mars_bp3_amg_solve(amg,pa,pb,px));
         const double positive1=hypre_ParVectorInnerProd(rhs,x);
         const double xy=hypre_ParVectorInnerProd(exact,x),yx=hypre_ParVectorInnerProd(rhs,residual);
         bp3::check(std::isfinite(positive0) && positive0>0 && std::isfinite(positive1) && positive1>0,
@@ -373,7 +373,7 @@ int main(int argc,char** argv)
         bp3::check(std::isfinite(xy) && std::isfinite(yx) && std::abs(xy-yx)<=1e-10*(std::abs(xy)+std::abs(yx)),
                    "preconditioner symmetry check failed");
         bp3::hypre(hypre_ParVectorSetConstantValues(x,0));
-        bp3::hypre(HYPRE_BoomerAMGSolve(amg,pa,reinterpret_cast<HYPRE_ParVector>(exact),px));
+        bp3::hypre(mars_bp3_amg_solve(amg,pa,reinterpret_cast<HYPRE_ParVector>(exact),px));
         bp3::hypre(hypre_ParVectorAxpy(-1,residual,x));
         const double repeated=std::sqrt(hypre_ParVectorInnerProd(x,x)/correction_norm);
         bp3::check(std::isfinite(repeated) && repeated<=1e-12,"preconditioner depends on earlier calls");
@@ -399,13 +399,16 @@ int main(int argc,char** argv)
     }
     bp3::hypre(mars_bp3_amg_destroy(amg));
     bp3::check(bp3::audit.setups==bp3::audit.destroyed,"coarse state leaked");
-    if (size>1 && bp3::threshold()>0) {
+    if (size > 1 && bp3::threshold() == -2)
+        bp3::check(bp3::audit.level == 0 && bp3::audit.rows == n && bp3::audit.root_calls > 0 &&
+                   bp3::audit.cycles == 3 * bp3::audit.root_calls, "root cycle grouping differs");
+    if (size>1 && bp3::threshold()!=0) {
         const bool stalled=n==32767 && bp3::threshold()==100;
         if (stalled) bp3::check(bp3::audit.skipped_setups==2 && bp3::audit.cycles==0,"stalled hierarchy fallback was not exercised");
         else bp3::check(bp3::audit.setups==2 && bp3::audit.cycles>0,"consolidation did not activate");
     }
     if (mode=="empty-root" && size>1 && rank==0)
-        bp3::check(count==0 && bp3::audit.empty_setups==(bp3::threshold()>0 ? 2 : 0),"empty root was not exercised");
+        bp3::check(count==0 && bp3::audit.empty_setups==(bp3::threshold()!=0 ? 2 : 0),"empty root was not exercised");
     if (rank==0) std::printf("PASS %s ranks=%d true=%.3e setups=%lld cycles=%lld\n",mode.c_str(),size,worst,bp3::audit.setups,bp3::audit.cycles);
     for (auto* v:{exact,rhs,x,residual}) bp3::hypre(hypre_ParVectorDestroy(v));
     bp3::hypre(HYPRE_IJMatrixDestroy(ij));

@@ -52,8 +52,8 @@ class Integration(unittest.TestCase):
             subprocess.run(args, check=True)
             cases = [(p, ne, c, enabled or c == 0) for _, p, _, ne in run.timing_cases() for c in (0, -1)]
             cases += [(p, 8, c, enabled or c == 0) for p in (1, 3, 7) for c in (0, -1)]
-            cases += [(3, 8, c, False) for c in (-2, 1, 9, 50001, '1x', '', '99999999999999999999999')]
-            cases += [(3, 8, c, enabled) for c in (10, 50000)]
+            cases += [(3, 8, c, False) for c in (-3, 1, 9, 50001, '1x', '', '99999999999999999999999')]
+            cases += [(3, 8, c, enabled) for c in (-2, "root", 10, 50000)]
             for p, ne, cutoff, expected in cases:
                 args = [str(binary)] + common.solver_args(Path('/generated'), p, ne, cutoff)
                 result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

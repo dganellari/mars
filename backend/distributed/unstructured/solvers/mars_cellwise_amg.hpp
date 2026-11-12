@@ -328,7 +328,7 @@ public:
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
         HYPRE_ParVectorSetConstantValues(u_, 0.0);
-        HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
+        solve_amg();
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
         MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
         if (rows_ > 0)
@@ -372,11 +372,20 @@ public:
     {
         MARS_CELLWISE_CK(cudaMemsetAsync(z, 0, rows_ * sizeof(double), stream_));
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
-        wrapped(z, r, [&] { HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_); });
+        wrapped(z, r, [&] { solve_amg(); });
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
     }
 
 private:
+    void solve_amg() const
+    {
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+        mars_bp3_amg_solve(amg_, matrix(), f_, u_);
+#else
+        HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
+#endif
+    }
+
     // Runs f with u_ and f_ pointing at u and f instead of their own data (no copies, as
     // MFEM wraps its vectors for Hypre).
     template <class F>

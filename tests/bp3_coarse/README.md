@@ -17,6 +17,27 @@ These 15 cases perform 60 manufactured solves, with action, symmetry,
 positivity, repeated-application and lifetime checks. Their true residual must
 be below `1e-10`.
 
+## Whole-bottom consolidation
+
+`--amg-consolidate root` gathers the complete assembled bottom matrix onto
+rank 0 before AMG setup. Each correction gathers the RHS once, runs the
+configured number of AMG cycles on that GPU, and scatters the result once.
+The p and h transfers and the assembled matrix are unchanged; the AMG hierarchy
+can differ from distributed setup. This is an explicit best-configuration
+option, not the matched MFEM configuration or the automatic default.
+
+The mode refuses matrices above 300000 rows or 30000000 entries before
+allocating the root matrix. These bounds do not include AMG hierarchy storage.
+On one rank it uses ordinary AMG. It has been checked on CUDA with shared
+Hypre 2.33, including empty owners; this does not establish HIP support or
+arbitrary-scale weak scaling.
+
+Set `BP3_CONSOLIDATE_ROWS=-2` for the fixture's whole-bottom mode. Run balanced
+511-row cases on 1, 4 and 8 ranks, empty-root and empty-tail cases on 4 ranks,
+and a balanced 32767-row case on 4 ranks. Besides the checks above, the fixture
+requires three cycles per root exchange and checks changed vector bindings.
+Keep the disabled and nested-consolidation controls as well.
+
 The site validation under `integration/` freezes a code-only source snapshot,
 the pinned Cornerstone/GoogleTest sources and the exact accepted PTX. It builds
 the normal top-level MARS project twice, with consolidation OFF and ON. Both
