@@ -75,6 +75,12 @@ static void shifted_gradient_checks() {
         }
         for(int k=0;k<count;++k) near(ordinary.volume[k],shifted.volume[k],0,"derivative shift preserves volume");
     }
+    // This corner folds while all edge midpoints and volume quadrature points remain valid.
+    double x[24];coordinates(8,x);for(int j=0;j<3;++j) x[3*6+j]=.6;
+    Geometry g;Point p;
+    require(geometry(8,x,g),"ordinary sample points miss folded corner");
+    require(!face_point(8,x,1,2,false,p,true),"shifted boundary derivative rejects folded corner");
+    require(!geometry(8,x,g,true),"flow setup rejects folded corner before boundary assembly");
 }
 template<class Function> static void jacobian_checks(State* state,int count,Function flux) {
     const auto base=flux();constexpr double eps=1e-5;

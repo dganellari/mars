@@ -78,6 +78,13 @@ MARS_MIXED_HD inline bool geometry(int count,const double* xyz,Geometry& g,bool 
             for(int a=0;a<3;++a) p.area[a]=tet.area[3*q+a];
         }
     } else if(count==8) {
+        if(shifted_gradients) {
+            // Boundary derivatives use vertices; reject invalid Jacobians before the flow kernels run.
+            for(int k=0;k<8;++k) {
+                double r[3];for(int a=0;a<3;++a) r[a]=sign(k,a);
+                Point p;if(!evaluate(8,xyz,r,p)) return false;
+            }
+        }
         g.samples=12;int q=0;
         for(int axis=0;axis<3;++axis) for(int k=0;k<8;++k) if(sign(k,axis)<0) {
             auto& p=g.interior[q++];double r[3],j[9];
