@@ -405,17 +405,26 @@ public:
     {
         cstone::DeviceVector<RealType> d_newSolution(newNumNodes, RealType(0));
 
-        int numBlocks1 = (oldNumNodes + blockSize - 1) / blockSize;
-        copyOldNodeSolutionsKernel<<<numBlocks1, blockSize>>>(oldNodeSolution, d_newSolution.data(), oldNumNodes);
+        if (oldNumNodes > 0)
+        {
+            int numBlocks = (oldNumNodes + blockSize - 1) / blockSize;
+            copyOldNodeSolutionsKernel<<<numBlocks, blockSize>>>(oldNodeSolution, d_newSolution.data(), oldNumNodes);
+            cudaCheckError();
+        }
 
-        KeyType edgeBaseNode = oldNumNodes;
-        int numBlocks2       = (numElements + blockSize - 1) / blockSize;
-        transferByParentageTetKernel<<<numBlocks2, blockSize>>>(
-            oldConn0, oldConn1, oldConn2, oldConn3, marks,
-            oldNodeSolution, d_newSolution.data(), edgeBaseNode,
-            sortedEdgeKeys, numUniqueEdges, numElements, oldNumNodes);
+        // A rank with no refined parents has no edge or marks array; its field is just copied.
+        if (numUniqueEdges > 0)
+        {
+            KeyType edgeBaseNode = oldNumNodes;
+            int numBlocks = (numElements + blockSize - 1) / blockSize;
+            transferByParentageTetKernel<<<numBlocks, blockSize>>>(
+                oldConn0, oldConn1, oldConn2, oldConn3, marks,
+                oldNodeSolution, d_newSolution.data(), edgeBaseNode,
+                sortedEdgeKeys, numUniqueEdges, numElements, oldNumNodes);
+            cudaCheckError();
+        }
 
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
         return d_newSolution;
     }
 

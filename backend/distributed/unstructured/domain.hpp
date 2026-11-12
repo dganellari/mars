@@ -105,11 +105,11 @@ struct QuadTag
     static constexpr const char* Name    = "Quadrilateral";
 };
 
+// The smallest and largest coordinate over all ranks, per axis
 template<class RealType>
-cstone::Box<RealType>
-device_mesh_box(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm)
+void device_mesh_extent(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm,
+                        RealType (&lower)[3], RealType (&upper)[3])
 {
-    RealType lower[3], upper[3];
     const RealType* coordinates[3] = {x, y, z};
     for (int d = 0; d < 3; ++d)
     {
@@ -125,6 +125,14 @@ device_mesh_box(const RealType* x, const RealType* y, const RealType* z, size_t 
     auto datatype = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(MPI_IN_PLACE, lower, 3, datatype, MPI_MIN, comm);
     MPI_Allreduce(MPI_IN_PLACE, upper, 3, datatype, MPI_MAX, comm);
+}
+
+template<class RealType>
+cstone::Box<RealType>
+device_mesh_box(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm)
+{
+    RealType lower[3], upper[3];
+    device_mesh_extent(x, y, z, nodes, comm, lower, upper);
     for (int d = 0; d < 3; ++d)
     {
         RealType padding = RealType(0.05) * (upper[d] - lower[d]);
@@ -743,12 +751,16 @@ public:
     // computed on GPU + MPI. Used for AMR mesh rebuild after refinement.
     // The input vectors are consumed (moved into the domain's owned buffers
     // for sync scratch space; coords are passed straight to sync()).
+    // fixedBox: the box to encode the node keys with instead of one fitted to
+    // the coordinates, which must lie inside it. Non-conforming AMR keeps the
+    // box of the first mesh, so node keys and positions survive rebuilds.
     ElementDomain(DeviceCoordsTuple&& d_coords,
                   DeviceConnectivityTuple&& d_conn,
                   int rank,
                   int numRanks,
                   int bucketSize = 64,
-                  unsigned bucketSizeFocus = 8);
+                  unsigned bucketSizeFocus = 8,
+                  const cstone::Box<RealType>* fixedBox = nullptr);
 
     // Per-phase timings populated by the ctor (in ms, rank-local).
     // All cudaDeviceSynchronize-fenced so they reflect actual elapsed time.
@@ -2021,6 +2033,7 @@ private:
                   int blockSize,
                   int numBlocks)
     {
+        if (elementCount_ == 0) return;
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             auto& d_i0 = std::get<0>(d_conn_);
@@ -2628,7 +2641,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
                                                                               int rank,
                                                                               int numRanks,
                                                                               int bucketSize,
-                                                                              unsigned bucketSizeFocus)
+                                                                              unsigned bucketSizeFocus,
+                                                                              const cstone::Box<RealType>* fixedBox)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -2645,7 +2659,19 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     nodeCount_    = d_x.size();
     elementCount_ = std::get<0>(d_conn).size();
 
-    box_ = device_mesh_box(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD);
+    if (fixedBox)
+    {
+        RealType lower[3], upper[3];
+        device_mesh_extent(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD, lower, upper);
+        const RealType lo[3] = {fixedBox->xmin(), fixedBox->ymin(), fixedBox->zmin()};
+        const RealType hi[3] = {fixedBox->xmax(), fixedBox->ymax(), fixedBox->zmax()};
+        for (int d = 0; d < 3; ++d)
+            if (lower[d] < lo[d] || upper[d] > hi[d])
+                throw std::runtime_error("ElementDomain: node coordinates lie outside the fixed box");
+        box_ = *fixedBox;
+    }
+    else
+        box_ = device_mesh_box(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD);
 
     RealType theta = 0.5;
 
@@ -2946,6 +2972,11 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     // Work directly with device data
     auto& d_h = std::get<0>(d_props_);
     d_h.resize(nodeCount_);
+    if (elementCount_ == 0)
+    {
+        thrust::fill(thrust::device, d_h.begin(), d_h.end(), RealType(0));
+        return;
+    }
 
     // Compute per-element h from actual edge lengths for Tet and Hex elements.
     // Cornerstone uses h as an SPH smoothing length (interaction radius = 2*h),
@@ -3062,20 +3093,24 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
         DeviceVector<RealType> d_elemZ(elementCount_);
         DeviceVector<RealType> d_elemH(elementCount_);
         d_elemSfcCodes_.resize(elementCount_);
+        // Cornerstone preserves removal markers; fresh mesh elements must not inherit them from reused memory.
+        thrust::fill(thrust::device, thrust::device_pointer_cast(d_elemSfcCodes_.data()),
+                     thrust::device_pointer_cast(d_elemSfcCodes_.data() + elementCount_), KeyType(0));
 
         // Extract element coordinates
-        extractRepCoordinatesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-            thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_h.data()),
-            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), thrust::raw_pointer_cast(d_elemX.data()),
-            thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
-            thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
+        if (elementCount_)
+            extractRepCoordinatesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+                thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_h.data()),
+                thrust::raw_pointer_cast(d_elemToNodeMap_.data()), thrust::raw_pointer_cast(d_elemX.data()),
+                thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
+                thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
         // With SFC node ownership the star completion adds every element an owner needs, so the distance search
         // only has to find direct neighbours. Search with each element's shortest edge: the mean edge length at
         // the representative node reaches many cells deep across flat or stretched cells.
-        if (sfcOwnership_)
+        if (sfcOwnership_ && elementCount_)
         {
             auto conn = connPtrsOf<KeyType, NodesPerElement>(d_conn_, std::make_index_sequence<NodesPerElement>{});
             shortestEdgeLengths<ElementTag>(conn, thrust::raw_pointer_cast(d_x.data()),
@@ -3150,21 +3185,22 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 auto& d_i7 = std::get<7>(d_conn_);
 
 
-            extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
-                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
-                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
-                thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
-                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
-                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
-                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
-                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
-                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
-                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
-                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
-                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
-                elementCount_);
+            if (elementCount_)
+                extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
+                    thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                    thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                    thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                    thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                    elementCount_);
             cudaCheckError();
 
             // Package into tuple for sync (direct tie, not std::ref)
@@ -3201,27 +3237,28 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
 
             // Rebuild node arrays using post-sync LOCAL connectivity (d_conn_local_ids_)
             int newNumBlocks = (elementCount_ + blockSize - 1) / blockSize;
-            rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
-                thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
-                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
-                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
-                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
-                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
-                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
-                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
-                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
-                elementCount_);
+            if (elementCount_)
+                rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
+                    elementCount_);
             cudaCheckError();
             } else {
                 // Standard sync with SFC-decoded coordinates (block-aware for multi-block meshes)
@@ -3606,6 +3643,7 @@ void AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>::createElement
         if constexpr (NodesPerElement >= 6) std::get<5>(d_conn_local_ids_).resize(elementCount);
         if constexpr (NodesPerElement >= 7) std::get<6>(d_conn_local_ids_).resize(elementCount);
         if constexpr (NodesPerElement >= 8) std::get<7>(d_conn_local_ids_).resize(elementCount);
+        if (elementCount == 0) return;
 
         int blockSize = 256;
         int numBlocks = (elementCount + blockSize - 1) / blockSize;
@@ -3795,6 +3833,7 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
         d_node_x_.resize(nodeCount);
         d_node_y_.resize(nodeCount);
         d_node_z_.resize(nodeCount);
+        if (nodeCount == 0) return;
 
         // Decode all SFC keys to coordinates (parallel kernel)
         int blockSize = 256;
@@ -3863,6 +3902,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
         if (numConnectivityEntries == 0)
         {
             nodeCount_ = 0;
+            d_localToGlobalSfcMap_.resize(0);
+            d_localToGlobalBlock_.resize(0);
             return;
         }
 

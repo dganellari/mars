@@ -270,6 +270,19 @@ struct OctreeAlignedRefine
         size_t numElements, size_t numNodes,
         int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            Result res;
+            res.numNodes = res.oldNumNodes = numNodes;
+            res.d_x.resize(numNodes); res.d_y.resize(numNodes); res.d_z.resize(numNodes);
+            if (numNodes)
+            {
+                cudaCheckCall(cudaMemcpy(res.d_x.data(), nodeX, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_y.data(), nodeY, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_z.data(), nodeZ, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+            }
+            return res;
+        }
         // Per-element child count (1 or 8)
         cstone::DeviceVector<uint64_t> d_childCount(numElements);
         cstone::DeviceVector<uint64_t> d_isMarked(numElements);
@@ -371,6 +384,14 @@ struct OctreeAlignedRefine
         cstone::DeviceVector<RealType>& newSolution,
         int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            newSolution.resize(numNodes);
+            if (numNodes)
+                cudaCheckCall(cudaMemcpy(newSolution.data(), oldSolution, numNodes * sizeof(RealType),
+                                         cudaMemcpyDeviceToDevice));
+            return;
+        }
         // Recompute markedPrefix locally (cheap; same logic as refineLocal)
         cstone::DeviceVector<uint64_t> d_isMarked(numElements);
         thrust::transform(thrust::device, marks, marks + numElements,

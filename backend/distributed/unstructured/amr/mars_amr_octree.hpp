@@ -9,57 +9,19 @@
 #include <thrust/count.h>
 #include <thrust/copy.h>
 #include <mpi.h>
+#include <type_traits>
+#include <utility>
 
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/domain.hpp"
 #include "cstone/tree/csarray.hpp"
+#include "mars_amr_tree_layout.hpp"
 #include "../utils/mars_gpu_reduce.hpp"
 
 namespace mars
 {
 namespace amr
 {
-
-template<typename KeyType>
-__global__ void assignLevelsFromTreeKernel(const KeyType* treeLeaves,
-                                           size_t numLeaves,
-                                           const KeyType* elemSfcKeys,
-                                           int* elemLevels,
-                                           size_t numElements)
-{
-    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= numElements) return;
-
-    KeyType key = elemSfcKeys[e];
-
-    size_t lo = 0, hi = numLeaves;
-    while (lo < hi)
-    {
-        size_t mid = (lo + hi) / 2;
-        if (treeLeaves[mid + 1] <= key)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-
-    // SFC range of a leaf at level L is nodeRange(0) / 8^L
-    if (lo < numLeaves)
-    {
-        KeyType range = treeLeaves[lo + 1] - treeLeaves[lo];
-        int level     = 0;
-        KeyType nr    = cstone::nodeRange<KeyType>(0);
-        while (nr > range && level < 21)
-        {
-            nr >>= 3;
-            level++;
-        }
-        elemLevels[e] = level;
-    }
-    else
-    {
-        elemLevels[e] = 0;
-    }
-}
 
 template<typename RealType>
 __global__ void markFromErrorKernel(const RealType* errorPerElement,
@@ -84,103 +46,60 @@ __global__ void markFromErrorKernel(const RealType* errorPerElement,
         marks[e] = 0;
 }
 
-// Enforce 1-irregular constraint: if a neighbor will be >1 level finer,
-// propagate the refinement mark to prevent hanging nodes.
-template<typename KeyType>
-__global__ void enforce1IrregularKernel(const int* elemLevels,
-                                        const uint8_t* marksIn,
-                                        uint8_t* marksOut,
-                                        const KeyType* conn0,
-                                        const KeyType* conn1,
-                                        const KeyType* conn2,
-                                        const KeyType* conn3,
-                                        const KeyType* conn4,
-                                        const KeyType* conn5,
-                                        const KeyType* conn6,
-                                        const KeyType* conn7,
-                                        const KeyType* nodeToElemOffsets,
-                                        const KeyType* nodeToElemList,
-                                        size_t numElements)
+template<typename KeyType, int N>
+struct AmrCorners
 {
-    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    const KeyType* c[N];
+};
+
+// Shortest edge of each element: hexahedra in the refiner's corner numbering, tetrahedra all six edges
+template<int N, typename KeyType, typename RealType>
+__global__ void shortestEdgeKernel(AmrCorners<KeyType, N> conn, const RealType* x, const RealType* y,
+                                   const RealType* z, size_t numElements, RealType* size)
+{
+    static_assert(N == 8 || N == 4, "hexahedra and tetrahedra");
+    constexpr int numEdges     = N == 8 ? 12 : 6;
+    constexpr int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                                  {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    constexpr int tetEdges[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+    size_t e = blockIdx.x * size_t(blockDim.x) + threadIdx.x;
     if (e >= numElements) return;
-
-    uint8_t myMark = marksIn[e];
-    int myLevel   = elemLevels[e];
-    int myNewLevel = myLevel + ((myMark > 0) ? 1 : 0);
-
-    KeyType nodes[8] = {conn0[e], conn1[e], conn2[e], conn3[e], conn4[e], conn5[e], conn6[e], conn7[e]};
-
-    uint8_t mark = myMark;
-
-    for (int ni = 0; ni < 8; ++ni)
+    RealType shortest2 = 0;
+    for (int q = 0; q < numEdges; ++q)
     {
-        KeyType node  = nodes[ni];
-        KeyType start = nodeToElemOffsets[node];
-        KeyType end   = nodeToElemOffsets[node + 1];
-
-        for (KeyType j = start; j < end; ++j)
-        {
-            KeyType neighbor = nodeToElemList[j];
-            if (neighbor == e) continue;
-
-            int neighborLevel    = elemLevels[neighbor];
-            uint8_t neighborMark  = marksIn[neighbor];
-            int neighborNewLevel = neighborLevel + ((neighborMark > 0) ? 1 : 0);
-
-            if (neighborNewLevel > myNewLevel + 1)
-            {
-                mark = 1;
-            }
-        }
+        const KeyType a = conn.c[N == 8 ? edges[q][0] : tetEdges[q][0]][e];
+        const KeyType b = conn.c[N == 8 ? edges[q][1] : tetEdges[q][1]][e];
+        const RealType dx = x[b] - x[a], dy = y[b] - y[a], dz = z[b] - z[a];
+        const RealType l2 = dx * dx + dy * dy + dz * dz;
+        shortest2         = (q == 0 || l2 < shortest2) ? l2 : shortest2;
     }
-
-    marksOut[e] = mark;
+    size[e] = sqrt(shortest2);
 }
 
-// Tet variant: 4 corner nodes per element (vs 8 for hex). Same algorithm.
-template<typename KeyType>
-__global__ void enforce1IrregularKernelTet(const int* elemLevels,
-                                            const uint8_t* marksIn,
-                                            uint8_t* marksOut,
-                                            const KeyType* conn0,
-                                            const KeyType* conn1,
-                                            const KeyType* conn2,
-                                            const KeyType* conn3,
-                                            const KeyType* nodeToElemOffsets,
-                                            const KeyType* nodeToElemList,
-                                            size_t numElements)
+// An element is marked too when, after this refinement, an element sharing one of its nodes would be more than
+// three times smaller: one level apart is a factor 2, two levels a factor 4. Sizes rather than levels: the levels
+// of cornerstone's tree follow its bucket size, and a coarse element and its refined neighbour can share a leaf.
+template<int N, typename KeyType, typename RealType>
+__global__ void enforce1IrregularKernel(const RealType* size, const uint8_t* marksIn, uint8_t* marksOut,
+                                        AmrCorners<KeyType, N> conn, const KeyType* nodeToElemOffsets,
+                                        const KeyType* nodeToElemList, size_t numElements)
 {
-    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t e = blockIdx.x * size_t(blockDim.x) + threadIdx.x;
     if (e >= numElements) return;
 
-    uint8_t myMark = marksIn[e];
-    int myLevel    = elemLevels[e];
-    int myNewLevel = myLevel + ((myMark > 0) ? 1 : 0);
-
-    KeyType nodes[4] = {conn0[e], conn1[e], conn2[e], conn3[e]};
-
-    uint8_t mark = myMark;
-
-    for (int ni = 0; ni < 4; ++ni)
+    const RealType mySize = size[e] * (marksIn[e] > 0 ? RealType(0.5) : RealType(1));
+    uint8_t mark          = marksIn[e];
+    for (int ni = 0; ni < N; ++ni)
     {
-        KeyType node  = nodes[ni];
-        KeyType start = nodeToElemOffsets[node];
-        KeyType end   = nodeToElemOffsets[node + 1];
-
-        for (KeyType j = start; j < end; ++j)
+        const KeyType node = conn.c[ni][e];
+        for (KeyType j = nodeToElemOffsets[node]; j < nodeToElemOffsets[node + 1]; ++j)
         {
-            KeyType neighbor = nodeToElemList[j];
+            const KeyType neighbor = nodeToElemList[j];
             if (neighbor == e) continue;
-
-            int neighborLevel    = elemLevels[neighbor];
-            uint8_t neighborMark = marksIn[neighbor];
-            int neighborNewLevel = neighborLevel + ((neighborMark > 0) ? 1 : 0);
-
-            if (neighborNewLevel > myNewLevel + 1) { mark = 1; }
+            const RealType neighborSize = size[neighbor] * (marksIn[neighbor] > 0 ? RealType(0.5) : RealType(1));
+            if (mySize > RealType(3) * neighborSize) mark = 1;
         }
     }
-
     marksOut[e] = mark;
 }
 
@@ -204,47 +123,29 @@ public:
         d_elemLevels_.resize(numElements);
         if (numElements == 0) return;
 
-        // Derive per-element refinement level from cstone's focus-tree leaves.
-        // Each element has an SFC key (from sync()); the leaf containing that
-        // key has an SFC range nodeRange(0) / 8^L, which gives L.
-        //
-        // Before this fix, levels were zeroed on every initialize() and never
-        // updated, so markFromErrorKernel always saw level=0. That broke
-        // Doerfler refinement: every cell looked "refinable" forever, so each
-        // adapt step refined the entire mesh uniformly (or stopped only when
-        // cstone's bucketSize/tree-depth cap kicked in). After this fix, the
-        // marker can correctly gate at maxLevel and reach a true adaptive
-        // distribution of base + L1 + L2 cells.
-        const auto& cstoneDom = domain.getDomain();
-        // the device copy: treeLeaves() is cornerstone's host copy, which the GPU can only read on
-        // systems with unified CPU-GPU memory (GH200), not on MI300A
-        const auto  leavesView = cstoneDom.focusTree().treeLeavesAcc();
-        size_t      numLeaves  = (leavesView.size() > 0) ? (leavesView.size() - 1) : 0;
-        const KeyType* d_leaves = leavesView.data();
-
-        const auto& d_elemKeys = domain.getElementSfcCodes();
-        if (numLeaves == 0 || d_elemKeys.size() < numElements)
+        // Acquire the current view after each rebuild; synchronization can replace its buffers.
+        const auto tree = domain.getDomain().octreeProperties();
+        if (tree.numLeafNodes == 0)
         {
             thrust::fill(thrust::device, d_elemLevels_.begin(), d_elemLevels_.end(), 0);
             return;
         }
-
-        int numBlocks = (numElements + config_.blockSize - 1) / config_.blockSize;
-        assignLevelsFromTreeKernel<KeyType><<<numBlocks, config_.blockSize>>>(
-            d_leaves, numLeaves,
-            thrust::raw_pointer_cast(d_elemKeys.data()),
-            thrust::raw_pointer_cast(d_elemLevels_.data()),
-            numElements);
-        cudaDeviceSynchronize();
+        assign_leaf_levels<<<tree.numLeafNodes, config_.blockSize>>>(tree, d_elemLevels_.data());
+        cudaCheckError();
     }
 
     // Doerfler marking: refine top fraction of error, coarsen bottom fraction
     cstone::DeviceVector<uint8_t> markForRefinement(const RealType* d_errorPerElement, size_t numElements)
     {
-        RealType maxError =
+        RealType maxError = numElements ?
             mars::reduce(thrust::device_pointer_cast(d_errorPerElement),
                            thrust::device_pointer_cast(d_errorPerElement + numElements), RealType(0),
-                           thrust::maximum<RealType>());
+                           thrust::maximum<RealType>()) : RealType(0);
+        // the same threshold on every rank, so the marked set does not depend on the partition
+        MPI_Allreduce(MPI_IN_PLACE, &maxError, 1, std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT, MPI_MAX,
+                      MPI_COMM_WORLD);
+        // Empty ranks still take part in the global threshold reduction.
+        if (numElements == 0) return {};
 
         RealType refineThreshold  = config_.refineFraction * maxError;
         RealType coarsenThreshold = config_.coarsenFraction * maxError;
@@ -260,44 +161,41 @@ public:
         return d_marks;
     }
 
-    // Iteratively propagate marks so no two neighbors differ by >1 level.
-    // Without this, hanging nodes break conformity of the mesh.
+    // Propagates marks so no two elements sharing a node differ by more than one level after refinement: then a
+    // hanging node sits at the midpoint of a coarse edge or the centre of a coarse face (HangingNodes). Sweeps this
+    // rank's elements up to irregularityIters times, stopping when nothing changes; returns whether a mark of an
+    // owned element changed. The marks of halo
+    // elements come from their owners, so the caller repeats exchange and sweep until no rank changes a mark.
     template<typename ElementTag, typename AcceleratorTag>
-    void enforce1Irregular(cstone::DeviceVector<uint8_t>& d_marks,
+    bool enforce1Irregular(cstone::DeviceVector<uint8_t>& d_marks,
                            const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
     {
         size_t numElements = domain.getElementCount();
         int numBlocks      = (numElements + config_.blockSize - 1) / config_.blockSize;
+        bool ownChanged    = false;
+        const size_t first = domain.startIndex(), last = domain.endIndex();
 
         // Use local node IDs, not SFC keys, for indexing into nodeToElemOffsets
+        constexpr int N = ElementTag::NodesPerElement;
+        static_assert(N == 8 || N == 4, "enforce1Irregular: only hex8 and tet4 are supported");
         const auto& d_conn = domain.getElementToNodeConnectivity();
         const auto& n2eOff = domain.getNodeToElementOffsets();
         const auto& n2eLst = domain.getNodeToElementList();
+        AmrCorners<KeyType, N> corners;
+        [&]<std::size_t... I>(std::index_sequence<I...>) { ((corners.c[I] = std::get<I>(d_conn).data()), ...); }
+        (std::make_index_sequence<N>{});
 
         cstone::DeviceVector<uint8_t> d_marksTemp(numElements);
+        cstone::DeviceVector<RealType> d_size(numElements);
+        if (numElements > 0)
+            shortestEdgeKernel<N, KeyType, RealType><<<numBlocks, config_.blockSize>>>(
+                corners, domain.getNodeX().data(), domain.getNodeY().data(), domain.getNodeZ().data(), numElements,
+                d_size.data());
 
-        for (int iter = 0; iter < config_.irregularityIters; ++iter)
+        for (int iter = 0; iter < config_.irregularityIters && numElements > 0; ++iter)
         {
-            if constexpr (ElementTag::NodesPerElement == 8)
-            {
-                enforce1IrregularKernel<<<numBlocks, config_.blockSize>>>(
-                    d_elemLevels_.data(), d_marks.data(), d_marksTemp.data(), std::get<0>(d_conn).data(),
-                    std::get<1>(d_conn).data(), std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
-                    std::get<4>(d_conn).data(), std::get<5>(d_conn).data(), std::get<6>(d_conn).data(),
-                    std::get<7>(d_conn).data(), n2eOff.data(), n2eLst.data(), numElements);
-            }
-            else if constexpr (ElementTag::NodesPerElement == 4)
-            {
-                enforce1IrregularKernelTet<<<numBlocks, config_.blockSize>>>(
-                    d_elemLevels_.data(), d_marks.data(), d_marksTemp.data(), std::get<0>(d_conn).data(),
-                    std::get<1>(d_conn).data(), std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
-                    n2eOff.data(), n2eLst.data(), numElements);
-            }
-            else
-            {
-                static_assert(ElementTag::NodesPerElement == 8 || ElementTag::NodesPerElement == 4,
-                              "enforce1Irregular: only hex8 and tet4 are supported");
-            }
+            enforce1IrregularKernel<N, KeyType, RealType><<<numBlocks, config_.blockSize>>>(
+                d_size.data(), d_marks.data(), d_marksTemp.data(), corners, n2eOff.data(), n2eLst.data(), numElements);
             cudaDeviceSynchronize();
 
             auto m_b = thrust::device_pointer_cast(d_marks.data());
@@ -305,10 +203,12 @@ public:
             auto t_b = thrust::device_pointer_cast(d_marksTemp.data());
             auto t_e = thrust::device_pointer_cast(d_marksTemp.data() + numElements);
             bool changed = !thrust::equal(thrust::device, m_b, m_e, t_b);
+            ownChanged |= changed && !thrust::equal(thrust::device, m_b + first, m_b + last, t_b + first);
             thrust::copy(thrust::device, t_b, t_e, m_b);
 
             if (!changed) break;
         }
+        return ownChanged;
     }
 
     const cstone::DeviceVector<int>& elementLevels() const { return d_elemLevels_; }

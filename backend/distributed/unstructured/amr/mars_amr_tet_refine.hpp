@@ -202,6 +202,20 @@ public:
                          size_t numNodes,
                          int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            // A rank without parents may still own nodes needed after repartitioning.
+            Result res;
+            res.numNodes = res.oldNumNodes = numNodes;
+            res.d_x.resize(numNodes); res.d_y.resize(numNodes); res.d_z.resize(numNodes);
+            if (numNodes)
+            {
+                cudaCheckCall(cudaMemcpy(res.d_x.data(), nodeX, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_y.data(), nodeY, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_z.data(), nodeZ, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+            }
+            return res;
+        }
         int numBlocks = (numElements + blockSize - 1) / blockSize;
 
         // Step 1: count children per element
@@ -302,7 +316,7 @@ public:
             res.d_conn0.data(), res.d_conn1.data(), res.d_conn2.data(), res.d_conn3.data(),
             numElements);
 
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
 
         res.d_edgeKeys     = std::move(d_edgeKeys);
         res.d_markedPrefix = std::move(d_markedPrefix);
