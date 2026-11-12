@@ -6,7 +6,8 @@ The native AMR module in `backend/distributed/unstructured/amr/` refines Hex8 an
 Tet4 meshes on CUDA/HIP devices. `AmrManager` uses `ElementDomain` and Cornerstone
 for SFC partitioning, redistribution, tree construction and halo exchange. It
 supports nonconforming red refinement and an optional
-[conforming tetrahedral LEPP policy](Conforming-Tet-AMR.md). Neither requires Kokkos.
+[conforming tetrahedral LEPP policy](Conforming-Tet-AMR.md). Neither requires Kokkos. The separate older Kokkos bisection module lives in
+`backend/kokkos/bisection/`; see [the backend layout](Backend-Layout.md).
 
 ## Refinement and field transfer
 

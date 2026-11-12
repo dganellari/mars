@@ -4,6 +4,8 @@ The structured backend provides distributed Cartesian Quad4 and Hex8 meshes with
 Morton or Hilbert ordering, nodal DOF numbering and field halo exchange. Enable it
 explicitly with `MARS_ENABLE_KOKKOS=ON`. It needs MPI, including for one-rank runs.
 It is independent of the unstructured cornerstone backend.
+Implementation files live under `backend/distributed/structured/`, with shared
+Kokkos support in `backend/kokkos/common/`. See [the layout and include compatibility](Backend-Layout.md).
 
 ## Build and use
 

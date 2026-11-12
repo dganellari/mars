@@ -280,3 +280,10 @@ execution. Hardware results are still required before a release capability claim
 Build/test children unblock only inherited `SIGCHLD` before exec. The parent mask
 and all other child signal masks are preserved. Receipts record whether the parent
 blocked it; this avoids the confirmed batch-environment CMake startup hang.
+
+## Source layout
+
+The export follows [the backend layout](../../../docs/Backend-Layout.md): it includes
+`backend/kokkos/common` and `backend/distributed/structured`, and excludes the older
+Kokkos bisection module. The installed consumer exercises old and canonical include
+paths together. Keep existing sealed kits unchanged when validating this layout.

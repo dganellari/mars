@@ -10,7 +10,7 @@ import subprocess
 
 
 ROOT_FILES = {"CMakeLists.txt", "LICENSE", "LICENSE.md", "LICENSE.txt", "examples/CMakeLists.txt"}
-ROOTS = ("cmake/", "base/", "core/", "io/", "kokkos/", "backend/distributed/", "tests/structured/")
+ROOTS = ("cmake/", "base/", "core/", "io/", "backend/kokkos/common/", "backend/distributed/", "tests/structured/")
 SUFFIXES = {".cmake", ".in", ".hpp", ".h", ".hxx", ".cpp", ".cc", ".c", ".cu", ".cuh", ".py", ".sh"}
 DEPENDENCIES = {"kokkos": "15dc143e5f39949eece972a798e175c4b463d4b8",
                 "googletest": "15460959cbbfa20e66ef0b5ab497367e47fc0a04"}
