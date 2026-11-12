@@ -90,6 +90,8 @@ removed symmetrically before PCG.
 P1 tetrahedra or Q1 hexahedra and BoomerAMG-preconditioned CG. `--problem=linear`
 checks an affine manufactured solution, allowing for coordinate quantization;
 `--problem=peak` reports an error against the localized exact solution.
+The [peak comparison](AMR-Peak-Example.md) uses `--refinement=red|lepp` and
+`--uniform` to compare local and uniform resolution at the same equation and solver settings.
 `--audit-mesh` and `--audit-algebra` enable the optional conservation and algebra
 checks described in [the validation guide](../tests/amr/nonconforming/README.md).
 

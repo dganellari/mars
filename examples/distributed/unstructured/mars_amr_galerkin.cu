@@ -1,10 +1,11 @@
-// Poisson on an adapted non-conforming mesh: Galerkin Q1 on hexahedra, P1 on tetrahedra.
+// Poisson with red or conforming LEPP refinement: Galerkin Q1 on hexahedra, P1 on tetrahedra.
 //
-// Every level refines the elements near a point and keeps the others, so nodes hang in the middle of the edges
+// Red refinement near a point leaves nodes hanging in the middle of the edges
 // (and faces) of the coarser elements next to the refined ones. HangingNodes finds them and DofSpace gives each
 // the mean of the nodes it hangs on, which keeps the field continuous: the unknowns are the regular nodes, the
 // matrix is P^T A P (DofSpace::restrictMatrix) with the Dirichlet values eliminated symmetrically, and PCG with
-// BoomerAMG solves it.
+// BoomerAMG solves it. LEPP closes edge stars and uses the same P1 solve without hanging-node constraints.
+// --uniform marks every element; compare error against DOFs because the policies split different numbers of cells.
 //
 //   --problem=linear  u = 1 + x + 2y + 3z. The discrete space holds u, so the solution equals it at every node,
 //                     hanging ones included, up to where the SFC keys put the nodes (1e-6 here): a direct check of
@@ -36,6 +37,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <mpi.h>
 #include <string>
 #include <utility>
@@ -70,7 +72,8 @@ struct Problem
 
 struct Options
 {
-    std::string mesh, element = "hex", marking = "doerfler";
+    std::string mesh, element = "hex", marking = "doerfler", refinement = "red";
+    bool uniform = false;
     Problem problem;
     int levels      = 3;
     double radius   = 0.25; // refine the elements whose centroid lies this close to c
@@ -344,6 +347,7 @@ int run(const Options& opt, int rank, int numRanks)
     typename Manager::Config config;
     config.strategy       = opt.marking == "octree" ? amr::MarkingStrategy::OctreeNative :
                                                     amr::MarkingStrategy::Doerfler;
+    if (opt.refinement == "lepp") config.tet_refinement = amr::TetRefinement::ConformingBisection;
     config.refineFraction = 0.5; // the indicator is 0 or 1
     config.maxLevels      = 64;  // the level gate is not used; the loop below stops after opt.levels
     config.bucketSize     = opt.bucketSize;
@@ -384,7 +388,9 @@ int run(const Options& opt, int rank, int numRanks)
 
         auto adapt = [&](bool transfer) {
             Vector indicator(numElements > 0 ? numElements : 1, 0.0);
-            if (numElements > 0)
+            if (opt.uniform)
+                thrust::fill(thrust::device, indicator.begin(), indicator.end(), 1.0);
+            else if (numElements > 0)
                 nearCentreKernel<N><<<unsigned((numElements + 255) / 256), 256>>>(
                     c, numElements, x, y, z, p, opt.radius, indicator.data());
             cudaCheckError();
@@ -418,9 +424,11 @@ int run(const Options& opt, int rank, int numRanks)
             continue;
         }
 
-        HangingNodes<KeyType, RealType> hanging(domain);
+        // LEPP closes every edge star, so every node is an independent P1 unknown.
+        std::unique_ptr<HangingNodes<KeyType, RealType>> hanging;
+        if (opt.refinement == "red") hanging = std::make_unique<HangingNodes<KeyType, RealType>>(domain);
         clock.lap("hanging nodes");
-        Space space(domain, nullptr, &hanging);
+        Space space(domain, nullptr, hanging.get());
         const uint8_t* isDof = space.isDof();
         clock.lap("DOF space");
         check_keys(1);
@@ -441,10 +449,13 @@ int run(const Options& opt, int rank, int numRanks)
         {
             // P of the exact values: the constraints, copies and extra values alone, no solve
             hangingSlot.assign(n, 0);
-            auto hangingSlots = thrust::device_pointer_cast(hanging.slots());
-            thrust::fill(thrust::device, thrust::make_permutation_iterator(hangingSlot.begin(), hangingSlots),
-                         thrust::make_permutation_iterator(hangingSlot.begin(), hangingSlots + hanging.size()),
-                         uint8_t(1));
+            if (hanging)
+            {
+                auto hangingSlots = thrust::device_pointer_cast(hanging->slots());
+                thrust::fill(thrust::device, thrust::make_permutation_iterator(hangingSlot.begin(), hangingSlots),
+                             thrust::make_permutation_iterator(hangingSlot.begin(), hangingSlots + hanging->size()),
+                             uint8_t(1));
+            }
             slotError.hanging = thrust::raw_pointer_cast(hangingSlot.data());
             Vector exactAtDofs(n);
             thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
@@ -628,7 +639,7 @@ int run(const Options& opt, int rank, int numRanks)
         {
             std::printf("[amr-galerkin] level=%d elements=%lld dofs=%lld hanging=%lld iterations=%d relres=%.3e "
                         "l2=%.6e max=%.6e\n",
-                        level, elements, space.numDofs(), hanging.globalCount(), iterations,
+                        level, elements, space.numDofs(), hanging ? hanging->globalCount() : 0LL, iterations,
                         solver.lastRelativeResidual(), l2, maxErr);
             for (const auto& [name, ms] : clock.phases)
                 std::printf("    %-16s %10.2f ms\n", name.c_str(), ms);
@@ -680,6 +691,8 @@ int main(int argc, char** argv)
         else if (a.rfind("--max-iter=", 0) == 0) opt.maxIter = std::stoi(value("--max-iter="));
         else if (a.rfind("--bucket-size=", 0) == 0) opt.bucketSize = std::stoi(value("--bucket-size="));
         else if (a.rfind("--marking=", 0) == 0) opt.marking = value("--marking=");
+        else if (a.rfind("--refinement=", 0) == 0) opt.refinement = value("--refinement=");
+        else if (a == "--uniform") opt.uniform = true;
         else if (a == "--measure-adapt") opt.measure_adapt = true;
         else if (a == "--diagnose-keys") opt.diagnose_keys = true;
         else if (a == "--diagnose") opt.diagnose = true;
@@ -693,20 +706,27 @@ int main(int argc, char** argv)
         }
     }
     if ((opt.marking != "doerfler" && opt.marking != "octree") || opt.mesh.empty() || (opt.element != "hex" && opt.element != "tet") ||
+        (opt.refinement != "red" && opt.refinement != "lepp") ||
+        (opt.refinement == "lepp" && (opt.element != "tet" || opt.audit_mesh)) ||
+        (opt.uniform && opt.marking != "doerfler") ||
         (opt.audit_mesh && opt.element != "tet") || (opt.mesh_only && opt.audit_algebra))
     {
         if (rank == 0)
             std::fprintf(stderr, "usage: %s --mesh=DIR --element=hex|tet [--problem=linear|peak] [--levels=N] "
-                                 "[--radius=R] [--alpha=A] [--tol=T] [--max-iter=N] [--bucket-size=N] [--diagnose] [--mesh-only] [--audit-mesh (tet)] [--audit-algebra] [--marking=doerfler|octree] [--measure-adapt] [--diagnose-keys]\n",
+                                 "[--refinement=red|lepp (tet)] [--uniform (doerfler)] [--radius=R] [--alpha=A] [--tol=T] [--max-iter=N] [--bucket-size=N] [--diagnose] [--mesh-only] [--audit-mesh (tet)] [--audit-algebra] [--marking=doerfler|octree] [--measure-adapt] [--diagnose-keys]\n",
                          argv[0]);
         MPI_Finalize();
         return 2;
     }
     if (opt.audit_mesh) setenv("MARS_AMR_AUDIT_TET", "1", 1);
     if (rank == 0)
-        std::printf("[amr-galerkin] %s, %s, %d levels, %d ranks, refinement within %g of (%g, %g, %g)\n",
-                    opt.element.c_str(), opt.problem.linear ? "u = 1 + x + 2y + 3z" : "peak", opt.levels, numRanks,
-                    opt.radius, opt.problem.c[0], opt.problem.c[1], opt.problem.c[2]);
+    {
+        std::printf("[amr-galerkin] %s, %s, %d levels, %d ranks\n",
+                    opt.element.c_str(), opt.problem.linear ? "u = 1 + x + 2y + 3z" : "peak", opt.levels, numRanks);
+        std::printf("[amr-policy] refinement=%s selection=%s radius=%.9g alpha=%.9g centre=(%.9g,%.9g,%.9g)\n",
+                    opt.refinement.c_str(), opt.uniform ? "uniform" : "local", opt.radius,
+                    opt.problem.alpha, opt.problem.c[0], opt.problem.c[1], opt.problem.c[2]);
+    }
 
     int status = opt.element == "hex" ? run<HexTag>(opt, rank, numRanks) : run<TetTag>(opt, rank, numRanks);
     MPI_Finalize();
