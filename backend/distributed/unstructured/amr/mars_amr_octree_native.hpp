@@ -20,6 +20,7 @@ public:
     struct Config
     {
         unsigned bucketSize = 64;
+        RealType refineFraction = RealType(0.3);
         int blockSize = 256;
     };
 
@@ -29,8 +30,9 @@ public:
         const Config& config = Config{})
     {
         // This kernel's shared reduction requires a power-of-two block of at most 256 threads.
-        if (config.bucketSize == 0 || config.bucketSize > 65535 || config.blockSize < 1 ||
-            config.blockSize > 256 || (config.blockSize & (config.blockSize - 1)))
+        if (!(config.refineFraction >= 0 && config.refineFraction <= 1) || config.bucketSize == 0 ||
+            config.bucketSize > 65535 || config.blockSize < 1 || config.blockSize > 256 ||
+            (config.blockSize & (config.blockSize - 1)))
             mars::abortAllRanks(EXIT_FAILURE);
         const size_t first = domain.startIndex(), last = domain.endIndex();
         RealType maximum = 0;
@@ -47,18 +49,19 @@ public:
         d_node_ops_.resize(tree.numLeafNodes + 1);
         cstone::DeviceVector<uint8_t> marks(domain.getElementCount(), 0);
         if (tree.numLeafNodes == 0) return marks;
-        weight_owned_leaves<<<tree.numLeafNodes, config.blockSize>>>(
-            tree.leaves, tree.numLeafNodes, keys, first, last, error, maximum, config.bucketSize,
-            d_weighted_counts_.data());
+        weight_owned_leaves<<<tree.numLeafNodes, config.blockSize>>>(tree.leaves, tree.numLeafNodes, keys, first, last,
+                                                                     error, maximum, config.bucketSize,
+                                                                     config.refineFraction, d_weighted_counts_.data());
         cudaCheckError();
 
         // Assignments end on global-leaf boundaries, so every populated leaf has one owner.
         // Counts stay >= bucket: sibling merging is impossible. Remote leaves may therefore
         // keep the floor count without changing the decisions for this rank's owned leaves.
         cstone::computeNodeOpsGpu(cstone::execution::gpuDefaultStream, tree.leaves, tree.numLeafNodes,
-                                 d_weighted_counts_.data(), config.bucketSize, d_node_ops_.data());
-        mark_owned_leaves<<<tree.numLeafNodes, config.blockSize>>>(
-            tree.leaves, tree.numLeafNodes, keys, first, last, d_node_ops_.data(), marks.data());
+                                  d_weighted_counts_.data(), config.bucketSize, d_node_ops_.data());
+        mark_owned_leaves<<<tree.numLeafNodes, config.blockSize>>>(tree.leaves, tree.numLeafNodes, keys, first, last,
+                                                                   d_node_ops_.data(), d_weighted_counts_.data(),
+                                                                   config.bucketSize, marks.data());
         cudaCheckError();
         return marks;
     }

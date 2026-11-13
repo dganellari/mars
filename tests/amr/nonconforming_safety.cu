@@ -3,6 +3,7 @@
 #include "backend/distributed/unstructured/amr/mars_amr_solution_transfer.hpp"
 #include "backend/distributed/unstructured/amr/mars_amr_octree_refine.hpp"
 #include "field_migration_checks.hpp"
+#include "nonconforming_topology_checks.hpp"
 
 namespace
 {
@@ -40,23 +41,52 @@ void check_node_keys()
     mars::generateSfcKeys<KeyType, RealType>(nullptr, nullptr, nullptr, nullptr, 0, box);
 }
 
-template<int N>
-void check_balance()
+template<class Real>
+void check_marking(int rank, int ranks)
 {
     using namespace amr_test;
-    auto size = upload(std::vector<RealType>{1, 0.5});
-    auto corner = upload(std::vector<KeyType>{0, 0});
-    auto offsets = upload(std::vector<KeyType>{0, 2});
-    auto elements = upload(std::vector<KeyType>{0, 1});
-    auto marks = upload(std::vector<uint8_t>{0, 1});
-    cstone::DeviceVector<uint8_t> balanced(2);
-    mars::amr::AmrCorners<KeyType, N> corners;
-    for (int c = 0; c < N; ++c) corners.c[c] = corner.data();
-    mars::amr::enforce1IrregularKernel<N><<<1, 256>>>(
-        size.data(), marks.data(), balanced.data(), corners, offsets.data(), elements.data(), 2);
-    cudaCheckError();
-    require_all(read_device(balanced.data(), 2) == std::vector<uint8_t>({1, 1}),
-                "Refining the smaller neighbour must also mark the coarse element");
+    std::vector<KeyType> leaves(9), keys(8);
+    std::vector<Real> errors{0, Real(.1), Real(.2999), Real(.3), Real(.3001), Real(.5), Real(.9), 1};
+    for (int level : {1, int(cstone::maxTreeLevel<KeyType>{})})
+    {
+        for (int i = 0; i <= 8; ++i)
+            leaves[i] = KeyType(i) * cstone::nodeRange<KeyType>(level);
+        for (int i = 0; i < 8; ++i)
+            keys[i] = leaves[i];
+        size_t first = size_t(8 * rank / ranks), last = size_t(8 * (rank + 1) / ranks);
+        Real maximum = 0;
+        for (size_t i = first; i < last; ++i)
+            maximum = std::max(maximum, errors[i]);
+        MPI_Allreduce(MPI_IN_PLACE, &maximum, 1, std::is_same_v<Real, double> ? MPI_DOUBLE : MPI_FLOAT, MPI_MAX,
+                      MPI_COMM_WORLD);
+        auto dl = upload(leaves), dk = upload(keys);
+        auto de = upload(errors);
+        for (unsigned bucket : {1u, 64u, 1024u})
+            for (Real fraction : {Real(0), Real(.3), Real(.5), Real(1)})
+                for (int threads : {1, 64, 256})
+                {
+                    cstone::DeviceVector<unsigned> counts(8);
+                    cstone::DeviceVector<cstone::TreeNodeIndex> ops(9);
+                    mars::amr::weight_owned_leaves<<<8, threads>>>(dl.data(), 8, dk.data(), first, last, de.data(),
+                                                                   maximum, bucket, fraction, counts.data());
+                    cudaCheckError();
+                    cstone::computeNodeOpsGpu(cstone::execution::gpuDefaultStream, dl.data(), 8, counts.data(), bucket,
+                                              ops.data());
+                    cstone::DeviceVector<uint8_t> marks(8, 0);
+                    mars::amr::mark_owned_leaves<<<8, threads>>>(dl.data(), 8, dk.data(), first, last, ops.data(),
+                                                                 counts.data(), bucket, marks.data());
+                    cudaCheckError();
+                    auto count = read_device(counts.data(), 8);
+                    auto mark  = read_device(marks.data(), 8);
+                    bool valid = true;
+                    for (size_t i = 0; i < 8; ++i)
+                    {
+                        bool selected = i >= first && i < last && errors[i] > fraction * maximum;
+                        valid &= count[i] == bucket + unsigned(selected) && mark[i] == uint8_t(selected);
+                    }
+                    require_all(valid, "Native non-binary octree threshold differs from refineFraction");
+                }
+    }
 }
 
 void check_empty_refiners(int rank)
@@ -116,8 +146,9 @@ void check_empty_refiners(int rank)
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
-    int rank, local_rank, devices;
+    int rank, ranks, local_rank, devices;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &ranks);
     MPI_Comm local;
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &local);
     MPI_Comm_rank(local, &local_rank);
@@ -162,8 +193,10 @@ int main(int argc, char** argv)
         require_all(read_device(refined.data(), refined.size()) ==
                         std::vector<RealType>({1, 2, 4, 8, 1.5, 2.5, 3, 4.5, 5, 6}),
                     "Shared-edge interpolation changed values");
-        check_balance<4>();
-        check_balance<8>();
+        for (bool staged : {false, true})
+            amr_test::check_nonconforming_topology<mars::amr::LeppDeviceExecution>(MPI_COMM_WORLD, staged);
+        check_marking<float>(rank, ranks);
+        check_marking<double>(rank, ranks);
         check_empty_refiners(rank);
         for (bool staged : {false, true})
             amr_test::check_field_sources<mars::amr::LeppDeviceExecution>(MPI_COMM_WORLD, staged);

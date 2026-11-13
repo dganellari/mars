@@ -109,9 +109,19 @@ __global__ void emitChildHexesKernel(const KeyType* conn0,
     };
     auto mid4 = [&](int a, int b, int c, int d, RealType& X, RealType& Y, RealType& Z)
     {
-        X = RealType(0.25) * (px[a] + px[b] + px[c] + px[d]);
-        Y = RealType(0.25) * (py[a] + py[b] + py[c] + py[d]);
-        Z = RealType(0.25) * (pz[a] + pz[b] + pz[c] + pz[d]);
+        int order[4] = {a, b, c, d};
+        for (int i = 1; i < 4; ++i)
+            for (int j = i; j > 0; --j)
+            {
+                int u = order[j - 1], v = order[j];
+                bool less = px[v] < px[u] || (px[v] == px[u] && (py[v] < py[u] || (py[v] == py[u] && pz[v] < pz[u])));
+                if (!less) break;
+                order[j - 1] = v;
+                order[j]     = u;
+            }
+        X = RealType(.25) * ((px[order[0]] + px[order[1]]) + (px[order[2]] + px[order[3]]));
+        Y = RealType(.25) * ((py[order[0]] + py[order[1]]) + (py[order[2]] + py[order[3]]));
+        Z = RealType(.25) * ((pz[order[0]] + pz[order[1]]) + (pz[order[2]] + pz[order[3]]));
     };
 
     // Edge node indices (0..11)
@@ -245,6 +255,7 @@ struct OctreeAlignedRefine
     {
         std::array<cstone::DeviceVector<KeyType>, NodesPerElement> d_conn;
         cstone::DeviceVector<RealType> d_x, d_y, d_z;
+        cstone::DeviceVector<KeyType> d_generations;
         size_t numNodes    = 0;
         size_t numElements = 0;
 

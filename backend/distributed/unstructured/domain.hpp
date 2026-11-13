@@ -758,9 +758,32 @@ public:
                   DeviceConnectivityTuple&& d_conn,
                   int rank,
                   int numRanks,
-                  int bucketSize = 64,
-                  unsigned bucketSizeFocus = 8,
-                  const cstone::Box<RealType>* fixedBox = nullptr);
+                  int bucketSize                        = 64,
+                  unsigned bucketSizeFocus              = 8,
+                  const cstone::Box<RealType>* fixedBox = nullptr,
+                  DeviceVector<KeyType>* generations    = nullptr);
+
+    enum class RefinementKind
+    {
+        Initial,
+        Red,
+        Bisection
+    };
+    RefinementKind refinement_kind() const { return refinement_kind_; }
+    void set_refinement_kind(RefinementKind kind) { refinement_kind_ = kind; }
+    bool has_refinement_history() const { return refinement_generations_enabled_; }
+    const DeviceVector<KeyType>& refinement_generations() const { return d_refinement_generations_; }
+    void initialize_refinement_generations()
+    {
+        if (!refinement_generations_enabled_)
+        {
+            d_refinement_generations_       = DeviceVector<KeyType>(elementCount_, KeyType(0));
+            refinement_generations_enabled_ = true;
+        }
+    }
+    // Six keys per active split entity: node, parent count, sorted parent keys (unused slots are ~0).
+    const DeviceVector<KeyType>& refinement_constraints() const { return d_refinement_constraints_; }
+    void set_refinement_constraints(DeviceVector<KeyType>&& records) { d_refinement_constraints_ = std::move(records); }
 
     // Per-phase timings populated by the ctor (in ms, rank-local).
     // All cudaDeviceSynchronize-fenced so they reflect actual elapsed time.
@@ -900,8 +923,8 @@ public:
     const DomainType& getDomain() const { return *domain_; }
 
     // Per-element SFC keys (one per local element, in cstone's local order).
-    // Filled by sync(). Used by AMR to compute per-element refinement level
-    // from the cstone focus-tree leaves.
+    // Filled by sync(). Spatial marking uses these keys with Cornerstone leaves;
+    // mesh refinement generations are carried separately.
     const DeviceVector<KeyType>& getElementSfcCodes() const { return d_elemSfcCodes_; }
 
     MARS_HOST_DEVICE
@@ -1928,7 +1951,12 @@ private:
     DeviceVector<int> d_elemBlock_;
     DeviceVector<int> d_localToGlobalBlock_;
 
-    // Opt-in gate for the above. Read once; must give the same answer on every rank, because
+    DeviceVector<KeyType> d_refinement_generations_;
+    DeviceVector<KeyType> d_refinement_constraints_;
+    bool refinement_generations_enabled_ = false;
+    RefinementKind refinement_kind_      = RefinementKind::Initial;
+
+    // Read once; every rank must agree on the block-aware identity option because
     // numBlocks_ > 1 selects the block-aware collective sync (one extra co-moved property) -- ranks
     // disagreeing here would mismatch the MPI exchange.
     static bool blockNodeIdentityEnabled()
@@ -2637,12 +2665,13 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 // Device-data constructor: no host round-trip
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(DeviceCoordsTuple&& d_coords,
-                                                                              DeviceConnectivityTuple&& d_conn,
-                                                                              int rank,
-                                                                              int numRanks,
-                                                                              int bucketSize,
-                                                                              unsigned bucketSizeFocus,
-                                                                              const cstone::Box<RealType>* fixedBox)
+                                                                            DeviceConnectivityTuple&& d_conn,
+                                                                            int rank,
+                                                                            int numRanks,
+                                                                            int bucketSize,
+                                                                            unsigned bucketSizeFocus,
+                                                                            const cstone::Box<RealType>* fixedBox,
+                                                                            DeviceVector<KeyType>* generations)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -2679,6 +2708,15 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
                                            globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
+
+    if (generations)
+    {
+        int invalid = generations->size() != elementCount_;
+        MPI_Allreduce(MPI_IN_PLACE, &invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (invalid) throw std::runtime_error("AMR generation count differs from input connectivity");
+        d_refinement_generations_       = std::move(*generations);
+        refinement_generations_enabled_ = true;
+    }
 
     // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
     DeviceConnectivityTuple d_conn_local = std::move(d_conn);
@@ -3141,7 +3179,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
         // meshes take the unchanged syncDomainImpl. Used by the standard hex and tet/tri/quad paths.
         auto syncElem = [&]()
         {
-            if (numBlocks_ > 1)
+            if (refinement_generations_enabled_)
+            {
+                if (numBlocks_ != 1) throw std::runtime_error("AMR generations require a single-block mesh");
+                // The existing extra-property sync carries generations through sorting, redistribution and halos.
+                syncDomainImplBlock(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_,
+                                    d_conn_keys_, d_refinement_generations_, starHaloKeys);
+            }
+            else if (numBlocks_ > 1)
             {
                 DeviceVector<KeyType> d_elemBlockKeys(elementCount_);
                 thrust::copy(thrust::device_pointer_cast(d_elemBlock_.data()),

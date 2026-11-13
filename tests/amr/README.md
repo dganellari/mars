@@ -323,3 +323,53 @@ the correction used by all three v6 jobs. Those frozen bundles retain their
 original provenance: `2a95e63b0ca5454712ab83f27505055c078887dc` plus the recorded
 `cornerstone-halo-depth.patch`. The published commit also adds a four-rank
 32/64-bit regression; it fails with the old header and passes with the fix.
+
+## Generation and topology validation
+
+`nonconforming_topology_mpi{1,2,4,8}` checks sparse split-entity matching, empty
+ranks, changed ownership, unrelated-key rejection, non-binary error thresholds
+and iterative generation closure, with direct and staged messages. `amr_tree_layout`
+now co-moves generation and identity properties through real Cornerstone sync/halos.
+`tet_lepp_*` also checks generation caps and three rounds on the pinned public
+[Escher mesh](data/mfem/README.md).
+
+`graded_mesh_checks` proves the thin fixture is a conforming positive-volume mesh
+and reproduces the former detector's false edge constraint. Native
+`nonconforming_{graded_tet,graded_hex,thin_tet}_{direct,staged}_mpiN` tests zero-mark
+invariance, three transfer rounds, P/P^T adjointness, constant/affine constraint
+reproduction and the generation cap. `public_tet_lepp_*` checks the public geometry
+through the real device manager.
+
+Accepted on 2026-11-13:
+
+| Platform | Job | Result |
+| --- | --- | --- |
+| NVIDIA GH200 | 5344783, reusing the successful builds from 5344272 | 46/46 cases; 211 MPI rank runtime records |
+| AMD MI300A | 740158 | 46/46 cases; 211 MPI rank runtime records |
+
+Each campaign contains 12 CPU/MPI shared-algorithm cases, 21 graded/thin refinement
+cases, 6 public LEPP cases, 2 device safety cases and 5 affine Poisson cases.
+Runs use 1/4/8 ranks; eight ranks span two nodes. Graded/thin threshold marking
+and public LEPP cover direct and staged AMR messages. The extra octree-marking
+cases run at eight ranks. Staging AMR messages does not stage all Cornerstone or
+solver MPI traffic. The separate local CPU/MPI suite passes 23/23 checks; this is
+not a native CPU ElementDomain manager backend.
+
+The source manifest SHA-256 is
+`21ffb4a96989de1814203c154c6bc7011d291cb4798877407c3491a5dc6c2805`.
+Publication updates only the validation documentation after that snapshot.
+The AMD kit manifest is
+`9ae97ca0b93c5da07c0bf36e88ecfdc75206f2e3c3fc7452e60a06a498f04e58`;
+the NVIDIA continuation manifest is
+`a31ee3053a27584afa252feb7b24059ed1a7faf3c19a5da5a4ba18112daa89ef`.
+The continuation corrects a versioned-Hypre filename check in the preparation
+harness and runs the unchanged tests with the previously built binaries.
+
+Raw log/command hashes, source manifests, per-rank binary/package/library
+verification records, and the unchanged numerical gates were checked. All
+checked counts agree across ranks and platforms. Octree-marked refinement reaches
+the generation-three saturation counts: graded Tet 196608, graded Hex 32768 and
+thin Tet 229376. Public Escher LEPP produces 96/192/384 cells over three rounds.
+Native binaries and installed trees were not downloaded for an independent rehash.
+These results cover correctness on the listed fixtures, not scaling or arbitrary
+geometry PDE accuracy.

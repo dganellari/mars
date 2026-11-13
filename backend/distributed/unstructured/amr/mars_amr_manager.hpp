@@ -8,6 +8,7 @@
 
 #include "backend/distributed/unstructured/domain.hpp"
 #include "mars_amr_octree.hpp"
+#include "mars_amr_history.hpp"
 #include "mars_amr_keyed_position.hpp"
 #include "mars_amr_tet_audit.hpp"
 #include "mars_amr_octree_native.hpp"
@@ -231,13 +232,14 @@ public:
 
     struct Config
     {
-        int maxLevels            = 5;
+        int maxLevels = 5; // Maximum refinement generation, relative to the input mesh
+        int maxAdaptations =
+            std::numeric_limits<int>::max(); // Driver stopping limit, including conforming LEPP closure rounds
         RealType refineFraction  = 0.3;
         RealType coarsenFraction = 0.03;
         RealType errorTolerance  = 1e-6;
         int bucketSize           = 64;
         int blockSize            = 256;
-        int irregularityIters    = 3;
         MarkingStrategy strategy = MarkingStrategy::OctreeNative;
         TetRefinement tet_refinement   = TetRefinement::Red;
         bool stage_refinement_messages = false;
@@ -248,12 +250,14 @@ public:
 
     AmrManager(const Config& config = Config{}) : config_(config), currentLevel_(0)
     {
+        if (config_.maxLevels < 0 || config_.maxAdaptations < 0 ||
+            !(config_.refineFraction >= 0 && config_.refineFraction <= 1))
+            throw std::invalid_argument("AMR needs nonnegative level limits and a refine fraction in [0,1]");
         typename AmrOctree<KeyType, RealType>::Config octConfig;
         octConfig.refineFraction    = config_.refineFraction;
         octConfig.coarsenFraction   = config_.coarsenFraction;
         octConfig.maxLevel          = config_.maxLevels;
         octConfig.blockSize         = config_.blockSize;
-        octConfig.irregularityIters = config_.irregularityIters;
         amrOctree_.config()         = octConfig;
     }
 
@@ -321,6 +325,7 @@ public:
         domain_->cacheNodeCoordinates();
         initTimings_.coordCacheTimeMs = lap();
 
+        domain_->initialize_refinement_generations();
         amrOctree_.initialize(*domain_);
         initTimings_.octreeTimeMs = lap();
 
@@ -338,16 +343,12 @@ public:
         numRanks_ = numRanks;
         domain_   = std::move(domain);
         // Match working CVFEM init order: ownership first, then conn, coords, AMR state
-        std::cerr << "AMR r" << rank << " getNodeOwnershipMap..." << std::endl; std::cerr.flush();
         (void)domain_->getNodeOwnershipMap();
         cudaDeviceSynchronize();
-        std::cerr << "AMR r" << rank << " ownership done" << std::endl; std::cerr.flush();
         (void)domain_->getElementToNodeConnectivity();
-        std::cerr << "AMR r" << rank << " adjacency done" << std::endl; std::cerr.flush();
         domain_->cacheNodeCoordinates();
-        std::cerr << "AMR r" << rank << " coords done" << std::endl; std::cerr.flush();
+        domain_->initialize_refinement_generations();
         amrOctree_.initialize(*domain_);
-        std::cerr << "AMR r" << rank << " octree done" << std::endl; std::cerr.flush();
         currentLevel_ = 0;
     }
 
@@ -368,12 +369,27 @@ public:
                                   const std::vector<const RealType*>& oldFields,
                                   const std::vector<DevVector*>& newFields)
     {
+        const auto kind = config_.tet_refinement == TetRefinement::ConformingBisection
+                              ? Domain::RefinementKind::Bisection
+                              : Domain::RefinementKind::Red;
+        int invalid_config =
+            (domain_->refinement_kind() != Domain::RefinementKind::Initial && domain_->refinement_kind() != kind) ||
+            config_.maxLevels < 0 || config_.maxAdaptations < 0 ||
+            !(config_.refineFraction >= 0 && config_.refineFraction <= 1) || domain_->numBlocks() != 1 ||
+            domain_->getPeriodicAxesMask() != 0;
+        if (config_.tet_refinement != TetRefinement::ConformingBisection)
+            invalid_config |= domain_->hasBoundaryInfo() || !domain_->sideSetNames().empty();
+        MPI_Allreduce(MPI_IN_PLACE, &invalid_config, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (invalid_config)
+            throw std::runtime_error("AMR requires one refinement policy, valid limits and a nonperiodic single-block "
+                                     "mesh; use LEPP to preserve side sets");
         if (config_.tet_refinement == TetRefinement::ConformingBisection)
         {
             const char* reuse = std::getenv("MARS_AMR_REUSE_DOMAIN");
             int invalid       = !std::is_same_v<ElementTag, TetTag> || domain_->numBlocks() != 1 ||
-                          domain_->hasBoundaryInfo() || domain_->getPeriodicAxesMask() != 0 ||
-                          (reuse && std::string(reuse) != "0") || (numRanks_ > 1 && !domain_->sfcOwnership());
+                          domain_->hasBoundaryInfo() || !domain_->refinement_constraints().empty() ||
+                          domain_->getPeriodicAxesMask() != 0 || (reuse && std::string(reuse) != "0") ||
+                          (numRanks_ > 1 && !domain_->sfcOwnership());
             MPI_Allreduce(MPI_IN_PLACE, &invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
             if (invalid)
                 throw std::runtime_error("Conforming bisection requires single-block, nonperiodic tetrahedra with face "
@@ -402,12 +418,8 @@ public:
         stats.elementsBeforeLocal = domain_->localElementCount();
         stats.nodesBeforeGlobal   = numNodes;
 
-        std::cerr << "ADAPT r" << rank_ << " before barrier" << std::endl; std::cerr.flush();
-        MPI_Barrier(MPI_COMM_WORLD);
-        std::cerr << "ADAPT r" << rank_ << " after barrier, before allreduce" << std::endl; std::cerr.flush();
         MPI_Allreduce(&stats.elementsBeforeLocal, &stats.elementsBeforeGlobal, 1,
                        MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
-        std::cerr << "ADAPT r" << rank_ << " after allreduce" << std::endl; std::cerr.flush();
 
         size_t startIdx = domain_->startIndex();
         size_t endIdx   = domain_->endIndex();
@@ -427,15 +439,19 @@ public:
         cstone::DeviceVector<uint8_t> d_marks;
         if (config_.strategy == MarkingStrategy::OctreeNative)
         {
-            std::cerr << "ADAPT r" << rank_ << " entering markFromOctree" << std::endl; std::cerr.flush();
             // Each global leaf is owned by one rank; only the maximum error is reduced globally.
             // Mesh balance is enforced below, independently of the spatial marking policy.
-            d_marks = octreeNativeAmr_.markFromOctree(d_errorPerElement, *domain_);
-            std::cerr << "ADAPT r" << rank_ << " markFromOctree returned" << std::endl; std::cerr.flush();
+            typename OctreeNativeAmr<KeyType, RealType>::Config marking;
+            marking.bucketSize     = config_.bucketSize;
+            marking.blockSize      = config_.blockSize;
+            marking.refineFraction = config_.refineFraction;
+            d_marks                = octreeNativeAmr_.markFromOctree(d_errorPerElement, *domain_, marking);
         }
         else
         {
-            d_marks = amrOctree_.markForRefinement(d_errorPerElement, numElements);
+            amrOctree_.config().maxLevel       = config_.maxLevels;
+            amrOctree_.config().refineFraction = config_.refineFraction;
+            d_marks = amrOctree_.markForRefinement(d_errorPerElement, numElements, startIdx, endIdx);
         }
 
         // Hanging-node constraints require mesh balance for either marking policy.
@@ -451,51 +467,26 @@ public:
         if (endIdx < numElements)
             cudaMemset(d_marks.data() + endIdx, 0, (numElements - endIdx) * sizeof(uint8_t));
 
-        auto exchangeMarks = [&]()
         {
-            if (numRanks_ <= 1) return;
-            // Cornerstone provides halo exchange for int, not uint8_t.
-            cstone::DeviceVector<int> d_marksInt(numElements);
-            thrust::transform(thrust::device,
-                               thrust::device_pointer_cast(d_marks.data()),
-                               thrust::device_pointer_cast(d_marks.data() + numElements),
-                               thrust::device_pointer_cast(d_marksInt.data()),
-                               [] __device__(uint8_t m) -> int { return int(m); });
-            cstone::DeviceVector<int> sendBuf, recvBuf;
-            domain_->exchangeHalos(std::tie(d_marksInt), sendBuf, recvBuf);
-            thrust::transform(thrust::device,
-                               thrust::device_pointer_cast(d_marksInt.data()),
-                               thrust::device_pointer_cast(d_marksInt.data() + numElements),
-                               thrust::device_pointer_cast(d_marks.data()),
-                               [] __device__(int m) -> uint8_t { return uint8_t(m); });
-        };
-
-        if (config_.tet_refinement != TetRefinement::ConformingBisection)
-        {
-            // A mark set near a rank boundary changes what the neighbouring rank must mark, so sweep with
-            // fresh halo marks until no rank changes a mark: the refined mesh is then 2:1 balanced.
-            constexpr int maxSweeps = 64;
-            for (int sweep = 0;; ++sweep)
+            const auto* generation = domain_->refinement_generations().data();
+            auto* marks            = d_marks.data();
+            const KeyType limit    = KeyType(config_.maxLevels);
+            LeppDeviceExecution::for_each(numElements,
+                                          [=] __device__(size_t e)
+                                          {
+                                              if (generation[e] >= limit) marks[e] = 0;
+                                          });
+            if (config_.tet_refinement != TetRefinement::ConformingBisection)
             {
-                exchangeMarks();
-                int changed = amrOctree_.enforce1Irregular(d_marks, *domain_) ? 1 : 0;
-                MPI_Allreduce(MPI_IN_PLACE, &changed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-                if (!changed) break;
-                if (sweep + 1 == maxSweeps)
-                {
-                    if (rank_ == 0)
-                        std::fprintf(stderr, "AMR: 2:1 balance did not settle in %d sweeps\n", maxSweeps);
-                    MPI_Abort(MPI_COMM_WORLD, 1);
-                }
+                auto balance = history_detail::make_generation_balance<KeyType, RealType, ElementTag>(
+                    *domain_, config_.stage_refinement_messages);
+                while (balance->sweep(generation, marks, numElements, limit)) {}
             }
         }
+        if (currentLevel_ >= config_.maxAdaptations)
+            thrust::fill(thrust::device, thrust::device_pointer_cast(d_marks.data()),
+                         thrust::device_pointer_cast(d_marks.data() + numElements), uint8_t(0));
 
-        if (startIdx > 0)
-            cudaMemset(d_marks.data(), 0, startIdx * sizeof(uint8_t));
-        if (endIdx < numElements)
-            cudaMemset(d_marks.data() + endIdx, 0, (numElements - endIdx) * sizeof(uint8_t));
-
-        if (config_.tet_refinement != TetRefinement::ConformingBisection) exchangeMarks();
         stats.markTimeMs = phaseLap();
 
         // Ghost marks are copies; only owned parents contribute to the refinement count.
@@ -511,7 +502,7 @@ public:
         // Copy error to a DevVector so globalErrorNorm can iterate it
         DevVector d_errCopy(numElements);
         cudaMemcpy(d_errCopy.data(), d_errorPerElement, numElements * sizeof(RealType), cudaMemcpyDeviceToDevice);
-        stats.errorNorm = ErrorIndicator<KeyType, RealType>::globalErrorNorm(d_errCopy);
+        stats.errorNorm = ErrorIndicator<KeyType, RealType>::globalErrorNormOwned(d_errCopy, startIdx, endIdx);
 
         if (stats.elementsRefined == 0)
         {
@@ -672,7 +663,22 @@ public:
                                                          preNumNodes, route, MPI_COMM_WORLD,
                                                          config_.stage_refinement_messages);
         }
-        rebuildDomainFromDevice(refined, conforming ? nullptr : &keptBox);
+        LeppDeviceExecution::Vector<SplitEntity<KeyType>> split_sources;
+        cstone::DeviceVector<KeyType> child_generations;
+        if (!conforming)
+        {
+            generateSfcKeys<KeyType, RealType>(d_preX.data(), d_preY.data(), d_preZ.data(), d_preKeys.data(),
+                                               preNumNodes, keptBox);
+            split_sources = history_detail::save_split_entities<KeyType, ElementTag>(
+                *domain_, refined, d_marks, d_preKeys.data(), child_generations, config_.stage_refinement_messages);
+        }
+        else
+            child_generations = std::move(refined.d_generations);
+        rebuildDomainFromDevice(refined, conforming ? nullptr : &keptBox, &child_generations);
+        domain_->set_refinement_kind(kind);
+        if (!conforming)
+            history_detail::restore_split_entities<KeyType, ElementTag>(*domain_, split_sources,
+                                                                        config_.stage_refinement_messages);
         if constexpr (std::is_same_v<ElementTag, TetTag>)
             if (audit_emitted)
             {
@@ -685,6 +691,7 @@ public:
                 audit_compare(*audit_emitted, rebuilt);
                 audit_emitted.reset();
             }
+        domain_->initialize_refinement_generations();
         amrOctree_.initialize(*domain_);
         stats.rebuildTimeMs = phaseLap();
 
@@ -736,7 +743,7 @@ public:
 
     bool shouldContinue(const AmrStats& stats) const
     {
-        return currentLevel_ < config_.maxLevels && stats.errorNorm > config_.errorTolerance &&
+        return currentLevel_ < config_.maxAdaptations && stats.errorNorm > config_.errorTolerance &&
                stats.elementsRefined > 0;
     }
 
@@ -762,6 +769,9 @@ public:
     }
 
 private:
+    using Split     = SplitEntity<KeyType>;
+    using Execution = LeppDeviceExecution;
+
     // cornerstone focus-tree bucket size of every domain the manager builds
     static constexpr unsigned bucketSizeFocus = 8;
     // The keyed point (KeyedPosition) of every local node in box, the box its keys were encoded with
@@ -793,7 +803,9 @@ private:
     // The opt-in reuse experiment remains unvalidated; fixed-box refinement always constructs a new domain.
     // Refresh all tree views after this call because sync can replace their backing buffers.
     template<typename ResultType>
-    void rebuildDomainFromDevice(ResultType& refined, const cstone::Box<RealType>* fixedBox)
+    void rebuildDomainFromDevice(ResultType& refined,
+                                 const cstone::Box<RealType>* fixedBox,
+                                 cstone::DeviceVector<KeyType>* generations)
     {
         const char* reuseEnv = std::getenv("MARS_AMR_REUSE_DOMAIN");
         const bool reuseDomain = (reuseEnv != nullptr && std::string(reuseEnv) != "0"
@@ -819,7 +831,7 @@ private:
             else
             {
                 domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn), rank_, numRanks_,
-                                                   config_.bucketSize, bucketSizeFocus, fixedBox);
+                                                   config_.bucketSize, bucketSizeFocus, fixedBox, generations);
             }
         }
         else if constexpr (std::is_same_v<ElementTag, TetTag>)
@@ -834,7 +846,7 @@ private:
             else
             {
                 domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn), rank_, numRanks_,
-                                                   config_.bucketSize, bucketSizeFocus, fixedBox);
+                                                   config_.bucketSize, bucketSizeFocus, fixedBox, generations);
             }
         }
 
@@ -873,8 +885,8 @@ private:
         else if constexpr (std::tuple_size_v<ConnTupleT> == 4)
         {
             if (config_.tet_refinement == TetRefinement::ConformingBisection)
-                return TetBisectionRefiner<KeyType, RealType>::refine(*domain_, d_marks.data(),
-                                                                      config_.stage_refinement_messages);
+                return TetBisectionRefiner<KeyType, RealType>::refine(
+                    *domain_, d_marks.data(), config_.stage_refinement_messages, KeyType(config_.maxLevels));
             return Refine::refineLocal(
                 std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
                 std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,

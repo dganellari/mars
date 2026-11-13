@@ -80,24 +80,23 @@ void check_tree(int rank, int ranks)
                 constexpr unsigned bucket = 64;
                 cstone::DeviceVector<unsigned> counts(global.numLeafNodes);
                 cstone::DeviceVector<cstone::TreeNodeIndex> ops(global.numLeafNodes + 1);
-                mars::amr::weight_owned_leaves<<<global.numLeafNodes, threads>>>(global.leaves, global.numLeafNodes,
-                    keys.data(), first, last, d_error.data(), maximum, bucket, counts.data());
+                mars::amr::weight_owned_leaves<<<global.numLeafNodes, threads>>>(
+                    global.leaves, global.numLeafNodes, keys.data(), first, last, d_error.data(), maximum, bucket,
+                    RealType(.3), counts.data());
                 checkGpuErrors(cudaGetLastError());
                 auto actual_counts = download(counts.data(), counts.size());
                 std::vector<unsigned> reference(global.numLeafNodes);
                 for (int leaf = 0; leaf < global.numLeafNodes; ++leaf)
                 {
-                    auto weighted = [=](RealType error) {
-                        const RealType scale = maximum > 0 ? RealType(1) + error / maximum * bucket : RealType(1);
-                        return std::max(bucket, unsigned(bucket * scale));
-                    };
+                    auto weighted = [=](RealType error)
+                    { return bucket + unsigned(maximum > 0 && error > RealType(.3) * maximum); };
                     invalid += actual_counts[leaf] != weighted(local[leaf]);
                     reference[leaf] = weighted(full[leaf]);
                 }
                 cstone::computeNodeOpsGpu(exec, global.leaves, global.numLeafNodes, counts.data(), bucket, ops.data());
                 cstone::DeviceVector<uint8_t> marks(keys.size(), 0);
                 mars::amr::mark_owned_leaves<<<global.numLeafNodes, threads>>>(global.leaves, global.numLeafNodes,
-                    keys.data(), first, last, ops.data(), marks.data());
+                    keys.data(), first, last, ops.data(), counts.data(), bucket, marks.data());
                 checkGpuErrors(cudaGetLastError());
                 const auto actual = download(marks.data(), marks.size());
                 for (size_t e = 0; e < sorted.size(); ++e)
@@ -106,8 +105,7 @@ void check_tree(int rank, int ranks)
                     if (e >= first && e < last)
                     {
                         auto leaf = std::upper_bound(global_keys.begin(), global_keys.end(), sorted[e]) - global_keys.begin() - 1;
-                        const auto op = cstone::calculateNodeOp(global_keys.data(), leaf, reference.data(), bucket);
-                        expected = op >= 8 ? 1 : op == 0 ? 2 : 0;
+                        expected = reference[leaf] > bucket ? 1 : 0;
                     }
                     invalid += actual[e] != expected;
                 }

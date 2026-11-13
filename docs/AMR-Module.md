@@ -14,7 +14,7 @@ supports nonconforming red refinement and an optional
 Each adaptation performs these steps:
 
 1. Mark owned elements from their errors, using a threshold or Cornerstone leaves.
-2. For red refinement, exchange halo marks and enforce mesh 2:1 balance until
+2. For red refinement, exchange generation requests at shared vertices and enforce mesh 2:1 balance until
    every rank reports no further changes. LEPP instead closes shared edge stars.
 3. Emit children only for owned parents. Red refinement produces eight children
    per marked parent; LEPP bisects terminal edges and may refine neighbouring tets.
@@ -38,10 +38,6 @@ no local input elements still participate in the rebuild and communication.
 
 ## Marking and Cornerstone reuse
 
-`MarkingStrategy::Doerfler` is the existing maximum-relative threshold policy:
-`error > refineFraction * globalMaximum`. Despite its historical name, it does
-not select a set whose accumulated error reaches a bulk fraction.
-
 `MarkingStrategy::OctreeNative` uses Cornerstone's existing global leaves and
 sorted element keys. Each rank computes errors for its owned leaf ranges and calls
 `computeNodeOpsGpu` to decide splits. A scalar maximum is reduced across ranks;
@@ -49,11 +45,30 @@ there is no additional global array reduction of leaf errors. Assignment boundar
 align with global leaves, and counts forbid sibling merging, so remote leaf errors
 are not needed for the owned split decisions.
 
-`AmrOctree` obtains element levels from Cornerstone's current focused-tree layout,
-including halos, rather than reconstructing a second element-to-leaf map. Physical
-mesh balance still uses element sizes and connectivity: spatial tree balance alone
-does not constrain hanging nodes. Cornerstone retains its own global tree; this
-change does not eliminate that data structure or establish large-scale performance.
+Both policies use `refineFraction` as a **maximum-relative threshold**. The
+historical `Doerfler` name does not mean bulk-error marking: an element is marked
+when its error is strictly greater than `refineFraction * globalMaximum`.
+`OctreeNative` applies that test to each global leaf's largest owned-element
+error, then marks the elements in that leaf. It passes `bucketSize + 1` to
+Cornerstone for a selected leaf and `bucketSize` otherwise. Thus changing the
+bucket size changes spatial grouping, but not the error threshold. Zero error
+marks nothing. A finest-resolution SFC leaf can no longer split spatially, but
+its selected elements still refine up to their mesh-generation cap. Several
+elements can share one key; spatial tree depth is not their refinement limit.
+Coarsening remains disabled.
+
+Mesh generations are separate from Cornerstone tree depth. Input cells start at
+zero; every red split or LEPP bisection increments its parent's generation.
+Cornerstone carries this integer alongside connectivity through its existing
+sort, redistribution and halo exchange. No second partition or replicated mesh
+is constructed. Cornerstone still retains its global spatial tree.
+
+Red closure compares generations at shared vertices and at the regular masters
+of hanging vertices. A reusable sparse communication plan collects the maximum
+requested generation at each SFC node owner. Sweeps continue to collective
+convergence. Physical edge lengths do not enter this decision, so an initially
+graded conforming mesh does not refine merely because neighbouring cells differ
+in size. This is a conservative vertex-balance rule, not a minimal face-only closure.
 
 ## Using the manager
 
@@ -75,14 +90,26 @@ solution = std::move(next);
 Every rank must supply equally sized field lists and valid pointers for its local
 arrays. Use SFC node ownership for distributed transfer. `AmrStats` records owned
 element counts, refined parents and phase timings; `shouldContinue(stats)` checks
-the configured level/error limits and whether any elements were refined.
+the adaptation-round/error limits and whether any elements were refined.
+`maxLevels` limits each element's refinement generation; `maxAdaptations` separately
+limits manager calls that change the mesh. Neither is a Cornerstone leaf depth.
+Red marking cannot exceed the generation cap. If LEPP conformity would require a
+bisection beyond that cap, the call fails collectively before replacing the domain;
+it never returns a partially conforming mesh.
 
 ## Galerkin equations with hanging nodes
 
 Red refinement leaves hanging edge nodes and, for hexes, face nodes. A continuous
 P1/Q1 field expresses their values as weighted combinations of independent nodes.
-`HangingNodes` finds these relations, routes them through SFC owners and resolves
-dependent constraints. `DofSpace` then supplies prolongation `P`, additive
+The refiner records each split edge or hex face by its sorted parent corner
+keys and the key of the node it emitted. After redistribution, exact entity
+matching retains records only where a coarse edge or face still exists.
+`HangingNodes` consumes these records, routes them through SFC owners and resolves
+dependent constraints. There is no distance tolerance. Equal midpoint keys alone
+do not establish incidence: reusing an old key requires the same recorded parent,
+and an unrelated collision fails collectively. Hex body-centre collisions are
+also rejected. `HangingNodes` requires manager refinement history; a file containing
+an already nonconforming mesh cannot reconstruct that history from coordinates. `DofSpace` then supplies prolongation `P`, additive
 restriction `P^T` and the constrained operator `P^T A P`. Dirichlet unknowns are
 removed symmetrically before PCG.
 
@@ -96,6 +123,19 @@ The [peak comparison](AMR-Peak-Example.md) uses `--refinement=red|lepp` and
 checks described in [the validation guide](../tests/amr/nonconforming/README.md).
 
 ## Validation scope
+
+The generation, exact-incidence and explicit-threshold changes pass 23 local
+CPU/MPI checks and 46 cases on each of NVIDIA GH200 and AMD MI300A. The native
+campaign covers 1/4/8 ranks, including two nodes, with graded Tet4/Hex8 and thin
+Tet4 refinement, constraint algebra, field transfer, nonbinary marking and
+maximum-generation checks. Conforming LEPP also passes three refinement rounds
+on the public non-box MFEM Escher mesh. All checked mesh/constraint counts agree
+across ranks and platforms. See the [validation record](../tests/amr/README.md#generation-and-topology-validation)
+for jobs, source identity and transport scope.
+
+These tests establish mesh and constraint behavior beyond cubes. They do not
+establish PDE accuracy on every distorted mesh. The affine Galerkin solver checks
+still use cube domains; the example's boundary selection is based on its bounding box.
 
 The source snapshots tested on NVIDIA GH200 and AMD MI300A pass the combined
 Cornerstone/red-refinement cube checks at one, four and eight ranks, including
@@ -113,14 +153,18 @@ These CPU checks do not turn the native GPU manager into a CPU backend.
 
 See the validation guide for job IDs, source seals, exact tolerances and the
 separate status of integration/package testing. These results do not establish
-scaling or general-mesh accuracy.
+scaling or arbitrary-geometry PDE accuracy.
 
 ## Limits
 
-- Refinement only: coarsening is not implemented.
+- Refinement only: coarsening is not implemented. Initial meshes must be conforming,
+  single-block and nonperiodic. Keep one refinement policy per mesh history:
+  red generations and directional bisection generations are not interchangeable.
+  Refinement history is not serialized for restart.
 - Nonconforming Galerkin acceptance covers the public nonperiodic single-block
-  cube fixtures. Periodic constraints, mixed elements, arbitrary geometry and
-  nonconforming side-set ancestry are not established by these checks. Use the
+  cube fixtures, while refinement and constraint checks also cover graded/thin
+  meshes. Periodic constraints, mixed elements, arbitrary-geometry PDE accuracy
+  and nonconforming side-set ancestry remain unvalidated. Use the
   separately validated conforming Tet4 policy for triangle side-set preservation.
 - Nonconforming CVFEM and Navier–Stokes AMR drivers do not constrain hanging nodes
   or supply the missing coarse/fine interface flux. A successful run does not

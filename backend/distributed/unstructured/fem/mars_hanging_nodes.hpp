@@ -7,13 +7,12 @@
 // value at such a node is the mean of the edge ends (face corners): the node is not an unknown. When an edge end is
 // itself hanging on a coarser element, its own constraint is substituted, down to regular nodes.
 //
-// Detection: each element E compares the corners of the elements around its corners with the midpoints of its
-// edges and the centres of its faces. Positions match within a tenth of the edge, not by key: every AMR rebuild
-// encodes the coordinates against a new box. Each rank sends what it found to the SFC owner of the node, then asks
-// the owners about every node its own elements use and every node a constraint refers to, so all ranks agree
-// whatever their halos hold.
+// Detection uses active split-edge/face records emitted by the refiner and matched to current coarse
+// entities after redistribution. Key equality identifies nodes; parent incidence establishes the constraint.
+// Each rank sends these records to the SFC node owner, then queries the nodes used by its owned elements.
 
 #include "../domain.hpp"
+#include "../amr/mars_amr_sparse_plan.hpp"
 #include "../mars_sfc_ownership.hpp"
 #include "../utils/mars_gpu_reduce.hpp"
 
@@ -48,198 +47,11 @@ constexpr int MaxHangingLinks = 16;
 // and their keys in ascending order, unused ones ~0.
 constexpr int HangingRecordSize = 6;
 
-template<typename ElementTag>
-struct HangingGeometry;
-
-// Corner numbering of the hexahedral refiner (mars_amr_octree_refine.hpp)
-template<>
-struct HangingGeometry<HexTag>
-{
-    static constexpr int numNodes = 8, numEdges = 12, numFaces = 6;
-    __host__ __device__ static void edge(int k, int& a, int& b)
-    {
-        constexpr int e[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
-                                  {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-        a = e[k][0];
-        b = e[k][1];
-    }
-    __host__ __device__ static void face(int k, int (&c)[4])
-    {
-        constexpr int f[6][4] = {{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4}, {3, 2, 6, 7}, {0, 3, 7, 4}, {1, 2, 6, 5}};
-        for (int i = 0; i < 4; ++i)
-            c[i] = f[k][i];
-    }
-};
-
-// Red refinement of tetrahedra only puts nodes on edges.
-template<>
-struct HangingGeometry<TetTag>
-{
-    static constexpr int numNodes = 4, numEdges = 6, numFaces = 0;
-    __host__ __device__ static void edge(int k, int& a, int& b)
-    {
-        constexpr int e[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
-        a = e[k][0];
-        b = e[k][1];
-    }
-    __host__ __device__ static void face(int, int (&)[4]) {}
-};
-
 template<typename KeyType, int N>
 struct HangingCorners
 {
     const KeyType* c[N];
 };
-
-// The hanging nodes on the edges and faces of each element E, from the corners of the elements around E's
-// corners. Count pass (records == nullptr): count[e]. Write pass: from offset[e], records of
-// {node slot, 2 or 4, master slots, -1 for unused}.
-template<typename ElementTag, typename KeyType, typename RealType>
-__global__ void hangingFindKernel(HangingCorners<KeyType, HangingGeometry<ElementTag>::numNodes> conn,
-                                  size_t numElements, const RealType* x, const RealType* y, const RealType* z,
-                                  const KeyType* n2eOffsets, const KeyType* n2eList, const unsigned* offset,
-                                  unsigned* count, int* records)
-{
-    using G                = HangingGeometry<ElementTag>;
-    constexpr int N        = G::numNodes;
-    constexpr int maxFound = G::numEdges + G::numFaces; // one node per edge and face in a 2:1 mesh
-    const size_t e         = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (e >= numElements) return;
-
-    int n[N];
-    RealType X[N][3], lo[3], hi[3], shortest2 = 0;
-    for (int i = 0; i < N; ++i)
-    {
-        n[i]    = int(conn.c[i][e]);
-        X[i][0] = x[n[i]];
-        X[i][1] = y[n[i]];
-        X[i][2] = z[n[i]];
-    }
-    for (int t = 0; t < 3; ++t)
-    {
-        lo[t] = hi[t] = X[0][t];
-        for (int i = 1; i < N; ++i)
-        {
-            lo[t] = X[i][t] < lo[t] ? X[i][t] : lo[t];
-            hi[t] = X[i][t] > hi[t] ? X[i][t] : hi[t];
-        }
-    }
-    for (int q = 0; q < G::numEdges; ++q)
-    {
-        int a, b;
-        G::edge(q, a, b);
-        RealType l2 = 0;
-        for (int t = 0; t < 3; ++t)
-            l2 += (X[b][t] - X[a][t]) * (X[b][t] - X[a][t]);
-        shortest2 = (q == 0 || l2 < shortest2) ? l2 : shortest2;
-    }
-    // A node on an edge or face lies in E's box; the slack covers the tolerance of the tests below.
-    const RealType slack = RealType(0.1) * sqrt(shortest2);
-
-    int found[maxFound];
-    int numFound = 0;
-    for (int i = 0; i < N && numFound < maxFound; ++i)
-    {
-        for (KeyType j = n2eOffsets[n[i]]; j < n2eOffsets[n[i] + 1] && numFound < maxFound; ++j)
-        {
-            const size_t f = size_t(n2eList[j]);
-            if (f == e) continue;
-            for (int k = 0; k < N && numFound < maxFound; ++k)
-            {
-                const int m = int(conn.c[k][f]);
-                bool skip   = false;
-                for (int v = 0; v < N; ++v)
-                    skip |= m == n[v];
-                for (int v = 0; v < numFound; ++v)
-                    skip |= m == found[v];
-                if (skip) continue;
-                const RealType xm[3] = {x[m], y[m], z[m]};
-                bool inside          = true;
-                for (int t = 0; t < 3; ++t)
-                    inside &= xm[t] >= lo[t] - slack && xm[t] <= hi[t] + slack;
-                if (!inside) continue;
-
-                int masters[4]  = {-1, -1, -1, -1};
-                int numMasters  = 0;
-                for (int q = 0; q < G::numEdges && numMasters == 0; ++q)
-                {
-                    int a, b;
-                    G::edge(q, a, b);
-                    RealType d2 = 0, l2 = 0;
-                    for (int t = 0; t < 3; ++t)
-                    {
-                        const RealType mid = RealType(0.5) * (X[a][t] + X[b][t]);
-                        d2 += (xm[t] - mid) * (xm[t] - mid);
-                        l2 += (X[b][t] - X[a][t]) * (X[b][t] - X[a][t]);
-                    }
-                    if (d2 < RealType(0.01) * l2)
-                    {
-                        masters[0] = n[a];
-                        masters[1] = n[b];
-                        numMasters = 2;
-                    }
-                }
-                for (int q = 0; q < G::numFaces && numMasters == 0; ++q)
-                {
-                    int c[4];
-                    G::face(q, c);
-                    RealType d2 = 0, diag2 = 0;
-                    for (int t = 0; t < 3; ++t)
-                    {
-                        const RealType centre = RealType(0.25) * (X[c[0]][t] + X[c[1]][t] + X[c[2]][t] + X[c[3]][t]);
-                        d2 += (xm[t] - centre) * (xm[t] - centre);
-                        diag2 += (X[c[2]][t] - X[c[0]][t]) * (X[c[2]][t] - X[c[0]][t]);
-                    }
-                    // a tenth of the half diagonal
-                    if (d2 < RealType(0.0025) * diag2)
-                    {
-                        for (int v = 0; v < 4; ++v)
-                            masters[v] = n[c[v]];
-                        numMasters = 4;
-                    }
-                }
-                if (numMasters == 0) continue;
-                if (records)
-                {
-                    int* r = records + size_t(HangingRecordSize) * (offset[e] + numFound);
-                    r[0]   = m;
-                    r[1]   = numMasters;
-                    for (int v = 0; v < 4; ++v)
-                        r[2 + v] = masters[v];
-                }
-                found[numFound++] = m;
-            }
-        }
-    }
-    if (!records) count[e] = unsigned(numFound);
-}
-
-// Slot records to key records, the master keys ascending, so equal constraints compare equal
-template<typename KeyType>
-__global__ void hangingKeyRecordsKernel(const int* slotRecords, size_t numRecords, const KeyType* keys,
-                                        KeyType* keyRecords, KeyType* nodeKeys)
-{
-    const size_t r = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (r >= numRecords) return;
-    const int* in = slotRecords + size_t(HangingRecordSize) * r;
-    KeyType* out  = keyRecords + size_t(HangingRecordSize) * r;
-    const int cnt = in[1];
-    KeyType m[4];
-    for (int v = 0; v < 4; ++v)
-        m[v] = v < cnt ? keys[in[2 + v]] : ~KeyType(0);
-    for (int a = 1; a < 4; ++a) // insertion sort of four
-        for (int b = a; b > 0 && m[b] < m[b - 1]; --b)
-        {
-            KeyType t = m[b];
-            m[b]      = m[b - 1];
-            m[b - 1]  = t;
-        }
-    out[0] = keys[in[0]];
-    out[1] = KeyType(cnt);
-    for (int v = 0; v < 4; ++v)
-        out[2 + v] = m[v];
-    nodeKeys[r] = out[0];
-}
 
 // Of records sorted by node key: keep[r] for the first of each key, conflict[r] if it differs from that first one
 template<typename KeyType>
@@ -425,6 +237,55 @@ struct HangingFirstLinks
     }
 };
 
+namespace hanging_detail
+{
+template<class KeyType>
+struct Packet
+{
+    KeyType keys[HangingRecordSize];
+};
+template<class KeyType>
+struct Pack
+{
+    const KeyType* records;
+    Packet<KeyType>* packets;
+    __device__ void operator()(size_t i) const
+    {
+        for (int j = 0; j < HangingRecordSize; ++j)
+            packets[i].keys[j] = records[HangingRecordSize * i + j];
+    }
+};
+template<class KeyType>
+struct Unpack
+{
+    const Packet<KeyType>* packets;
+    KeyType* records;
+    __device__ void operator()(size_t i) const
+    {
+        for (int j = 0; j < HangingRecordSize; ++j)
+            records[HangingRecordSize * i + j] = packets[i].keys[j];
+    }
+};
+template<class KeyType>
+struct Questions
+{
+    const KeyType* keys;
+    Packet<KeyType>* packets;
+    __device__ void operator()(size_t i) const
+    {
+        packets[i]         = {};
+        packets[i].keys[0] = keys[i];
+    }
+};
+template<class KeyType>
+struct QuestionKeys
+{
+    const Packet<KeyType>* packets;
+    KeyType* keys;
+    __device__ void operator()(size_t i) const { keys[i] = packets[i].keys[0]; }
+};
+} // namespace hanging_detail
+
 // The hanging nodes among a rank's slots and the regular nodes behind each, by key, with weights summing to one.
 // Built for the slots this rank's own elements use and the slots it owns: what a DofSpace classifies.
 template<typename KeyType, typename RealType>
@@ -432,7 +293,9 @@ class HangingNodes
 {
 public:
     template<typename ElementTag>
-    explicit HangingNodes(const ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>& domain)
+    explicit HangingNodes(const ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>& domain,
+                          bool staged_messages = false)
+        : staged_messages_(staged_messages)
     {
         MPI_Comm_dup(MPI_COMM_WORLD, &comm_);
         build(domain);
@@ -454,101 +317,65 @@ public:
     size_t slotCount() const { return n_; }
 
 private:
-    // Collective. The record of each key from its owner: the nodes it hangs on, or count 0 for a regular node.
+    using Execution = amr::LeppDeviceExecution;
+    using Packet    = hanging_detail::Packet<KeyType>;
+
+    static Execution::Vector<Packet> pack(const KeyType* records, size_t n)
+    {
+        Execution::Vector<Packet> packets(n);
+        auto* out = Execution::data(packets);
+        Execution::for_each(n, hanging_detail::Pack<KeyType>{records, out});
+        return packets;
+    }
+
+    static void unpack(const Execution::Vector<Packet>& packets, thrust::device_vector<KeyType>& records)
+    {
+        records.resize(HangingRecordSize * packets.size());
+        auto* out      = thrust::raw_pointer_cast(records.data());
+        const auto* in = Execution::data(packets);
+        Execution::for_each(packets.size(), hanging_detail::Unpack<KeyType>{in, out});
+    }
+
     template<typename DomainT>
     void query(const thrust::device_vector<KeyType>& keys, thrust::device_vector<KeyType>& answers,
                const DomainT& domain) const
     {
-        constexpr int W = HangingRecordSize;
-        const size_t n  = keys.size();
-        thrust::device_vector<int> owner(n), order(n);
-        ownerOf(keys, 1, owner, domain);
-        thrust::sequence(thrust::device, order.begin(), order.end());
-        thrust::stable_sort_by_key(thrust::device, owner.begin(), owner.end(), order.begin());
-        thrust::device_vector<KeyType> sortedKeys(n);
-        permute(keys, order, 1, sortedKeys, false);
-
-        // runs of equal owner in the sorted keys
-        std::vector<int> h_owner(n);
-        thrust::copy(owner.begin(), owner.end(), h_owner.begin());
-        std::vector<int> dests, counts;
-        std::vector<size_t> begins;
-        size_t selfBegin = 0, selfCount = 0;
-        for (size_t i = 0; i < n;)
-        {
-            size_t j = i;
-            while (j < n && h_owner[j] == h_owner[i])
-                ++j;
-            if (h_owner[i] == rank_)
-            {
-                selfBegin = i;
-                selfCount = j - i;
-            }
-            else
-            {
-                dests.push_back(h_owner[i]);
-                counts.push_back(int(j - i));
-                begins.push_back(i);
-            }
-            i = j;
-        }
-
-        // questions to the owners
-        thrust::device_vector<KeyType> sendKeys(n - selfCount);
-        thrust::copy(sortedKeys.begin(), sortedKeys.begin() + selfBegin, sendKeys.begin());
-        thrust::copy(sortedKeys.begin() + selfBegin + selfCount, sortedKeys.end(), sendKeys.begin() + selfBegin);
-        cudaCheckCall(cudaDeviceSynchronize()); // GPU-aware MPI reads sendKeys
-        cstone::DeviceVector<KeyType> asked;
-        auto questions = sparseExchange<KeyType>(dests, counts, thrust::raw_pointer_cast(sendKeys.data()), asked,
-                                                 tagQueries, comm_);
-
-        // answers, one message per asker in source order
-        const size_t numAsked = asked.size();
-        thrust::device_vector<KeyType> lookedUp(size_t(W) * numAsked), replyBuf(size_t(W) * numAsked);
-        lookup(asked.data(), numAsked, thrust::raw_pointer_cast(lookedUp.data()));
-        std::vector<int> replyDests, replyCounts;
-        size_t at = 0;
-        for (const auto& q : questions)
-        {
-            thrust::copy(lookedUp.begin() + size_t(W) * q.offset, lookedUp.begin() + size_t(W) * (q.offset + q.count),
-                         replyBuf.begin() + at);
-            at += size_t(W) * q.count;
-            replyDests.push_back(q.source);
-            replyCounts.push_back(W * q.count);
-        }
-        cudaCheckCall(cudaDeviceSynchronize());
-        cstone::DeviceVector<KeyType> got;
-        auto replies = sparseExchange<KeyType>(replyDests, replyCounts, thrust::raw_pointer_cast(replyBuf.data()), got,
-                                               tagReplies, comm_);
-        if (replies.size() != dests.size())
-        {
-            std::fprintf(stderr, "HangingNodes: rank %d asked %zu ranks and got %zu replies\n", rank_, dests.size(),
-                         replies.size());
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-
-        // in the sorted-by-owner order: own keys answered here, the others from the replies (sources ascend, as dests)
-        thrust::device_vector<KeyType> sortedAnswers(size_t(W) * n);
-        if (selfCount > 0)
-            lookup(thrust::raw_pointer_cast(sortedKeys.data()) + selfBegin, selfCount,
-                   thrust::raw_pointer_cast(sortedAnswers.data()) + size_t(W) * selfBegin);
-        for (size_t d = 0; d < dests.size(); ++d)
-        {
-            auto src = thrust::device_pointer_cast(got.data()) + replies[d].offset;
-            thrust::copy(src, src + size_t(W) * counts[d], sortedAnswers.begin() + size_t(W) * begins[d]);
-        }
-        answers.resize(size_t(W) * n);
-        permute(sortedAnswers, order, W, answers, true);
+        const size_t n = keys.size();
+        thrust::device_vector<int> owners(n);
+        ownerOf(keys, 1, owners, domain);
+        cstone::DeviceVector<int> destinations(n);
+        Execution::copy(thrust::raw_pointer_cast(owners.data()), n, destinations.data());
+        Execution::Vector<Packet> questions(n);
+        auto* q         = Execution::data(questions);
+        const auto* key = thrust::raw_pointer_cast(keys.data());
+        Execution::for_each(n, hanging_detail::Questions<KeyType>{key, q});
+        amr::AmrSparsePlan<Execution, Packet> plan(destinations, comm_, staged_messages_);
+        const auto& incoming = plan.forward(questions);
+        const auto* in       = Execution::data(incoming);
+        cstone::DeviceVector<KeyType> asked(incoming.size());
+        auto* ask = asked.data();
+        Execution::for_each(incoming.size(), hanging_detail::QuestionKeys<KeyType>{in, ask});
+        thrust::device_vector<KeyType> found(HangingRecordSize * incoming.size());
+        lookup(ask, incoming.size(), thrust::raw_pointer_cast(found.data()));
+        auto replies = pack(thrust::raw_pointer_cast(found.data()), incoming.size());
+        unpack(plan.reverse(replies), answers);
     }
 
     template<typename ElementTag>
     void build(const ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>& domain)
     {
-        constexpr int N    = HangingGeometry<ElementTag>::numNodes;
+        constexpr int N     = ElementTag::NodesPerElement;
         n_                 = domain.getNodeCount();
         rank_              = domain.rank();
         numRanks_          = domain.numRanks();
         const KeyType* key = domain.getLocalToGlobalSfcMap().data();
+        int missing_history = !domain.has_refinement_history();
+        MPI_Allreduce(MPI_IN_PLACE, &missing_history, 1, MPI_INT, MPI_MAX, comm_);
+        if (missing_history)
+        {
+            MPI_Comm_free(&comm_);
+            throw std::runtime_error("HangingNodes requires AMR refinement history from an initially conforming mesh");
+        }
         if (numRanks_ > 1 && !domain.sfcOwnership())
         {
             if (rank_ == 0)
@@ -560,32 +387,11 @@ private:
         HangingCorners<KeyType, N> c;
         [&]<std::size_t... I>(std::index_sequence<I...>) { ((c.c[I] = std::get<I>(conn).data()), ...); }
         (std::make_index_sequence<N>{});
-        const size_t numElements = domain.getElementCount();
-        const auto& n2eOffsets   = domain.getNodeToElementOffsets();
-        const auto& n2eList      = domain.getNodeToElementList();
-        const RealType *x = domain.getNodeX().data(), *y = domain.getNodeY().data(), *z = domain.getNodeZ().data();
-
-        // 1. Every element this rank holds, own and halo, finds the hanging nodes on its edges and faces.
-        thrust::device_vector<unsigned> count(numElements + 1, 0u), offset(numElements + 1, 0u);
-        if (numElements > 0)
-            hangingFindKernel<ElementTag, KeyType, RealType>
-                <<<grid(numElements), 256>>>(c, numElements, x, y, z, n2eOffsets.data(), n2eList.data(), nullptr,
-                                             thrust::raw_pointer_cast(count.data()), nullptr);
-        cudaCheckError();
-        thrust::exclusive_scan(thrust::device, count.begin(), count.end(), offset.begin(), 0u);
-        unsigned numFound = offset.back();
-        thrust::device_vector<int> slotRecords(size_t(HangingRecordSize) * numFound);
-        if (numFound > 0)
-            hangingFindKernel<ElementTag, KeyType, RealType><<<grid(numElements), 256>>>(
-                c, numElements, x, y, z, n2eOffsets.data(), n2eList.data(), thrust::raw_pointer_cast(offset.data()),
-                nullptr, thrust::raw_pointer_cast(slotRecords.data()));
-        cudaCheckError();
-        thrust::device_vector<KeyType> found(size_t(HangingRecordSize) * numFound), foundKeys(numFound);
-        if (numFound > 0)
-            hangingKeyRecordsKernel<KeyType><<<grid(numFound), 256>>>(
-                thrust::raw_pointer_cast(slotRecords.data()), numFound, key, thrust::raw_pointer_cast(found.data()),
-                thrust::raw_pointer_cast(foundKeys.data()));
-        cudaCheckError();
+        const auto& ancestry = domain.refinement_constraints();
+        thrust::device_vector<KeyType> found(ancestry.size());
+        if (!ancestry.empty())
+            thrust::copy(thrust::device, thrust::device_pointer_cast(ancestry.data()),
+                         thrust::device_pointer_cast(ancestry.data() + ancestry.size()), found.begin());
         long long conflicts = uniqueRecords(found);
 
         // 2. Each record goes to the SFC owner of its node, which keeps the union: the registry.
@@ -757,49 +563,15 @@ private:
         cudaCheckError();
     }
 
-    // Records to the owners of their nodes; out: this rank's own records, then the received ones.
+    // Routes and payloads remain on device; only the sparse peer list reaches MPI on the host.
     void sendToOwners(const thrust::device_vector<KeyType>& records, thrust::device_vector<int>& owner,
                       thrust::device_vector<KeyType>& out) const
     {
-        constexpr int W = HangingRecordSize;
-        const size_t n  = owner.size();
-        thrust::device_vector<int> order(n);
-        thrust::sequence(thrust::device, order.begin(), order.end());
-        thrust::stable_sort_by_key(thrust::device, owner.begin(), owner.end(), order.begin());
-        thrust::device_vector<KeyType> sorted(records.size());
-        permute(records, order, W, sorted, false);
-        std::vector<int> h_owner(n), dests, counts;
-        thrust::copy(owner.begin(), owner.end(), h_owner.begin());
-        size_t selfBegin = 0, selfCount = 0;
-        for (size_t i = 0; i < n;)
-        {
-            size_t j = i;
-            while (j < n && h_owner[j] == h_owner[i])
-                ++j;
-            if (h_owner[i] == rank_)
-            {
-                selfBegin = i;
-                selfCount = j - i;
-            }
-            else
-            {
-                dests.push_back(h_owner[i]);
-                counts.push_back(int(W * (j - i)));
-            }
-            i = j;
-        }
-        thrust::device_vector<KeyType> sendBuf(size_t(W) * (n - selfCount));
-        auto s = sorted.begin();
-        thrust::copy(s, s + W * selfBegin, sendBuf.begin());
-        thrust::copy(s + W * (selfBegin + selfCount), sorted.end(), sendBuf.begin() + W * selfBegin);
-        cudaCheckCall(cudaDeviceSynchronize()); // GPU-aware MPI reads sendBuf
-        cstone::DeviceVector<KeyType> recv;
-        sparseExchange<KeyType>(dests, counts, thrust::raw_pointer_cast(sendBuf.data()), recv, tagRecords, comm_);
-        out.resize(size_t(W) * selfCount + recv.size());
-        thrust::copy(s + W * selfBegin, s + W * (selfBegin + selfCount), out.begin());
-        if (recv.size() > 0)
-            thrust::copy(thrust::device_pointer_cast(recv.data()), thrust::device_pointer_cast(recv.data()) + recv.size(),
-                         out.begin() + size_t(W) * selfCount);
+        cstone::DeviceVector<int> destinations(owner.size());
+        Execution::copy(thrust::raw_pointer_cast(owner.data()), owner.size(), destinations.data());
+        auto packets = pack(thrust::raw_pointer_cast(records.data()), owner.size());
+        amr::AmrSparsePlan<Execution, Packet> plan(destinations, comm_, staged_messages_);
+        unpack(plan.forward(packets), out);
     }
 
     size_t n_ = 0;
@@ -810,7 +582,7 @@ private:
     thrust::device_vector<int> slots_, numLinks_;
     thrust::device_vector<KeyType> linkKeys_;
     thrust::device_vector<RealType> linkWeights_;
-    static constexpr int tagRecords = 0x4e70, tagQueries = 0x4e71, tagReplies = 0x4e72;
+    bool staged_messages_ = false;
 };
 
 } // namespace fem

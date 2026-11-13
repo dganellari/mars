@@ -349,7 +349,8 @@ int run(const Options& opt, int rank, int numRanks)
                                                     amr::MarkingStrategy::Doerfler;
     if (opt.refinement == "lepp") config.tet_refinement = amr::TetRefinement::ConformingBisection;
     config.refineFraction = 0.5; // the indicator is 0 or 1
-    config.maxLevels      = 64;  // the level gate is not used; the loop below stops after opt.levels
+    config.maxLevels      = 64;  // Per-element generation cap; --levels counts adaptation rounds.
+    config.maxAdaptations = opt.levels;
     config.bucketSize     = opt.bucketSize;
     Manager amr(config);
     amr.initialize(opt.mesh, rank, numRanks);

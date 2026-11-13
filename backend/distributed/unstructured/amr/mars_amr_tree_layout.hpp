@@ -6,27 +6,40 @@
 namespace mars::amr
 {
 template<class KeyType>
-HOST_DEVICE_FUN util::array<size_t, 2> owned_leaf_range(const KeyType* leaves,
-    cstone::TreeNodeIndex leaf, const KeyType* keys, size_t first, size_t last)
+HOST_DEVICE_FUN util::array<size_t, 2>
+owned_leaf_range(const KeyType* leaves, cstone::TreeNodeIndex leaf, const KeyType* keys, size_t first, size_t last)
 {
     if (first == last) return {first, last};
     const auto begin = stl::lower_bound(keys + first, keys + last, leaves[leaf]);
-    const auto end = stl::lower_bound(begin, keys + last, leaves[leaf + 1]);
+    const auto end   = stl::lower_bound(begin, keys + last, leaves[leaf + 1]);
     return {size_t(begin - keys), size_t(end - keys)};
 }
 
 template<class RealType>
-HOST_DEVICE_FUN unsigned weighted_leaf_count(RealType error, RealType maximum, unsigned bucket)
+HOST_DEVICE_FUN unsigned
+weighted_leaf_count(RealType error, RealType maximum, unsigned bucket, RealType fraction = RealType(0.3))
 {
-    const RealType scale = maximum > RealType(0) ? RealType(1) + error / maximum * RealType(bucket) : RealType(1);
-    const auto weighted = static_cast<unsigned>(bucket * scale);
-    return weighted > bucket ? weighted : bucket;
+    // Cornerstone splits when count > bucket. Keep this decision independent of bucket size.
+    return bucket + unsigned(maximum > RealType(0) && error > fraction * maximum);
+}
+
+template<class KeyType>
+HOST_DEVICE_FUN uint8_t
+mesh_leaf_mark(KeyType range, cstone::TreeNodeIndex operation, unsigned weighted_count, unsigned bucket)
+{
+    // A finest-resolution SFC leaf cannot split, but its elements can still refine.
+    // Several tets may share a key without sharing a refinement generation.
+    if (operation >= 8 || (range == KeyType(1) && weighted_count > bucket)) return 1;
+    return operation == 0 ? 2 : 0;
 }
 
 // The layout indexes elements, including halos; it must come from the latest sync.
 template<class KeyType, class RealType>
 HOST_DEVICE_FUN void assign_leaf_level(cstone::OctreeNsView<RealType, KeyType> tree,
-                                      cstone::TreeNodeIndex leaf, unsigned lane, unsigned stride, int* levels)
+                                       cstone::TreeNodeIndex leaf,
+                                       unsigned lane,
+                                       unsigned stride,
+                                       int* levels)
 {
     const int level = cstone::treeLevel(tree.leaves[leaf + 1] - tree.leaves[leaf]);
     for (size_t e = size_t(tree.layout[leaf]) + lane; e < tree.layout[leaf + 1]; e += stride)
@@ -42,9 +55,16 @@ __global__ void assign_leaf_levels(cstone::OctreeNsView<RealType, KeyType> tree,
 }
 // Work once per leaf, using Cornerstone's sorted element keys instead of reconstructing node keys.
 template<class KeyType, class RealType>
-__global__ void weight_owned_leaves(const KeyType* leaves, cstone::TreeNodeIndex num_leaves,
-                                   const KeyType* keys, size_t first, size_t last, const RealType* error,
-                                   RealType global_max, unsigned bucket, unsigned* counts)
+__global__ void weight_owned_leaves(const KeyType* leaves,
+                                    cstone::TreeNodeIndex num_leaves,
+                                    const KeyType* keys,
+                                    size_t first,
+                                    size_t last,
+                                    const RealType* error,
+                                    RealType global_max,
+                                    unsigned bucket,
+                                    RealType fraction,
+                                    unsigned* counts)
 {
     const auto leaf = cstone::TreeNodeIndex(blockIdx.x);
     if (leaf >= num_leaves) return;
@@ -53,8 +73,8 @@ __global__ void weight_owned_leaves(const KeyType* leaves, cstone::TreeNodeIndex
     if (threadIdx.x == 0)
     {
         const auto bounds = owned_leaf_range(leaves, leaf, keys, first, last);
-        range[0] = bounds[0];
-        range[1] = bounds[1];
+        range[0]          = bounds[0];
+        range[1]          = bounds[1];
     }
     __syncthreads();
     RealType maximum = 0;
@@ -68,13 +88,19 @@ __global__ void weight_owned_leaves(const KeyType* leaves, cstone::TreeNodeIndex
             partial[threadIdx.x] = partial[threadIdx.x + width];
         __syncthreads();
     }
-    if (threadIdx.x == 0) counts[leaf] = weighted_leaf_count(partial[0], global_max, bucket);
+    if (threadIdx.x == 0) counts[leaf] = weighted_leaf_count(partial[0], global_max, bucket, fraction);
 }
 
 template<class KeyType>
-__global__ void mark_owned_leaves(const KeyType* leaves, cstone::TreeNodeIndex num_leaves,
-                                 const KeyType* keys, size_t first, size_t last,
-                                 const cstone::TreeNodeIndex* node_ops, uint8_t* marks)
+__global__ void mark_owned_leaves(const KeyType* leaves,
+                                  cstone::TreeNodeIndex num_leaves,
+                                  const KeyType* keys,
+                                  size_t first,
+                                  size_t last,
+                                  const cstone::TreeNodeIndex* node_ops,
+                                  const unsigned* weighted_counts,
+                                  unsigned bucket,
+                                  uint8_t* marks)
 {
     const auto leaf = cstone::TreeNodeIndex(blockIdx.x);
     if (leaf >= num_leaves) return;
@@ -82,13 +108,14 @@ __global__ void mark_owned_leaves(const KeyType* leaves, cstone::TreeNodeIndex n
     if (threadIdx.x == 0)
     {
         const auto bounds = owned_leaf_range(leaves, leaf, keys, first, last);
-        range[0] = bounds[0];
-        range[1] = bounds[1];
+        range[0]          = bounds[0];
+        range[1]          = bounds[1];
     }
     __syncthreads();
     const auto operation = node_ops[leaf + 1] - node_ops[leaf];
-    const uint8_t mark = operation >= 8 ? 1 : operation == 0 ? 2 : 0;
-    for (size_t e = range[0] + threadIdx.x; e < range[1]; e += blockDim.x) marks[e] = mark;
+    const uint8_t mark   = mesh_leaf_mark(leaves[leaf + 1] - leaves[leaf], operation, weighted_counts[leaf], bucket);
+    for (size_t e = range[0] + threadIdx.x; e < range[1]; e += blockDim.x)
+        marks[e] = mark;
 }
 
 #endif

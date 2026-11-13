@@ -33,8 +33,7 @@ void check_marks(const cstone::Domain<KeyType, double>& domain, const std::vecto
             std::vector<unsigned> reference(global.numLeafNodes), candidate(global.numLeafNodes);
             for (int leaf = 0; leaf < global.numLeafNodes; ++leaf)
             {
-                const RealType scale = !zero && maximum > 0 ? RealType(1) + full[leaf] / maximum * bucket : 1;
-                reference[leaf] = std::max(bucket, unsigned(bucket * scale));
+                reference[leaf] = bucket + unsigned(!zero && maximum > 0 && full[leaf] > RealType(.3) * maximum);
                 candidate[leaf] = mars::amr::weighted_leaf_count(zero ? RealType(0) : local[leaf],
                                                                  zero ? RealType(0) : maximum, bucket);
                 errors_found += owners[leaf] > 1;
@@ -52,10 +51,33 @@ void check_marks(const cstone::Domain<KeyType, double>& domain, const std::vecto
     if (errors_found) throw std::runtime_error("Owned-leaf decisions differ from replicated global errors");
 }
 
+// Cornerstone must keep a unit-range leaf even when its selected elements still need refinement.
+template<class KeyType>
+void check_terminal_leaf()
+{
+    std::array<KeyType, 9> leaves;
+    for (size_t i = 0; i < leaves.size(); ++i) leaves[i] = KeyType(i);
+    for (unsigned bucket : {1u, 64u, 1024u})
+        for (bool selected : {false, true})
+        {
+            std::array<unsigned, 8> counts;
+            counts.fill(bucket + unsigned(selected));
+            for (int i = 0; i < 8; ++i)
+            {
+                const auto op = cstone::calculateNodeOp(leaves.data(), i, counts.data(), bucket);
+                if (op != 1 || mars::amr::mesh_leaf_mark(KeyType(1), op, counts[i], bucket) != unsigned(selected))
+                    throw std::runtime_error("SFC resolution incorrectly limits mesh refinement");
+                // The old op>=8 predicate misses every selected finest-resolution leaf.
+                if (selected && op >= 8) throw std::runtime_error("Terminal-leaf negative control did not trigger");
+            }
+        }
+}
+
 // Check the actual post-sync layout against an independent per-key search.
 template<class KeyType>
 void check_tree(int rank, int ranks)
 {
+    check_terminal_leaf<KeyType>();
     cstone::Box<double> box(0, 1);
     for (int round = 0; round < 3; ++round)
     {
@@ -75,9 +97,22 @@ void check_tree(int rank, int ranks)
                                                MPI_COMM_WORLD, box);
         std::vector<KeyType> keys(x.size(), 0);
         std::vector<double> s1, s2, s3;
+        std::vector<KeyType> generations(x.size()), identities(x.size()), s4, s5;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            identities[i]  = KeyType(i * ranks + rank);
+            generations[i] = identities[i] % 7;
+        }
         for (int sync = 0; sync < 2; ++sync)
         {
-            domain.sync(keys, x, y, z, h, std::tie(), std::tie(s1, s2, s3));
+            domain.sync(keys, x, y, z, h, std::tie(generations, identities), std::tie(s1, s2, s3, s4, s5));
+            domain.exchangeHalos(std::tie(generations, identities), s4, s5);
+            int generation_errors = 0;
+            for (size_t i = 0; i < keys.size(); ++i)
+                generation_errors += generations[i] != identities[i] % 7;
+            MPI_Allreduce(MPI_IN_PLACE, &generation_errors, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            if (generation_errors)
+                throw std::runtime_error("Generation property changed through Cornerstone sync/halos");
             check_marks<KeyType, float>(domain, keys);
             check_marks<KeyType, double>(domain, keys);
             const auto tree = domain.octreeProperties();

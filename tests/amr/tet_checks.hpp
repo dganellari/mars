@@ -44,6 +44,7 @@ Face tet_face(const Tet& tet, int opposite);
 int boundary_plane(const Face& face);
 void select_device(int rank);
 void run_gpu_checks(int rank, int ranks, bool staged);
+void check_public_manager(const std::string& path, int rank, int ranks, bool staged);
 void check_exodus_manager(const std::string& path, int rank, int ranks, bool staged);
 
 template<class T>
