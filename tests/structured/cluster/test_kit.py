@@ -420,11 +420,13 @@ class KitTests(unittest.TestCase):
 
     def test_export_scope_excludes_other_backends_and_artifacts(self):
         for name in ("internal-notes/brief.md", "SYNC.md", "AGENTS.md", "docs/private.md", "mesh.bin",
-                     "backend/serial/source.hpp", "backend/amr/source.hpp", "backend/distributed/unstructured/domain.hpp",
+                     "backend/serial/source.hpp", "backend/amr/source.hpp", "backend/kokkos/bisection/source.hpp", "backend/distributed/unstructured/domain.hpp",
                      "backend/distributed/testsuite/unstructured/mars_domain_test.cu",
-                     ".local-worktrees/file.hpp", "backend/distributed/mesh_manager/pump.hpp"):
+                     ".local-worktrees/file.hpp", "backend/distributed/structured/mesh_manager/pump.hpp"):
             self.assertFalse(snapshot_export.eligible(name), name)
         for name in ("CMakeLists.txt", "cmake/MarsOptions.cmake", "core/mars.hpp",
+                     "backend/kokkos/common/mars_utils_kokkos.hpp",
+                     "backend/distributed/structured/mesh/mars_distributed_mesh_kokkos.hpp",
                      "backend/distributed/testsuite/common/mars_structured_test.hpp",
                      "tests/structured/mars_structured_runtime.hpp", "tests/structured/cluster/run.py"):
             self.assertTrue(snapshot_export.eligible(name), name)

@@ -35,6 +35,20 @@ ranks. This does not establish support for every Exodus layout or arbitrary mesh
 
 ## Refinement and conformity
 
+`maxLevels` counts actual parent bisections, starting at zero on the input mesh.
+Several bisections can occur during one LEPP closure. Generations travel through
+Cornerstone with connectivity. A closure exceeding the cap fails collectively
+before the manager replaces its domain; increasing `maxAdaptations` alone does not
+raise this cap.
+
+The public MFEM 4.8 Escher Tet4 fixture adds a non-box mesh with 48 boundary labels.
+Its host LEPP test uses three rounds and changed rank ownership. The corresponding
+native manager test is `tet_bisection_gpu --public-mesh tests/amr/data/mfem/escher.mesh`
+(with optional `--staged`). Three rounds pass on NVIDIA GH200 and AMD MI300A at
+1/4/8 ranks, with direct and staged AMR messages. See the
+[validation record](../tests/amr/README.md#generation-and-topology-validation).
+This single fixture does not establish arbitrary-mesh or curved-element support.
+
 Input tetrahedra must already form a conforming, nonperiodic, single-block mesh.
 Only mark `1` requests refinement. A marked tetrahedron requests its longest
 edge; equal lengths use the canonical pair of global endpoint keys. A requested

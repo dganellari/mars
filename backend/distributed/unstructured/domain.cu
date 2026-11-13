@@ -342,6 +342,9 @@ void generateSfcKeys(const RealType* x,
                      size_t numKeys,
                      const cstone::Box<RealType>& box)
 {
+    if (numKeys == 0) return;
+    // This output is fresh node identity data. Cornerstone otherwise preserves stale removal markers.
+    cudaCheckCall(cudaMemsetAsync(keys, 0, numKeys * sizeof(KeyType), cstone::execution::gpuDefaultStream));
     // Use sfcKindPointer to match cornerstone's template instantiation
     cstone::computeSfcKeys(cstone::execution::gpuDefaultStream, x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
     cudaCheckError();

@@ -17,10 +17,9 @@ if(MARS_ENABLE_KOKKOS)
         message(FATAL_ERROR "The structured Kokkos backend requires MARS_ENABLE_MPI=ON.")
     endif()
     list(APPEND DISTRIBUTED_MODULES
-        sfc
-        mesh
-        mesh_manager
-        discretization
+        structured/sfc
+        structured/mesh
+        structured/mesh_manager
         # Removed testsuite directories from here
     )
     
@@ -36,7 +35,6 @@ endif()
 if(MARS_ENABLE_UNSTRUCTURED)
     # Add directories to search paths
     list(APPEND DISTRIBUTED_MODULES
-        octree
         unstructured
         unstructured/utils
     )

@@ -7,7 +7,7 @@ import subprocess
 
 import run
 
-ROOTS = ("backend/", "base/", "cmake/", "core/", "examples/", "io/", "kokkos/", "scripts/", "tests/")
+ROOTS = ("backend/", "base/", "cmake/", "core/", "examples/", "io/", "scripts/", "tests/")
 SUFFIXES = {".cmake", ".in", ".hpp", ".h", ".hxx", ".cpp", ".cc", ".c", ".cu", ".cuh", ".py", ".sh"}
 
 
