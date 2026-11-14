@@ -8,6 +8,7 @@
 #define MARS_MIXED_HD
 #endif
 namespace mars::mixed {
+inline constexpr int interface_capacity=16;
 struct Controls {
     double rho=1000,mu=.001,dt=1,speed=.3,alpha_u=1,alpha_p=1,alpha_mass=1,alpha_gradient=.5625;
     bool high_resolution=true;
@@ -16,12 +17,12 @@ struct State {
     double u[3]{},p{},gp[3]{},gu[9]{},d[3]{},blend[3]{},volume{},divergence{},increment{},gc[3]{};
 };
 struct Flux {
-    double mass{},pressure[12]{},momentum[3]{},coefficient[108]{};
+    double mass{},pressure[interface_capacity]{},momentum[3]{},coefficient[9*interface_capacity]{};
     MARS_MIXED_HD double& a(int k,int i,int j) { return coefficient[9*k+3*i+j]; }
 };
 struct Interface {
-    int count[2]{},node[12]{},face_mask[12]{},row{};
-    double shape[12]{},gradient[36]{},area[3]{},inverse_height[2]{};
+    int count[2]{},node[interface_capacity]{},face_mask[interface_capacity]{},row{};
+    double shape[interface_capacity]{},gradient[3*interface_capacity]{},area[3]{},inverse_height[2]{};
 };
 MARS_MIXED_HD inline double inlet(const double* xyz,const Controls& c) {
     return 16*c.speed*xyz[1]*(1-xyz[1])*xyz[2]*(1-xyz[2]);
@@ -58,8 +59,8 @@ MARS_MIXED_HD inline Flux interior_flux(const Cell& cell,const Point& p,const St
     }
     return out;
 }
-// Each side integrates its own shifted points. No equal-and-opposite patch is
-// substituted: that would change the PI's discrete operator on nonmatching faces.
+// The caller chooses independent-side quadrature for OpenAccel compatibility,
+// or a common overlap quadrature with equal-and-opposite row contributions.
 MARS_MIXED_HD inline Flux interface_flux(const Interface& p,const State* state,const Controls& c,double advecting_mass) {
     Flux out;double velocity[2][3]{},d[2][3]{},compact[2][3]{},g[2][3]{},pressure[2]{};
     const int total=p.count[0]+p.count[1];int face_nodes[2]{};

@@ -14,6 +14,13 @@ struct Point {
     int left{}, right{};
 };
 struct Geometry { Point interior[12]{}; double volume[8]{}; int samples{}; };
+// Compare against the minimum over all valid candidates, not the last winner:
+// pairwise tolerance ties are not transitive and can depend on traversal order.
+MARS_MIXED_HD inline bool prefer_donor(double score,double minimum,int id,int selected,double tolerance) {
+    return segregated::geometry_finite(score) && segregated::geometry_finite(minimum) &&
+           segregated::geometry_finite(tolerance) && score>=0 && tolerance>=0 && id>=0 &&
+           score<=minimum+tolerance && (selected<0 || id<selected);
+}
 MARS_MIXED_HD inline int face_size(int count) { return count==8 ? 4 : 3; }
 MARS_MIXED_HD inline int face_count(int count) { return count==8 ? 6 : 4; }
 MARS_MIXED_HD inline int face_node(int count,int face,int k) {

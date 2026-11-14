@@ -17,6 +17,23 @@ static void coordinates(int count,double* x,bool warped=false) {
     for(int k=0;k<8;++k) for(int j=0;j<3;++j) x[3*k+j]=.5*(1+sign(k,j));
     if(warped) {x[18]+=.13;x[19]-=.07;x[20]+=.11;x[14]+=.06;}
 }
+static void donor_order_checks() {
+    constexpr double tolerance=1e-14;
+    const double score[3]={0,.75*tolerance,1.5*tolerance};
+    const int id[3]={30,20,10};int order[3]={0,1,2};
+    do {
+        double minimum=1;for(int k:order) minimum=std::min(minimum,score[k]);
+        int selected=-1;
+        for(int k:order) if(prefer_donor(score[k],minimum,id[k],selected,tolerance)) selected=id[k];
+        require(selected==20,"donor tie band is anchored to the global minimum");
+    } while(std::next_permutation(order,order+3));
+    require(prefer_donor(0,0,10,20,tolerance),"equal scores use persistent face identity");
+    require(!prefer_donor(2*tolerance,0,1,20,tolerance),"lower ID cannot select a worse score outside the band");
+    require(!prefer_donor(0,0,-1,-1,tolerance),"negative donor identity rejected");
+    require(!prefer_donor(0,0,1,-1,-tolerance),"negative tie tolerance rejected");
+    require(!prefer_donor(std::numeric_limits<double>::quiet_NaN(),0,1,-1,tolerance),"nonfinite score rejected");
+    require(!prefer_donor(0,std::numeric_limits<double>::infinity(),1,-1,tolerance),"nonfinite minimum rejected");
+}
 static void geometry_checks(int count,bool warped) {
     double x[24]{};coordinates(count,x,warped);Geometry g;
     require(geometry(count,x,g),"positive geometry");double total=0;
@@ -166,7 +183,59 @@ static void interface_checks() {
     for(int k=0;k<12;++k) {int old=k<4?k+8:k-4;reverse.node[k]=p.node[old];reverse.shape[k]=p.shape[old];reverse.face_mask[k]=p.face_mask[old];for(int j=0;j<3;++j) reverse.gradient[3*k+j]=p.gradient[3*old+j];}
     near(interface_flux(reverse,state,controls,0).mass,-f.mass,1e-14,"reversing both sides reverses the same-point flux");
 }
+static void common_interface_checks(int first,int second) {
+    double x[2][24]{};coordinates(first,x[0]);coordinates(second,x[1]);
+    if(first==4) for(int k=0;k<first;++k) {
+        x[0][3*k]=1-x[0][3*k];std::swap(x[0][3*k+1],x[0][3*k+2]);
+    }
+    for(int k=0;k<second;++k) x[1][3*k]+=1;
+    const double position[3]={1,.2,.3};Point point[2];
+    require(invert(first,x[0],position,point[0])&&invert(second,x[1],position,point[1]),"common interface inverse maps");
+    Interface patch;patch.count[0]=first;patch.count[1]=second;patch.area[0]=.025;
+    for(int side=0;side<2;++side) for(int k=0;k<patch.count[side];++k) {
+        int slot=(side?first:0)+k;patch.node[slot]=slot;patch.shape[slot]=point[side].shape[k];
+        patch.face_mask[slot]=x[side][3*k]==1;
+        for(int j=0;j<3;++j) patch.gradient[3*slot+j]=point[side].gradient[3*k+j];
+        patch.inverse_height[side]+=(side?-1.:1.)*patch.face_mask[slot]*point[side].gradient[3*k];
+    }
+    Interface reverse;reverse.count[0]=second;reverse.count[1]=first;
+    reverse.area[0]=-patch.area[0];reverse.inverse_height[0]=patch.inverse_height[1];reverse.inverse_height[1]=patch.inverse_height[0];
+    for(int k=0;k<first+second;++k) {
+        int old=k<second?k+first:k-second;reverse.node[k]=patch.node[old];reverse.shape[k]=patch.shape[old];reverse.face_mask[k]=patch.face_mask[old];
+        for(int j=0;j<3;++j) reverse.gradient[3*k+j]=patch.gradient[3*old+j];
+    }
+    State state[interface_capacity];initialize(state,first+second);Controls controls;
+    for(double mass:{-2.,0.,3.}) {
+        jacobian_checks(state,first+second,[&]{return interface_flux(patch,state,controls,mass);});
+        const auto f=interface_flux(patch,state,controls,mass),r=interface_flux(reverse,state,controls,-mass);
+        near(f.mass,-r.mass,1e-13,"common mass flux reverses with orientation");
+        for(int i=0;i<3;++i) near(f.momentum[i],-r.momentum[i],1e-13,"common momentum flux reverses with orientation");
+        double pressure_sum=0;
+        for(int k=0;k<first+second;++k) {
+            const int swapped=k<first?k+second:k-first;pressure_sum+=f.pressure[k];
+            near(f.pressure[k],-r.pressure[swapped],1e-13,"opposite pressure Jacobian uses same parent column");
+            for(int ij=0;ij<9;++ij) near(f.coefficient[9*k+ij],-r.coefficient[9*swapped+ij],1e-13,"opposite momentum Jacobian uses same parent column");
+        }
+        near(pressure_sum,0,1e-13,"common pressure operator preserves constant gauge");
+    }
+    // An affine trace must have no jump penalty or Rhie--Chow pressure defect.
+    const double gradient[9]={.1,-.2,.3,.4,.1,-.1,-.3,.2,.2},gp[3]={.3,-.2,.1};
+    for(int side=0;side<2;++side) for(int k=0;k<patch.count[side];++k) {
+        auto& s=state[(side?first:0)+k];s={};s.p=2;
+        for(int j=0;j<3;++j) {s.p+=gp[j]*x[side][3*k+j];s.gp[j]=gp[j];s.d[j]=.001+.0002*j;
+            s.u[j]=.2*(j+1);for(int a=0;a<3;++a) s.u[j]+=gradient[3*j+a]*x[side][3*k+a];}
+    }
+    const double advecting_mass=-2.;const auto f=interface_flux(patch,state,controls,advecting_mass);
+    double trace[3];for(int i=0;i<3;++i) {trace[i]=.2*(i+1);for(int j=0;j<3;++j) trace[i]+=gradient[3*i+j]*position[j];}
+    near(f.mass,controls.rho*dot(trace,patch.area),1e-13,"affine traces retain physical common mass flux");
+    for(int i=0;i<3;++i) {
+        double expected=advecting_mass*trace[i];
+        for(int j=0;j<3;++j) expected-=controls.mu*(gradient[3*i+j]+gradient[3*j+i])*patch.area[j];
+        near(f.momentum[i],expected,1e-13,"affine traces retain common advective and viscous traction");
+    }
+}
 int main() {
-    geometry_checks(4,false);geometry_checks(8,false);geometry_checks(8,true);shifted_gradient_checks();flux_checks(4);flux_checks(8);interface_checks();
+    donor_order_checks();geometry_checks(4,false);geometry_checks(8,false);geometry_checks(8,true);shifted_gradient_checks();flux_checks(4);flux_checks(8);interface_checks();
+    for(int first:{4,8}) for(int second:{4,8}) common_interface_checks(first,second);
     std::printf("PASS: %d mixed geometry, flux, Jacobian and tetrahedral oracle checks\n",checks);
 }

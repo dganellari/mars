@@ -8,10 +8,18 @@ int main(int argc,char** argv) {
         MPI_Comm_rank(local,&local_rank);check(cudaGetDeviceCount(&devices)==cudaSuccess && devices>0,"mixed GPU selection");
         check(cudaSetDevice(devices==1?0:local_rank%devices)==cudaSuccess,"mixed selected GPU");MPI_Comm_free(&local);
 #endif
-        std::string path,output;int budget=2000;double tolerance=1e-9;bool setup_only=false,high_resolution=true;
+        std::string path,output,interface_name="compatibility";int budget=2000;double tolerance=1e-9;bool setup_only=false,high_resolution=true;
+        mixedflow::InterfaceMethod interface_method=mixedflow::InterfaceMethod::compatibility;
         for(int i=1;i<argc;++i) {std::string arg=argv[i];
             if(arg=="--partitioned-mesh" && i+1<argc) path=argv[++i];else if(arg=="--output" && i+1<argc) output=argv[++i];
             else if(arg=="--iterations" && i+1<argc) budget=std::stoi(argv[++i]);else if(arg=="--tolerance" && i+1<argc) tolerance=std::stod(argv[++i]);
+            else if(arg=="--interface" && i+1<argc) {
+                interface_name=argv[++i];
+                if(interface_name=="compatibility") interface_method=mixedflow::InterfaceMethod::compatibility;
+                else if(interface_name=="conservative") interface_method=mixedflow::InterfaceMethod::conservative;
+                else if(interface_name=="legacy") interface_method=mixedflow::InterfaceMethod::legacy;
+                else throw std::runtime_error("interface must be compatibility, conservative or legacy");
+            }
             else if(arg=="--advection" && i+1<argc) {
                 const std::string scheme=argv[++i];
                 if(scheme!="upwind" && scheme!="high-resolution") throw std::runtime_error("advection must be upwind or high-resolution");
@@ -23,7 +31,8 @@ int main(int argc,char** argv) {
 #if defined(__CUDACC__) || defined(__HIPCC__)
         mixedflow::hypre_check(HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE));mixedflow::hypre_check(HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE));mixedflow::hypre_check(HYPRE_SetGpuAwareMPI(1));
 #endif
-        {auto mesh=mixedflow::read(path);mixedflow::Channel channel(mesh);channel.view_.controls.high_resolution=high_resolution;
+        {auto mesh=mixedflow::read(path);mixedflow::Channel channel(mesh,interface_method);channel.view_.controls.high_resolution=high_resolution;
+         if(rankId==0) std::printf("Interface: %s\n",interface_name.c_str());
          if(rankId==0) std::printf("Advection: %s\n",high_resolution?"high-resolution":"upwind");
          bool ok=setup_only || channel.solve(budget,tolerance,output);if(rankId==0) std::printf("%s: mixed %s\n",ok?"PASS":"FAIL",setup_only?"setup only":"flow convergence (field comparison separate)");result=ok?0:2;}
         mixedflow::hypre_check(HYPRE_Finalize());

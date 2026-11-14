@@ -4,6 +4,7 @@
 #include <HYPRE_parcsr_ls.h>
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #include <_hypre_utilities.h>
+#include <thrust/equal.h>
 #endif
 namespace mixedflow {
 inline void hypre_check(int code) {check(code==0,"mixed Hypre API");}
@@ -55,6 +56,7 @@ private:
 };
 inline bool Channel::solve(int budget,double tolerance,const std::string& output) {
     ChannelOps u(momentum_,input_.mesh,50,3,false),p(pressure_,input_.mesh,50,1,false);Linear velocity(momentum_),pressure(pressure_);
+    Buffer<int> previous_closed(closed_.size());
     if(rankId==0) std::puts("Linear solves: Hypre GMRES/PMIS-AMG for both systems, true residual checked; differs from reference PETSc momentum and Falgout pressure.");
     for(int iteration=0;iteration<budget;++iteration) {
         view_.completed=iteration;exchange();
@@ -69,14 +71,34 @@ inline bool Channel::solve(int budget,double tolerance,const std::string& output
         double prms=sqrt(pr.sums[7]/input_.mesh.globalNodes)/pressure_scale;
         int pi=pressure.solve(p,false);each<device>(n_,AddIncrement{view_,p.solution(),false});exchange();
         each<device>(n_,Gradient{view_,2,false});each<device>(int(cells_.size()),UpdateCellMass{view_});
-        each<device>(int(faces_.size()),UpdateBoundaryMass{view_});each<device>(int(queries_.size()),UpdateInterfaceMass{view_});
+        previous_closed=closed_;
+        each<device>(int(faces_.size()),UpdateBoundaryMass{view_});update_interface_mass();
         each<device>(n_,Divergence{view_});each<device>(n_,Correct{view_});ncflow::finish();
-        bool converged=urms<tolerance && prms<tolerance;
+        const auto balance=reduce(n_,Statistics{view_});
+        const double mass_scale=fmax(fabs(balance.sums[0])+fabs(balance.sums[1])+fabs(balance.sums[2]),1e-30);
+        const double continuity_relative=balance.sums[5]/mass_scale;
+        const double boundary_relative=fabs(balance.sums[0]+balance.sums[1]+balance.sums[2])/mass_scale;
+#if defined(__CUDACC__) || defined(__HIPCC__)
+        int local_stable=thrust::equal(previous_closed.begin(),previous_closed.end(),closed_.begin());
+#else
+        int local_stable=std::equal(previous_closed.begin(),previous_closed.end(),closed_.begin());
+#endif
+        int boundary_stable=0;MPI_Allreduce(&local_stable,&boundary_stable,1,MPI_INT,MPI_MIN,MPI_COMM_WORLD);
+        // A changed outlet state needs another assembly with that boundary condition.
+        bool converged=boundary_stable && urms<tolerance && prms<tolerance && continuity_relative<tolerance &&
+                       (!view_.conservative || boundary_relative<tolerance);
         if(iteration%10==0 || converged || iteration+1==budget) {
             auto s=reduce(n_,Statistics{view_});check(s.sums[10]==0,"mixed solution has nonfinite values");
             if(rankId==0) {std::printf("iteration %d momentum_rms %.9e pressure_rms %.9e linear %d/%d inlet %.9e outlet %.9e continuity_l1 %.9e interface_in %.9e interface_out %.9e closed_area %.9e\n",iteration+1,urms,prms,ui,pi,s.sums[0],s.sums[1],s.sums[5],s.sums[11],s.sums[12],s.sums[13]);std::fflush(stdout);}
         }
-        if(converged) {write(output);return true;}
+        if(converged) {
+            auto s=reduce(n_,Statistics{view_});
+            const double boundary=fabs(s.sums[0]+s.sums[1]+s.sums[2]);
+            const double scale=fmax(fabs(s.sums[0])+fabs(s.sums[1])+fabs(s.sums[2]),1e-30);
+            const double interface=fabs(s.sums[11]+s.sums[12]);
+            if(rankId==0) std::printf("Conservation: inlet %.17g outlet %.17g wall %.17g boundary_relative %.17g interface_net %.17g continuity_l1 %.17g\n",s.sums[0],s.sums[1],s.sums[2],boundary/scale,interface,s.sums[5]);
+            write(output);return true;
+        }
     }
     write(output);return false;
 }
