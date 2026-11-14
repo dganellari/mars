@@ -68,6 +68,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 using namespace mars;
 using namespace mars::fem;
@@ -3434,10 +3435,11 @@ struct NSStepper
     // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
     RealType pumpDp = 0;
 
-    // Prescribed outlet pressures (velocity-driven pump, do-nothing outlets): the caller fills
-    // d_pPhiTargetDof (size numOwnedDofs) with each masked outlet DOF's pressure, and the pressure
-    // solve clamps p^{n+1} there to it (rhs = target - p^n, FIX B's lift) instead of to p^n. None
-    // of FIX B's pressure-driven inlet: the inlet keeps its velocity. Off: the outlets at p = 0.
+    // Physical pressure targets on the masked outlet DOFs: phi = target - p_old,
+    // including a target of zero. Fill d_pPhiTargetDof for every owned DOF before runNsStep.
+    // Supported with Pump/do-nothing outlets, one DDT/Hypre corrector using assembled K
+    // and GMRES. Unsupported modes and malformed targets are rejected before the step.
+    // All ranks must enable this flag together; keep the setup and boundary masks fixed.
     bool outletPressureLift = false;
 
     // Flux-consistent Neumann openings (--flux-neumann). The openings keep their
@@ -7547,9 +7549,10 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         // GMRES explicitly.
         // forceGmres wins over the env knob: PCG on a non-symmetric matrix is
         // wrong, not just slow, so it must not be reachable by mistake.
-        const bool outletPressure = s.outletBeta >= RealType(0) && &A == &s.Apre;
+        // Retained boundary columns make a nonzero Dirichlet row system nonsymmetric.
+        const bool outletPressure = (s.outletBeta >= RealType(0) || s.outletPressureLift) && &A == &s.Apre;
         KrylovHint krylovEff = (forceGmres || outletPressure) ? KrylovHint::GMRES : krylov;
-        // The outlet derivative occupies opposite-node columns and is nonsymmetric.
+        // Both outlet variants require GMRES regardless of the debug override.
         if (!forceGmres && !outletPressure)
         {
             const char* kEnv = std::getenv("MARS_HYPRE_KRYLOV");
@@ -7602,6 +7605,9 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             }
             HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
             hypreSolver.setVerbose(false);
+            // Hypre also needs coarse-level l1 norms when no coarsening occurs.
+            if (s.outletPressureLift && outletPressure && precond == HSol::BOOMERAMG)
+                hypreSolver.setAMGCoarseRelaxType(18);
             // Schur-complement preconditioning: when solving the Gram operator
             // A_fem (AMG-hostile), build the AMG V-cycle on the spectrally-
             // equivalent Galerkin K (precondMat) instead. K shares A_fem's
@@ -10263,7 +10269,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // K_ij = integral grad(N_i).grad(N_j) has diagonal ~h (sum of squares,
             // no cancellation) -> well-conditioned, AMG-friendly, no near-zero
             // eigenvalue. This is what the reference assembles; switching to it is
-            // the structural fix. K is SPD so PCG is also valid here.
+            // the structural fix. Nonzero Dirichlet identity rows make the full K system nonsymmetric.
             // MARS_HYPRE_USE_DDT=1 falls back to the DDT operator for comparison.
             bool useDDTop = (std::getenv("MARS_HYPRE_USE_DDT") != nullptr);
             auto& pressureMat = useDDTop ? s.AddT : s.Apre;
@@ -10272,7 +10278,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // preconditioner is non-symmetric on GPU (GS-family relax) and the
             // pin row's diag=1 spike disturbs coarsening -> the effective
             // preconditioned operator isn't SPD for CG. GMRES tolerates that and
-            // was the proven-converging path. (MARS_HYPRE_KRYLOV=pcg to force CG.)
+            // was the proven-converging path. The PCG debug override is disabled for prescribed outlets.
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
                 s, b, xVec, s.d_phi, pressureMat, KrylovHint::GMRES);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
@@ -12272,9 +12278,42 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
 
 #include "mars_outlet_correction.hpp"
 
+template<typename KeyType, typename RealType, typename ElementTag>
+void validateOutletPressureLift(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (!s.outletPressureLift) return;
+    using Stepper = NSStepper<KeyType, RealType, ElementTag>;
+    // AddT has eliminated boundary columns without lifting the interior RHS.
+    // Matrix-free DDT replaces only rows, so its CG solve cannot accept this lift.
+    int bad = s.solverKind != SolverKind::Hypre || s.pressureSolve != PressureSolveKind::DDT || s.nnzDDT == 0 ||
+              std::getenv("MARS_HYPRE_USE_DDT") != nullptr || s.bcKind != Stepper::BCKind::Pump || !s.outletDoNothing ||
+              s.pumpDp != RealType(0) || s.nCorrectors != 1 || s.rotationalPressureCorrection || s.useFemProjection ||
+              s.outletBeta >= RealType(0) || s.fluxNeumann || s.pressurePinDof >= 0;
+#ifndef MARS_ENABLE_HYPRE
+    bad = 1;
+#endif
+    if (s.d_pPhiTargetDof.size() != size_t(s.numOwnedDofs) || s.d_isPressureBdryDof.size() != size_t(s.numOwnedDofs))
+        bad = 1;
+    else if (s.numOwnedDofs > 0)
+    {
+        const auto* target = s.d_pPhiTargetDof.data();
+        const auto* mask   = s.d_isPressureBdryDof.data();
+        bad |= mars::transformReduce(
+            thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(s.numOwnedDofs),
+            [target, mask] __device__(int i) -> int { return mask[i] && !isfinite(target[i]); }, 0,
+            thrust::maximum<int>());
+    }
+    int global = 0;
+    MPI_Allreduce(&bad, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (global)
+        throw std::invalid_argument("outletPressureLift requires finite owned targets and the single-corrector "
+                                    "Pump/do-nothing DDT/Hypre K/GMRES path");
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
+    validateOutletPressureLift(s);
     s.nuCached = nu;
     bool dbg = (g_nsDebugStepsLeft > 0);
 
