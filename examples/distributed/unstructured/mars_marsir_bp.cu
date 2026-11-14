@@ -78,6 +78,18 @@
 // centroids, equal chunks) and keeps the elements that share a vertex with its chunk as
 // ghosts, the closure the DSS needs. u is the same sin product at the nodes, zero on the
 // boundary copies, b = A u.
+// --mesh <file.e> --domain: the mesh read and distributed by MARS's ElementDomain instead
+// (cornerstone's SFC partition, with the file's exact coordinates, as the step-01 and
+// Poiseuille examples use it), the tables and ghost layer built from the domain
+// (solvers/mars_cellwise_domain.hpp). Left-handed elements are listed right-handed as above.
+// The discrete problem is the same, so DSS-Jacobi histories must match the Morton partition
+// to rounding, and the unique DoF counts exactly (a merged vertex would change them).
+// --heat-case wing|slab: physical steady conduction, k = 1 W/(m K), hot 80 C,
+// cold 20 C, with the named insulated faces left natural. Coordinates are taken
+// in metres. Solve for a homogeneous correction to the imposed boundary lift,
+// not for a manufactured interior field. This mode needs --mesh --domain --p 3
+// --spec bp3 --mg --amg --h-levels 0. Optional --export-slice writes the computed
+// temperature after the convergence, boundary, energy and heat-balance checks.
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
@@ -111,6 +123,8 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_lines.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
+#include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_raw.hpp"
 
 #ifdef MARS_ENABLE_HYPRE
@@ -124,6 +138,7 @@ namespace bp3_h = mars::cellwise::h_coarse;
 
 #include <cuda_profiler_api.h>
 #include <mpi.h>
+#include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 
@@ -136,6 +151,12 @@ namespace bp3_h = mars::cellwise::h_coarse;
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
+#include <stdexcept>
+#include <thrust/copy.h>
+#include <thrust/execution_policy.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/counting_iterator.h>
 
 using namespace mars;
 
@@ -690,6 +711,92 @@ cellwise::UnstructuredTopology mesh_file_topology(const MeshTables& t)
                                     count, t.local);
 }
 
+// --mesh --domain: this rank's elements as MARS's ElementDomain reads and distributes them.
+using MeshDomain = ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu>;
+#include "mars_bp3_heat.hpp"
+
+// Corners of this rank's elements (corners_kernel's layout) from the domain's exact file
+// coordinates, and their corner keys for the node lines. A left-handed element is listed
+// right-handed (corners 1 <-> 3 and 5 <-> 7, as mesh_tables) and flagged in `mirror`.
+__global__ void domain_corners_kernel(cellwise::domain_detail::Corners<uint64_t> ids,
+                                      cellwise::domain_detail::Corners<uint64_t> keys, const double* __restrict__ x,
+                                      const double* __restrict__ y, const double* __restrict__ z, long long first,
+                                      long long n, double* __restrict__ X, unsigned char* __restrict__ mirror,
+                                      unsigned long long* __restrict__ vkey)
+{
+    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    double c[8][3];
+    for (int k = 0; k < 8; ++k) {
+        const uint64_t v = ids.key[k][first + i];
+        c[k][0] = x[v];
+        c[k][1] = y[v];
+        c[k][2] = z[v];
+    }
+    double d[3][3];
+    for (int a = 0; a < 3; ++a) {
+        d[0][a] = c[1][a] + c[2][a] + c[5][a] + c[6][a] - c[0][a] - c[3][a] - c[4][a] - c[7][a];
+        d[1][a] = c[2][a] + c[3][a] + c[6][a] + c[7][a] - c[0][a] - c[1][a] - c[4][a] - c[5][a];
+        d[2][a] = c[4][a] + c[5][a] + c[6][a] + c[7][a] - c[0][a] - c[1][a] - c[2][a] - c[3][a];
+    }
+    const double det = d[0][0] * (d[1][1] * d[2][2] - d[1][2] * d[2][1]) -
+                       d[0][1] * (d[1][0] * d[2][2] - d[1][2] * d[2][0]) +
+                       d[0][2] * (d[1][0] * d[2][1] - d[1][1] * d[2][0]);
+    const bool flip = det < 0.0;
+    mirror[i] = flip;
+    for (int k = 0; k < 8; ++k) {
+        const int s = flip && (k & 1) ? k ^ 2 : k;
+        int b[3];
+        cellwise::corner_bits(k, b[0], b[1], b[2]);
+        for (int a = 0; a < 3; ++a) X[i * 24 + a * 8 + b[0] * 4 + b[1] * 2 + b[2]] = c[s][a];
+        if (vkey) vkey[i * 8 + k] = keys.key[s][first + i];
+    }
+}
+
+// The counts and (with `keys`, for the node lines) corner keys of this rank's elements; the
+// tables and corners stay on the device. The domain is needed only here, so it is freed on
+// return.
+MeshTables domain_mesh_tables(const std::string& path, MPI_Comm comm, cellwise::DomainTables& tables,
+                              thrust::device_vector<double>& X, bool keys, const std::string& heat_case,
+                              thrust::device_vector<unsigned char>& heat_faces)
+{
+    int rank = 0, size = 1;
+    MARS_CELLWISE_MPI(MPI_Comm_rank(comm, &rank));
+    MARS_CELLWISE_MPI(MPI_Comm_size(comm, &size));
+    MeshDomain domain(path, rank, size, true, 64, 8, 0, 0.0, 0.0, !heat_case.empty());
+    MeshTables t;
+    t.local = (long long)domain.localElementCount();
+    const long long first = (long long)domain.startIndex();
+    const auto& local_ids = domain.getElementToNodeConnectivity();
+    cellwise::domain_detail::Corners<uint64_t> ids, ckeys;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+        ((ids.key[I] = thrust::raw_pointer_cast(std::get<I>(local_ids).data()),
+          ckeys.key[I] = thrust::raw_pointer_cast(domain.indices<I>().data())), ...);
+    }(std::make_index_sequence<8>{});
+    X.resize(t.local * 24);
+    thrust::device_vector<unsigned char> mirror(t.local);
+    thrust::device_vector<unsigned long long> vkey(keys ? t.local * 8 : 0);
+    if (t.local > 0)
+        domain_corners_kernel<<<blocks_for(t.local), cellwise::kThreads>>>(
+            ids, ckeys, thrust::raw_pointer_cast(domain.getNodeX().data()),
+            thrust::raw_pointer_cast(domain.getNodeY().data()), thrust::raw_pointer_cast(domain.getNodeZ().data()),
+            first, t.local, thrust::raw_pointer_cast(X.data()), thrust::raw_pointer_cast(mirror.data()),
+            keys ? thrust::raw_pointer_cast(vkey.data()) : nullptr);
+    BP_CK(cudaGetLastError());
+    tables = cellwise::build_tables(domain, comm, thrust::raw_pointer_cast(mirror.data()));
+    if (!heat_case.empty()) heat::boundary_faces(domain, ids, mirror, first, t.local, tables.topo, heat_case, heat_faces);
+    tables.halo.reset();   // its p = 7 exchange; run() makes one per degree from gid and owner
+    long long counts[2] = {t.local, (long long)thrust::count(thrust::device, mirror.begin(), mirror.end(), 1)};
+    MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_LONG_LONG, MPI_SUM, comm));
+    t.global = counts[0];
+    t.mirrored = counts[1];
+    if (keys) {
+        t.key.resize(vkey.size());
+        thrust::copy(vkey.begin(), vkey.end(), t.key.begin());
+    }
+    return t;
+}
+
 template <int P>
 void block_dss(int B, const double* in, double* out, const cellwise::BlockSkeleton& S, bool nodes, cudaStream_t st)
 {
@@ -808,7 +915,11 @@ double counted_norm(const double* v, const cellwise::UnstructuredTopology& T, cu
     return std::sqrt(all_sum(thrust::reduce(partial.begin(), partial.end(), 0.0)));
 }
 
+#include "mars_bp3_heat_slice.hpp"
+
 struct Options {
+    std::string heat_case, export_prefix;
+    SliceWindow slice_window{-0.55, 1.25, -0.30, 0.30, 0.45, nullptr};
     std::string ptx_dir, spec = "bp3", dss_ptx, block_dss;   // block_dss: "", "passes" or "nodes"
     // (2,2) smoothing and 3 AMG cycles: the fastest measured at equal accuracy at p = 3 and 7,
     // about 1% from the best at p = 1 (docs/design/cellwise_bp_fcg.md).
@@ -823,6 +934,7 @@ struct Options {
     bool consolidate_explicit = false;
     int power_steps = 0;   // > 0: the power steps of every level's lmax instead of the interval's
     bool rotate = false, mg = false, amg = false, amg_print = false, profile = false, p1_matrix_free = false;
+    bool domain = false;         // --mesh through ElementDomain instead of the Morton chunks
     bool p1_assembled = false;   // set from the others after parsing
     bool lines_ptx = false;      // --smoother lines with the MARSIR-generated passes
     std::string cheb_interval = "mars", rhs = "discrete", mesh, smoother = "jacobi";
@@ -861,12 +973,16 @@ int run(const Options& o)
     const cellwise::Decomposition dec(MPI_COMM_WORLD, o.ne, o.ne, o.ne);
     const bool root = dec.rank == 0;
     const cellwise::Block& box = dec.local;
-    const bool meshed = !o.mesh.empty();
+    const bool meshed = !o.mesh.empty(), thermal = !o.heat_case.empty();
+    thrust::device_vector<unsigned char> heat_faces;
     MeshTables mt;
+    cellwise::DomainTables dtables;          // --domain: the tables, built from the domain
+    thrust::device_vector<double> domain_X;  // --domain: the corners, already on the device
     double read_s = 0.0;
     if (meshed) {
         const auto m0 = std::chrono::steady_clock::now();
-        mt = mesh_tables(o.mesh, MPI_COMM_WORLD);
+        mt = o.domain ? domain_mesh_tables(o.mesh, MPI_COMM_WORLD, dtables, domain_X, o.smoother == "lines", o.heat_case, heat_faces)
+                      : mesh_tables(o.mesh, MPI_COMM_WORLD);
         read_s = all_max(std::chrono::duration<double>(std::chrono::steady_clock::now() - m0).count());
     }
     const long long E = meshed ? mt.local : box.elements(), N = E * n3;   // this rank's elements and copies
@@ -888,7 +1004,8 @@ int run(const Options& o)
     BP_CK(cudaMemcpyToSymbol(c_rotation, rotations.data(), rotations.size() * sizeof(int)));
     thrust::device_vector<double> dB(B), dBt(Bt), dD(D), dDt(Dt), dDB(DB), dgq(gq), dwq(wq);
     auto raw = [](thrust::device_vector<double>& v) { return thrust::raw_pointer_cast(v.data()); };
-    thrust::device_vector<double> mesh_X(mt.X.begin(), mt.X.end());
+    thrust::device_vector<double> mesh_X =
+        o.domain ? std::move(domain_X) : thrust::device_vector<double>(mt.X.begin(), mt.X.end());
     {
         const double* p = meshed ? raw(mesh_X) : nullptr;
         BP_CK(cudaMemcpyToSymbol(c_mesh_X, &p, sizeof(p)));
@@ -919,15 +1036,19 @@ int run(const Options& o)
     // layout of its elements; with --block-dss also of the blocks.
     thrust::device_vector<unsigned long long> gid;
     thrust::device_vector<int> owner;
-    if (meshed) {
+    if (meshed && o.domain) {
+        gid = std::move(dtables.gid);
+        owner = std::move(dtables.owner);
+    } else if (meshed) {
         gid.assign(mt.gid.begin(), mt.gid.end());
         owner.assign(mt.owner.begin(), mt.owner.end());
     } else if (!blocked) {
         cellwise::block_elements(dec, gid, owner);
     }
     const unsigned long long* d_gid = blocked ? nullptr : thrust::raw_pointer_cast(gid.data());
-    const cellwise::UnstructuredTopology topo =
-        meshed ? mesh_file_topology(mt) : mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
+    cellwise::UnstructuredTopology topo =
+        meshed ? (o.domain ? std::move(dtables.topo) : mesh_file_topology(mt))
+               : mesh_topology(blocked ? E : (long long)gid.size(), E, false, d_gid, stream);
     if (meshed) {   // every node once (its counting copy), Dirichlet ones included
         const double c = counted_norm<P>(raw(ones), topo, stream);
         unique = std::llround(c * c);
@@ -948,6 +1069,7 @@ int run(const Options& o)
     cellwise::UnstructuredHalo* const h1 = P == 1 ? h : halo1.get();
     // The tables and halos were built on the default stream, which `stream` does not wait for.
     BP_CK(cudaDeviceSynchronize());
+    if (thermal) heat::prepare<P>(topo, h, heat_faces, r, q, s, raw(u), stream);
     const cellwise::BlockSkeleton skeleton{
         cellwise::topo_detail::raw(skeleton_topo.face_nbr), cellwise::topo_detail::raw(skeleton_topo.edge_off),
         cellwise::topo_detail::raw(skeleton_topo.edge_ent), cellwise::topo_detail::raw(skeleton_topo.vert_off),
@@ -1002,10 +1124,14 @@ int run(const Options& o)
     apply(raw(x), raw(z), stream);
     BP_CK(cudaStreamSynchronize(stream));
     const double sum1 = all_sum(thrust::reduce(y.begin(), y.end(), 0.0));
-    exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3 && !meshed);
-    BP_CK(cudaGetLastError());
-    if (meshed) cellwise::zero_dirichlet<P>(raw(u), topo, stream);   // the boundary from the tables
-    apply(raw(u), raw(b), stream);   // b = A u
+    if (!thermal) {
+        exact_kernel<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(u), E, o.ne, o.deform, bp3 && !meshed);
+        BP_CK(cudaGetLastError());
+        if (meshed) cellwise::zero_dirichlet<P>(raw(u), topo, stream);
+    }
+    apply(raw(u), raw(b), stream);
+    // T = g + w, with homogeneous correction w: K w = -K g on free nodes.
+    if (thermal) scale_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(b), N, -1.0);
     const bool pde = o.rhs == "pde";
     std::unique_ptr<marsir::GalerkinPtx> mass;
     thrust::device_vector<double> G1;
@@ -1330,15 +1456,18 @@ int run(const Options& o)
         cellwise::zero_dirichlet<P>(raw(q), topo, stream);
     }
     const double true_rel = counted_norm<P>(raw(r), topo, stream) / counted_norm<P>(raw(q), topo, stream);
-    difference_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(x), raw(u), N);
-    BP_CK(cudaStreamSynchronize(stream));
-    const double err = all_max(thrust::reduce(s.begin(), s.end(), 0.0, thrust::maximum<double>()));
-    double umax = 0.0;
-    {
-        std::vector<double> hu(N);
-        thrust::copy(u.begin(), u.end(), hu.begin());
-        for (double v : hu) umax = std::fmax(umax, std::fabs(v));
-        umax = all_max(umax);
+    double err = 0.0, umax = 1.0;
+    if (!thermal) {
+        difference_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(s), raw(x), raw(u), N);
+        BP_CK(cudaStreamSynchronize(stream));
+        err = all_max(thrust::reduce(s.begin(), s.end(), 0.0, thrust::maximum<double>()));
+        umax = 0.0;
+        {
+            std::vector<double> hu(N);
+            thrust::copy(u.begin(), u.end(), hu.begin());
+            for (double v : hu) umax = std::fmax(umax, std::fabs(v));
+            umax = all_max(umax);
+        }
     }
     // --rhs pde: ||x_h - u||_L2 / ||u||_L2 with the q = p + 2 rule.
     double l2_err = 0.0;
@@ -1400,10 +1529,32 @@ int run(const Options& o)
     amg_setup_ms = all_max(amg_setup_ms);
     // A collective, so every rank calls it here: inside the root-only printing it hung on several ranks.
     const double rows = o.p1_assembled ? all_sum((double)m) : 0.0;
+    heat::Sums heat_sums{};
+    double heat_balance = 0.0, heat_energy_error = 0.0, heat_slab_error = 0.0;
+    bool heat_pass = true;
+    if (thermal) {
+        heat::add_lift<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(x), raw(u), N);
+        BP_CK(cudaGetLastError());
+        apply(raw(x), raw(y), stream);
+        heat_sums = heat::measure<P>(topo, raw(x), raw(u), raw(y), stream);
+        const double scale = std::max(heat_sums.hot, -heat_sums.cold);
+        heat_balance = std::fabs(heat_sums.hot + heat_sums.cold) / scale;
+        heat_energy_error = std::fabs(heat_sums.energy - heat_sums.hot) / scale;
+        if (o.heat_case == "slab") {
+            heat::slab_error<P><<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(x), raw(mesh_X), raw(r), E);
+            BP_CK(cudaGetLastError()); BP_CK(cudaStreamSynchronize(stream));
+            heat_slab_error = all_max(thrust::reduce(r.begin(), r.end(), 0.0, thrust::maximum<double>()));
+        }
+        heat_pass = std::isfinite(heat_sums.hot) && heat_sums.hot > 0 && heat_sums.cold < 0 &&
+                    std::isfinite(heat_sums.energy) && heat_sums.energy > 0 &&
+                    std::isfinite(heat_sums.low) && std::isfinite(heat_sums.high) && heat_sums.bc <= 1e-12 &&
+                    heat_balance <= 1e-7 && heat_energy_error <= 1e-7 && heat_slab_error <= 1e-8;
+        if (o.heat_case == "slab") heat_pass &= std::fabs(heat_sums.hot - 1.0) <= 1e-8;
+    }
     const bool converged = res.relative <= o.tol;
     const bool accurate = std::isfinite(true_rel) && true_rel <= o.true_tol;
-    const bool pass = converged && accurate && std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
-                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 * o.stretch - 1.0) <= 1e-12) && (pde || err <= 1e-8 * umax) &&
+    const bool pass = converged && accurate && heat_pass && std::fabs(oracle_err) <= 1e-12 * oracle_scale &&
+                      (bp3 ? max1 <= 1e-12 * maxv : std::fabs(sum1 * o.stretch - 1.0) <= 1e-12) && (thermal || pde || err <= 1e-8 * umax) &&
                       block_err <= 1e-13 * block_scale && block_bits == 0;
 
     if (root) {
@@ -1414,8 +1565,9 @@ int run(const Options& o)
             printf("  read and partitioned in %.1f s; %lld elements mirrored to a right-handed corner order\n",
                    read_s, mt.mirrored);
             if (dec.size > 1)
-                printf("  %d ranks (Morton chunks); rank 0: %lld elements, %lld ghosts, %d peers\n", dec.size, E,
-                       topo.elements - topo.local, h->peers());
+                printf("  %d ranks (%s); rank 0: %lld elements, %lld ghosts, %d peers\n", dec.size,
+                       o.domain ? "ElementDomain SFC partition" : "Morton chunks", E, topo.elements - topo.local,
+                       h->peers());
         } else {
             printf("%s, p=%d, q=%d, %d^3 elements (%lld), %lld unique DoFs, %lld cell-wise, deform %.3f, %s geometry\n",
                    o.spec.c_str(), P, Q, o.ne, (long long)o.ne * o.ne * o.ne, unique, N_all, o.deform,
@@ -1461,7 +1613,16 @@ int run(const Options& o)
         if (!accurate) printf("  true assembled residual above --true-tol %.1e\n", o.true_tol);
         for (int k : {1, 5, 10, 20, 50, 100})
             if (k <= (int)res.history.size()) printf("  it %3d  %.6e\n", k, res.history[k - 1]);
-        if (pde)
+        if (thermal) {
+            const double flux_scale = heat::conductivity * (heat::hot_temperature - heat::cold_temperature);
+            printf("THERMAL MODEL: %s; k=%.17g W/(m K), hot=%.17g K, cold=%.17g K, mesh units=m\n",
+                   o.heat_case.c_str(), heat::conductivity, heat::hot_temperature, heat::cold_temperature);
+            printf("THERMAL CHECK: heat_in_W=%.17g heat_out_W=%.17g balance=%.17g energy_error=%.17g boundary_error=%.17g slab_error=%.17g theta_min=%.17g theta_max=%.17g outside_nodes=%.0f unique_nodes=%.0f outside_fraction=%.17g\n",
+                   heat_sums.hot * flux_scale, -heat_sums.cold * flux_scale, heat_balance, heat_energy_error,
+                   heat_sums.bc, heat_slab_error, heat_sums.low, heat_sums.high,
+                   heat_sums.outside, heat_sums.nodes, heat_sums.outside / heat_sums.nodes);
+            printf("THERMAL STATUS: %s\n", pass ? "PASS" : "FAIL");
+        } else if (pde)
             printf("  right-hand side M f_h, f = 3 pi^2 u: L2 error %.3e (relative), at the nodes max |x - u| / "
                    "max |u| = %.3e  %s\n",
                    l2_err, err / umax, pass ? "PASS" : "FAIL");
@@ -1499,6 +1660,19 @@ int run(const Options& o)
                    "%.3f ms); AMG setup %.0f ms\n",
                    coarse_s * 1e3 / (res.iterations + 1), 100.0 * coarse_s * 1e3 / solve_ms, o.amg_cycles, dss1_ms,
                    amg_setup_ms);
+    }
+    if (!o.export_prefix.empty()) {
+        int local_pass = pass ? 1 : 0, all_pass = 0;
+        MARS_CELLWISE_MPI(MPI_Allreduce(&local_pass, &all_pass, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD));
+        if (all_pass) {
+            try {
+                export_heat_slice(o.export_prefix, o.slice_window, E, d_gid, raw(mesh_X), raw(x), raw(u),
+                                  fine.zeta, true_rel, heat_sums.bc, stream);
+            } catch (const std::exception& error) {
+                fprintf(stderr, "Thermal export failed: %s\n", error.what());
+                MPI_Abort(MPI_COMM_WORLD, 91);
+            }
+        }
     }
     BP_CK(cudaStreamDestroy(stream));
     return pass ? 0 : 1;
@@ -1548,8 +1722,22 @@ int main(int argc, char** argv)
             --i;
             continue;
         }
+        if (!strcmp(argv[i], "--domain")) {
+            o.domain = true;
+            --i;
+            continue;
+        }
         if (i + 1 >= argc) error = "an option needs a value";
         else if (!strcmp(argv[i], "--ptx-dir")) o.ptx_dir = argv[i + 1];
+        else if (!strcmp(argv[i], "--heat-case")) o.heat_case = argv[i + 1];
+        else if (!strcmp(argv[i], "--export-slice")) o.export_prefix = argv[i + 1];
+        else if (!strcmp(argv[i], "--slice-window")) {
+            int used = 0; auto& w = o.slice_window;
+            if (sscanf(argv[i + 1], "%lf,%lf,%lf,%lf,%lf%n", &w.xlo, &w.xhi, &w.ylo, &w.yhi, &w.z, &used) != 5 ||
+                argv[i + 1][used] || !std::isfinite(w.xlo) || !std::isfinite(w.xhi) || !std::isfinite(w.ylo) ||
+                !std::isfinite(w.yhi) || !std::isfinite(w.z) || w.xlo >= w.xhi || w.ylo >= w.yhi)
+                error = "--slice-window expects finite xmin,xmax,ymin,ymax,z with increasing bounds";
+        }
         else if (!strcmp(argv[i], "--spec")) o.spec = argv[i + 1];
         else if (!strcmp(argv[i], "--h-levels")) {
             char* end = nullptr;
@@ -1665,9 +1853,15 @@ int main(int argc, char** argv)
         error = "--smoother lines goes with --mg at p = 3 or 7, without --block, --rotate or --block-dss";
     if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
         error = "--rhs is discrete, or pde for bp3 and bp3_tri";
+    if (!error && !o.heat_case.empty() &&
+        ((o.heat_case != "wing" && o.heat_case != "slab") || o.mesh.empty() || !o.domain || o.spec != "bp3" ||
+         o.p != 3 || o.rhs != "discrete" || !o.mg || !o.amg || o.h_levels != 0))
+        error = "--heat-case wing|slab requires --mesh --domain --spec bp3 --p 3 --mg --amg --h-levels 0";
+    if (!error && !o.export_prefix.empty() && o.heat_case.empty()) error = "--export-slice requires --heat-case";
     if (!error && !o.mesh.empty() &&
         (o.spec.rfind("bp3", 0) != 0 || o.rhs == "pde" || o.block || o.rotate || !o.block_dss.empty()))
         error = "--mesh is for bp3 and bp3_tri, without --rhs pde, --block, --rotate or --block-dss";
+    if (!error && o.domain && o.mesh.empty()) error = "--domain goes with --mesh";
     if (!error && !(o.stretch >= 1.0)) error = "--stretch is at least 1";
     if (!error && o.stretch != 1.0 && (!o.mesh.empty() || o.rhs == "pde"))
         error = "--stretch is for the cube, without --mesh or --rhs pde";
@@ -1698,7 +1892,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e [--domain]] [--heat-case wing|slab [--export-slice prefix] [--slice-window xmin,xmax,ymin,ymax,z]] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
