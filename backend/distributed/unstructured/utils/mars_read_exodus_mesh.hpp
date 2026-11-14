@@ -45,6 +45,11 @@ struct ExodusSideSets
     // an inlet velocity can be applied along the surface normal, not a global
     // axis. Tet faces are triangles; only the tet reader fills this.
     std::map<std::string, std::vector<uint64_t>> trianglesByName;
+    // The hex reader's counterparts: side-set name -> flat list of face quads, 4 (x,y,z) per
+    // face and 4 GLOBAL 0-based node IDs per face, in Exodus side order (outward normal by the
+    // right-hand rule).
+    std::map<std::string, std::vector<std::array<double, 3>>> quadCoordsByName;
+    std::map<std::string, std::vector<uint64_t>> quadsByName;
 };
 
 #ifdef MARS_HAVE_NETCDF
@@ -558,6 +563,10 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
 
         std::unordered_set<uint64_t> nodeSet;
         nodeSet.reserve(num_faces * 4);
+        std::vector<uint64_t> quads;
+        std::vector<std::array<double, 3>> quadCoords;
+        quads.reserve(num_faces * 4);
+        quadCoords.reserve(num_faces * 4);
         for (size_t f = 0; f < num_faces; ++f)
         {
             // 1-based global element ID -> 0-based index into the flattened multi-block connectivity.
@@ -567,12 +576,17 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
             size_t elem0 = static_cast<size_t>(elem1 - 1);
             const int* hex = &allConn[elem0 * 8];
             const int* faceLocal = hexFaceNodes[side1 - 1];
+            bool valid = true;
+            for (int j = 0; j < 4; ++j)
+                if (hex[faceLocal[j]] < 1 || static_cast<size_t>(hex[faceLocal[j]]) > total_nodes) valid = false;
+            if (!valid) continue;
             for (int j = 0; j < 4; ++j)
             {
                 // 1-based global node ID -> 0-based.
-                int node1 = hex[faceLocal[j]];
-                if (node1 < 1) continue;
-                nodeSet.insert(static_cast<uint64_t>(node1 - 1));
+                uint64_t g0 = static_cast<uint64_t>(hex[faceLocal[j]] - 1);
+                nodeSet.insert(g0);
+                quads.push_back(g0);
+                quadCoords.push_back({ all_x[g0], all_y[g0], all_z[g0] });
             }
         }
 
@@ -593,6 +607,8 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
                       << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
         out.nodesByName[ssName]      = std::move(nodeVec);
         out.nodeCoordsByName[ssName] = std::move(nodeCoords);
+        out.quadsByName[ssName]      = std::move(quads);
+        out.quadCoordsByName[ssName] = std::move(quadCoords);
     }
 
     NC_CHECK(nc_close(ncid));

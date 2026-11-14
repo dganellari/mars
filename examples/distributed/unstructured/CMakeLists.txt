@@ -317,6 +317,14 @@ if(MARS_ENABLE_DEV_EXAMPLES)
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
     )
     install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
+
+    # The pump solver's hex pieces on one element, and its hex instantiation.
+    add_executable(mars_pump_hex_gate mars_pump_hex_gate.cu)
+    target_link_libraries(mars_pump_hex_gate PRIVATE mars)
+    target_include_directories(mars_pump_hex_gate PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_pump_hex_gate RUNTIME DESTINATION bin/examples)
 endif()
 
 # Segregated SIMPLE solver (experimental), and the gates that compare it and the pump solver's

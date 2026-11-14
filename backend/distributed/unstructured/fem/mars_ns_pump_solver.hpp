@@ -28,6 +28,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_element_traits.hpp"
+#include "backend/distributed/unstructured/fem/mars_hex_geometry.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_tet_area.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_tet_assembler.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
@@ -810,15 +811,16 @@ __global__ void computeLumpedMassPerNodeKernel(const KeyType* c0, const KeyType*
     // automatically; a periodic-pair MPI exchange is required after this step.)
     if constexpr (std::is_same_v<ElementTag, HexTag>)
     {
-        RealType xmin = x[0], xmax = x[0], ymin = y[0], ymax = y[0], zmin = z[0], zmax = z[0];
-        for (int i = 1; i < 8; ++i)
+        // Hex: each corner gets its sub-control volume (exact for any trilinear hex,
+        // not only for axis-aligned boxes).
+        RealType corner[8][3];
+        for (int i = 0; i < 8; ++i)
         {
-            if (x[i] < xmin) xmin = x[i]; if (x[i] > xmax) xmax = x[i];
-            if (y[i] < ymin) ymin = y[i]; if (y[i] > ymax) ymax = y[i];
-            if (z[i] < zmin) zmin = z[i]; if (z[i] > zmax) zmax = z[i];
+            corner[i][0] = x[i];
+            corner[i][1] = y[i];
+            corner[i][2] = z[i];
         }
-        RealType contrib = (xmax - xmin) * (ymax - ymin) * (zmax - zmin) * RealType(0.125);
-        for (int i = 0; i < 8; ++i) atomicAdd(&massNode[n[i]], contrib);
+        for (int i = 0; i < 8; ++i) atomicAdd(&massNode[n[i]], hexSubVolume(corner, i));
     }
     else
     {
@@ -1785,11 +1787,11 @@ __global__ void assembleDDTPerElementKernel(const KeyType* c0, const KeyType* c1
 // D^T (scatter), M^-1 (per-node divide), D (scatter) applied to a unit
 // vector e_c -- so the assembled matrix is bit-identical to the operator.
 //
-// Hex8 specific: max 8 elements per corner node * 3 SCS faces per element
-// per corner = 24 faces in the worst case. We store them in a fixed-size
-// register array (MAX_FACES = 32 for safety; nodes with more incidents --
-// e.g., from non-conformal AMR -- would need a fallback, but plain hex
-// meshes never exceed 24).
+// Hex8 specific: 3 SCS faces per incident element. A structured hex mesh has
+// at most 8 elements per node (24 faces); unstructured hex meshes have more
+// (12 in a gmsh-recombined quad mesh extruded to hexes: 36 faces). The faces
+// are stored in a fixed-size array of ElemTraits<HexTag>::MaxFacesPerNode;
+// a node with more counts in *overflow (setup aborts on it).
 template<typename KeyType, typename RealType>
 __global__ void assembleDDTPerNodeKernel(const KeyType* c0, const KeyType* c1,
                                          const KeyType* c2, const KeyType* c3,
@@ -1807,7 +1809,8 @@ __global__ void assembleDDTPerNodeKernel(const KeyType* c0, const KeyType* c1,
                                          const int* colInd,
                                          int numOwnedDofs,
                                          RealType* values,
-                                         size_t numNodes)
+                                         size_t numNodes,
+                                         int* overflow)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
@@ -1824,7 +1827,12 @@ __global__ void assembleDDTPerNodeKernel(const KeyType* c0, const KeyType* c1,
     constexpr int nodeFaces[8][3] = { {0,3,8},  {0,1,9},  {1,2,10}, {2,3,11},
                                        {4,7,8},  {4,5,9},  {5,6,10}, {6,7,11} };
 
-    constexpr int MAX_FACES = 32;
+    constexpr int MAX_FACES = ElemTraits<HexTag>::MaxFacesPerNode;
+    if (KeyType(3) * (nodeToElemOffsets[i + 1] - nodeToElemOffsets[i]) > KeyType(MAX_FACES))
+    {
+        atomicAdd(overflow, 1);
+        return;
+    }
     int      incCount = 0;
     KeyType  incOtherNode[MAX_FACES];
     int      incOtherDof[MAX_FACES];
@@ -2206,7 +2214,7 @@ __global__ void assemble_outlet_pressure_sensitivity_kernel(
     }
 }
 
-// Linearized convection block C for --implicit-advection (tet-only).
+// Linearized convection block C for --implicit-advection (tet; the hex form follows).
 //   C_ij = int N_i (a . grad N_j) = (V/4) * (a . grad N_j)
 // with a = element-mean u^n. On a linear tet a.gradN_j is constant over the
 // element and int N_i = V/4, so the quadrature is exact -- this is the same
@@ -2294,6 +2302,93 @@ __global__ void assembleConvectionTetKernel(
             RealType v = cj[j];
             if (tau > RealType(0)) v += tau * vol * aDotG[i] * aDotG[j];
             fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, v);
+        }
+    }
+}
+
+// The hex (Q1) form of assembleConvectionTetKernel, the same discretisation:
+//   C_ij = int N_i (a . grad N_j),   S_ij = tau int (a . grad N_i)(a . grad N_j),
+// with a = the element mean of u^n and tau from g = sum_i |a . grad N_i| at the
+// centre (2|a|/h along the streamline, as on the tet). 2x2x2 Gauss: exact for C
+// and S on a parallelepiped. Dirichlet rows skipped, columns kept (see above).
+template<typename KeyType, typename RealType>
+__global__ void assembleConvectionHexKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const KeyType* c4, const KeyType* c5, const KeyType* c6, const KeyType* c7,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* un, const RealType* vn, const RealType* wn,
+    const int* nodeToDof, const uint8_t* ownership, const uint8_t* isBdryDof,
+    const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType nu, RealType dt, int supgOn,
+    RealType* vals, size_t numElem)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElem) return;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[8];
+    for (int i = 0; i < 8; ++i) n[i] = cc[i][e];
+    RealType coords[8][3];
+    RealType ax = 0, ay = 0, az = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+        ax += un[n[i]];
+        ay += vn[n[i]];
+        az += wn[n[i]];
+    }
+    ax *= RealType(0.125);
+    ay *= RealType(0.125);
+    az *= RealType(0.125);
+
+    RealType N[8], dNdx[8][3], aDotG[8];
+    RealType tau = 0;
+    if (supgOn)
+    {
+        const RealType centre[3] = {0, 0, 0};
+        if (!(fem::hexBasisGradients<RealType>(coords, centre, N, dNdx) > RealType(0))) return;
+        RealType amag = sqrt(ax * ax + ay * ay + az * az);
+        if (amag > RealType(1e-30))
+        {
+            RealType g = 0;
+            for (int i = 0; i < 8; ++i) g += fabs(ax * dNdx[i][0] + ay * dNdx[i][1] + az * dNdx[i][2]);
+            if (g > RealType(0))
+            {
+                RealType hs   = RealType(2) * amag / g;
+                RealType tTr  = RealType(2) / dt;              // transient limit
+                RealType tDif = RealType(4) * nu / (hs * hs);  // diffusive limit
+                tau = RealType(1) / sqrt(tTr * tTr + g * g + tDif * tDif);
+            }
+        }
+    }
+
+    RealType c[8][8];
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j) c[i][j] = 0;
+    const RealType gp = RealType(0.577350269189625764509148780502);
+    for (int q = 0; q < 8; ++q)
+    {
+        const RealType xi[3] = {(q & 1) ? gp : -gp, (q & 2) ? gp : -gp, (q & 4) ? gp : -gp};
+        const RealType det   = fem::hexBasisGradients<RealType>(coords, xi, N, dNdx);
+        if (!(det > RealType(0))) return;   // an inverted hex: leave it out (as the tet kernel does)
+        for (int j = 0; j < 8; ++j) aDotG[j] = ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2];
+        for (int i = 0; i < 8; ++i)
+            for (int j = 0; j < 8; ++j) c[i][j] += det * (N[i] + tau * aDotG[i]) * aDotG[j];
+    }
+
+    for (int i = 0; i < 8; ++i)
+    {
+        if (ownership[n[i]] != 1) continue;
+        int dofI = nodeToDof[n[i]];
+        if (dofI < 0 || dofI >= numOwnedDofs) continue;
+        if (isBdryDof[dofI]) continue;
+        int rs = rowPtr[dofI], re = rowPtr[dofI + 1];
+        for (int j = 0; j < 8; ++j)
+        {
+            int dofJ = nodeToDof[n[j]];
+            if (dofJ < 0) continue;
+            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, c[i][j]);
         }
     }
 }
@@ -3173,6 +3268,7 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_penaltyBeta;
     RealType                       penaltyInvEta     = RealType(0);
     RealType                       penaltyBetaDtEff  = RealType(0);
+    CvfemKernelVariant             laplacianVariant  = CvfemKernelVariant::Tensor; // setup's, for refreshes
     bool                           penalisedProjection = false;
     bool                           penaltyBetaDirty    = false;
     // CSR assembly visits every outlet facet touching an owned row, including halo tets.
@@ -4355,7 +4451,14 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     pt.lap("area vectors");
 
+    // PSPG (tau L added to the pressure operator) is implemented for tets only. With Hypre the
+    // pressure operator is the compact CVFEM K, on which PSPG is inert (tau ~ h^2); the hex
+    // runs without it.
+    if (std::is_same_v<ElementTag, HexTag> && s.usePSPG && s.rank == 0)
+        std::cerr << "NOTE: PSPG is implemented for tets only; the hex pressure operator is the CVFEM K\n";
+
     // Velocity matrix: nu * K assembled first (then we add M/dt and apply BC).
+    s.laplacianVariant = kernelVariant;
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesVel, kernelVariant);
     // The Laplacian above was assembled with gamma=1 -> raw K. Scale by nu for
     // the diffusion matrix.
@@ -4586,6 +4689,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         const auto& d_n2eList = s.domain.getNodeToElementList();
         if (s.nodeCount > 0)
         {
+            cstone::DeviceVector<int> d_overflow(1, 0);
             int nBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
             assembleDDTPerNodeKernel<KeyType, RealType><<<nBlocks, s.blockSize>>>(
                 std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
@@ -4597,8 +4701,17 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.d_node_to_dof.data(), d_nodeOwnership.data(),
                 s.d_massNode.data(),
                 s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.numOwnedDofs,
-                s.d_valuesDDT.data(), s.nodeCount);
+                s.d_valuesDDT.data(), s.nodeCount, d_overflow.data());
             cudaDeviceSynchronize();
+            int overflow = 0;
+            cudaMemcpy(&overflow, d_overflow.data(), sizeof(int), cudaMemcpyDeviceToHost);
+            if (overflow > 0)
+            {
+                std::cerr << "ERROR: rank " << s.rank << ": " << overflow
+                          << " nodes have more SCS faces than the hex D M^-1 D^T assembly holds ("
+                          << ElemTraits<HexTag>::MaxFacesPerNode << ", mars_element_traits.hpp)\n";
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
         }
         // Post-assembly health check: every owned row must have a non-zero
         // diagonal entry (Hypre BoomerAMG strength-of-connection asserts on
@@ -9205,7 +9318,7 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
     // which the element-mean advecting velocity needs. Only the matrix that is
     // ACTIVE this step is rebuilt; the other one is rebuilt when it becomes
     // active, and nothing else in the step reads either.
-    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    if constexpr (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>)
     {
         if (s.implicitAdvection
             && s.d_isBdryDof.size() == static_cast<size_t>(s.numOwnedDofs))
@@ -9246,22 +9359,33 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                 const auto& d_conn = s.domain.getElementToNodeConnectivity();
                 auto cp = connPtrs<ElementTag, KeyType>(d_conn);
                 int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
-                assembleConvectionTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
-                    cp[0], cp[1], cp[2], cp[3],
-                    s.domain.getNodeX().data(), s.domain.getNodeY().data(),
-                    s.domain.getNodeZ().data(),
-                    s.d_u.data(), s.d_v.data(), s.d_w.data(),
-                    s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
-                    s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
-                    s.nuCached, dt, s.useSupg ? 1 : 0,
-                    velVals, s.elementCount);
+                if constexpr (std::is_same_v<ElementTag, HexTag>)
+                    assembleConvectionHexKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                        cp[0], cp[1], cp[2], cp[3], cp[4], cp[5], cp[6], cp[7],
+                        s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                        s.domain.getNodeZ().data(),
+                        s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                        s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
+                        s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                        s.nuCached, dt, s.useSupg ? 1 : 0,
+                        velVals, s.elementCount);
+                else
+                    assembleConvectionTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                        cp[0], cp[1], cp[2], cp[3],
+                        s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                        s.domain.getNodeZ().data(),
+                        s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                        s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
+                        s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                        s.nuCached, dt, s.useSupg ? 1 : 0,
+                        velVals, s.elementCount);
             }
             cudaDeviceSynchronize();
         }
     }
     else if (s.implicitAdvection && s.rank == 0 && s.bdfStep == 0)
     {
-        std::cerr << "WARNING: --implicit-advection is tet-only; ignored\n";
+        std::cerr << "WARNING: --implicit-advection is implemented for tets and hexes only; ignored\n";
     }
 
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
@@ -9346,7 +9470,8 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
         // goes to Hypre GMRES. Preconditioner still comes from
         // MARS_HYPRE_PRECOND; jacobi is the sane default for a mass-dominated
         // operator, BoomerAMG is not.
-        const bool nonSym = s.implicitAdvection && std::is_same_v<ElementTag, TetTag>;
+        const bool nonSym = s.implicitAdvection
+                            && (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>);
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
             bdf2Active ? s.Avel_bdf2 : s.Avel,
@@ -10712,7 +10837,7 @@ void refreshPenalisedPressureOperator(NSStepper<KeyType, RealType, ElementTag>& 
     const RealType dtEff      = bdf2Active ? (RealType(2) * dt / RealType(3)) : dt;
     if (!s.penaltyBetaDirty && dtEff == s.penaltyBetaDtEff) return;
 
-    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    if constexpr (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>)
     {
         if (s.solverKind != SolverKind::Hypre || std::getenv("MARS_HYPRE_USE_DDT") != nullptr || s.outletBeta >= RealType(0)
             || s.useFemProjection || s.useVMSStab || s.useRcImplicit || s.useRcOnly)
@@ -10732,13 +10857,13 @@ void refreshPenalisedPressureOperator(NSStepper<KeyType, RealType, ElementTag>& 
             cudaDeviceSynchronize();
         }
 
-        assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, CvfemKernelVariant{},
+        assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, s.laplacianVariant,
                                                          s.d_penaltyBeta.data());
 
         const auto& d_conn          = s.domain.getElementToNodeConnectivity();
         const auto& d_nodeOwnership = s.ownershipMap();
         const RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
-        if (s.usePSPG && tauL > RealType(0) && s.elementCount > 0)
+        if (std::is_same_v<ElementTag, TetTag> && s.usePSPG && tauL > RealType(0) && s.elementCount > 0)
         {
             int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
             assemblePSPGStiffnessTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
@@ -10777,7 +10902,7 @@ void refreshPenalisedPressureOperator(NSStepper<KeyType, RealType, ElementTag>& 
     }
     else
     {
-        std::cerr << "ERROR: the penalised projection is implemented for tets only\n";
+        std::cerr << "ERROR: the penalised projection is implemented for tets and hexes only\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 }
