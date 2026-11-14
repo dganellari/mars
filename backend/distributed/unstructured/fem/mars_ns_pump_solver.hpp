@@ -761,6 +761,10 @@ __device__ __forceinline__ void scsLR(int ip, int& L, int& R)
 // header above. Off by default (s.useFemProjection).
 #include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
 
+// Opt-in projection on a stored face flux (s.useFaceFlux): the flux, the nodal gradient G and
+// the self-check against the assembled K. Same inclusion contract as the two headers above.
+#include "backend/distributed/unstructured/fem/mars_face_flux.hpp"
+
 // Host-side connectivity pointer gather. Returns NodesPerElem device pointers
 // from the connectivity tuple so launch sites can dispatch on element type
 // without spelling std::get<7> for tet (which has only 4 columns).
@@ -3753,6 +3757,38 @@ struct NSStepper
     bool useRhieChow      = false;
     RealType rhieChowTau  = -1;   // <=0 => auto-pick = dt/rho
 
+    // --face-flux: the projection on a stored face flux F (mars_face_flux.hpp). The pressure
+    // right-hand side is sum F* per control volume, the corrector updates F with the face form of
+    // the assembled K, so sum F = 0 in every control volume with a free pressure row. The nodal
+    // predictor and corrector are MARS's own. PSPG off (inert on K, and K's face form does not
+    // carry it); excludes the other Rhie-Chow, VMS and FEM options.
+    bool useFaceFlux          = false;
+    // The Rhie-Chow bracket on p^n in F* (0: none, the default). Measured 2026-11-14 at 1 bar: at
+    // weight 1 it carried 13-19 % of the delivered volume through the penalised plates in 10 ms;
+    // the projection does not need it (K is compact).
+    RealType faceFluxRcScale  = RealType(0);
+    // Convection on the stored flux (needs --implicit-advection): upwind F+ u_L + F- u_R with the
+    // smoothed switch |F|_eps (eps 0: the hard switch), the outlets' backflow guard, and with
+    // faceFluxSecondOrder the deferred correction along G u (limiter 0 none, 1 clip,
+    // 2 Venkatakrishnan with eps2 = faceFluxVenkatC h^3, 3 Darwish-Moukalled). Replaces the
+    // Galerkin convection and its SUPG.
+    bool faceFluxConvection   = false;
+    bool faceFluxSecondOrder  = true;
+    int faceFluxLimiter       = 0;
+    RealType faceFluxUpwindEps = RealType(0);
+    RealType faceFluxVenkatC  = RealType(0);
+    int faceFluxRcBetaPower   = 1;             // ... times (beta_L beta_R)^m on each face
+    cstone::DeviceVector<RealType> d_faceFlux;      // [elementCount * NSCS], all local elements
+    cstone::DeviceVector<RealType> d_faceFluxGradW; // G's weights per node, owner-complete
+    bool faceFluxChecked      = false;
+    // The pressure outlets' nodes with free velocity (owned, by node): their control volumes keep the
+    // continuity row, closed by the boundary face's flux (mars_face_flux.hpp); built on first use.
+    cstone::DeviceVector<uint8_t> d_faceFluxOutlet;
+    bool faceFluxOutletsBuilt = false;
+    bool faceFluxOperatorBuilt = false;
+    RealType lastFaceFluxDivMax = 0;   // max |sum F| over control volumes with free pressure rows
+    RealType lastFaceFluxDivSum = 0;   // sum of |sum F| over them
+
     // Nalu-Wind-style VMS pressure stabilization (NOT Rhie-Chow). Opt-in,
     // tet-only for now. Uses the residual (projected-nodal-grad - element-ip-grad),
     // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
@@ -4135,6 +4171,310 @@ void addBochevDohrmannStab(NSStepper<KeyType, RealType, ElementTag>& s, RealType
 // pressure pin, area vectors. Runs ONCE before the time loop.
 // =============================================================================
 
+// ---- the face-flux projection (s.useFaceFlux, mars_face_flux.hpp): host side ----
+
+template<typename KeyType, typename RealType, typename ElementTag>
+std::array<const KeyType*, 8> faceFluxConn(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    auto cp = connPtrs<ElementTag, KeyType>(s.domain.getElementToNodeConnectivity());
+    std::array<const KeyType*, 8> c{};
+    for (int i = 0; i < ElemTraits<ElementTag>::NodesPerElem; ++i) c[i] = cp[i];
+    return c;
+}
+
+template<typename RealType>
+void faceFluxZero(cstone::DeviceVector<RealType>& v, size_t n)
+{
+    v.resize(n);
+    if (n > 0) thrust::fill(thrust::device, thrust::device_pointer_cast(v.data()), thrust::device_pointer_cast(v.data() + n), RealType(0));
+}
+
+// G of phi (+grad phi) on every local node: owned-element scatter, reverse-add, divide by the
+// weights, forward exchange (so the halo elements' faces see their owners' values).
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxNodalGradient(NSStepper<KeyType, RealType, ElementTag>& s, const RealType* phi,
+                           cstone::DeviceVector<RealType>& gx, cstone::DeviceVector<RealType>& gy,
+                           cstone::DeviceVector<RealType>& gz)
+{
+    faceFluxZero(gx, s.nodeCount);
+    faceFluxZero(gy, s.nodeCount);
+    faceFluxZero(gz, s.nodeCount);
+    const auto c           = faceFluxConn(s);
+    const size_t startElem = s.domain.startIndex();
+    const size_t numLocal  = s.domain.localElementCount();
+    if (numLocal > 0)
+    {
+        faceFluxNodalGradientKernel<KeyType, RealType, ElementTag><<<int((numLocal + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+            s.domain.getNodeZ().data(), phi, gx.data(), gy.data(), gz.data(), nullptr, startElem, numLocal);
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(gx);
+    s.domain.reverseExchangeNodeHaloAdd(gy);
+    s.domain.reverseExchangeNodeHaloAdd(gz);
+    if (s.nodeCount > 0)
+    {
+        faceFluxNormalizeKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            s.ownershipMap().data(), s.d_faceFluxGradW.data(), gx.data(), gy.data(), gz.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    s.domain.exchangeNodeHalo(gx);
+    s.domain.exchangeNodeHalo(gy);
+    s.domain.exchangeNodeHalo(gz);
+}
+
+// Each control volume's net outflow through its interior faces, sum_s sigma_s F_s, owner-complete.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxDivergence(NSStepper<KeyType, RealType, ElementTag>& s, cstone::DeviceVector<RealType>& acc)
+{
+    faceFluxZero(acc, s.nodeCount);
+    const auto c           = faceFluxConn(s);
+    const size_t numLocal  = s.domain.localElementCount();
+    if (numLocal > 0)
+    {
+        faceFluxScatterKernel<KeyType, ElementTag, RealType><<<int((numLocal + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.d_faceFlux.data(), acc.data(), s.domain.startIndex(),
+            numLocal);
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(acc);
+}
+
+// max and sum of |acc| over the owned nodes whose pressure row is free (not an outlet's or the pin).
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxFreeRowNorms(NSStepper<KeyType, RealType, ElementTag>& s, const cstone::DeviceVector<RealType>& acc,
+                          RealType& maxOut, RealType& sumOut, bool withOutletRows = false)
+{
+    const uint8_t* own  = s.ownershipMap().data();
+    const int* n2d      = s.d_node_to_dof.data();
+    const uint8_t* pbc  = (!withOutletRows && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs))
+                              ? s.d_isPressureBdryDof.data() : nullptr;
+    const int pin       = s.pressurePinDof;
+    const int nOwned    = s.numOwnedDofs;
+    const RealType* a   = acc.data();
+    auto value = [own, n2d, pbc, pin, nOwned, a] __device__ (size_t i) -> RealType {
+        if (own[i] != 1) return RealType(0);
+        const int d = n2d[i];
+        if (d < 0 || d >= nOwned || d == pin || (pbc && pbc[d])) return RealType(0);
+        return a[i] < RealType(0) ? -a[i] : a[i];
+    };
+    RealType loc[2] = {0, 0};
+    if (s.nodeCount > 0)
+    {
+        loc[0] = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                                       value, RealType(0), thrust::maximum<RealType>());
+        loc[1] = mars::transformReduce(thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                                       value, RealType(0), thrust::plus<RealType>());
+    }
+    const MPI_Datatype t = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(&loc[0], &maxOut, 1, t, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&loc[1], &sumOut, 1, t, MPI_SUM, MPI_COMM_WORLD);
+}
+
+// The outlet nodes of the face-flux projection: owned, an outlet pressure DOF, free velocity, a
+// nonzero outward opening area. Once.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxEnsureOutlets(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (s.faceFluxOutletsBuilt) return;
+    s.faceFluxOutletsBuilt = true;
+    s.d_faceFluxOutlet.resize(s.nodeCount);
+    if (s.nodeCount > 0)
+        thrust::fill(thrust::device, thrust::device_pointer_cast(s.d_faceFluxOutlet.data()),
+                     thrust::device_pointer_cast(s.d_faceFluxOutlet.data() + s.nodeCount), uint8_t(0));
+    const bool haveArea = s.d_outletAreaVecX.size() == s.nodeCount;
+    const bool haveMask = s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs);
+    long long local = 0, global = 0;
+    if (haveArea && haveMask && s.nodeCount > 0)
+    {
+        const uint8_t* own = s.ownershipMap().data();
+        const int* n2d     = s.d_node_to_dof.data();
+        const uint8_t* pbc = s.d_isPressureBdryDof.data();
+        const uint8_t* vbc = s.d_isBdryDof.data();
+        const RealType *ax = s.d_outletAreaVecX.data(), *ay = s.d_outletAreaVecY.data(), *az = s.d_outletAreaVecZ.data();
+        uint8_t* out       = s.d_faceFluxOutlet.data();
+        const int nOwned   = s.numOwnedDofs;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [own, n2d, pbc, vbc, ax, ay, az, out, nOwned] __device__ (size_t i) {
+                             const int d = n2d[i];
+                             if (own[i] != 1 || d < 0 || d >= nOwned || !pbc[d] || vbc[d]) return;
+                             if (ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i] > RealType(0)) out[i] = 1;
+                         });
+        local = thrust::count(thrust::device, thrust::device_pointer_cast(out), thrust::device_pointer_cast(out + s.nodeCount),
+                              uint8_t(1));
+    }
+    MPI_Allreduce(&local, &global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if (s.rank == 0)
+        std::cout << "face flux: " << global << " outlet nodes with free velocity keep their continuity rows\n";
+}
+
+// The face-flux pressure operator: K_gamma (gamma = beta with the penalised projection), no
+// Dirichlet rows, the outlets' rows closed by their boundary faces (mars_face_flux.hpp), into Apre.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxPressureOperator(NSStepper<KeyType, RealType, ElementTag>& s, const RealType* gamma)
+{
+    faceFluxEnsureOutlets(s);
+    assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, s.laplacianVariant, gamma);
+    const auto c = faceFluxConn(s);
+    if (s.elementCount > 0)
+    {
+        faceFluxOutletRowsKernel<KeyType, RealType, ElementTag><<<int((s.elementCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.d_faceFluxOutlet.data(), gamma, s.d_massNode.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), s.d_areaVec_x.data(),
+            s.d_areaVec_y.data(), s.d_areaVec_z.data(), s.d_node_to_dof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+            s.d_valuesPre.data(), s.numOwnedDofs, s.elementCount);
+        cudaDeviceSynchronize();
+    }
+    if (s.nodeCount > 0)
+    {
+        faceFluxOutletDiagonalKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            s.d_faceFluxOutlet.data(), gamma, s.d_massNode.data(), s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(),
+            s.d_outletAreaVecZ.data(), s.d_node_to_dof.data(), s.d_diagPtr.data(), s.d_valuesPre.data(), s.numOwnedDofs,
+            s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    if (s.nnz > 0)
+        cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(), size_t(s.nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice);
+    cudaDeviceSynchronize();
+    s.faceFluxOperatorBuilt = true;
+}
+
+// g += (target - phi) A_b / V at the outlet nodes (targetDof null: 0).
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxCloseGradient(NSStepper<KeyType, RealType, ElementTag>& s, const RealType* phi, const RealType* targetDof,
+                           cstone::DeviceVector<RealType>& gx, cstone::DeviceVector<RealType>& gy,
+                           cstone::DeviceVector<RealType>& gz)
+{
+    faceFluxEnsureOutlets(s);
+    if (s.nodeCount == 0 || s.d_outletAreaVecX.size() != s.nodeCount) return;
+    faceFluxOutletGradientKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+        s.d_faceFluxOutlet.data(), phi, targetDof, s.d_node_to_dof.data(), s.d_massNode.data(), s.d_outletAreaVecX.data(),
+        s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), gx.data(), gy.data(), gz.data(), s.numOwnedDofs, s.nodeCount);
+    cudaDeviceSynchronize();
+}
+
+// acc += u . A_b at the outlet nodes.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxAddOutletFlux(NSStepper<KeyType, RealType, ElementTag>& s, const RealType* u, const RealType* v,
+                           const RealType* w, cstone::DeviceVector<RealType>& acc)
+{
+    faceFluxEnsureOutlets(s);
+    if (s.nodeCount == 0 || s.d_outletAreaVecX.size() != s.nodeCount) return;
+    faceFluxOutletFluxKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+        s.d_faceFluxOutlet.data(), u, v, w, s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(),
+        s.d_outletAreaVecZ.data(), acc.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+}
+
+// Once, before the first face-flux pressure solve: the face form of K_gamma against the assembled
+// pressure matrix on a smooth non-linear field, over the free rows. They must agree to round-off,
+// or the corrected flux is not divergence-free.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxSelfCheck(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    const auto& X = s.domain.getNodeX();
+    const auto& Y = s.domain.getNodeY();
+    const auto& Z = s.domain.getNodeZ();
+    // A smooth field on the domain's scale (every rank evaluates the same shared nodes alike).
+    RealType lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
+    if (s.nodeCount > 0)
+    {
+        const RealType* P[3] = {X.data(), Y.data(), Z.data()};
+        for (int a = 0; a < 3; ++a)
+        {
+            auto mm = thrust::minmax_element(thrust::device, thrust::device_pointer_cast(P[a]),
+                                             thrust::device_pointer_cast(P[a] + s.nodeCount));
+            lo[a]   = *mm.first;
+            hi[a]   = *mm.second;
+        }
+    }
+    RealType glo[3], ghi[3];
+    const MPI_Datatype t = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(lo, glo, 3, t, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(hi, ghi, 3, t, MPI_MAX, MPI_COMM_WORLD);
+    const RealType L = std::max({ghi[0] - glo[0], ghi[1] - glo[1], ghi[2] - glo[2], RealType(1e-30)});
+    cstone::DeviceVector<RealType> phi(s.nodeCount);
+    if (s.nodeCount > 0)
+    {
+        const RealType *x = X.data(), *y = Y.data(), *z = Z.data();
+        const RealType k  = RealType(7.3) / L;
+        thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                          thrust::device_pointer_cast(phi.data()), [x, y, z, k] __device__ (size_t i) -> RealType {
+                              return sin(k * x[i] + RealType(0.3)) * cos(RealType(0.7) * k * y[i]) +
+                                     RealType(0.5) * sin(RealType(1.3) * k * z[i] + k * x[i]);
+                          });
+    }
+    // face form, owned elements, reverse-added
+    cstone::DeviceVector<RealType> acc;
+    faceFluxZero(acc, s.nodeCount);
+    const RealType* gamma  = s.penalisedProjection ? s.d_penaltyBeta.data() : nullptr;
+    const auto c           = faceFluxConn(s);
+    const size_t numLocal  = s.domain.localElementCount();
+    if (numLocal > 0)
+    {
+        faceFluxLaplacianKernel<KeyType, RealType, ElementTag><<<int((numLocal + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], X.data(), Y.data(), Z.data(), phi.data(), gamma,
+            s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(), acc.data(), s.domain.startIndex(), numLocal);
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(acc);
+    // the assembled K on the DOF vector of phi
+    cstone::DeviceVector<RealType> xDof, yDof;
+    faceFluxZero(xDof, size_t(s.numTotalDofs));
+    faceFluxZero(yDof, size_t(s.numOwnedDofs));
+    if (s.nodeCount > 0)
+    {
+        const int* n2d   = s.d_node_to_dof.data();
+        const RealType* p = phi.data();
+        RealType* xd      = xDof.data();
+        const int nTot    = s.numTotalDofs;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [n2d, p, xd, nTot] __device__ (size_t i) {
+                             const int d = n2d[i];
+                             if (d >= 0 && d < nTot) xd[d] = p[i];
+                         });
+    }
+    if (s.numOwnedDofs > 0)
+    {
+        faceFluxCsrApplyKernel<RealType><<<(s.numOwnedDofs + s.blockSize - 1) / s.blockSize, s.blockSize>>>(
+            s.d_rowPtr.data(), s.d_colInd.data(), s.Apre.valuesPtr(), xDof.data(), yDof.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+    }
+    // |face form - K phi| over the free rows, against |K phi|
+    cstone::DeviceVector<RealType> diff, ref;
+    faceFluxZero(diff, s.nodeCount);
+    faceFluxZero(ref, s.nodeCount);
+    if (s.nodeCount > 0)
+    {
+        const int* n2d    = s.d_node_to_dof.data();
+        const uint8_t* own = s.ownershipMap().data();
+        const RealType* a = acc.data();
+        const RealType* yd = yDof.data();
+        RealType *dd = diff.data(), *rr = ref.data();
+        const int nOwned  = s.numOwnedDofs;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [n2d, own, a, yd, dd, rr, nOwned] __device__ (size_t i) {
+                             const int d = n2d[i];
+                             if (own[i] != 1 || d < 0 || d >= nOwned) return;
+                             dd[i] = a[i] - yd[d];
+                             rr[i] = yd[d];
+                         });
+    }
+    RealType dMax, dSum, rMax, rSum;
+    faceFluxFreeRowNorms(s, diff, dMax, dSum);
+    faceFluxFreeRowNorms(s, ref, rMax, rSum);
+    const RealType rel = rMax > RealType(0) ? dMax / rMax : dMax;
+    if (s.rank == 0)
+        std::cout << "face flux: self-check of K's face form against the assembled K: max |difference| / max |K phi| = "
+                  << std::scientific << rel << std::defaultfloat << (rel < RealType(1e-10) ? " (ok)" : " (MISMATCH)") << "\n";
+    if (!(rel < RealType(1e-10)))
+    {
+        if (s.rank == 0)
+            std::cerr << "ERROR: face flux: the corrector's face form does not reproduce the pressure operator\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     RealType nu,
@@ -4450,6 +4790,45 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data());
     }
     pt.lap("area vectors");
+
+    if (s.useFaceFlux)
+    {
+        if (s.useRhieChow || s.useVMSStab || s.useRcImplicit || s.useRcOnly || s.useRcBlend || s.useFemProjection
+            || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic || s.outletBeta >= RealType(0))
+        {
+            if (s.rank == 0)
+                std::cerr << "ERROR: --face-flux excludes the other Rhie-Chow, VMS and FEM projection options, periodic "
+                             "boundaries and the outlet beta\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        // Its Rhie-Chow bracket is the pressure stabilisation; PSPG would put tau L into K, which the
+        // corrector's face form does not carry.
+        if (s.usePSPG && s.rank == 0) std::cout << "face flux: PSPG off (the face flux carries the Rhie-Chow term)\n";
+        s.usePSPG = false;
+        faceFluxZero(s.d_faceFlux, s.elementCount * ElemTraits<ElementTag>::ScsPerElem);
+        // G's weights: sum over the owned elements of each node's share, reverse-added.
+        faceFluxZero(s.d_faceFluxGradW, s.nodeCount);
+        cstone::DeviceVector<RealType> zx, zy, zz, zphi;
+        faceFluxZero(zx, s.nodeCount);
+        faceFluxZero(zy, s.nodeCount);
+        faceFluxZero(zz, s.nodeCount);
+        faceFluxZero(zphi, s.nodeCount);
+        const auto c          = faceFluxConn(s);
+        const size_t numLocal = s.domain.localElementCount();
+        if (numLocal > 0)
+        {
+            faceFluxNodalGradientKernel<KeyType, RealType, ElementTag><<<int((numLocal + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], d_x.data(), d_y.data(), d_z.data(), zphi.data(), zx.data(),
+                zy.data(), zz.data(), s.d_faceFluxGradW.data(), s.domain.startIndex(), numLocal);
+            cudaDeviceSynchronize();
+        }
+        s.domain.reverseExchangeNodeHaloAdd(s.d_faceFluxGradW);
+        if (s.rank == 0)
+            std::cout << "face flux: the projection on a stored face flux (" << ElemTraits<ElementTag>::ScsPerElem
+                      << " per element), Rhie-Chow scale " << s.faceFluxRcScale << " times (beta_L beta_R)^"
+                      << s.faceFluxRcBetaPower << "\n";
+        pt.lap("face flux");
+    }
 
     // PSPG (tau L added to the pressure operator) is implemented for tets only. With Hypre the
     // pressure operator is the compact CVFEM K, on which PSPG is inert (tau ~ h^2); the hex
@@ -8937,6 +9316,12 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s, s.d_p,
             (s.d_pTraceOutlet.size() == s.nodeCount ? s.d_pTraceOutlet.data() : nullptr),
             s.d_gradPx, s.d_gradPy, s.d_gradPz);
+        // Face flux: the outlets' pressure enters through the closure (p_bar - p_i) A_b / V_i, not a
+        // Dirichlet row (mars_face_flux.hpp).
+        if (s.useFaceFlux)
+            faceFluxCloseGradient<KeyType, RealType, ElementTag>(
+                s, s.d_p.data(), s.d_pPhiTargetDof.size() == size_t(s.numOwnedDofs) ? s.d_pPhiTargetDof.data() : nullptr,
+                s.d_gradPx, s.d_gradPy, s.d_gradPz);
         s.lastGradPRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
@@ -9351,7 +9736,24 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                     cNew - cOld, velVals, s.numOwnedDofs);
             }
 
-            if (s.elementCount > 0)
+            if (s.elementCount > 0 && s.useFaceFlux && s.faceFluxConvection)
+            {
+                // Upwind on the stored flux F^n (mars_face_flux.hpp), all local elements, owned rows;
+                // the outlets' boundary faces on the diagonal.
+                const auto c = faceFluxConn(s);
+                int eB       = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+                faceFluxConvectionKernel<KeyType, RealType, ElementTag><<<eB, s.blockSize>>>(
+                    c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.d_faceFlux.data(), s.faceFluxUpwindEps,
+                    s.d_node_to_dof.data(), s.d_isBdryDof.data(), s.d_rowPtr.data(), s.d_colInd.data(), velVals,
+                    s.numOwnedDofs, s.elementCount);
+                faceFluxEnsureOutlets(s);
+                if (s.nodeCount > 0 && s.d_outletAreaVecX.size() == s.nodeCount)
+                    faceFluxOutletConvectionKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                        s.d_faceFluxOutlet.data(), s.d_u.data(), s.d_v.data(), s.d_w.data(), s.d_outletAreaVecX.data(),
+                        s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), s.d_node_to_dof.data(), s.d_isBdryDof.data(),
+                        s.d_diagPtr.data(), velVals, s.numOwnedDofs, s.nodeCount);
+            }
+            else if (s.elementCount > 0)
             {
                 // All local elements (owned + halo), owned rows only -- the same
                 // pattern the PSPG stiffness scatter uses. No reverse fold is
@@ -9391,10 +9793,38 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
 
+    // Face-flux convection, second order: per component the deferred correction's net outflow per
+    // control volume, from u^n and G u^n (lagged; mars_face_flux.hpp), subtracted from the RHS.
+    cstone::DeviceVector<RealType> hoSrc[3];
+    const bool faceFluxHO = s.useFaceFlux && s.faceFluxConvection && s.faceFluxSecondOrder && s.implicitAdvection;
+    if (faceFluxHO)
+    {
+        const cstone::DeviceVector<RealType>* comp[3] = {&s.d_u, &s.d_v, &s.d_w};
+        const auto c          = faceFluxConn(s);
+        const size_t numLocal = s.domain.localElementCount();
+        cstone::DeviceVector<RealType> gx, gy, gz;
+        for (int k = 0; k < 3; ++k)
+        {
+            faceFluxNodalGradient<KeyType, RealType, ElementTag>(s, comp[k]->data(), gx, gy, gz);
+            faceFluxZero(hoSrc[k], s.nodeCount);
+            if (numLocal > 0)
+            {
+                faceFluxDeferredCorrectionKernel<KeyType, RealType, ElementTag><<<int((numLocal + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                    c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                    s.domain.getNodeZ().data(), s.d_faceFlux.data(), s.faceFluxUpwindEps, comp[k]->data(), gx.data(),
+                    gy.data(), gz.data(), s.faceFluxLimiter, s.faceFluxVenkatC, hoSrc[k].data(), s.domain.startIndex(),
+                    numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(hoSrc[k]);
+        }
+    }
+
     auto runImplicit = [&] (cstone::DeviceVector<RealType>& qStar,
                              cstone::DeviceVector<RealType>& qStarStar,
                              cstone::DeviceVector<RealType>& qTarget,
-                             const cstone::DeviceVector<RealType>& qLift) -> int
+                             const cstone::DeviceVector<RealType>& qLift,
+                             const cstone::DeviceVector<RealType>& qHO) -> int
     {
         // RHS = (mass coef) * mass * qStar; coef = 1/dt for BDF1, 3/(2dt) for BDF2.
         thrust::fill(thrust::device_pointer_cast(b.data()),
@@ -9414,6 +9844,21 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             thrust::transform(thrust::device, bp, bp + s.numOwnedDofs,
                               thrust::device_pointer_cast(qLift.data()), bp,
                               thrust::minus<RealType>());
+            cudaDeviceSynchronize();
+        }
+        // Face-flux convection's deferred correction (owned rows; Dirichlet rows are overwritten below).
+        if (qHO.size() == s.nodeCount && s.nodeCount > 0)
+        {
+            const int* n2d    = s.d_node_to_dof.data();
+            const uint8_t* own = d_nodeOwnership.data();
+            const RealType* h = qHO.data();
+            RealType* bb      = b.data();
+            const int nOwned  = s.numOwnedDofs;
+            thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                             [n2d, own, h, bb, nOwned] __device__ (size_t i) {
+                                 const int d = n2d[i];
+                                 if (own[i] == 1 && d >= 0 && d < nOwned) bb[d] -= h[i];
+                             });
             cudaDeviceSynchronize();
         }
 
@@ -9480,9 +9925,9 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             /*precondMat=*/nullptr, /*forceGmres=*/nonSym);
     };
 
-    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU);
-    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velLiftV);
-    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velLiftW);
+    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU, hoSrc[0]);
+    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velLiftV, hoSrc[1]);
+    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velLiftW, hoSrc[2]);
 
     // Sync ghosts of q** for the divergence scatter (face donors read q** at
     // ghost corners on rank boundaries).
@@ -9674,7 +10119,49 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
 
     cstone::DeviceVector<RealType> d_divAccNode(s.nodeCount, RealType(0));
-    if (eBlocks > 0)
+    // Face-flux projection: F* on every local element (halo included: the formula is element-local
+    // on halo-complete nodal fields, so every rank gets the same values), from u** and, when its
+    // scale is not 0, the Rhie-Chow bracket on p^n. The bracket's smooth term is the gradient the
+    // predictor used (d_gradP*, which holds zeros on ghosts: copied and exchanged here), so it swaps
+    // exactly what u** carries.
+    if (s.useFaceFlux)
+    {
+        if (!s.penalisedProjection && !s.faceFluxOperatorBuilt)
+            faceFluxPressureOperator<KeyType, RealType, ElementTag>(s, nullptr);
+        if (!s.faceFluxChecked)
+        {
+            faceFluxSelfCheck<KeyType, RealType, ElementTag>(s);
+            s.faceFluxChecked = true;
+        }
+        cstone::DeviceVector<RealType> gpx, gpy, gpz;
+        if (s.faceFluxRcScale != RealType(0))
+        {
+            gpx = s.d_gradPx;
+            gpy = s.d_gradPy;
+            gpz = s.d_gradPz;
+            s.domain.exchangeNodeHalo(gpx);
+            s.domain.exchangeNodeHalo(gpy);
+            s.domain.exchangeNodeHalo(gpz);
+        }
+        if (s.elementCount > 0)
+        {
+            faceFluxPredictKernel<KeyType, RealType, ElementTag><<<int((s.elementCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7, s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                s.domain.getNodeZ().data(), uIter ? uIter : s.d_uStarStar.data(), vIter ? vIter : s.d_vStarStar.data(),
+                wIter ? wIter : s.d_wStarStar.data(), s.d_p.data(), gpx.data(), gpy.data(), gpz.data(),
+                s.penalisedProjection ? s.d_penaltyBeta.data() : nullptr, s.d_areaVec_x.data(),
+                s.d_areaVec_y.data(), s.d_areaVec_z.data(), s.faceFluxRcScale / (invDt * rho), s.faceFluxRcBetaPower,
+                s.d_faceFlux.data(), s.elementCount);
+            cudaDeviceSynchronize();
+        }
+    }
+    if (eBlocks > 0 && s.useFaceFlux)
+    {
+        faceFluxScatterKernel<KeyType, ElementTag, RealType><<<eBlocks, s.blockSize>>>(
+            c0, c1, c2, c3, c4, c5, c6, c7, s.d_faceFlux.data(), d_divAccNode.data(), startElem, numLocal);
+        cudaDeviceSynchronize();
+    }
+    else if (eBlocks > 0)
     {
         // Rhie-Chow corrected divergence: adds the compact pressure-velocity
         // coupling term that suppresses the checkerboard pressure mode on
@@ -9892,6 +10379,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     }
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+    // Face flux: the outlet control volumes' boundary faces, u** . A_b (owned, so after the fold).
+    if (s.useFaceFlux)
+        faceFluxAddOutletFlux<KeyType, RealType, ElementTag>(s, uIter ? uIter : s.d_uStarStar.data(),
+                                                             vIter ? vIter : s.d_vStarStar.data(),
+                                                             wIter ? wIter : s.d_wStarStar.data(), d_divAccNode);
 
     // Closing term for the CVFEM control volumes at the openings, on the SOLVED
     // velocity. divAccNode and the per-node area-vectors are both owner-complete
@@ -10169,7 +10661,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             enforcePinRhsKernel<RealType><<<1, 1>>>(s.pressurePinDof, b.data());
             cudaDeviceSynchronize();
         }
-        if (s.d_isPressureBdryDof.size() > 0)
+        if (s.d_isPressureBdryDof.size() > 0 && !s.useFaceFlux)
         {
             int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
             // FIX B clamps p^{n+1} to the head (rhs=target-p^n); the rhs=0 path
@@ -10311,7 +10803,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 enforcePinRhsKernel<RealType><<<1, 1>>>(s.pressurePinDof, b.data());
                 cudaDeviceSynchronize();
             }
-            if (s.d_isPressureBdryDof.size() > 0)
+            if (s.d_isPressureBdryDof.size() > 0 && !s.useFaceFlux)
             {
                 int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
                 // FIX B lift (assembled-CG diagnostic path): clamp p^{n+1} to the
@@ -10500,7 +10992,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // Periodic / opening-flux pump: subtract the global mean so phi is uniquely
     // defined and the constant mode doesn't drift step over step.
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        || s.useOpeningFluxSource)
+        || (s.useOpeningFluxSource && !s.useFaceFlux))
     {
         mars::fem::removeMean<RealType>(s.domain, s.d_phi, MPI_COMM_WORLD);
     }
@@ -10857,6 +11349,13 @@ void refreshPenalisedPressureOperator(NSStepper<KeyType, RealType, ElementTag>& 
             cudaDeviceSynchronize();
         }
 
+        if (s.useFaceFlux)
+        {
+            faceFluxPressureOperator<KeyType, RealType, ElementTag>(s, s.d_penaltyBeta.data());
+            s.penaltyBetaDtEff = dtEff;
+            s.penaltyBetaDirty = false;
+            return;
+        }
         assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, s.laplacianVariant,
                                                          s.d_penaltyBeta.data());
 
@@ -10943,6 +11442,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     auto computeGradPhi = [&] ()
     {
         compute_pressure_increment_gradient<KeyType, RealType, ElementTag>(s);
+        if (s.useFaceFlux)
+            faceFluxCloseGradient<KeyType, RealType, ElementTag>(s, s.d_phi.data(), nullptr, s.d_gradPhix, s.d_gradPhiy,
+                                                                 s.d_gradPhiz);
         if (s.penalisedProjection && s.nodeCount > 0)
         {
             scaleGradientByBetaKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -10970,6 +11472,26 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_u, s.d_uStarStar, s.d_gradPhix, s.d_uTarget);
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
+
+    // Face-flux projection: F = F* - (dtEff/rho) beta_f (grad phi)^K_f . A on every local element
+    // (phi is halo-complete after the pressure solve), then each control volume's balance.
+    if (s.useFaceFlux)
+    {
+        const auto c = faceFluxConn(s);
+        if (s.elementCount > 0)
+        {
+            faceFluxCorrectKernel<KeyType, RealType, ElementTag><<<int((s.elementCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                s.domain.getNodeZ().data(), s.d_phi.data(), s.penalisedProjection ? s.d_penaltyBeta.data() : nullptr,
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(), dtEff * invRho, s.d_faceFlux.data(),
+                s.elementCount);
+            cudaDeviceSynchronize();
+        }
+        cstone::DeviceVector<RealType> balance;
+        faceFluxDivergence<KeyType, RealType, ElementTag>(s, balance);
+        faceFluxAddOutletFlux<KeyType, RealType, ElementTag>(s, s.d_u.data(), s.d_v.data(), s.d_w.data(), balance);
+        faceFluxFreeRowNorms<KeyType, RealType, ElementTag>(s, balance, s.lastFaceFluxDivMax, s.lastFaceFluxDivSum, true);
+    }
 
     // ---- PISO inner pressure corrections (--correctors=N, FEM path only) ----
     // One K-solve contracts the weak divergence only ~0.5-0.6x; iterating
