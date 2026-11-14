@@ -28,6 +28,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_element_traits.hpp"
+#include "backend/distributed/unstructured/fem/mars_hex_geometry.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_tet_area.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_tet_assembler.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
@@ -630,15 +631,16 @@ __global__ void computeLumpedMassPerNodeKernel(const KeyType* c0, const KeyType*
     // automatically; a periodic-pair MPI exchange is required after this step.)
     if constexpr (std::is_same_v<ElementTag, HexTag>)
     {
-        RealType xmin = x[0], xmax = x[0], ymin = y[0], ymax = y[0], zmin = z[0], zmax = z[0];
-        for (int i = 1; i < 8; ++i)
+        // Hex: each corner gets its sub-control volume (exact for any trilinear hex,
+        // not only for axis-aligned boxes).
+        RealType corner[8][3];
+        for (int i = 0; i < 8; ++i)
         {
-            if (x[i] < xmin) xmin = x[i]; if (x[i] > xmax) xmax = x[i];
-            if (y[i] < ymin) ymin = y[i]; if (y[i] > ymax) ymax = y[i];
-            if (z[i] < zmin) zmin = z[i]; if (z[i] > zmax) zmax = z[i];
+            corner[i][0] = x[i];
+            corner[i][1] = y[i];
+            corner[i][2] = z[i];
         }
-        RealType contrib = (xmax - xmin) * (ymax - ymin) * (zmax - zmin) * RealType(0.125);
-        for (int i = 0; i < 8; ++i) atomicAdd(&massNode[n[i]], contrib);
+        for (int i = 0; i < 8; ++i) atomicAdd(&massNode[n[i]], hexSubVolume(corner, i));
     }
     else
     {
