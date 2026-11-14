@@ -327,9 +327,14 @@ public:
             gather_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(raw(y_), raw(copy_), rows_, data(f_));
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
-        HYPRE_ParVectorSetConstantValues(u_, 0.0);
-        solve_amg();
-        MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        {
+#ifdef MARS_BP3_PHASES
+            bp3_phase::Scope phase(bp3_phase::Hypre, false, true);
+#endif
+            HYPRE_ParVectorSetConstantValues(u_, 0.0);
+            solve_amg();
+            MARS_CELLWISE_CK(cudaDeviceSynchronize());
+        }
         MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
         if (rows_ > 0)
             scatter_kernel<<<blocks(rows_), kThreads, 0, stream_>>>(data(u_), raw(copy_), rows_, raw(v_));

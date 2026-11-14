@@ -81,6 +81,8 @@
 // --solves k runs the solve k times from x = 0 and prints each time; the results reported are
 // those of the last (warm) solve. --profile brackets the last solve with cudaProfilerStart /
 // Stop (nsys --capture-range=cudaProfilerApi).
+// BP3_PHASE_PREFIX records completed coarse intervals in the last solve;
+// BP3_PHASE_DETAIL=1 also measures operators, outer DSS, smoothers and the V-cycle.
 // Reference: marsir-mlir/test/cellwise_bp_mg_ref.py. Every solve also reports the TRUE
 // assembled residual ||DSS(b - A x)|| over the free nodes, each once, relative to that
 // of b: the FCG history sqrt(<r,z>/<r0,z0>) depends on the preconditioner.
@@ -107,6 +109,8 @@
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_block_dss.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_fcg.hpp"
+#include "tests/performance/bp3_phases/phases.hpp"
+#define MARS_BP3_PHASES 1
 #include "backend/distributed/unstructured/solvers/mars_cellwise_pmg.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_lines.hpp"
@@ -910,6 +914,7 @@ int run(const Options& o)
     const std::string path = o.ptx_dir + "/" + o.spec + "_p" + std::to_string(P) + "_sm90.ptx";
     marsir::GalerkinPtx op(path, kernel, P, Q, bp3, tri ? 0 : K);
     auto apply = [&](const double* in, double* out, cudaStream_t st) {
+        bp3_phase::Scope phase(bp3_phase::Operator, true, true);
         if (tri) op.apply_trilinear(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(dgq), raw(dwq), raw(X), out, E, st);
         else op.apply(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(G), out, E, st);
     };
@@ -962,6 +967,7 @@ int run(const Options& o)
     auto dss = [&topo, &skeleton, &skeleton_topo, gen = dss_gen.get(), bgen = block_gen.get(), E, Bk, h,
                 block = !o.block_dss.empty(), nodes = o.block_dss != "passes"](const double* in, double* out,
                                                                                  cudaStream_t st) {
+        bp3_phase::Scope phase(bp3_phase::Dss, true, true);
         if (bgen) bgen->run(in, out, skeleton_topo, st);
         else if (block) block_dss<P>(Bk, in, out, skeleton, nodes, st);
         else if (gen) gen->run(in, nullptr, out, topo, cellwise::ElementList{nullptr, E}, st);
@@ -1117,6 +1123,8 @@ int run(const Options& o)
     std::unique_ptr<cellwise::P1Amg> amg;
     std::unique_ptr<bp3_h::Hierarchy> hmg;
     auto coarse = [&](const double* in, double* out) {
+        bp3_phase::entry_wait();
+        bp3_phase::Scope phase(bp3_phase::Coarse, false, true);
         BP_CK(cudaStreamSynchronize(stream));
         const auto c0 = std::chrono::steady_clock::now();
         if (hmg) hmg->solve(in, out);
@@ -1148,8 +1156,11 @@ int run(const Options& o)
         if constexpr (P > 1) L1 = bp3_level<1>(o.ptx_dir, E, o.ne, o.deform, stream);
         auto level_apply = [&](int lp, const double* in, double* out, cudaStream_t st) {
             if (lp == P) apply(in, out, st);
-            else if (lp == 3) L3->apply(in, out, st);
-            else L1->apply(in, out, st);
+            else {
+                bp3_phase::Scope phase(bp3_phase::Operator, true, true);
+                if (lp == 3) L3->apply(in, out, st);
+                else L1->apply(in, out, st);
+            }
         };
         auto level_elem = [&](int lp) -> const double* {
             return lp == P ? raw(elem_fine) : (lp == 3 ? raw(L3->elem) : raw(L1->elem));
@@ -1270,6 +1281,7 @@ int run(const Options& o)
     std::vector<float> solve_times;
     std::vector<double> wall_times;
     auto cycle = [&](const double* in, double* out, cudaStream_t) {
+        bp3_phase::Scope phase(bp3_phase::Cycle, true, true);
         if (mg) mg->cycle(in, out);
 #ifdef MARS_ENABLE_HYPRE
         else coarse(in, out);
@@ -1299,6 +1311,7 @@ int run(const Options& o)
             BP_CK(cudaProfilerStart());
         }
         BP_CK(cudaStreamSynchronize(stream));
+        if (last) bp3_phase::begin(+[] { BP_CK(cudaDeviceSynchronize()); });
         const auto wall_start = std::chrono::steady_clock::now();
         BP_CK(cudaEventRecord(t0, stream));
 #ifdef MARS_ENABLE_HYPRE
@@ -1312,7 +1325,9 @@ int run(const Options& o)
         BP_CK(cudaEventSynchronize(t1));
         const double wall_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - wall_start).count();
+        if (last) bp3_phase::end();
         wall_times.push_back(all_max(wall_ms));
+        if (last) bp3_phase::write();
         if (last && o.profile) BP_CK(cudaProfilerStop());
         BP_CK(cudaEventElapsedTime(&solve_ms, t0, t1));
         solve_times.push_back((float)all_max(solve_ms));

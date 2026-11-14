@@ -389,6 +389,9 @@ private:
     template <int P>
     void chebyshev(const double* b, double* x, int steps, bool zero_x) const
     {
+#ifdef MARS_BP3_PHASES
+        bp3_phase::Scope phase(bp3_phase::Smoother, true, true);
+#endif
         double* d = P == 7 ? d7_ : (P == 3 ? d3_ : d1_);
         double* y = P == 7 ? y7_ : (P == 3 ? y3_ : y1_);
         if (!zero_x) apply<P>(x, y);

@@ -24,6 +24,12 @@
 // the errors (L2 at the Gauss points of the same rule, max at the nodes) measure the
 // discretization.
 //
+// --h-levels 0..3 retains native geometric levels below p=1. Each mesh is deformed
+// after refinement so the fine geometry stays unchanged; coarse forms are rediscretized.
+// --audit-prefix writes small-case canonical coordinates and fine actions after timing.
+// BP3_PHASE_PREFIX enables completed coarse intervals for the last solve;
+// BP3_PHASE_DETAIL=1 additionally measures operators (including MFEM assembly/exchange).
+//
 // --amg-settings mars (default): Hypre and BoomerAMG as MARS sets them, so both codes run the
 // same coarse solve: Hypre's own SpMV and SpGEMM kernels (MFEM leaves cuSPARSE's SpMV on CUDA),
 // GPU-aware MPI (this Hypre build defaults to host copies), the device pool of
@@ -38,12 +44,17 @@
 // pays for that). --profile brackets the last solve with cudaProfilerStart / Stop (nsys
 // --capture-range=cudaProfilerApi).
 //
-// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--pc mg|jacobi]
+// Run: mfem_bp3 --p 3 --ne 64 [--deform 0.05] [--stretch s] [--tol 1e-10] [--true-tol 1e-10] [--maxit 2000] [--pc
+// mg|jacobi]
 //               [--amg-cycles 3] [--amg-settings mars|mfem] [--rhs discrete|pde] [--reps 20] [--solves 1] [--profile]
 //               [--device cuda]
 //               [--no-gpu-aware-mpi]
 
 #include "mfem.hpp"
+#include "phase_operators.hpp"
+#include "h_transfer.hpp"
+#include <fstream>
+#include <iomanip>
 #ifdef MFEM_USE_CUDA
 #include <cuda_profiler_api.h>
 #endif
@@ -78,6 +89,11 @@ double exact(const Vector& x)
 // Gauss-Legendre with p + 2 points per axis: exact to order 2 (p + 2) - 1.
 const IntegrationRule& rule(int p) { return IntRules.Get(Geometry::CUBE, 2 * (p + 2) - 1); }
 
+using bp3_measure::sync_device;
+using bp3_measure::TimedAmg;
+using bp3_measure::TimedOperator;
+using bp3_measure::TimedSmoother;
+
 // ex26p's DiffusionMultigrid with the BP3 rule on every level, FULL assembly on the
 // coarse level (on the device) and BoomerAMG alone as the coarse solve.
 class Bp3Multigrid : public GeometricMultigrid
@@ -95,7 +111,10 @@ public:
         bfs[0]->FormSystemMatrix(*essentialTrueDofs[0], matrix);
         matrix.SetOperatorOwner(false);
         coarse_matrix_ = matrix.As<HypreParMatrix>();
-        amg_ = new HypreBoomerAMG(*coarse_matrix_);
+        const bool measure = std::getenv("BP3_PHASE_PREFIX") != nullptr;
+        const bool detail = measure && std::getenv("BP3_PHASE_DETAIL") &&
+                            !std::strcmp(std::getenv("BP3_PHASE_DETAIL"), "1");
+        amg_ = measure ? new TimedAmg(*coarse_matrix_) : new HypreBoomerAMG(*coarse_matrix_);
         amg_->SetPrintLevel(0);
         amg_->SetMaxIter(amg_cycles);
         if (mars_amg) {
@@ -123,9 +142,17 @@ public:
             op.SetOperatorOwner(false);
             Vector diag(fes.GetTrueVSize());
             bfs.Last()->AssembleDiagonal(diag);
-            Solver* smoother = new OperatorChebyshevSmoother(*op, diag, ess, cheb_order, fes.GetParMesh()->GetComm());
-            AddLevel(op.Ptr(), smoother, true, true);
+            Operator* action = detail ? new TimedOperator(op.Ptr()) : op.Ptr();
+            Solver* smoother =
+                new OperatorChebyshevSmoother(*action, diag, ess, cheb_order, fes.GetParMesh()->GetComm());
+            AddLevel(action, detail ? new TimedSmoother(smoother) : smoother, true, true);
         }
+    }
+
+    void Mult(const Vector& b, Vector& x) const override
+    {
+        bp3_phase::Scope phase(bp3_phase::Cycle, true, true);
+        GeometricMultigrid::Mult(b, x);
     }
 
 private:
@@ -174,13 +201,15 @@ double all_max(double v)
 
 }  // namespace
 
-int main(int argc, char* argv[])
+static int run_bp3(int argc, char* argv[])
 {
-    Mpi::Init(argc, argv);
     const int rank = Mpi::WorldRank(), ranks = Mpi::WorldSize();
     const bool root = rank == 0;
     Hypre::Init();
 
+    int h_levels             = 0;
+    const char* h_transfer = "assembled";
+    const char* audit_prefix = "";
     int p = 3, ne = 32, maxit = 2000, cheb_order = 2, amg_cycles = 3, reps = 20, solves = 1;
     bool profile = false;
     double tol = 1e-10, true_tol = 1e-10;
@@ -190,6 +219,10 @@ int main(int argc, char* argv[])
     const char* device_config = "cuda";
     bool gpu_aware_mpi = true;
     OptionsParser args(argc, argv);
+    args.AddOption(&h_transfer, "-ht", "--h-transfer", "Geometric transfer: assembled (device-capable) or native (reference).");
+    args.AddOption(&h_levels, "-hl", "--h-levels", "Native rediscretized geometric levels below p=1 (0..3).");
+    args.AddOption(&audit_prefix, "-audit", "--audit-prefix",
+                   "Small-case canonical fine-system audit output (ne <= 16).");
     args.AddOption(&p, "-p", "--p", "Degree of the finest level: 1, 3 or 7.");
     args.AddOption(&ne, "-ne", "--ne", "Elements per axis.");
     args.AddOption(&g_deform, "-a", "--deform", "Amplitude of the vertex deformation.");
@@ -213,9 +246,13 @@ int main(int argc, char* argv[])
     const bool mg = !std::strcmp(pc, "mg");
     const bool mars_amg = !std::strcmp(amg_settings, "mars");
     const bool pde = !std::strcmp(rhs, "pde");
-    if (!args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1 ||
+    const bool assembled_transfer = !std::strcmp(h_transfer, "assembled");
+    if ((!assembled_transfer && std::strcmp(h_transfer, "native")) || !args.Good() || (p != 1 && p != 3 && p != 7) || (!mg && std::strcmp(pc, "jacobi")) || solves < 1 ||
         (!mars_amg && std::strcmp(amg_settings, "mfem")) || (!pde && std::strcmp(rhs, "discrete")) ||
-        !(g_stretch >= 1.0) || (pde && g_stretch != 1.0)) {
+        !(g_stretch >= 1.0) || (pde && g_stretch != 1.0) || h_levels < 0 || h_levels > 3 || ne < 1 ||
+        ne % (1 << std::max(0, std::min(3, h_levels))) ||
+        (h_levels && (ne / (1 << std::max(0, std::min(3, h_levels))) < 2 || !mg)) || (*audit_prefix && ne > 16))
+    {
         if (root) args.PrintUsage(std::cout);
         return 1;
     }
@@ -249,6 +286,7 @@ int main(int argc, char* argv[])
     // Serial mesh of at most 32^3 elements, r parallel refinements to ne^3.
     int r = 0;
     while ((ne >> r) > 32 && (ne >> r) % 2 == 0) ++r;
+    r             = std::max(r, h_levels);
     const int ne0 = ne >> r;
     int dims[3] = {0, 0, 0};
     MPI_Dims_create(ranks, 3, dims);
@@ -268,14 +306,28 @@ int main(int argc, char* argv[])
         std::unique_ptr<int[]> part(serial.CartesianPartitioning(dims));
         pmesh.reset(new ParMesh(MPI_COMM_WORLD, serial, part.get()));
     }
-    for (int l = 0; l < r; ++l) pmesh->UniformRefinement();
-    pmesh->Transform(deform);
+    for (int l = 0; l < r - h_levels; ++l)
+        pmesh->UniformRefinement();
+    if (!h_levels) pmesh->Transform(deform);
 
     // Degrees 1 [-> 3] [-> 7]; the hierarchy owns the mesh and the spaces.
     std::vector<std::unique_ptr<FiniteElementCollection>> collections;
     collections.emplace_back(new H1_FECollection(1, 3));
     auto* coarse_fes = new ParFiniteElementSpace(pmesh.get(), collections.back().get());
     ParFiniteElementSpaceHierarchy fespaces(pmesh.release(), coarse_fes, true, true);
+    for (int l = 0; l < h_levels; ++l) {
+        if (assembled_transfer)
+            bp3_transfer::add_assembled_level(fespaces);
+        else
+            fespaces.AddUniformlyRefinedLevel();
+    }
+    // Refining warped coarse cells would change the final BP3 problem.
+    if (h_levels)
+        for (int l = 0; l <= h_levels; ++l)
+            fespaces.GetFESpaceAtLevel(l).GetParMesh()->Transform(deform);
+    if (root)
+        printf("MFEM h levels: %d; coarse operators: native rediscretization; fine cells/axis %d; h-transfer %s\n",
+               h_levels, ne, h_levels ? h_transfer : "unused");
     for (int deg : {3, 7}) {
         if (deg > p) break;
         collections.emplace_back(new H1_FECollection(deg, 3));
@@ -372,15 +424,18 @@ int main(int argc, char* argv[])
 #ifdef MFEM_USE_CUDA
         if (last && profile) cudaProfilerStart();
 #endif
+        if (last) bp3_phase::begin(sync_device);
         tic_toc.Clear();
         tic_toc.Start();
         cg.Mult(B, X);
         MFEM_DEVICE_SYNC;
         tic_toc.Stop();
+        if (last) bp3_phase::end();
 #ifdef MFEM_USE_CUDA
         if (last && profile) cudaProfilerStop();
 #endif
         solve_times.push_back(all_max(tic_toc.RealTime() * 1e3));
+        if (last) bp3_phase::write();
     }
     const double solve_ms = solve_times.back();
     const int iterations = cg.GetNumIterations();
@@ -454,5 +509,45 @@ int main(int argc, char* argv[])
         printf("  CG iteration %8.3f ms  (solve %.1f ms, + setup %.0f ms)\n", iterations ? solve_ms / iterations : 0.0,
                solve_ms, setup_ms);
     }
+    if (*audit_prefix)
+    {
+        Vector coord[3], probe(n), action(n);
+        probe.UseDevice(true);
+        action.UseDevice(true);
+        for (int d = 0; d < 3; ++d)
+        {
+            FunctionCoefficient coordinate([d](const Vector& x) { return x(d); });
+            ugf.ProjectCoefficient(coordinate);
+            ugf.GetTrueDofs(coord[d]);
+        }
+        FunctionCoefficient test([](const Vector& x) { return std::cos(2 * x(0) + x(1)) * std::sin(3 * x(2) + .4); });
+        ugf.ProjectCoefficient(test);
+        ugf.GetTrueDofs(probe);
+        probe.SetSubVector(ess, 0.0);
+        A->Mult(probe, action);
+        std::vector<int> boundary(n, 0);
+        for (int i = 0; i < ess.Size(); ++i)
+            boundary[ess[i]] = 1;
+        const double* c[3] = {coord[0].HostRead(), coord[1].HostRead(), coord[2].HostRead()};
+        const double *u = U.HostRead(), *b = B.HostRead(), *v = probe.HostRead(), *av = action.HostRead(),
+                     *x = X.HostRead();
+        std::ofstream file(std::string(audit_prefix) + "-rank" + std::to_string(rank) + ".txt");
+        file << std::setprecision(17);
+        for (int i = 0; i < n; ++i)
+            file << c[0][i] << ' ' << c[1][i] << ' ' << c[2][i] << ' ' << boundary[i] << ' ' << u[i] << ' ' << b[i]
+                 << ' ' << v[i] << ' ' << av[i] << ' ' << x[i] << '\n';
+        file.close();
+        if (!file) MPI_Abort(MPI_COMM_WORLD, 94);
+    }
     return pass ? 0 : 1;
+}
+
+int main(int argc, char* argv[])
+{
+    Mpi::Init(argc, argv);
+    const int status = run_bp3(argc, argv);
+    // Destroy solver objects before MPI, and finish MPI before process-exit GPU cleanup.
+    Hypre::Finalize();
+    Mpi::Finalize();
+    return status;
 }
