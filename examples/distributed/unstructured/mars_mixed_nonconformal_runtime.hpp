@@ -57,6 +57,7 @@ struct View {
     const int *co,*ci,*fo,*fi,*qo,*qi;
     Interface* interfaces;State* state;double *cell_mass,*face_mass,*interface_mass;int* closed;
     Controls controls;int completed{};
+    const int* coefficient_slots=nullptr;
     const int *qs=nullptr,*patch_owner=nullptr;
     Flux* interface_fluxes=nullptr;
     bool conservative=false;int rank=0;
@@ -193,6 +194,7 @@ struct Assemble {
     MARS_FS_FN void add(int r,int node,int i,int j,double value) const {
         int pos=nonconformal_detail::columnSlot(matrix.columns,matrix.offsets[r],matrix.offsets[r+1],v.ids[node]);
         if(pos<0) {valid[r]=0;return;}
+        if(v.coefficient_slots) pos=v.coefficient_slots[pos];
         if(momentum) {int len=matrix.offsets[r+1]-matrix.offsets[r];matrix.values[9*matrix.offsets[r]+3*len*i+3*(pos-matrix.offsets[r])+j]+=value;}
         else matrix.values[pos]+=value;
     }
@@ -325,12 +327,48 @@ public:
             }
         }
         std::vector<int64_t> cols;std::vector<int> off{0};for(auto& row:graph) {cols.insert(cols.end(),row.begin(),row.end());off.push_back(int(cols.size()));}
+        if(method==InterfaceMethod::compatibility) {
+            // OpenAccel uses edge neighbours, with full parents at interfaces.
+            // Omitted coefficients enter the diagonal; the flux residual stays full.
+            std::vector<std::set<int64_t>> implicit(n_);
+            for(const auto& c:input.cells) for(int k=0;k<c.count;++k) {
+                int r=local_row[c.node[k]];if(r<0) continue;
+                for(int j=0;j<c.count;++j) {
+                    int differences=0;for(int a=0;a<3;++a) differences+=sign(k,a)!=sign(j,a);
+                    if(c.count==4 || differences<=1) implicit[r].insert(m.dofs[c.node[j]]);
+                }
+            }
+            for(auto face:input.faces) if(face.kind>=3) {
+                const auto& c=input.cells[face.cell];
+                for(int k=0;k<c.count;++k) {
+                    int r=local_row[c.node[k]];if(r<0) continue;
+                    for(int j=0;j<c.count;++j) implicit[r].insert(m.dofs[c.node[j]]);
+                }
+            }
+            for(auto query:input.queries) {
+                int r=local_row[query.row];
+                for(int k=query.start;k<query.start+query.count;++k) {
+                    const auto& c=input.cells[input.faces[input.donors[k]].cell];
+                    for(int j=0;j<c.count;++j) implicit[r].insert(m.dofs[c.node[j]]);
+                }
+            }
+            std::vector<int> slots(cols.size());
+            bool valid_diagonals=true;
+            for(int r=0;r<n_;++r) {
+                int diagonal=int(std::lower_bound(cols.begin()+off[r],cols.begin()+off[r+1],rows[r])-cols.begin());
+                valid_diagonals=valid_diagonals && diagonal<off[r+1] && cols[diagonal]==rows[r];
+                for(int p=off[r];p<off[r+1];++p) slots[p]=implicit[r].count(cols[p])?p:diagonal;
+            }
+            check(valid_diagonals,"compatibility diagonal column");
+            coefficient_slots_=Buffer<int>(slots.begin(),slots.end());
+        }
         pressure_.rowIds=Buffer<int64_t>(rows.begin(),rows.end());pressure_.columns=Buffer<int64_t>(cols.begin(),cols.end());pressure_.offsets=Buffer<int>(off.begin(),off.end());pressure_.values.resize(cols.size());momentum_=ncflow::blockGraph(pressure_);
         cells_=Buffer<Cell>(input.cells.begin(),input.cells.end());faces_=Buffer<Face>(input.faces.begin(),input.faces.end());queries_=Buffer<Query>(input.queries.begin(),input.queries.end());donors_=Buffer<int>(input.donors.begin(),input.donors.end());
         std::vector<double> xyz;for(auto x:m.x) {xyz.push_back(x.x);xyz.push_back(x.y);xyz.push_back(x.z);}xyz_=Buffer<double>(xyz.begin(),xyz.end());ids_=Buffer<int64_t>(m.dofs.begin(),m.dofs.end());owned_=Buffer<int>(owned.begin(),owned.end());
         ncflow::incidence(by_cell,co_,ci_);ncflow::incidence(by_face,fo_,fi_);ncflow::incidence(by_query,qo_,qi_);
         geometry_.resize(cells_.size());interfaces_.resize(queries_.size());state_.resize(m.x.size());cell_mass_.resize(12*cells_.size());face_mass_.resize(4*faces_.size());interface_mass_.resize(queries_.size());closed_.resize(faces_.size());
         view_={pointer(cells_),pointer(geometry_),pointer(faces_),pointer(queries_),pointer(donors_),pointer(xyz_),pointer(ids_),pointer(owned_),pointer(co_),pointer(ci_),pointer(fo_),pointer(fi_),pointer(qo_),pointer(qi_),pointer(interfaces_),pointer(state_),pointer(cell_mass_),pointer(face_mass_),pointer(interface_mass_),pointer(closed_),Controls{},0};
+        if(method==InterfaceMethod::compatibility) view_.coefficient_slots=pointer(coefficient_slots_);
         std::vector<uint64_t> halo_ids(m.dofs.begin(),m.dofs.end());std::vector<int> owners;for(auto id:m.dofs) owners.push_back(owner(id,m.globalNodes));check(halo_.buildFromHost(halo_ids,owners,m.candidatePeers),"mixed state halo");
         Buffer<int> flags(cells_.size());each<device>(int(cells_.size()),BuildGeometry{view_,pointer(geometry_),pointer(flags)});ncflow::finish();ncflow::validFlags(flags,"mixed cell geometry");
         if(method==InterfaceMethod::conservative) build_conservative();
@@ -385,7 +423,7 @@ public:
     Buffer<Flux> interface_fluxes_;Buffer<int> patch_owner_,qs_;
     Buffer<Cell> cells_;Buffer<Geometry> geometry_;Buffer<Face> faces_;Buffer<Query> queries_;Buffer<Interface> interfaces_;Buffer<State> state_;
     Buffer<double> xyz_,cell_mass_,face_mass_,interface_mass_;Buffer<int64_t> ids_;
-    Buffer<int> donors_,owned_,co_,ci_,fo_,fi_,qo_,qi_,closed_;View view_;
+    Buffer<int> donors_,owned_,co_,ci_,fo_,fi_,qo_,qi_,closed_,coefficient_slots_;View view_;
 };
 }
 #include "mars_mixed_conservative_runtime.hpp"

@@ -19,6 +19,56 @@ static Flux poisoned_flux() {
 }
 static bool close(double a,double b) {return std::isfinite(a) && std::abs(a-b)<=2e-13*(1+std::abs(b));}
 
+static void verify_reduced_stencil() {
+    Input input;auto& mesh=input.mesh;mesh.globalNodes=8;mesh.partitioned=true;
+    Cell cell{};cell.count=8;
+    for(int k=0;k<8;++k) {
+        cell.node[k]=k;mesh.dofs.push_back(k);
+        mesh.x.push_back({.5*(1+sign(k,0)),.5*(1+sign(k,1)),.5*(1+sign(k,2))});
+    }
+    input.cells.push_back(cell);input.element_ids.push_back(0);mesh.elements.push_back(0);
+    for(int f=0;f<6;++f) input.faces.push_back({0,f,2,f});
+    for(int r=0;r<rankCount;++r) if(r!=rankId) mesh.candidatePeers.push_back(r);
+    Channel full(input,InterfaceMethod::legacy),reduced(input,InterfaceMethod::compatibility);
+    Buffer<double> full_rhs(3*full.n_),reduced_rhs(3*reduced.n_);Buffer<int> flags(full.n_);
+    for(Channel* channel:{&full,&reduced}) {
+        auto states=host<State>(channel->state_);
+        for(int k=0;k<8;++k) {double volume=states[k].volume;states[k]=manufactured(k,mesh.x[k]);states[k].volume=volume;}
+        channel->state_=Buffer<State>(states.begin(),states.end());channel->view_.state=pointer(channel->state_);
+        channel->view_.completed=1;channel->view_.controls.mu=.2;
+        auto matrix=channel->pressure_.view();matrix.values=pointer(channel->momentum_.values);
+        each<device>(channel->n_,Assemble{channel->view_,matrix,pointer(channel==&full?full_rhs:reduced_rhs),pointer(flags),true});
+        ncflow::finish();ncflow::validFlags(flags,"synthetic compatibility assembly");
+    }
+    const auto a=host<double>(full.momentum_.values),b=host<double>(reduced.momentum_.values);
+    const auto fa=host<double>(full_rhs),fb=host<double>(reduced_rhs);
+    const auto rows=host<int64_t>(full.pressure_.rowIds),cols=host<int64_t>(full.pressure_.columns);
+    const auto offsets=host<int>(full.pressure_.offsets),slots=host<int>(reduced.coefficient_slots_);
+    const auto fs=host<State>(full.state_),rs=host<State>(reduced.state_);
+    // Cube vertex adjacency, independent of the map built by Channel.
+    constexpr int edges[8][3]={{1,3,4},{0,2,5},{1,3,6},{0,2,7},{0,5,7},{1,4,6},{2,5,7},{3,4,6}};
+    bool good=true;
+    for(int r=0;r<full.n_;++r) {
+        int node=int(rows[r]),diagonal=offsets[r]+node;
+        for(int p=offsets[r];p<offsets[r+1];++p) {
+            int c=int(cols[p]);bool retained=c==node || c==edges[node][0] || c==edges[node][1] || c==edges[node][2];
+            good=good && slots[p]==(retained?p:diagonal);
+        }
+        for(int i=0;i<3;++i) {
+            good=good && fa[3*r+i]==fb[3*r+i];
+            // Each tangential wall contributes its opposite-corner weight 1/16.
+            good=good && close(rs[node].volume/rs[node].d[i]-fs[node].volume/fs[node].d[i],.125*.2);
+            for(int j=0;j<3;++j) {
+                double sum_a=0,sum_b=0;
+                for(int k=0;k<8;++k) {int p=9*offsets[r]+24*i+3*k+j;sum_a+=a[p];sum_b+=b[p];}
+                good=good && close(sum_a,sum_b);
+            }
+        }
+    }
+    check(good,"reduced block row sums, full residual and analytic wall diagonal");
+    if(rankId==0) std::puts("PASS: compatibility coefficient folding preserves block row sums and full residual");
+}
+
 static void verify(Channel& channel) {
     const auto& mesh=channel.input_.mesh;
     check(channel.view_.conservative && channel.view_.rank==rankId,"conservative mode and rank initialized");
@@ -125,7 +175,13 @@ int main(int argc,char** argv) {
         char uuid[33]{};for(int i=0;i<16;++i) std::snprintf(uuid+2*i,3,"%02x",static_cast<unsigned char>(properties.uuid.bytes[i]));
         std::printf("GPU rank=%d device=%d uuid=%s\n",rankId,selected_device,uuid);std::fflush(stdout);
 #endif
+        verify_reduced_stencil();
         auto input=read(argv[1]);
+        {
+            // The PI mesh has unequal owned-row counts on four ranks.
+            Channel compatibility(input,InterfaceMethod::compatibility);
+            check(compatibility.view_.coefficient_slots!=nullptr,"compatibility setup on uneven partitions");
+        }
         if(argc==3) {
             int local_face=INT_MAX,removed_face=INT_MAX;
             for(auto face:input.faces) if(face.kind==4) local_face=std::min(local_face,face.id);

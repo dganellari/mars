@@ -83,7 +83,16 @@ static void outlet_storage() {
     UpdateBoundaryMass{v}(0);require(closed,"net backflow closes entire face");
     for(double value:mass) near(value,0,"closed outlet has zero mass");
 }
+static void missing_column() {
+    int64_t ids[3]={0,1,2},columns[2]={0,1};int offsets[2]={0,2},slots[2]={0,0},valid=1;
+    double values[2]{};View v{};v.ids=ids;v.coefficient_slots=slots;
+    InterfaceCsrView<double> matrix{};matrix.columns=columns;matrix.offsets=offsets;matrix.values=values;
+    Assemble assembly{v,matrix,nullptr,&valid,false};
+    assembly.add(0,1,0,0,2);near(values[0],2,"declared omitted column folds to diagonal");
+    assembly.add(0,2,0,0,3);require(!valid,"folding must not hide a genuinely missing column");
+    near(values[0],2,"missing coefficient is not silently folded");
+}
 int main() {
-    face_scores();candidate_selection();outlet_storage();
+    face_scores();candidate_selection();outlet_storage();missing_column();
     std::printf("PASS: %d coincident-face score and production donor checks\n",checks);
 }

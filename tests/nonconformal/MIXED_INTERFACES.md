@@ -24,9 +24,16 @@ scores. Equal scores use persistent face IDs within a band anchored to the
 minimum score. The original OpenAccel executable retains the first equal-score
 candidate encountered; matching its incidental search ordering is not promised.
 Captured PI donor tables are diagnostic evidence, not production input.
+Compatibility also uses OpenAccel's reduced implicit stencil: edge neighbours
+in the volume and complete parent coupling at interfaces. Coefficients outside
+that stencil are added to the same row's diagonal block, while the full flux
+residual is retained. This changes the momentum diagonal used by Rhie–Chow.
+The full CSR allocation remains so a genuinely missing column still fails;
+this is coefficient folding, not a matrix-storage optimization.
 
 `legacy` retains the earlier MARS containment-based donor score with deterministic
-ties. It is a regression control, not another OpenAccel reference.
+ties and the full implicit stencil. It is a regression control, not another
+OpenAccel reference. Conservative mode also retains the full stencil.
 
 `conservative` intersects the two faces' nodal median-dual patches. It evaluates
 one flux at each common overlap centroid and scatters the same value and Jacobian
