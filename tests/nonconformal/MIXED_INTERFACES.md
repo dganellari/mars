@@ -6,7 +6,7 @@ pressure is physical pressure in Pa, density is in kg/m³ and dynamic viscosity
 is in Pa·s when mesh coordinates are metres. The momentum stress is
 `-p I + mu (grad(u) + grad(u)^T)`; mass flux is positive out of the first side.
 The stabilized mass flux, rather than raw velocity divergence, enters continuity.
-An open outlet retains signed quadrature fluxes; the backflow rule closes a whole
+With the default `--profile mars`, an open outlet retains signed quadrature fluxes; the backflow rule closes a whole
 face. Clipping individual contributions would make stored mass disagree with the
 pressure equation. Convergence requires normalized continuity L1 as well as both
 nonlinear residuals; conservative mode also requires physical boundary balance.
@@ -55,3 +55,64 @@ additionally requires complete surface coverage, physical boundary mass balance,
 converged nonlinear residuals and one-/multi-rank field agreement on CPU and GPU.
 OpenAccel field parity is a separate compatibility check, not the acceptance
 target for the changed conservative discretization.
+
+## Corrected OpenAccel profile
+
+Build with `MARS_ENABLE_HYPRE=ON` and `MARS_ENABLE_PETSC=ON`, supplying shared
+real-FP64 PETSc through `MARS_PETSC_ROOT` (and `MARS_PETSC_ARCH` for a source
+build). The standalone `tests/nonconformal` CMake project also builds
+`mars_mixed_nonconformal_flow_host` with those options. Set `HYPRE_DIR` there
+to the directory containing `HYPREConfig.cmake`.
+
+```sh
+python3 scripts/prepare_mixed_nonconformal_mesh.py hybrid_hex_tet.exo --ranks 1 --output mesh-r1
+mars_mixed_nonconformal_flow --partitioned-mesh mesh-r1 --profile openaccel --interface compatibility --advection high-resolution --output result
+```
+
+Use a separately prepared partition directory for each MPI size. The driver
+retains the PI channel's prescribed inlet profile, material constants and
+boundary labels; it does not read arbitrary OpenAccel YAML decks. This is a
+stationary planar Hex8/Tet4 channel workflow, not a general pump/FSI driver.
+
+`openaccel` uses the corrected component-major limiter, PETSc FGMRES with
+block-Jacobi/ILU(0), and Hypre GMRES/Falgout. Momentum targets are relative
+1e-6, absolute 1e-12 and 20 iterations; pressure targets are 1e-5, 1e-10 and
+100. Both solves check the true residual of the original assembled operator.
+Selected interface parents define the reference sparse allocation, including
+stored zeros; any omitted nonzero coefficient fails. Matrix layout matters to
+these preconditioners even when the underlying operator is unchanged.
+
+These reference preconditioners execute on the CPU. GPU builds retain device
+geometry, assembly, field updates and halos, but explicitly stage each assembled
+matrix/RHS to persistent host buffers and return the correction. This is an
+accuracy comparison profile, not a GPU performance profile. A CPU-only Hypre
+library can run it; the default GPU profile requires GPU-enabled Hypre.
+
+The profile also reproduces the reference's pointwise outlet clipping and its
+momentum/pressure stopping rule. Its success message says **reference equation
+convergence**. Reported continuity and boundary imbalance remain visible and
+are not conservation acceptance. Combining it with `--interface conservative`
+or `legacy` is rejected. Defaults retain signed outlet fluxes and continuity
+acceptance.
+
+Donors are constructed from geometry, never read from a captured map. The mesh
+preparer assigns persistent face identity from the original element and side
+ordinal, independent of side-set listing order. Selection uses the smallest
+face score followed by the smallest identity within an absolute 1e-14 band.
+The historical OpenAccel search resolves ties by traversal order, which can
+change across platforms. Replay-free field parity therefore requires a corrected
+reference with the same deterministic tie rule; it is not a promise to reproduce
+every historical executable's incidental donor choices. Archive both reference
+source changes and the input identity with any comparison.
+
+With `MARS_MIXED_PARTITIONS` pointing to a directory containing `mesh-r1`,
+`mesh-r2` and `mesh-r4`, the optional host CTests run the complete reference
+profile at all three rank counts. CPU tests do not replace a native GPU run.
+
+The reference profile is not rank-invariant: block-Jacobi partitions change the
+iteration trajectory, and outlet closure depends on that history. In the PI
+host checks, one/two ranks match the one-rank reference, while four ranks converge
+to a different field. Compare CPU and GPU at matching rank counts; do not infer
+cross-rank field agreement from the convergence tests or widen the reference
+field tolerance to hide this difference. Conservative/default rank-agreement
+checks remain separate.

@@ -84,7 +84,8 @@ def prepare(source,output,ranks):
         owned=set(range(n*rank//ranks,n*(rank+1)//ranks));require(owned.issubset(ids),'missing owned nodes')
         peers[rank].update(int(node_owner[k]) for k in ids if node_owner[k]!=rank)
         cs=np.array([[counts[e],e]+[nmap[int(k)] if k>=0 else -1 for k in cells[e]] for e in es],dtype='<i4')
-        ff=np.array([[emap[int(faces[f,0])],int(faces[f,1]),int(faces[f,2]),f] for f in fs],dtype='<i4')
+        # Identity follows original topology, not the order of side-set records.
+        ff=np.array([[emap[int(faces[f,0])],int(faces[f,1]),int(faces[f,2]),6*int(faces[f,0])+int(faces[f,1])] for f in fs],dtype='<i4')
         qs=[];ds=[]
         for f in receiving:
             for q,node in enumerate(corners[f]):

@@ -8,6 +8,7 @@
 namespace mixedflow {
 using namespace mars::mixed;
 enum class InterfaceMethod { compatibility, conservative, legacy };
+enum class FlowProfile { mars, openaccel };
 struct Face { int cell,ordinal,kind,id; };
 struct Query { int face,sample,start,count,row; };
 struct Input { Mesh mesh;std::vector<Cell> cells;std::vector<int> element_ids;std::vector<Face> faces;std::vector<Query> queries;std::vector<int> donors; };
@@ -61,6 +62,7 @@ struct View {
     const int *qs=nullptr,*patch_owner=nullptr;
     Flux* interface_fluxes=nullptr;
     bool conservative=false;int rank=0;
+    bool openaccel_profile=false;
     MARS_FS_FN void coordinates(int e,double* x) const {for(int k=0;k<cells[e].count;++k) for(int j=0;j<3;++j) x[3*k+j]=xyz[3*cells[e].node[k]+j];}
     MARS_FS_FN Point facepoint(int f,int q,bool shifted=false) const {
         double x[24];coordinates(faces[f].cell,x);Point p;
@@ -186,6 +188,15 @@ struct Blend {
         }
         for(int t=v.fo[r];t<v.fo[r+1];++t) {int f=v.fi[t];auto c=v.cells[v.faces[f].cell];for(int q=0;q<face_size(c.count);++q) if(c.node[face_node(c.count,v.faces[f].ordinal,q)]==node) {
             auto p=v.facepoint(f,q);for(int i=0;i<3;++i) {double projection=0;for(int j=0;j<3;++j) projection+=s.gu[3*i+j]*(p.position[j]-v.xyz[3*node+j]);bound[i]=fmin(bound[i],blend_bound(s.u[i],lo[i],hi[i],projection));}}}
+        if(v.openaccel_profile) for(int t=v.qo[r];t<v.qo[r+1];++t) {
+            const auto query=v.queries[v.qi[t]];
+            const auto p=v.facepoint(query.face,query.sample,true);
+            for(int i=0;i<3;++i) {
+                double projection=0;
+                for(int j=0;j<3;++j) projection+=s.gu[3*i+j]*(p.position[j]-v.xyz[3*node+j]);
+                bound[i]=fmin(bound[i],blend_bound(s.u[i],lo[i],hi[i],projection));
+            }
+        }
         for(int i=0;i<3;++i) s.blend[i]=fmin(bound[i],.75*s.blend[i]+.25*bound[i]);
     }
 };
@@ -257,7 +268,12 @@ struct UpdateBoundaryMass {
         else if(mars::mixed::dot(mean_u,normal)>=0 && 0<=mean_p) v.closed[f]=0;
         // The valve acts on the whole face. An open face can have both signs at
         // its quadrature points; clipping those would change the pressure flux.
-        if(v.closed[f]) for(int q=0;q<nf;++q) v.face_mass[4*f+q]=0;
+        // Only the reference profile deliberately reproduces that mismatch.
+        for(int q=0;q<nf;++q) {
+            double& mass=v.face_mass[4*f+q];
+            if(v.closed[f]) mass=0;
+            else if(v.openaccel_profile) mass=fmax(mass,0.);
+        }
     }
 };
 struct Divergence {
@@ -305,7 +321,9 @@ inline Report reduce(int count,Statistics f) {
 }
 class Channel {
 public:
-    explicit Channel(const Input& input,InterfaceMethod method=InterfaceMethod::compatibility):input_(input),halo_(MPI_COMM_WORLD),flux_halo_(MPI_COMM_WORLD),mass_halo_(MPI_COMM_WORLD) {
+    explicit Channel(const Input& input,InterfaceMethod method=InterfaceMethod::compatibility,FlowProfile profile=FlowProfile::mars):input_(input),halo_(MPI_COMM_WORLD),flux_halo_(MPI_COMM_WORLD),mass_halo_(MPI_COMM_WORLD) {
+        check(profile!=FlowProfile::openaccel || method==InterfaceMethod::compatibility,
+              "OpenAccel profile requires compatibility coupling");
         const auto& m=input.mesh;const auto rows=ownedRows(m);n_=int(rows.size());
         std::vector<int> owned;for(auto id:rows) owned.push_back(int(std::lower_bound(m.dofs.begin(),m.dofs.end(),id)-m.dofs.begin()));
         std::vector<int> local_row(m.x.size(),-1);for(int r=0;r<n_;++r) local_row[owned[r]]=r;
@@ -368,6 +386,7 @@ public:
         ncflow::incidence(by_cell,co_,ci_);ncflow::incidence(by_face,fo_,fi_);ncflow::incidence(by_query,qo_,qi_);
         geometry_.resize(cells_.size());interfaces_.resize(queries_.size());state_.resize(m.x.size());cell_mass_.resize(12*cells_.size());face_mass_.resize(4*faces_.size());interface_mass_.resize(queries_.size());closed_.resize(faces_.size());
         view_={pointer(cells_),pointer(geometry_),pointer(faces_),pointer(queries_),pointer(donors_),pointer(xyz_),pointer(ids_),pointer(owned_),pointer(co_),pointer(ci_),pointer(fo_),pointer(fi_),pointer(qo_),pointer(qi_),pointer(interfaces_),pointer(state_),pointer(cell_mass_),pointer(face_mass_),pointer(interface_mass_),pointer(closed_),Controls{},0};
+        view_.openaccel_profile=profile==FlowProfile::openaccel;
         if(method==InterfaceMethod::compatibility) view_.coefficient_slots=pointer(coefficient_slots_);
         std::vector<uint64_t> halo_ids(m.dofs.begin(),m.dofs.end());std::vector<int> owners;for(auto id:m.dofs) owners.push_back(owner(id,m.globalNodes));check(halo_.buildFromHost(halo_ids,owners,m.candidatePeers),"mixed state halo");
         Buffer<int> flags(cells_.size());each<device>(int(cells_.size()),BuildGeometry{view_,pointer(geometry_),pointer(flags)});ncflow::finish();ncflow::validFlags(flags,"mixed cell geometry");

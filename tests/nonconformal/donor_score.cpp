@@ -79,6 +79,12 @@ static void outlet_storage() {
     require(net>0 && negative,"open outlet fixture has mixed-sign point fluxes");
     UpdateBoundaryMass{v}(0);require(!closed,"positive net outlet remains open");
     for(int q=0;q<4;++q) near(mass[q],expected[q],"stored outlet flux equals pressure equation flux");
+    v.openaccel_profile=true;
+    UpdateBoundaryMass{v}(0);require(!closed,"reference profile retains face closure rule");
+    for(int q=0;q<4;++q) near(mass[q],std::max(expected[q],0.),"reference profile explicitly clips point flux");
+    v.openaccel_profile=false;
+    UpdateBoundaryMass{v}(0);
+    for(int q=0;q<4;++q) near(mass[q],expected[q],"default restores unclipped flux");
     for(auto& s:state) s.u[0]=-1;
     UpdateBoundaryMass{v}(0);require(closed,"net backflow closes entire face");
     for(double value:mass) near(value,0,"closed outlet has zero mass");

@@ -42,7 +42,7 @@ public:
         hypre_check(HYPRE_ParCSRGMRESSetup(solver,a,b,x));hypre_check(HYPRE_ParCSRGMRESSolve(solver,a,b,x));
         HYPRE_Int iterations;hypre_check(HYPRE_ParCSRGMRESGetNumIterations(solver,&iterations));
         hypre_check(HYPRE_IJVectorGetValues(x_,ops.n,pointer(rows_),ops.solution()));
-#if defined(__CUDACC__) || defined(__HIPCC__)
+#if defined(HYPRE_USING_GPU) && (defined(__CUDACC__) || defined(__HIPCC__))
         // Hypre may use a different stream; its completed correction feeds MARS.
         hypre_check(hypre_ForceSyncComputeStream());
 #endif
@@ -54,10 +54,30 @@ public:
 private:
     Graph& graph_;Buffer<HYPRE_BigInt> rows_,cols_;Buffer<HYPRE_Int> counts_;HYPRE_IJMatrix a_{};HYPRE_IJVector b_{},x_{};
 };
+}
+#ifdef MARS_MIXED_PETSC
+#include "mars_mixed_openaccel_linear.hpp"
+#endif
+namespace mixedflow {
 inline bool Channel::solve(int budget,double tolerance,const std::string& output) {
     ChannelOps u(momentum_,input_.mesh,50,3,false),p(pressure_,input_.mesh,50,1,false);Linear velocity(momentum_),pressure(pressure_);
+#ifdef MARS_MIXED_PETSC
+    std::unique_ptr<OpenAccelLinear> reference_velocity,reference_pressure;
+    if(view_.openaccel_profile) {
+        const auto pattern=reference_pattern(*this);
+        reference_velocity=std::make_unique<OpenAccelLinear>(momentum_,pattern,input_.mesh,true);
+        reference_pressure=std::make_unique<OpenAccelLinear>(pressure_,pattern,input_.mesh,false);
+    }
+#endif
+    auto linear_solve=[&](ChannelOps& ops,bool momentum) {
+#ifdef MARS_MIXED_PETSC
+        if(view_.openaccel_profile) return (momentum?reference_velocity:reference_pressure)->solve(ops);
+#endif
+        return (momentum?velocity:pressure).solve(ops,momentum);
+    };
     Buffer<int> previous_closed(closed_.size());
-    if(rankId==0) std::puts("Linear solves: Hypre GMRES/PMIS-AMG for both systems, true residual checked; differs from reference PETSc momentum and Falgout pressure.");
+    if(rankId==0 && view_.openaccel_profile) std::puts("OpenAccel profile: host PETSc FGMRES/ILU and Hypre Falgout; GPU assembly stages matrix/RHS to host. Reference outlet clips point fluxes; equation convergence is not mass conservation.");
+    if(rankId==0 && !view_.openaccel_profile) std::puts("Linear solves: Hypre GMRES/PMIS-AMG for both systems, true residual checked; differs from reference PETSc momentum and Falgout pressure.");
     for(int iteration=0;iteration<budget;++iteration) {
         view_.completed=iteration;exchange();
         each<device>(n_,Gradient{view_,0,iteration>0});each<device>(n_,Gradient{view_,1,iteration>0});exchange();
@@ -65,11 +85,11 @@ inline bool Channel::solve(int budget,double tolerance,const std::string& output
         auto mu=reduce(n_,Statistics{view_,u.rhs(),pointer(u.diagonal),3});
         double velocity_scale=mu.maxima[1]<1e-9?1.:mu.maxima[1];double urms=0;
         for(int j=0;j<3;++j) urms=std::max(urms,sqrt(mu.sums[7+j]/input_.mesh.globalNodes)/velocity_scale);
-        exchange();int ui=velocity.solve(u,true);each<device>(n_,AddIncrement{view_,u.solution(),true});exchange();
+        exchange();int ui=linear_solve(u,true);each<device>(n_,AddIncrement{view_,u.solution(),true});exchange();
         assemble(false,p);
         auto pr=reduce(n_,Statistics{view_,p.rhs(),pointer(p.diagonal),1});double pressure_scale=std::max(pr.maxima[0]+pr.maxima[3],.5*view_.controls.rho*velocity_scale*velocity_scale);
         double prms=sqrt(pr.sums[7]/input_.mesh.globalNodes)/pressure_scale;
-        int pi=pressure.solve(p,false);each<device>(n_,AddIncrement{view_,p.solution(),false});exchange();
+        int pi=linear_solve(p,false);each<device>(n_,AddIncrement{view_,p.solution(),false});exchange();
         each<device>(n_,Gradient{view_,2,false});each<device>(int(cells_.size()),UpdateCellMass{view_});
         previous_closed=closed_;
         each<device>(int(faces_.size()),UpdateBoundaryMass{view_});update_interface_mass();
@@ -84,9 +104,10 @@ inline bool Channel::solve(int budget,double tolerance,const std::string& output
         int local_stable=std::equal(previous_closed.begin(),previous_closed.end(),closed_.begin());
 #endif
         int boundary_stable=0;MPI_Allreduce(&local_stable,&boundary_stable,1,MPI_INT,MPI_MIN,MPI_COMM_WORLD);
-        // A changed outlet state needs another assembly with that boundary condition.
-        bool converged=boundary_stable && urms<tolerance && prms<tolerance && continuity_relative<tolerance &&
-                       (!view_.conservative || boundary_relative<tolerance);
+        // The MARS profile reassembles a changed outlet before accepting continuity.
+        bool converged=urms<tolerance && prms<tolerance &&
+                       (view_.openaccel_profile || (boundary_stable && continuity_relative<tolerance &&
+                       (!view_.conservative || boundary_relative<tolerance)));
         if(iteration%10==0 || converged || iteration+1==budget) {
             auto s=reduce(n_,Statistics{view_});check(s.sums[10]==0,"mixed solution has nonfinite values");
             if(rankId==0) {std::printf("iteration %d momentum_rms %.9e pressure_rms %.9e linear %d/%d inlet %.9e outlet %.9e continuity_l1 %.9e interface_in %.9e interface_out %.9e closed_area %.9e\n",iteration+1,urms,prms,ui,pi,s.sums[0],s.sums[1],s.sums[5],s.sums[11],s.sums[12],s.sums[13]);std::fflush(stdout);}
