@@ -297,7 +297,7 @@ option list.
 ### Documentation
 
 The [documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)
-has a quickstart, tutorials for v0.1 and reference pages:
+has a quickstart, tutorials for v0.2.0 and reference pages:
 
 **Getting started & tutorials**
 

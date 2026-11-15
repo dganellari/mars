@@ -48,6 +48,6 @@ and bounded solution-error agreement, not identical solver iterations.
 
 No AMR scaling or performance advantage is claimed. Structured timing against
 the older snapshot is reported information rather than a release gate.
-The serial backend is unchanged. See [known limitations](../KNOWN_LIMITATIONS.md),
-[AMR](AMR-Module.md), [AMR checks](../tests/amr/README.md) and
+The serial backend is unchanged. See [known limitations](https://github.com/dganellari/mars/blob/v0.2.0/KNOWN_LIMITATIONS.md),
+[AMR](AMR-Module.md), [AMR checks](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md) and
 [structured Kokkos](Structured-Kokkos.md) for details.

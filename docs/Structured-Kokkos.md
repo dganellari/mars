@@ -51,7 +51,7 @@ Keep the C++ host compiler separate from the GPU compiler:
 
 Select the architecture of the actual GPU and use the same compiler and
 architecture settings when building Kokkos, MARS and the installed consumer.
-The [cluster validation kit](../tests/structured/cluster/README.md) exports pinned
+The [cluster validation kit](https://github.com/dganellari/mars/blob/v0.2.0/tests/structured/cluster/README.md) exports pinned
 dependency sources and builds all three offline in private directories. It
 provides separate CUDA and HIP launch recipes and records source, dependency,
 compiler, binary and test evidence.
@@ -189,7 +189,7 @@ its direct-MPI timing stage returned `TIMING_REJECTED`; its correctness tests pa
 
 Earlier candidates, their timing rejections and the pooled CUDA allocation
 diagnosis (2026-11-04 to 2026-11-06) are in the history of this file.
-For regressions, rerun the [cluster validation kit](../tests/structured/cluster/README.md)
+For regressions, rerun the [cluster validation kit](https://github.com/dganellari/mars/blob/v0.2.0/tests/structured/cluster/README.md)
 on all three platforms with one candidate source. A pass on one platform does
 not cover another. AMR is a separate release scope.
 
