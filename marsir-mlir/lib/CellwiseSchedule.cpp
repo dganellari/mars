@@ -305,7 +305,9 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
 
   CellwiseSchedulePass() = default;
   CellwiseSchedulePass(const CellwiseSchedulePass &other) : PassWrapper(other) {}
-  Option<int64_t> lanes{*this, "lanes", llvm::cl::desc("lanes per element (0: n^2, at most 32)"), llvm::cl::init(0)};
+  Option<int64_t> lanes{*this, "lanes",
+                        llvm::cl::desc("lanes per element (0: n^2, at most 32; a multiple of 32 spans warps)"),
+                        llvm::cl::init(0)};
   Option<int64_t> warps{*this, "warps", llvm::cl::desc("warps per block"), llvm::cl::init(8)};
   Option<int64_t> maxBlock{*this, "max-block", llvm::cl::desc("longest loop dimension kept in a thread"),
                            llvm::cl::init(8)};
