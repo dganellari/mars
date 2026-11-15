@@ -1,6 +1,6 @@
 option(MARS_ENABLE_MPI "Build mars with MPI support" ON)
 
-option(MARS_ENABLE_KOKKOS "Use -DMARS_ENABLE_KOKKOS=ON for enabling mesh transfer functions." OFF)
+option(MARS_ENABLE_KOKKOS "Enable Kokkos support, including the optional structured backend" OFF)
 option(MARS_ENABLE_KOKKOS_KERNELS "Use -DMARS_ENABLE_KOKKOS_KERNELS=ON for enabling kokkos_kernels" OFF)
 option(MARS_ENABLE_CUDA "Build mars with cuda support" OFF)
 option(MARS_ENABLE_CUDAUVM "Use as default memory space CUDAUVM. This has only an effect if MARS_ENABLE_CUDA is used too." OFF)
@@ -19,12 +19,12 @@ option(MARS_ENABLE_TESTS "Enable tests" ON)
 option(MARS_ENABLE_MOONOLITH "Use -DMARS_ENABLE_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 option(MARS_ENABLE_VTK "Uses VTK IO" OFF)
 option(MARS_ENABLE_HYPRE "Use -DMARS_ENABLE_HYPRE=ON for enabling Hypre AMG preconditioner" OFF)
-option(MARS_ENABLE_PETSC "Enable the optional PETSc momentum backend for segregated SIMPLE" OFF)
+option(MARS_ENABLE_PETSC "Enable optional PETSc momentum for segregated SIMPLE and mixed-flow compatibility" OFF)
 
 # FIXME  and turn on!
 option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabling the serial backend" OFF)
 option(MARS_ENABLE_DISTRIBUTED_BACKEND "Use -DMARS_ENABLE_DISTRIBUTED_BACKEND=ON for enabling the distributed backend" ON)
-option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling the AMR backend" OFF)
+option(MARS_ENABLE_AMR_BACKEND "Enable the older Kokkos mesh/bisection backend (not Cornerstone AMR)" OFF)
 
 option(MARS_ENABLE_EXAMPLES "Enable examples" OFF)
 option(MARS_ENABLE_FEM_EXAMPLES "Enable FEM examples (unstructured)" OFF)
@@ -37,6 +37,17 @@ option(MARS_ENABLE_DEV_EXAMPLES "Development drivers outside the v0.1 docs: pump
 # the compiler itself is a separate build-time tool and is NOT a MARS build
 # dependency. OFF by default.
 option(MARS_ENABLE_MARSIR "Build the MARSIR generated-kernel parity example (requires UNSTRUCTURED + CUDA)" OFF)
+set(MARS_ENABLE_BP3_COARSE_CONSOLIDATION "AUTO" CACHE STRING "BP3 coarse adapter: AUTO, ON or OFF")
+set_property(CACHE MARS_ENABLE_BP3_COARSE_CONSOLIDATION PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${MARS_ENABLE_BP3_COARSE_CONSOLIDATION}" _mars_bp3_mode)
+if(_mars_bp3_mode MATCHES "^(1|TRUE|YES)$")
+    set(_mars_bp3_mode ON)
+elseif(_mars_bp3_mode MATCHES "^(0|FALSE|NO)$")
+    set(_mars_bp3_mode OFF)
+endif()
+if(NOT _mars_bp3_mode MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "MARS_ENABLE_BP3_COARSE_CONSOLIDATION expects AUTO, ON or OFF")
+endif()
 
 # Unstructured (cornerstone-octree) module. Its kernels are CUDA/HIP only, so it defaults ON
 # only in a GPU build; a plain `cmake ..` on a CPU machine then builds the core library.
@@ -49,4 +60,22 @@ if(MARS_ENABLE_UNSTRUCTURED AND NOT (MARS_ENABLE_CUDA OR MARS_ENABLE_HIP))
     message(FATAL_ERROR
         "MARS_ENABLE_UNSTRUCTURED needs a GPU build: add -DMARS_ENABLE_CUDA=ON or "
         "-DMARS_ENABLE_HIP=ON, or set -DMARS_ENABLE_UNSTRUCTURED=OFF for a CPU-only build.")
+endif()
+
+set(MARS_BP3_COARSE_REQUESTED FALSE)
+if(NOT _mars_bp3_mode STREQUAL "OFF")
+    set(_mars_bp3_unavailable "")
+    if(NOT MARS_ENABLE_MARSIR OR NOT MARS_ENABLE_FEM_EXAMPLES OR NOT MARS_ENABLE_UNSTRUCTURED OR NOT MARS_ENABLE_CUDA
+       OR MARS_ENABLE_HIP OR NOT MARS_ENABLE_HYPRE OR NOT MARS_ENABLE_MPI)
+        set(_mars_bp3_unavailable "requires MARSIR, FEM_EXAMPLES, UNSTRUCTURED, CUDA, HYPRE and MPI")
+    elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(_mars_bp3_unavailable "requires the validated Linux shared-Hypre callback ABI")
+    endif()
+    if(_mars_bp3_unavailable)
+        if(_mars_bp3_mode STREQUAL "ON")
+            message(FATAL_ERROR "BP3 coarse consolidation ${_mars_bp3_unavailable}")
+        endif()
+    else()
+        set(MARS_BP3_COARSE_REQUESTED TRUE)
+    endif()
 endif()

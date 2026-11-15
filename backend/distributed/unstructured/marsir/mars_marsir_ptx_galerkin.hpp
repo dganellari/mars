@@ -1,16 +1,21 @@
 #pragma once
 // A Galerkin operator MARSIR generates from a `form = galerkin` spec
 // (marsir-compiler/specs/bp1.op, bp3.op; PTX from marsir-mlir/test/bp_gpu_pipeline.py),
-// run on element-local vectors. Kernel contract: {spec}_apply_p{p}(u, B, Bt, [D, Dt],
-// [G], y) with u, y E x n x n x n (n = p + 1 GLL nodes per axis), B q x n (the GLL basis
-// at the q Gauss points), Bt its transpose, D the q x q Gauss-point derivative and Dt its
-// transpose (when the spec reads a gradient), G E x K x q x q x q (the K geometry
-// components the spec reads), each an MLIR memref descriptor. A `geometry = trilinear`
+// run on element-local vectors. Kernel contract: {spec}_apply_p{p}(u, [G], y) with u, y
+// E x n x n x n (n = p + 1 GLL nodes per axis) and G E x K x q x q x q (the K geometry
+// components the spec reads), each an MLIR memref descriptor. The 1D matrices are globals
+// in constant memory, {kernel}__m0 .. __m3: B q x n (the GLL basis at the q Gauss points),
+// Bt its transpose, and when the spec reads a gradient D, the q x q Gauss-point derivative,
+// and Dt its transpose; read at constant indices, they become fma operands instead of
+// loads through L1. They are copied in when their pointers change. A `geometry = trilinear`
 // spec (bp1_tri.op, bp3_tri.op) takes gq, wq (q: the Gauss points and weights) and X (E x
 // 3 x 2 x 2 x 2: the corners by component, then corner bit along each reference axis)
 // instead of G, and forms the geometry in registers. The launch shape is the published
-// {kernel}__launch, or one warp per element.
+// {kernel}__launch, or one warp per element. A matrix with a published {symbol}__fold =
+// {rows, cols, sign} is read in the even-odd folded form (marsir-mlir --mir-even-odd,
+// mars_marsir_fold.hpp), which is formed here on the device from the matrix given.
 
+#include "backend/distributed/unstructured/marsir/mars_marsir_fold.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
 
 #include <string>
@@ -18,6 +23,13 @@
 
 namespace mars {
 namespace marsir {
+
+template <typename Real>
+__global__ void fold_kernel(const Real* __restrict__ M, Real* __restrict__ out, long long r, long long c)
+{
+    const long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (k < folded_size(r, c)) out[k] = folded_entry(M, r, c, k);
+}
 
 class GalerkinPtx {
 public:
@@ -36,8 +48,28 @@ public:
             threads_ = (unsigned)v[0];
             per_block_ = v[1];
         }
+        for (int k = 0; k < (grad ? 4 : 2); ++k) {
+            const std::string name = kernel + "__m" + std::to_string(k);
+            MARS_MARSIR_CU(cuModuleGetGlobal(&matrix_[k], &matrix_bytes_[k], module_, name.c_str()));
+            // Setup only: three integers, like __launch above.
+            if (cuModuleGetGlobal(&global, &bytes, module_, (name + "__fold").c_str()) == CUDA_SUCCESS &&
+                bytes == sizeof(long long[3])) {
+                MARS_MARSIR_CU(cuMemcpyDtoH(fold_[k], global, sizeof(fold_[k])));
+                if (folded_size(fold_[k][0], fold_[k][1]) * (long long)sizeof(double) != (long long)matrix_bytes_[k]) {
+                    fprintf(stderr, "%s: %zu bytes, not the folded size of its __fold record\n", name.c_str(),
+                            matrix_bytes_[k]);
+                    std::abort();
+                }
+                MARS_MARSIR_CU(cuMemAlloc(&folded_[k], matrix_bytes_[k]));
+            }
+        }
     }
-    ~GalerkinPtx() { cuModuleUnload(module_); }
+    ~GalerkinPtx()
+    {
+        for (CUdeviceptr f : folded_)
+            if (f) cuMemFree(f);
+        cuModuleUnload(module_);
+    }
     GalerkinPtx(const GalerkinPtx&) = delete;
     GalerkinPtx& operator=(const GalerkinPtx&) = delete;
 
@@ -83,12 +115,25 @@ private:
                 const std::vector<Desc>& geometry, double* y, long long E, cudaStream_t stream) const
     {
         if (E == 0) return;
-        const long long n = p_ + 1, q = q_;
-        std::vector<Desc> descs{make(u, {E, n, n, n}), make(B, {q, n}), make(Bt, {n, q})};
-        if (grad_) {
-            descs.push_back(make(D, {q, q}));
-            descs.push_back(make(Dt, {q, q}));
-        }
+        const long long n = p_ + 1;
+        const double* source[4] = {B, Bt, D, Dt};
+        for (int k = 0; k < (grad_ ? 4 : 2); ++k)
+            if (source[k] != copied_[k]) {
+                CUdeviceptr from = (CUdeviceptr)source[k];
+                if (folded_[k]) {
+                    const long long size = folded_size(fold_[k][0], fold_[k][1]);
+                    fold_kernel<<<(unsigned)((size + 127) / 128), 128, 0, stream>>>(source[k], (double*)folded_[k],
+                                                                                    fold_[k][0], fold_[k][1]);
+                    if (cudaError_t e = cudaGetLastError(); e != cudaSuccess) {
+                        fprintf(stderr, "fold_kernel: %s\n", cudaGetErrorString(e));
+                        std::abort();
+                    }
+                    from = folded_[k];
+                }
+                MARS_MARSIR_CU(cuMemcpyDtoDAsync(matrix_[k], from, matrix_bytes_[k], (CUstream)stream));
+                copied_[k] = source[k];
+            }
+        std::vector<Desc> descs{make(u, {E, n, n, n})};
         descs.insert(descs.end(), geometry.begin(), geometry.end());
         descs.push_back(make(y, {E, n, n, n}));
         std::vector<void*> params;
@@ -110,6 +155,11 @@ private:
     int K_;
     unsigned threads_ = 32;
     long long per_block_ = 1;
+    CUdeviceptr matrix_[4] = {};
+    size_t matrix_bytes_[4] = {};
+    mutable const double* copied_[4] = {};   // the matrices last copied into matrix_
+    long long fold_[4][3] = {};               // {rows, cols, sign} of a folded matrix
+    CUdeviceptr folded_[4] = {};              // its folded form, before the copy into matrix_
 };
 
 }  // namespace marsir

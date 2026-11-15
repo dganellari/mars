@@ -16,7 +16,7 @@ namespace mars {
         Impl(int argc, char *argv[], MPI_Comm comm) : error_code(0) {
             silence_warning(comm);
 #ifdef MARS_ENABLE_KOKKOS
-            Kokkos::initialize(argc, argv);
+            initialize_kokkos(argc, argv);
 #endif  // MARS_ENABLE_KOKKOS
         }
 #endif  // MARS_ENABLE_MPI
@@ -29,7 +29,7 @@ namespace mars {
 #endif  // MARS_ENABLE_MPI
         {
 #ifdef MARS_ENABLE_KOKKOS
-            Kokkos::initialize(argc, argv);
+            initialize_kokkos(argc, argv);
 #endif  // MARS_ENABLE_KOKKOS
 
 // #ifdef MARS_ENABLE_CUDA
@@ -41,9 +41,19 @@ namespace mars {
 
         ~Impl() {
 #ifdef MARS_ENABLE_KOKKOS
-            Kokkos::finalize();
+            if (owns_kokkos) Kokkos::finalize();
 #endif  // MARS_ENABLE_KOKKOS
         }
+
+#ifdef MARS_ENABLE_KOKKOS
+        void initialize_kokkos(int &argc, char *argv[]) {
+            // Applications may initialize Kokkos before constructing a MARS environment.
+            owns_kokkos = !Kokkos::is_initialized();
+            if (owns_kokkos) Kokkos::initialize(argc, argv);
+        }
+
+        bool owns_kokkos = false;
+#endif
 
         int error_code;
 #ifdef MARS_ENABLE_MPI

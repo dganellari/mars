@@ -11,6 +11,7 @@
 
 #include "cstone/cuda/cuda_utils.hpp"
 #include "mars_amr_hex_refine.hpp" // reuse EdgeKey
+#include "core/mars_tet_red.hpp"
 
 namespace mars
 {
@@ -35,7 +36,7 @@ namespace amr
 //   4 corner tets (each keeps one original vertex + 3 adjacent midpoints)
 //   4 interior tets (octahedron triangulation, choice affects quality)
 
-__global__ void countChildTetsKernel(const uint8_t* marks, uint64_t* childCounts, size_t numElements)
+static __global__ void countChildTetsKernel(const uint8_t* marks, uint64_t* childCounts, size_t numElements)
 {
     size_t e = blockIdx.x * blockDim.x + threadIdx.x;
     if (e >= numElements) return;
@@ -155,19 +156,13 @@ __global__ void buildChildTetConnectivityKernel(const KeyType* conn0,
         outConn3[idx] = c3;
     };
 
-    // Bey's red refinement: 4 corner tets + 4 octahedron tets
-    // Corner tets: each original vertex + its 3 adjacent midpoints
-    writeChild(0, n[0], m01, m02, m03);
-    writeChild(1, m01, n[1], m12, m13);
-    writeChild(2, m02, m12, n[2], m23);
-    writeChild(3, m03, m13, m23, n[3]);
-
-    // Interior octahedron: 4 tets (consistent diagonal choice: m01-m23)
-    // This diagonal choice keeps quality bounded across refinement levels
-    writeChild(4, m01, m02, m03, m13);
-    writeChild(5, m01, m02, m13, m12);
-    writeChild(6, m02, m03, m13, m23);
-    writeChild(7, m02, m12, m13, m23);
+    KeyType nodes[10] = {n[0], n[1], n[2], n[3], m01, m02, m03, m12, m13, m23};
+    for (int child = 0; child < 8; ++child)
+    {
+        KeyType corners[4];
+        red_child_connectivity(child, nodes, corners);
+        writeChild(child, corners[0], corners[1], corners[2], corners[3]);
+    }
 }
 
 template<typename KeyType, typename RealType>
@@ -207,6 +202,20 @@ public:
                          size_t numNodes,
                          int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            // A rank without parents may still own nodes needed after repartitioning.
+            Result res;
+            res.numNodes = res.oldNumNodes = numNodes;
+            res.d_x.resize(numNodes); res.d_y.resize(numNodes); res.d_z.resize(numNodes);
+            if (numNodes)
+            {
+                cudaCheckCall(cudaMemcpy(res.d_x.data(), nodeX, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_y.data(), nodeY, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_z.data(), nodeZ, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+            }
+            return res;
+        }
         int numBlocks = (numElements + blockSize - 1) / blockSize;
 
         // Step 1: count children per element
@@ -307,7 +316,7 @@ public:
             res.d_conn0.data(), res.d_conn1.data(), res.d_conn2.data(), res.d_conn3.data(),
             numElements);
 
-        cudaDeviceSynchronize();
+        cudaCheckCall(cudaDeviceSynchronize());
 
         res.d_edgeKeys     = std::move(d_edgeKeys);
         res.d_markedPrefix = std::move(d_markedPrefix);

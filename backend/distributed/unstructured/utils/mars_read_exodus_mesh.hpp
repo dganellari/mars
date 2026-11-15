@@ -14,7 +14,11 @@
 #include <unordered_set>
 #include <utility>
 #include <cstdint>
-#include "mars.hpp"
+#include <limits>
+#include <type_traits>
+#include <initializer_list>
+#include <cmath>
+#include "mars_mesh_io_utils.hpp"
 #include "mars_read_exodus_raw.hpp"
 
 #ifdef MARS_HAVE_NETCDF
@@ -47,6 +51,22 @@ struct ExodusSideSets
     std::map<std::string, std::vector<uint64_t>> trianglesByName;
 };
 
+// Batches carry file identity and block provenance until the consumer resolves them.
+// Face indices preserve Exodus winding and order, including repeated faces.
+struct ExodusSideSetNode
+{
+    uint64_t id;
+    int block;
+    double x, y, z;
+};
+
+struct ExodusSideSetBatch
+{
+    std::vector<ExodusSideSetNode> nodes;
+    std::vector<unsigned> face_nodes;
+    std::vector<uint64_t> face_ids; // Side-set entry indices retain order and repeated faces after routing.
+};
+
 #ifdef MARS_HAVE_NETCDF
 
 // Helper macro for netCDF error checking
@@ -58,265 +78,219 @@ struct ExodusSideSets
         } \
     } while(0)
 
-/**
- * @brief Read Exodus II mesh format and return data compatible with mars::ElementDomain
- *
- * This reads ExodusII (.exo) files directly using netCDF without requiring external tools.
- * Returns coordinates and connectivity in the same SoA format expected by ElementDomain.
- *
- * @tparam N Number of nodes per element (4 for tetrahedra, 8 for hexahedra)
- * @tparam RealType Type for coordinate data (float or double)
- * @tparam KeyType Type for connectivity indices
- * @param meshFile Path to Exodus mesh file (.exo)
- * @param rank Current MPI rank
- * @param numRanks Total MPI ranks
- * @return Tuple containing: node count, element count, x_coords, y_coords, z_coords,
- *         connectivity tuple, local_to_global_map, boundary_nodes
- */
+namespace exodus_detail
+{
+struct File
+{
+    int id = -1;
+    explicit File(const std::string& path) { NC_CHECK(nc_open(path.c_str(), NC_NOWRITE, &id)); }
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+    ~File() { if (id >= 0) nc_close(id); }
+    void close() { NC_CHECK(nc_close(id)); id = -1; }
+};
+
+inline size_t dimension(int file, const std::string& name)
+{
+    int id;
+    size_t size;
+    NC_CHECK(nc_inq_dimid(file, name.c_str(), &id));
+    NC_CHECK(nc_inq_dimlen(file, id, &size));
+    return size;
+}
+
+inline int variable(int file, const std::string& name, std::initializer_list<size_t> shape)
+{
+    int id, ndims;
+    NC_CHECK(nc_inq_varid(file, name.c_str(), &id));
+    NC_CHECK(nc_inq_varndims(file, id, &ndims));
+    if (size_t(ndims) != shape.size())
+        throw std::runtime_error("Invalid Exodus variable rank: " + name);
+    std::vector<int> dims(ndims);
+    NC_CHECK(nc_inq_vardimid(file, id, dims.data()));
+    size_t axis = 0;
+    for (size_t expected : shape)
+    {
+        size_t actual;
+        NC_CHECK(nc_inq_dimlen(file, dims[axis++], &actual));
+        if (actual != expected) throw std::runtime_error("Invalid Exodus variable shape: " + name);
+    }
+    return id;
+}
+
+struct Blocks
+{
+    std::vector<size_t> sizes;
+    size_t total = 0;
+};
+
+inline Blocks read_blocks(int file)
+{
+    Blocks blocks;
+    const size_t block_count = dimension(file, "num_el_blk");
+    if (block_count > size_t(std::numeric_limits<int>::max()))
+        throw std::runtime_error("Exodus block count exceeds local block index capacity");
+    blocks.sizes.resize(block_count);
+    std::vector<int> active(blocks.sizes.size(), 1);
+    int status_id;
+    if (nc_inq_varid(file, "eb_status", &status_id) == NC_NOERR)
+    {
+        status_id = variable(file, "eb_status", {blocks.sizes.size()});
+        NC_CHECK(nc_get_var_int(file, status_id, active.data()));
+    }
+    for (size_t b = 0; b < blocks.sizes.size(); ++b)
+    {
+        // Null Exodus blocks have no connectivity or element dimensions.
+        if (!active[b]) continue;
+        const size_t count = dimension(file, "num_el_in_blk" + std::to_string(b + 1));
+        if (count > std::numeric_limits<size_t>::max() - blocks.total)
+            throw std::runtime_error("Exodus element count overflows size_t");
+        blocks.sizes[b] = count;
+        blocks.total += count;
+    }
+    int id;
+    if (nc_inq_dimid(file, "num_elem", &id) == NC_NOERR && dimension(file, "num_elem") != blocks.total)
+        throw std::runtime_error("Exodus element count disagrees with its blocks");
+    return blocks;
+}
+
+inline std::pair<size_t, size_t> element_range(size_t total, int rank, int ranks)
+{
+    if (ranks <= 0 || rank < 0 || rank >= ranks)
+        throw std::runtime_error("Invalid Exodus rank partition");
+    // Preserve the binary reader's order, including its final-rank remainder.
+    const size_t per_rank = total / size_t(ranks);
+    return {size_t(rank) * per_rank, rank == ranks - 1 ? total : size_t(rank + 1) * per_rank};
+}
+} // namespace exodus_detail
+
+// Independent per-rank reads work with serial netCDF as well as parallel builds.
+// Only local connectivity and referenced coordinates reach ElementDomain's existing SFC redistribution.
 template<int N, typename RealType = double, typename KeyType = unsigned>
 inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, int rank, int numRanks)
 {
-    // Helper to create N-tuple of vectors
-    auto createNVectors = [](size_t size) {
-        if constexpr (N == 4) {
-            return std::tuple<std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>>(
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size));
-        } else if constexpr (N == 8) {
-            return std::tuple<std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>>(
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size));
-        }
-    };
+    static_assert(N == 4 || N == 8, "Exodus reader supports Tet4 and Hex8");
+    static_assert(std::is_integral_v<KeyType>);
+    using namespace exodus_detail;
+    File file(meshFile);
+    const size_t total_nodes = dimension(file.id, "num_nodes");
+    const auto blocks = read_blocks(file.id);
+    const auto [begin, end] = element_range(blocks.total, rank, numRanks);
+    const size_t element_count = end - begin;
+    if (element_count > std::numeric_limits<size_t>::max() / N)
+        throw std::runtime_error("Exodus local connectivity size overflows size_t");
 
-    // Open netCDF file
-    int ncid;
-    NC_CHECK(nc_open(meshFile.c_str(), NC_NOWRITE, &ncid));
-
-    // Read dimension for number of nodes
-    int num_nodes_dim;
-    size_t total_nodes;
-    NC_CHECK(nc_inq_dimid(ncid, "num_nodes", &num_nodes_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_nodes_dim, &total_nodes));
-
-    // Read dimension for number of elements (check multiple possible names)
-    int num_elem_dim;
-    size_t total_elements = 0;
-
-    // Try different dimension names for total elements
-    if (nc_inq_dimid(ncid, "num_elem", &num_elem_dim) == NC_NOERR) {
-        NC_CHECK(nc_inq_dimlen(ncid, num_elem_dim, &total_elements));
-    } else {
-        // Count elements from all element blocks
-        int num_el_blk_dim;
-        size_t num_el_blk;
-        NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-        NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
-
-        for (size_t blk = 1; blk <= num_el_blk; ++blk) {
-            char dim_name[64];
-            snprintf(dim_name, sizeof(dim_name), "num_el_in_blk%zu", blk);
-            int dim_id;
-            size_t num_el_in_blk;
-            NC_CHECK(nc_inq_dimid(ncid, dim_name, &dim_id));
-            NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
-            total_elements += num_el_in_blk;
-        }
-    }
-
-    if (rank == 0) {
-        if (std::getenv("MARS_VERBOSE_MESH"))
-            std::cout << "Exodus mesh: " << total_nodes << " nodes, " << total_elements << " elements" << std::endl;
-    }
-
-    // Read all coordinates (we need global coordinates for proper partitioning)
-    std::vector<double> all_x(total_nodes), all_y(total_nodes), all_z(total_nodes);
-
-    int coord_x_id, coord_y_id, coord_z_id;
-    NC_CHECK(nc_inq_varid(ncid, "coordx", &coord_x_id));
-    NC_CHECK(nc_inq_varid(ncid, "coordy", &coord_y_id));
-    NC_CHECK(nc_inq_varid(ncid, "coordz", &coord_z_id));
-
-    NC_CHECK(nc_get_var_double(ncid, coord_x_id, all_x.data()));
-    NC_CHECK(nc_get_var_double(ncid, coord_y_id, all_y.data()));
-    NC_CHECK(nc_get_var_double(ncid, coord_z_id, all_z.data()));
-
-    // Read all element connectivity from element blocks
-    std::vector<int> all_connectivity(total_elements * N);
-
-    int num_el_blk_dim;
-    size_t num_el_blk;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
-
-    size_t elem_offset = 0;
-    for (size_t blk = 1; blk <= num_el_blk; ++blk) {
-        char dim_name[64];
-        snprintf(dim_name, sizeof(dim_name), "num_el_in_blk%zu", blk);
-        int dim_id;
-        size_t num_el_in_blk;
-        NC_CHECK(nc_inq_dimid(ncid, dim_name, &dim_id));
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
-
-        // Read connectivity for this block
-        char var_name[64];
-        snprintf(var_name, sizeof(var_name), "connect%zu", blk);
-        int conn_id;
-        NC_CHECK(nc_inq_varid(ncid, var_name, &conn_id));
-
-        std::vector<int> block_conn(num_el_in_blk * N);
-        NC_CHECK(nc_get_var_int(ncid, conn_id, block_conn.data()));
-
-        // Copy to global connectivity array
-        for (size_t e = 0; e < num_el_in_blk; ++e) {
-            for (int n = 0; n < N; ++n) {
-                all_connectivity[(elem_offset + e) * N + n] = block_conn[e * N + n];
-            }
-        }
-        elem_offset += num_el_in_blk;
-    }
-
-    // Close netCDF file
-    NC_CHECK(nc_close(ncid));
-
-    // Partition elements across ranks
-    size_t elemPerRank = total_elements / numRanks;
-    size_t elemStartIdx = rank * elemPerRank;
-    size_t elemEndIdx = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
-    size_t elementCount = elemEndIdx - elemStartIdx;
-
-    // Collect unique nodes needed by this rank's elements
-    std::vector<KeyType> uniqueNodes;
+    std::vector<long long> conn(element_count * N);
+    size_t block_begin = 0;
+    for (size_t b = 0; b < blocks.sizes.size(); ++b)
     {
-        std::vector<bool> nodeUsed(total_nodes, false);
-        for (size_t e = elemStartIdx; e < elemEndIdx; ++e) {
-            for (int n = 0; n < N; ++n) {
-                int globalNodeIdx = all_connectivity[e * N + n] - 1; // Exodus is 1-based
-                nodeUsed[globalNodeIdx] = true;
+        const size_t block_end = block_begin + blocks.sizes[b];
+        if (blocks.sizes[b])
+        {
+            // Check every block on every rank, including blocks outside this rank's slice.
+            const int id = variable(file.id, "connect" + std::to_string(b + 1), {blocks.sizes[b], N});
+            nc_type type;
+            NC_CHECK(nc_inq_vartype(file.id, id, &type));
+            if (type != NC_INT && type != NC_INT64)
+                throw std::runtime_error("Exodus connectivity must contain integer node IDs");
+            const size_t lo = std::max(begin, block_begin), hi = std::min(end, block_end);
+            if (lo < hi)
+            {
+                const size_t start[] = {lo - block_begin, 0}, count[] = {hi - lo, N};
+                NC_CHECK(nc_get_vara_longlong(file.id, id, start, count, conn.data() + (lo - begin) * N));
             }
         }
-        for (size_t i = 0; i < total_nodes; ++i) {
-            if (nodeUsed[i]) {
-                uniqueNodes.push_back(static_cast<KeyType>(i));
+        block_begin = block_end;
+    }
+
+    std::vector<KeyType> node_ids(conn.size());
+    for (size_t k = 0; k < conn.size(); ++k)
+    {
+        if (conn[k] < 1 || uint64_t(conn[k]) > total_nodes ||
+            uint64_t(conn[k] - 1) > uint64_t(std::numeric_limits<KeyType>::max()))
+            throw std::runtime_error("Exodus connectivity contains an invalid or unrepresentable node ID");
+        node_ids[k] = static_cast<KeyType>(conn[k] - 1);
+    }
+    auto local_to_global = dedupNodes(node_ids);
+    const size_t node_count = local_to_global.size();
+    auto connectivity = createNVectors<N, KeyType>(element_count);
+    auto local = [&](long long id) {
+        return static_cast<KeyType>(std::lower_bound(local_to_global.begin(), local_to_global.end(),
+                                                    static_cast<KeyType>(id - 1)) - local_to_global.begin());
+    };
+    [&]<size_t... I>(std::index_sequence<I...>) {
+        for (size_t e = 0; e < element_count; ++e)
+            ((std::get<I>(connectivity)[e] = local(conn[e * N + I])), ...);
+    }(std::make_index_sequence<N>{});
+    std::vector<long long>().swap(conn);
+    std::vector<KeyType>().swap(node_ids);
+
+    int coord_ids[3], packed_id;
+    const bool split_coords = nc_inq_varid(file.id, "coordx", &coord_ids[0]) == NC_NOERR;
+    if (split_coords)
+    {
+        const char* names[] = {"coordx", "coordy", "coordz"};
+        for (int a = 0; a < 3; ++a) coord_ids[a] = variable(file.id, names[a], {total_nodes});
+    }
+    else packed_id = variable(file.id, "coord", {3, total_nodes});
+    std::vector<RealType> x(node_count), y(node_count), z(node_count);
+    std::vector<RealType>* coords[] = {&x, &y, &z};
+    std::vector<double> buffer;
+    // Bound both scratch (8 MiB) and requested values (at most 4x the local nodes).
+    // A gap-only rule can read nearly the whole coordinate file on every rank.
+    constexpr size_t max_run = size_t(1) << 20;
+    buffer.reserve(std::min(max_run / 4, node_count) * 4);
+    for (size_t i = 0; i < node_count;)
+    {
+        const size_t first = size_t(local_to_global[i]);
+        size_t j = i + 1;
+        while (j < node_count)
+        {
+            const size_t span = size_t(local_to_global[j]) - first + 1;
+            if (span > max_run || (span + 3) / 4 > j - i + 1) break;
+            ++j;
+        }
+        const size_t count = size_t(local_to_global[j - 1]) - first + 1;
+        buffer.resize(count);
+        for (int a = 0; a < 3; ++a)
+        {
+            if (split_coords)
+                NC_CHECK(nc_get_vara_double(file.id, coord_ids[a], &first, &count, buffer.data()));
+            else
+            {
+                const size_t start[] = {size_t(a), first}, extent[] = {1, count};
+                NC_CHECK(nc_get_vara_double(file.id, packed_id, start, extent, buffer.data()));
             }
+            for (size_t k = i; k < j; ++k)
+                (*coords[a])[k] = static_cast<RealType>(buffer[size_t(local_to_global[k]) - first]);
         }
+        i = j;
     }
-
-    size_t nodeCount = uniqueNodes.size();
-
-    // Create global-to-local mapping
-    std::vector<KeyType> globalToLocal(total_nodes, static_cast<KeyType>(-1));
-    for (size_t i = 0; i < nodeCount; ++i) {
-        globalToLocal[uniqueNodes[i]] = static_cast<KeyType>(i);
-    }
-
-    // Extract coordinates for local nodes
-    std::vector<RealType> x_coords(nodeCount), y_coords(nodeCount), z_coords(nodeCount);
-    for (size_t i = 0; i < nodeCount; ++i) {
-        KeyType globalIdx = uniqueNodes[i];
-        x_coords[i] = static_cast<RealType>(all_x[globalIdx]);
-        y_coords[i] = static_cast<RealType>(all_y[globalIdx]);
-        z_coords[i] = static_cast<RealType>(all_z[globalIdx]);
-    }
-
-    // Create local connectivity using local node indices
-    auto connectivity = createNVectors(elementCount);
-
-    for (size_t e = 0; e < elementCount; ++e) {
-        size_t globalElemIdx = elemStartIdx + e;
-        if constexpr (N == 4) {
-            std::get<0>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 0] - 1];
-            std::get<1>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 1] - 1];
-            std::get<2>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 2] - 1];
-            std::get<3>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 3] - 1];
-        } else if constexpr (N == 8) {
-            std::get<0>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 0] - 1];
-            std::get<1>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 1] - 1];
-            std::get<2>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 2] - 1];
-            std::get<3>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 3] - 1];
-            std::get<4>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 4] - 1];
-            std::get<5>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 5] - 1];
-            std::get<6>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 6] - 1];
-            std::get<7>(connectivity)[e] = globalToLocal[all_connectivity[globalElemIdx * N + 7] - 1];
-        }
-    }
-
-    // Local to global map (uniqueNodes already contains this)
-    std::vector<KeyType> localToGlobal = uniqueNodes;
-
-    // Boundary nodes (empty for now - could be extracted from side sets)
-    std::vector<uint8_t> boundaryNodes(nodeCount, 0);
-
-    if (rank == 0) {
-        if (std::getenv("MARS_VERBOSE_MESH"))
-            std::cout << "Rank 0: " << elementCount << " elements, " << nodeCount << " nodes (from Exodus)" << std::endl;
-    }
-
-    return std::make_tuple(nodeCount, elementCount,
-                           std::move(x_coords), std::move(y_coords), std::move(z_coords),
-                           std::move(connectivity), std::move(localToGlobal), std::move(boundaryNodes));
+    file.close();
+    if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))
+        std::cout << "Rank 0: " << element_count << " elements, " << node_count << " nodes (from Exodus)\n";
+    return std::make_tuple(node_count, element_count, std::move(x), std::move(y), std::move(z),
+                           std::move(connectivity), std::move(local_to_global), std::vector<uint8_t>(node_count, 0));
 }
 
-// Lightweight companion to readExodusMeshWithElementPartitioning: read ONLY the per-element block id
-// (element-block-at-load, for block-aware node identity). It reproduces the SAME per-rank element
-// partition as the main reader (mars_read_exodus_mesh.hpp:162-166) and walks blocks in the same order
-// the main reader flattens them, so elemBlock[e] lines up with connectivity column [e]. Kept separate
-// so the main reader's return tuple (and its many unpack sites) stay unchanged. numBlocks == 1 means a
-// single element block -> the caller keeps the single-block fast path. Not templated on N/RealType/
-// KeyType: a block id is per-element and independent of the node count.
+// Match the main reader's element order without constructing a global per-element array.
 inline std::pair<std::vector<int>, size_t>
 readExodusElementBlocks(const std::string& meshFile, int rank, int numRanks)
 {
-    int ncid;
-    NC_CHECK(nc_open(meshFile.c_str(), NC_NOWRITE, &ncid));
-
-    int num_el_blk_dim;
-    size_t num_el_blk = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
-
-    // Global per-element block id, blocks walked 1..num_el_blk accumulating (same order as the main
-    // reader's flatten loop) so global element indices align.
-    std::vector<int> all_block;
-    for (size_t blk = 1; blk <= num_el_blk; ++blk) {
-        char dim_name[64];
-        snprintf(dim_name, sizeof(dim_name), "num_el_in_blk%zu", blk);
-        int dim_id;
-        size_t num_el_in_blk = 0;
-        NC_CHECK(nc_inq_dimid(ncid, dim_name, &dim_id));
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
-        all_block.insert(all_block.end(), num_el_in_blk, static_cast<int>(blk - 1));
+    exodus_detail::File file(meshFile);
+    const auto blocks = exodus_detail::read_blocks(file.id);
+    const auto [begin, end] = exodus_detail::element_range(blocks.total, rank, numRanks);
+    std::vector<int> ids(end - begin);
+    size_t block_begin = 0;
+    for (size_t b = 0; b < blocks.sizes.size(); ++b)
+    {
+        const size_t block_end = block_begin + blocks.sizes[b];
+        const size_t lo = std::max(begin, block_begin), hi = std::min(end, block_end);
+        if (lo < hi) std::fill(ids.begin() + (lo - begin), ids.begin() + (hi - begin), static_cast<int>(b));
+        block_begin = block_end;
     }
-
-    // total_elements: prefer the num_elem dim (what the main reader uses when present), else the block
-    // sum. They agree for valid Exodus; pad defensively if num_elem is larger.
-    size_t total_elements = all_block.size();
-    int num_elem_dim;
-    if (nc_inq_dimid(ncid, "num_elem", &num_elem_dim) == NC_NOERR) {
-        size_t ne = 0;
-        NC_CHECK(nc_inq_dimlen(ncid, num_elem_dim, &ne));
-        total_elements = ne;
-    }
-    NC_CHECK(nc_close(ncid));
-    if (all_block.size() < total_elements) all_block.resize(total_elements, 0);
-
-    // Identical partition to the main reader so elemBlock[e] <-> connectivity column [e].
-    size_t elemPerRank  = total_elements / numRanks;
-    size_t elemStartIdx = static_cast<size_t>(rank) * elemPerRank;
-    size_t elemEndIdx   = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
-    size_t elementCount = elemEndIdx - elemStartIdx;
-
-    std::vector<int> elemBlock(elementCount);
-    for (size_t e = 0; e < elementCount; ++e)
-        elemBlock[e] = all_block[elemStartIdx + e];
-
-    return { std::move(elemBlock), num_el_blk == 0 ? size_t(1) : num_el_blk };
+    file.close();
+    return {std::move(ids), std::max(size_t(1), blocks.sizes.size())};
 }
 
 // MARS_MESH_DIAG=1 -- SHAREABLE mesh diagnostics, for confidential meshes.
@@ -349,475 +323,286 @@ inline uint64_t meshDiagHash(const std::vector<uint64_t>& ids)
     return h;
 }
 
-// Read the connectivity of ALL element blocks, flattened into one array in Exodus's global
-// element-id order (block 1's elements first, then block 2's, ...), which is the numbering the
-// side-set variables (elem_ss<n>) use -- so a 1-based elem_ss id indexes the result directly,
-// regardless of block count. Mirrors the flatten loop in readExodusMeshWithElementPartitioning
-// above, so the two stay in the same element order.
-//
-// nodesPerElem is the caller's topology stride (8 hex / 4 tet). Every block MUST match it:
-// nc_get_var_int fills the whole connect<blk> variable, so a block of a different element type
-// would over- or under-run a buffer sized from this stride. A mixed-topology mesh is unusable by
-// the rest of MARS anyway (ElementDomain is templated on ONE topology), so name the offending
-// block and throw rather than read past the end.
-inline std::pair<std::vector<int>, size_t>
-readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller, int rank = 0)
+namespace exodus_detail
 {
-    int num_el_blk_dim;
-    size_t num_el_blk = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
+constexpr size_t side_set_batch_faces = 4096;
 
-    const bool diag = meshDiagEnabled() && rank == 0;
-    if (diag)
-        std::cout << "[mesh-diag] " << caller << ": element_blocks=" << num_el_blk
-                  << " expected_nodes_per_elem=" << nodesPerElem
-                  << " multiblock_path=" << (num_el_blk > 1 ? "yes" : "no") << "\n";
-
-    std::vector<int> allConn;
-    size_t total_elements = 0;
-    for (size_t blk = 1; blk <= num_el_blk; ++blk)
-    {
-        char name[64];
-        int dim_id;
-        size_t num_el_in_blk = 0, nod_per_el = 0;
-
-        snprintf(name, sizeof(name), "num_el_in_blk%zu", blk);
-        NC_CHECK(nc_inq_dimid(ncid, name, &dim_id));
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
-
-        snprintf(name, sizeof(name), "num_nod_per_el%zu", blk);
-        NC_CHECK(nc_inq_dimid(ncid, name, &dim_id));
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &nod_per_el));
-        if (nod_per_el != nodesPerElem)
-        {
-            nc_close(ncid);
-            throw std::runtime_error(std::string(caller) + ": element block " + std::to_string(blk)
-                                     + " has " + std::to_string(nod_per_el)
-                                     + " nodes/element, expected " + std::to_string(nodesPerElem)
-                                     + " (mixed-topology meshes are not supported)");
-        }
-
-        snprintf(name, sizeof(name), "connect%zu", blk);
-        int conn_id;
-        NC_CHECK(nc_inq_varid(ncid, name, &conn_id));
-
-        size_t offset = allConn.size();
-        allConn.resize(offset + num_el_in_blk * nodesPerElem);
-        NC_CHECK(nc_get_var_int(ncid, conn_id, allConn.data() + offset));
-        total_elements += num_el_in_blk;
-
-        // Block index + width only: no element counts (a size fingerprint), no names.
-        if (diag)
-            std::cout << "[mesh-diag]   block " << blk << ": nodes_per_elem=" << nod_per_el << "\n";
-    }
-    return { std::move(allConn), total_elements };
-}
-
-// Read all named side-sets from an Exodus mesh and return a map from side-set
-// name -> sorted unique list of GLOBAL (1-based-removed -> 0-based) node IDs
-// that belong to any face in that side-set.
-//
-// Every rank reads the SAME global side-set node lists (small enough to
-// duplicate -- 7 side-sets * ~80k faces * 4 nodes = ~2.2M global IDs total,
-// ~18 MB on each rank). The driver then walks its own local-to-global node
-// map post-cstone-partition to mark which of its locally-owned nodes belong
-// to which side-set. This avoids re-engineering cstone's partitioner for
-// side-set carry-through.
-//
-// Hex face -> local-node convention follows Exodus II (1-based sides 1..6,
-// 1-based local nodes); we use the 0-based form internally.
-inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int rank)
+// Read only requested coordinates. Duplicated IDs on different blocks stay aligned.
+inline void read_side_set_coordinates(int file, size_t total_nodes, std::vector<ExodusSideSetNode>& nodes)
 {
-    ExodusSideSets out;
-
-    // Hex face -> 4-node local indices (0-based). Exodus side k uses Exodus
-    // 1-based local nodes; subtract 1 here.
-    //   side 1 (y- "south"):   1,2,6,5  ->  0,1,5,4
-    //   side 2 (x+ "east"):    2,3,7,6  ->  1,2,6,5
-    //   side 3 (y+ "north"):   3,4,8,7  ->  2,3,7,6
-    //   side 4 (x- "west"):    4,1,5,8  ->  3,0,4,7
-    //   side 5 (z- "bottom"):  1,4,3,2  ->  0,3,2,1
-    //   side 6 (z+ "top"):     5,6,7,8  ->  4,5,6,7
-    static const int hexFaceNodes[6][4] = {
-        {0,1,5,4}, {1,2,6,5}, {2,3,7,6}, {3,0,4,7}, {0,3,2,1}, {4,5,6,7}
-    };
-
-    int ncid;
-    NC_CHECK(nc_open(meshFile.c_str(), NC_NOWRITE, &ncid));
-
-    // Number of side-sets (may be absent for meshes without boundary tags).
-    int num_ss_dim;
-    size_t num_side_sets = 0;
-    if (nc_inq_dimid(ncid, "num_side_sets", &num_ss_dim) == NC_NOERR)
+    int coord_ids[3], packed_id = -1;
+    const bool split = nc_inq_varid(file, "coordx", &coord_ids[0]) == NC_NOERR;
+    if (split)
     {
-        NC_CHECK(nc_inq_dimlen(ncid, num_ss_dim, &num_side_sets));
+        const char* names[] = {"coordx", "coordy", "coordz"};
+        for (int a = 0; a < 3; ++a)
+            coord_ids[a] = variable(file, names[a], {total_nodes});
     }
-    if (num_side_sets == 0)
+    else
+        packed_id = variable(file, "coord", {3, total_nodes});
+    std::vector<double> buffer;
+    for (size_t i = 0; i < nodes.size();)
     {
-        nc_close(ncid);
-        if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
-        return out;
-    }
-    if (meshDiagEnabled() && rank == 0)
-        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
-
-    // Side-set names from ss_names(num_side_sets, len_name).
-    int ss_names_id;
-    NC_CHECK(nc_inq_varid(ncid, "ss_names", &ss_names_id));
-    int len_name_dim;
-    size_t len_name = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "len_name", &len_name_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, len_name_dim, &len_name));
-    std::vector<char> raw_names(num_side_sets * len_name, 0);
-    NC_CHECK(nc_get_var_text(ncid, ss_names_id, raw_names.data()));
-    std::vector<std::string> ssNames(num_side_sets);
-    for (size_t k = 0; k < num_side_sets; ++k)
-    {
-        const char* p = raw_names.data() + k * len_name;
-        // length up to first NUL or len_name
-        size_t n = strnlen(p, len_name);
-        // Exodus pads names to len_name. strnlen stops at the first NUL but
-        // KEEPS trailing spaces -- some writers space-pad, which would make the
-        // stored key "name   " and silently fail an exact match against a
-        // user-passed "name". Trim trailing whitespace (space/tab/CR/NL/NUL).
-        while (n > 0 && (p[n-1] == ' ' || p[n-1] == '\t' ||
-                         p[n-1] == '\r' || p[n-1] == '\n' || p[n-1] == '\0'))
-            --n;
-        ssNames[k] = std::string(p, n);
-    }
-
-    // Side-set IDs from ss_prop1 (e.g. [1,2,...]).
-    int ss_prop1_id;
-    NC_CHECK(nc_inq_varid(ncid, "ss_prop1", &ss_prop1_id));
-    std::vector<long long> ssIds(num_side_sets);
-    NC_CHECK(nc_get_var_longlong(ncid, ss_prop1_id, ssIds.data()));
-
-    // Element-block connectivity, needed to expand (elem, side) -> 4 face nodes. All blocks are
-    // flattened in Exodus's global element-id order, so a 1-based elem_ss id indexes allConn
-    // directly whatever the block count -- see readAllBlockConnectivity.
-    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 8, "readExodusSideSetsHex8", rank);
-
-    // Global node coordinates (0-based global id), so each side-set node can be
-    // resolved to its runtime SFC local id by coordinate (the Exodus id is not
-    // the runtime id). See readExodusSideSetsTet4 for the same rationale.
-    size_t total_nodes = 0;
-    {
-        int num_nodes_dim;
-        NC_CHECK(nc_inq_dimid(ncid, "num_nodes", &num_nodes_dim));
-        NC_CHECK(nc_inq_dimlen(ncid, num_nodes_dim, &total_nodes));
-    }
-    std::vector<double> all_x(total_nodes), all_y(total_nodes), all_z(total_nodes);
-    {
-        int cx, cy, cz;
-        NC_CHECK(nc_inq_varid(ncid, "coordx", &cx));
-        NC_CHECK(nc_inq_varid(ncid, "coordy", &cy));
-        NC_CHECK(nc_inq_varid(ncid, "coordz", &cz));
-        NC_CHECK(nc_get_var_double(ncid, cx, all_x.data()));
-        NC_CHECK(nc_get_var_double(ncid, cy, all_y.data()));
-        NC_CHECK(nc_get_var_double(ncid, cz, all_z.data()));
-    }
-
-    // For each side-set: read elem_ss<id> + side_ss<id>, expand to 4 face-nodes
-    // per face, dedup, sort, store in out.nodesByName[name].
-    for (size_t k = 0; k < num_side_sets; ++k)
-    {
-        std::string ssName = ssNames[k];
-
-        // Exodus indexes the per-side-set variables (elem_ss<n>, side_ss<n>,
-        // num_side_ss<n>) by SEQUENCE number n = 1..num_side_sets, NOT by the
-        // ss_prop1 "ID" value. Earlier code keyed off the ID and only worked
-        // when IDs happened to equal 1..N; meshes whose IDs differ (e.g.
-        // 100,200) threw "Invalid dimension ID or name". Use the sequence
-        // index; fall back to the ID form for any writer that used it.
-        long long seq   = static_cast<long long>(k + 1);
-        long long ssId  = ssIds[k];
-
-        char elem_var[64], side_var[64], dim_var[64];
-        int dim_id;
-        size_t num_faces;
-
-        snprintf(dim_var, sizeof(dim_var), "num_side_ss%lld", seq);
-        if (nc_inq_dimid(ncid, dim_var, &dim_id) != NC_NOERR)
+        const size_t first = nodes[i].id;
+        size_t j           = i + 1;
+        while (j < nodes.size())
         {
-            snprintf(dim_var, sizeof(dim_var), "num_side_ss%lld", ssId);
-            NC_CHECK(nc_inq_dimid(ncid, dim_var, &dim_id));
-            seq = ssId;   // this writer keyed by ID; use it for elem/side too
+            const size_t span = nodes[j].id - first + 1;
+            if (span > (size_t(1) << 20) || (span + 3) / 4 > j - i + 1) break;
+            ++j;
         }
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_faces));
-
-        snprintf(elem_var, sizeof(elem_var), "elem_ss%lld", seq);
-        snprintf(side_var, sizeof(side_var), "side_ss%lld", seq);
-
-        int elem_id, side_id;
-        NC_CHECK(nc_inq_varid(ncid, elem_var, &elem_id));
-        NC_CHECK(nc_inq_varid(ncid, side_var, &side_id));
-        std::vector<long long> elemList(num_faces), sideList(num_faces);
-        NC_CHECK(nc_get_var_longlong(ncid, elem_id, elemList.data()));
-        NC_CHECK(nc_get_var_longlong(ncid, side_id, sideList.data()));
-
-        std::unordered_set<uint64_t> nodeSet;
-        nodeSet.reserve(num_faces * 4);
-        for (size_t f = 0; f < num_faces; ++f)
+        const size_t count = nodes[j - 1].id - first + 1;
+        buffer.resize(count);
+        for (int a = 0; a < 3; ++a)
         {
-            // 1-based global element ID -> 0-based index into the flattened multi-block connectivity.
-            long long elem1 = elemList[f];
-            int       side1 = static_cast<int>(sideList[f]);
-            if (elem1 < 1 || (uint64_t)elem1 > total_elements || side1 < 1 || side1 > 6) continue;
-            size_t elem0 = static_cast<size_t>(elem1 - 1);
-            const int* hex = &allConn[elem0 * 8];
-            const int* faceLocal = hexFaceNodes[side1 - 1];
-            for (int j = 0; j < 4; ++j)
+            if (split)
+                NC_CHECK(nc_get_vara_double(file, coord_ids[a], &first, &count, buffer.data()));
+            else
             {
-                // 1-based global node ID -> 0-based.
-                int node1 = hex[faceLocal[j]];
-                if (node1 < 1) continue;
-                nodeSet.insert(static_cast<uint64_t>(node1 - 1));
+                const size_t start[] = {size_t(a), first}, extent[] = {1, count};
+                NC_CHECK(nc_get_vara_double(file, packed_id, start, extent, buffer.data()));
+            }
+            for (size_t k = i; k < j; ++k)
+            {
+                const double value = buffer[nodes[k].id - first];
+                if (!std::isfinite(value)) throw std::runtime_error("Nonfinite Exodus side-set coordinate");
+                if (a == 0)
+                    nodes[k].x = value;
+                else if (a == 1)
+                    nodes[k].y = value;
+                else
+                    nodes[k].z = value;
             }
         }
-
-        std::vector<uint64_t> nodeVec(nodeSet.begin(), nodeSet.end());
-        std::sort(nodeVec.begin(), nodeVec.end());
-        std::vector<std::array<double, 3>> nodeCoords;
-        nodeCoords.reserve(nodeVec.size());
-        for (uint64_t g0 : nodeVec) nodeCoords.push_back({ all_x[g0], all_y[g0], all_z[g0] });
-        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // side-set names/counts identify the mesh -> opt-in
-        {
-            std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
-                      << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
-        }
-        // Shareable: index not name, booleans not counts, hash to prove byte-identical resolution.
-        if (meshDiagEnabled() && rank == 0)
-            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
-                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
-                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
-        out.nodesByName[ssName]      = std::move(nodeVec);
-        out.nodeCoordsByName[ssName] = std::move(nodeCoords);
+        i = j;
     }
+}
 
-    NC_CHECK(nc_close(ncid));
+inline int integer_variable(int file, const std::string& name, std::initializer_list<size_t> shape)
+{
+    const int id = variable(file, name, shape);
+    nc_type type;
+    NC_CHECK(nc_inq_vartype(file, id, &type));
+    if (type != NC_INT && type != NC_INT64) throw std::runtime_error("Exodus indices must be integer: " + name);
+    return id;
+}
+} // namespace exodus_detail
+
+// No MPI calls. Optional slices divide list entries once across readers.
+// Every reader emits the same number of batches, including empty ones, so a
+// collective consumer can route each batch without mismatched MPI calls.
+// An empty first batch announces each name, including inactive/locally empty sets.
+template<int N, class Consumer>
+void visitExodusSideSets(const std::string& mesh_file, Consumer&& consume, int rank = 0, int ranks = 1)
+{
+    static_assert(N == 4 || N == 8);
+    if (ranks < 1 || rank < 0 || rank >= ranks) throw std::invalid_argument("Invalid side-set reader partition");
+    using namespace exodus_detail;
+    constexpr int corners = N == 4 ? 3 : 4, sides = N == 4 ? 4 : 6;
+    constexpr int tet_faces[4][4] = {{0, 1, 3, 0}, {1, 2, 3, 0}, {0, 3, 2, 0}, {0, 2, 1, 0}};
+    constexpr int hex_faces[6][4] = {{0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6},
+                                     {3, 0, 4, 7}, {0, 3, 2, 1}, {4, 5, 6, 7}};
+    const auto* faces             = N == 4 ? tet_faces : hex_faces;
+    File file(mesh_file);
+    int dim;
+    if (nc_inq_dimid(file.id, "num_side_sets", &dim) == NC_EBADDIM) return;
+    const size_t sets = dimension(file.id, "num_side_sets");
+    if (!sets) return;
+    const size_t total_nodes = dimension(file.id, "num_nodes");
+    const auto blocks        = read_blocks(file.id);
+    std::vector<size_t> ends;
+    std::vector<int> connectivity(blocks.sizes.size(), -1);
+    size_t offset = 0;
+    for (size_t b = 0; b < blocks.sizes.size(); ++b)
+    {
+        offset += blocks.sizes[b];
+        ends.push_back(offset);
+        if (blocks.sizes[b])
+            connectivity[b] = integer_variable(file.id, "connect" + std::to_string(b + 1), {blocks.sizes[b], N});
+    }
+    const size_t name_length = dimension(file.id, "len_name");
+    if (!name_length) throw std::runtime_error("Invalid Exodus side-set name length");
+    const int names_id       = variable(file.id, "ss_names", {sets, name_length});
+    const int ids_id         = integer_variable(file.id, "ss_prop1", {sets});
+    int status_id            = -1;
+    if (nc_inq_varid(file.id, "ss_status", &status_id) == NC_NOERR)
+        status_id = integer_variable(file.id, "ss_status", {sets});
+    std::vector<char> raw_name(name_length);
+    std::unordered_set<std::string> names;
+    for (size_t set = 0; set < sets; ++set)
+    {
+        const size_t name_start[] = {set, 0}, name_count[] = {1, name_length}, one = 1;
+        NC_CHECK(nc_get_vara_text(file.id, names_id, name_start, name_count, raw_name.data()));
+        size_t length = strnlen(raw_name.data(), raw_name.size());
+        while (length && std::strchr(" \t\r\n", raw_name[length - 1]))
+            --length;
+        const std::string name(raw_name.data(), length);
+        if (!names.insert(name).second) throw std::runtime_error("Duplicate Exodus side-set name");
+        long long set_id, active = 1;
+        NC_CHECK(nc_get_vara_longlong(file.id, ids_id, &set, &one, &set_id));
+        if (status_id >= 0) NC_CHECK(nc_get_vara_longlong(file.id, status_id, &set, &one, &active));
+        consume(name, ExodusSideSetBatch{});
+        if (!active) continue;
+        std::string suffix = std::to_string(set + 1);
+        if (nc_inq_dimid(file.id, ("num_side_ss" + suffix).c_str(), &dim) != NC_NOERR) suffix = std::to_string(set_id);
+        const size_t face_count = dimension(file.id, "num_side_ss" + suffix);
+        const int elem_id       = integer_variable(file.id, "elem_ss" + suffix, {face_count});
+        const int side_id       = integer_variable(file.id, "side_ss" + suffix, {face_count});
+        const size_t quotient = face_count / size_t(ranks), remainder = face_count % size_t(ranks);
+        const size_t begin = quotient * size_t(rank) + std::min(size_t(rank), remainder);
+        const size_t local_count = quotient + (size_t(rank) < remainder);
+        const size_t largest_count = quotient + (remainder != 0);
+        for (size_t offset = 0; offset < largest_count; offset += side_set_batch_faces)
+        {
+            const size_t first = begin + std::min(offset, local_count);
+            const size_t count = std::min(side_set_batch_faces, local_count - std::min(offset, local_count));
+            if (!count)
+            {
+                consume(name, ExodusSideSetBatch{});
+                continue;
+            }
+            std::vector<long long> elements(count), side(count);
+            NC_CHECK(nc_get_vara_longlong(file.id, elem_id, &first, &count, elements.data()));
+            NC_CHECK(nc_get_vara_longlong(file.id, side_id, &first, &count, side.data()));
+            std::vector<size_t> element_ids;
+            for (size_t f = 0; f < count; ++f)
+            {
+                if (elements[f] < 1 || uint64_t(elements[f]) > blocks.total || side[f] < 1 || side[f] > sides)
+                    throw std::runtime_error("Invalid Exodus side-set element or side index");
+                element_ids.push_back(size_t(elements[f] - 1));
+            }
+            std::sort(element_ids.begin(), element_ids.end());
+            element_ids.erase(std::unique(element_ids.begin(), element_ids.end()), element_ids.end());
+            std::vector<long long> conn(element_ids.size() * N);
+            std::vector<int> element_blocks(element_ids.size());
+            for (size_t i = 0; i < element_ids.size();)
+            {
+                const size_t b = std::upper_bound(ends.begin(), ends.end(), element_ids[i]) - ends.begin();
+                size_t j       = i + 1;
+                while (j < element_ids.size() && element_ids[j] == element_ids[j - 1] + 1 && element_ids[j] < ends[b])
+                    ++j;
+                const size_t start[] = {element_ids[i] - (b ? ends[b - 1] : 0), 0}, extent[] = {j - i, N};
+                NC_CHECK(nc_get_vara_longlong(file.id, connectivity[b], start, extent, conn.data() + i * N));
+                std::fill(element_blocks.begin() + i, element_blocks.begin() + j, int(b));
+                i = j;
+            }
+            using Identity = std::pair<uint64_t, int>;
+            std::vector<Identity> face_nodes;
+            face_nodes.reserve(count * corners);
+            for (size_t f = 0; f < count; ++f)
+            {
+                const size_t e = std::lower_bound(element_ids.begin(), element_ids.end(), size_t(elements[f] - 1)) -
+                                 element_ids.begin();
+                for (int c = 0; c < corners; ++c)
+                {
+                    const long long node = conn[e * N + faces[side[f] - 1][c]];
+                    if (node < 1 || uint64_t(node) > total_nodes)
+                        throw std::runtime_error("Invalid Exodus side-set node index");
+                    face_nodes.emplace_back(uint64_t(node - 1), element_blocks[e]);
+                }
+            }
+            auto nodes = face_nodes;
+            std::sort(nodes.begin(), nodes.end());
+            nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+            ExodusSideSetBatch batch;
+            for (size_t f = 0; f < count; ++f) batch.face_ids.push_back(first + f);
+            batch.nodes.reserve(nodes.size());
+            for (auto [id, block] : nodes)
+                batch.nodes.push_back({id, block, 0, 0, 0});
+            read_side_set_coordinates(file.id, total_nodes, batch.nodes);
+            batch.face_nodes.reserve(face_nodes.size());
+            for (auto node : face_nodes)
+                batch.face_nodes.push_back(
+                    unsigned(std::lower_bound(nodes.begin(), nodes.end(), node) - nodes.begin()));
+            consume(name, batch);
+        }
+    }
+    file.close();
+}
+
+// Explicit global-return APIs keep their contract for callers that need complete
+// boundaries. Only their requested boundary output grows with the global mesh.
+template<int N>
+ExodusSideSets readExodusSideSets(const std::string& mesh_file, int rank)
+{
+    ExodusSideSets out;
+    std::map<std::string, std::map<uint64_t, std::array<double, 3>>> nodes;
+    visitExodusSideSets<N>(mesh_file,
+                           [&](const std::string& name, const ExodusSideSetBatch& batch)
+                           {
+                               auto& set = nodes[name];
+                               if constexpr (N == 4)
+                               {
+                                   auto& triangles = out.trianglesByName[name];
+                                   auto& coords    = out.triangleCoordsByName[name];
+                                   for (unsigned i : batch.face_nodes)
+                                   {
+                                       const auto& node = batch.nodes[i];
+                                       triangles.push_back(node.id);
+                                       coords.push_back({node.x, node.y, node.z});
+                                   }
+                               }
+                               for (const auto& node : batch.nodes)
+                                   set.emplace(node.id, std::array<double, 3>{node.x, node.y, node.z});
+                           });
+    if (rank == 0 && meshDiagEnabled())
+        std::cout << "[mesh-diag] side_sets=" << nodes.size() << "\n";
+    size_t set_index = 0;
+    for (const auto& [name, set] : nodes)
+    {
+        auto& ids    = out.nodesByName[name];
+        auto& coords = out.nodeCoordsByName[name];
+        for (const auto& [id, coord] : set)
+        {
+            ids.push_back(id);
+            coords.push_back(coord);
+        }
+        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))
+            std::cout << "Exodus side-set [" << name << "]: " << ids.size() << " unique nodes\n";
+        if (rank == 0 && meshDiagEnabled())
+            std::cout << "[mesh-diag]   sideset[" << set_index << "]: nodes>0=" << (ids.empty() ? "no" : "yes")
+                      << " nodes_hash=0x" << std::hex << meshDiagHash(ids) << std::dec << "\n";
+        ++set_index;
+    }
     return out;
 }
 
-// Tet4 counterpart of readExodusSideSetsHex8. Same Exodus side-set machinery
-// (read names, ids, per-set (elem, side) pairs, expand to face nodes, dedup);
-// the only element-specific parts are the connectivity stride (4 nodes/elem),
-// the face->local-node table (4 triangular faces), and 3 nodes per face.
-//
-// Exodus II tet4 face convention (1-based sides 1..4, 1-based local nodes):
-//   side 1: 1,2,4   side 2: 2,3,4   side 3: 1,4,3   side 4: 1,3,2
-// (each side is the triangle NOT containing the node opposite it). Converted
-// to 0-based below.
-inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int rank)
+inline ExodusSideSets readExodusSideSetsHex8(const std::string& mesh_file, int rank)
 {
-    ExodusSideSets out;
+    return readExodusSideSets<8>(mesh_file, rank);
+}
 
-    static const int tetFaceNodes[4][3] = {
-        {0,1,3}, {1,2,3}, {0,3,2}, {0,2,1}
-    };
-
-    int ncid;
-    NC_CHECK(nc_open(meshFile.c_str(), NC_NOWRITE, &ncid));
-
-    int num_ss_dim;
-    size_t num_side_sets = 0;
-    if (nc_inq_dimid(ncid, "num_side_sets", &num_ss_dim) == NC_NOERR)
-    {
-        NC_CHECK(nc_inq_dimlen(ncid, num_ss_dim, &num_side_sets));
-    }
-    if (num_side_sets == 0)
-    {
-        nc_close(ncid);
-        if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
-        return out;
-    }
-    if (meshDiagEnabled() && rank == 0)
-        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
-
-    int ss_names_id;
-    NC_CHECK(nc_inq_varid(ncid, "ss_names", &ss_names_id));
-    int len_name_dim;
-    size_t len_name = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "len_name", &len_name_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, len_name_dim, &len_name));
-    std::vector<char> raw_names(num_side_sets * len_name, 0);
-    NC_CHECK(nc_get_var_text(ncid, ss_names_id, raw_names.data()));
-    std::vector<std::string> ssNames(num_side_sets);
-    for (size_t k = 0; k < num_side_sets; ++k)
-    {
-        const char* p = raw_names.data() + k * len_name;
-        size_t n = strnlen(p, len_name);
-        ssNames[k] = std::string(p, n);
-    }
-
-    int ss_prop1_id;
-    NC_CHECK(nc_inq_varid(ncid, "ss_prop1", &ss_prop1_id));
-    std::vector<long long> ssIds(num_side_sets);
-    NC_CHECK(nc_get_var_longlong(ncid, ss_prop1_id, ssIds.data()));
-
-    // Same multi-block flatten as the hex reader, 4 nodes/element.
-    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 4, "readExodusSideSetsTet4", rank);
-
-    // Global node coordinates, indexed by 0-based global node id (same as the
-    // main mesh reader). Needed so each side-set node can be resolved to its
-    // runtime SFC local id via its coordinate (the Exodus id is not the runtime
-    // id). Read once for the whole file.
-    size_t total_nodes = 0;
-    {
-        int num_nodes_dim;
-        NC_CHECK(nc_inq_dimid(ncid, "num_nodes", &num_nodes_dim));
-        NC_CHECK(nc_inq_dimlen(ncid, num_nodes_dim, &total_nodes));
-    }
-    std::vector<double> all_x(total_nodes), all_y(total_nodes), all_z(total_nodes);
-    {
-        int cx, cy, cz;
-        NC_CHECK(nc_inq_varid(ncid, "coordx", &cx));
-        NC_CHECK(nc_inq_varid(ncid, "coordy", &cy));
-        NC_CHECK(nc_inq_varid(ncid, "coordz", &cz));
-        NC_CHECK(nc_get_var_double(ncid, cx, all_x.data()));
-        NC_CHECK(nc_get_var_double(ncid, cy, all_y.data()));
-        NC_CHECK(nc_get_var_double(ncid, cz, all_z.data()));
-    }
-    auto coordOf = [&](uint64_t g0) -> std::array<double, 3> {
-        return { all_x[g0], all_y[g0], all_z[g0] };
-    };
-
-    for (size_t k = 0; k < num_side_sets; ++k)
-    {
-        std::string ssName = ssNames[k];
-
-        // Exodus indexes the per-side-set variables (elem_ss<n>, side_ss<n>,
-        // num_side_ss<n>) by SEQUENCE number n = 1..num_side_sets, NOT by the
-        // ss_prop1 "ID" value. Earlier code keyed off the ID and only worked
-        // when IDs happened to equal 1..N; meshes whose IDs differ (e.g.
-        // 100,200) threw "Invalid dimension ID or name". Use the sequence
-        // index; fall back to the ID form for any writer that used it.
-        long long seq   = static_cast<long long>(k + 1);
-        long long ssId  = ssIds[k];
-
-        char elem_var[64], side_var[64], dim_var[64];
-        int dim_id;
-        size_t num_faces;
-
-        snprintf(dim_var, sizeof(dim_var), "num_side_ss%lld", seq);
-        if (nc_inq_dimid(ncid, dim_var, &dim_id) != NC_NOERR)
-        {
-            snprintf(dim_var, sizeof(dim_var), "num_side_ss%lld", ssId);
-            NC_CHECK(nc_inq_dimid(ncid, dim_var, &dim_id));
-            seq = ssId;   // this writer keyed by ID; use it for elem/side too
-        }
-        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_faces));
-
-        snprintf(elem_var, sizeof(elem_var), "elem_ss%lld", seq);
-        snprintf(side_var, sizeof(side_var), "side_ss%lld", seq);
-
-        int elem_id, side_id;
-        NC_CHECK(nc_inq_varid(ncid, elem_var, &elem_id));
-        NC_CHECK(nc_inq_varid(ncid, side_var, &side_id));
-        std::vector<long long> elemList(num_faces), sideList(num_faces);
-        NC_CHECK(nc_get_var_longlong(ncid, elem_id, elemList.data()));
-        NC_CHECK(nc_get_var_longlong(ncid, side_id, sideList.data()));
-
-        std::unordered_set<uint64_t> nodeSet;
-        nodeSet.reserve(num_faces * 3);
-        std::vector<uint64_t> tris;       // 3 global node IDs per face
-        tris.reserve(num_faces * 3);
-        for (size_t f = 0; f < num_faces; ++f)
-        {
-            // 1-based global element ID -> 0-based index into the flattened multi-block connectivity.
-            long long elem1 = elemList[f];
-            int       side1 = static_cast<int>(sideList[f]);
-            if (elem1 < 1 || (uint64_t)elem1 > total_elements || side1 < 1 || side1 > 4) continue;
-            size_t elem0 = static_cast<size_t>(elem1 - 1);
-            const int* tet = &allConn[elem0 * 4];
-            const int* faceLocal = tetFaceNodes[side1 - 1];
-            bool faceOk = true;
-            uint64_t triNodes[3];
-            for (int j = 0; j < 3; ++j)
-            {
-                int node1 = tet[faceLocal[j]];
-                if (node1 < 1) { faceOk = false; continue; }
-                uint64_t g0 = static_cast<uint64_t>(node1 - 1);
-                nodeSet.insert(g0);
-                triNodes[j] = g0;
-            }
-            // Keep the face triangle in the Exodus winding (tetFaceNodes is
-            // outward-oriented), so the cross product gives the outward normal.
-            if (faceOk)
-                for (int j = 0; j < 3; ++j) tris.push_back(triNodes[j]);
-        }
-
-        std::vector<uint64_t> nodeVec(nodeSet.begin(), nodeSet.end());
-        std::sort(nodeVec.begin(), nodeVec.end());
-        // Per-node coords aligned with nodeVec, and per-triangle-node coords
-        // aligned with tris, so the driver can resolve via coordinate->SFC key.
-        std::vector<std::array<double, 3>> nodeCoords;
-        nodeCoords.reserve(nodeVec.size());
-        for (uint64_t g0 : nodeVec) nodeCoords.push_back(coordOf(g0));
-        std::vector<std::array<double, 3>> triCoords;
-        triCoords.reserve(tris.size());
-        for (uint64_t g0 : tris) triCoords.push_back(coordOf(g0));
-        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // side-set names/counts identify the mesh -> opt-in
-        {
-            std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
-                      << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
-        }
-        if (meshDiagEnabled() && rank == 0)
-            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
-                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
-                      << " tris>0=" << (tris.empty() ? "no" : "yes")
-                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
-        out.nodesByName[ssName]         = std::move(nodeVec);
-        out.nodeCoordsByName[ssName]    = std::move(nodeCoords);
-        out.trianglesByName[ssName]     = std::move(tris);
-        out.triangleCoordsByName[ssName] = std::move(triCoords);
-    }
-
-    NC_CHECK(nc_close(ncid));
-    return out;
+inline ExodusSideSets readExodusSideSetsTet4(const std::string& mesh_file, int rank)
+{
+    return readExodusSideSets<4>(mesh_file, rank);
 }
 
 #undef NC_CHECK
 
 #else // !MARS_HAVE_NETCDF
 
-// Stub implementation when netCDF is not available
 template<int N, typename RealType = double, typename KeyType = unsigned>
-inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, int rank, int numRanks)
+inline auto readExodusMeshWithElementPartitioning(const std::string&, int, int)
 {
-    // Helper to create N-tuple of vectors (must match the real implementation's return type)
-    auto createNVectors = [](size_t size) {
-        if constexpr (N == 4) {
-            return std::tuple<std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>>(
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size));
-        } else if constexpr (N == 8) {
-            return std::tuple<std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>,
-                              std::vector<KeyType>, std::vector<KeyType>>(
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size),
-                std::vector<KeyType>(size), std::vector<KeyType>(size));
-        }
-    };
-
+    static_assert(N == 4 || N == 8, "Exodus reader supports Tet4 and Hex8");
     throw std::runtime_error("Exodus mesh reading requires netCDF. Please rebuild with netCDF support.");
+    // Keep the tuple type available to builds that cannot open Exodus files.
+    return std::make_tuple(size_t(0), size_t(0), std::vector<RealType>(), std::vector<RealType>(),
+                           std::vector<RealType>(), createNVectors<N, KeyType>(0), std::vector<KeyType>(),
+                           std::vector<uint8_t>());
+}
 
-    // Unreachable, but needed for return type deduction
-    return std::make_tuple(size_t(0), size_t(0),
-                           std::vector<RealType>(), std::vector<RealType>(), std::vector<RealType>(),
-                           createNVectors(0), std::vector<KeyType>(), std::vector<uint8_t>());
+template<int N, class Consumer>
+void visitExodusSideSets(const std::string&, Consumer&&, int = 0, int = 1)
+{
+    throw std::runtime_error("Exodus side-set reading requires netCDF.");
 }
 
 // Stub: without netCDF a .exo is unreadable (the main reader above throws first), so return the
 // single-block default. Signature matches the real implementation.
-inline std::pair<std::vector<int>, size_t>
-readExodusElementBlocks(const std::string&, int, int)
+inline std::pair<std::vector<int>, size_t> readExodusElementBlocks(const std::string&, int, int)
 {
-    return { std::vector<int>(), size_t(1) };
+    return {std::vector<int>(), size_t(1)};
 }
 
 inline ExodusSideSets readExodusSideSetsHex8(const std::string&, int)

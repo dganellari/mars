@@ -107,6 +107,9 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
           return;
         if (auto global = mod.lookupSymbol<memref::GlobalOp>(get.getName()))
           gb.clone(*global.getOperation());
+        // How the launcher fills a folded table (--mir-even-odd): read by the host only.
+        if (auto record = mod.lookupSymbol<memref::GlobalOp>((get.getName() + "__fold").str()))
+          if (!gmod.lookupSymbol(record.getSymName())) gb.clone(*record.getOperation());
       });
       // A kernel ends in gpu.return, and only a void one can: a result would
       // have to come back through an out-parameter.
