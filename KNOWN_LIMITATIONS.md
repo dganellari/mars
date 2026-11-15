@@ -1,4 +1,4 @@
-# Known Limitations (v0.2.0 candidate)
+# Known Limitations (v0.2.0)
 
 MARS v0.1 is the first public release; v0.1.1 adds AMD GPUs (HIP). This document states plainly what is
 validated, what is experimental, and what is not supported yet, so you can judge

@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.2.0] — release candidate
+## [0.2.0] — 2026-11-15
 
 ### Added
 - Optional structured Kokkos backend validated on CPU, NVIDIA and AMD, with
@@ -43,8 +43,11 @@ public API may change between minor releases.
 
 Validation details and limits: [AMR](docs/AMR-Module.md),
 [AMR validation](tests/amr/README.md), [structured Kokkos](docs/Structured-Kokkos.md).
-Final release-candidate package validation remains pending; this entry does not
-announce a published release.
+Release validation passed on CPU, NVIDIA and AMD. On each GPU platform, the
+main-build suites passed all 37 AMR/mesh checks and all 48 distinct core,
+flow and tutorial checks. The separate AMR/PDE package campaign passed all
+95 commands on each GPU platform. See [release validation](docs/Release-0.2.0.md)
+for revisions, job IDs and the tested scope.
 
 ## [0.1.1] — 2026-11-02
 
