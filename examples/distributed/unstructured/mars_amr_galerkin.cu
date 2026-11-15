@@ -8,11 +8,12 @@
 // --uniform marks every element; compare error against DOFs because the policies split different numbers of cells.
 //
 //   --problem=linear  u = 1 + x + 2y + 3z. The discrete space holds u, so the solution equals it at every node,
-//                     hanging ones included, up to where the SFC keys put the nodes (1e-6 here): a direct check of
-//                     the constraints, which would be off by 1e-2 and more.
+//                     hanging ones included. Coordinates use the same interpolation as the field, so this
+//                     checks the constraints independently of SFC coordinate quantization.
 //   --problem=peak    u = exp(-alpha |x - c|^2) with the refinement around c: the L2 error at each level.
 //
-// The mesh must be the unit cube (its faces are the Dirichlet boundary). Example, three refinements on 4 ranks:
+// Box boundaries are the default. For a labelled Tet4 Exodus mesh use --boundary=side-sets with either refinement policy.
+// Example, three refinements on 4 ranks:
 //   srun -n 4 ./mars_amr_galerkin --mesh=cube16.mesh --element=hex --problem=linear --levels=3
 
 #include "backend/distributed/unstructured/domain.hpp"
@@ -50,7 +51,7 @@ using RealType = double;
 
 struct Problem
 {
-    bool linear = true;
+    bool linear = true, quadratic = false;
     double alpha = 100, c[3] = {0.3, 0.4, 0.45};
 
     __host__ __device__ double r2(double x, double y, double z) const
@@ -59,12 +60,13 @@ struct Problem
     }
     __host__ __device__ double u(double x, double y, double z) const
     {
-        return linear ? 1 + x + 2 * y + 3 * z : exp(-alpha * r2(x, y, z));
+        return linear ? 1 + x + 2 * y + 3 * z : quadratic ? x*x + y*y + z*z : exp(-alpha * r2(x, y, z));
     }
     // f = -laplace u
     __host__ __device__ double f(double x, double y, double z) const
     {
         if (linear) return 0;
+        if (quadratic) return -6;
         const double s = r2(x, y, z);
         return (6 * alpha - 4 * alpha * alpha * s) * exp(-alpha * s);
     }
@@ -72,7 +74,9 @@ struct Problem
 
 struct Options
 {
-    std::string mesh, element = "hex", marking = "doerfler", refinement = "red";
+    std::string mesh, element = "hex", marking = "doerfler", refinement = "red", boundary = "box";
+    bool staged = false;
+    bool error_indicator = false;
     bool uniform = false;
     Problem problem;
     int levels      = 3;
@@ -95,6 +99,7 @@ struct Corners
 };
 
 #include "mars_amr_galerkin_audit.hpp"
+#include "mars_amr_galerkin_boundary.hpp"
 
 // Every corner pair of the own elements as a (row << 32 | col) key, then the diagonal of every slot: an owned node
 // whose elements are all halos here still needs its row.
@@ -193,6 +198,16 @@ __global__ void l2ErrorKernel(Corners<KeyType, N> conn, size_t first, size_t own
     double X[N][3];
     cornersOf(conn, first + t, x, y, z, n, X);
     ElementValues<ElementTag, double> v;
+    if constexpr (N == 4)
+    {
+        if (p.quadratic)
+        {
+            double values[4];
+            for (int i = 0; i < 4; ++i) values[i] = uh[n[i]];
+            err[t] = amr_pde::tet_error(X, values, p);
+            return;
+        }
+    }
     double sum = 0;
     for (int q = 0; q < v.numQuadPoints; ++q)
     {
@@ -222,6 +237,19 @@ __global__ void nearCentreKernel(Corners<KeyType, N> conn, size_t numElements, c
         m[2] += z[s] / N;
     }
     indicator[e] = p.r2(m[0], m[1], m[2]) < radius * radius ? 1.0 : 0.0;
+}
+
+template<int N>
+__global__ void volumeKernel(Corners<KeyType,N> conn, size_t first, size_t own, const double* x,
+                            const double* y, const double* z, double* volumes)
+{
+    size_t i = size_t(blockIdx.x)*blockDim.x+threadIdx.x;
+    if (i >= own) return;
+    int nodes[N]; double X[N][3]; cornersOf(conn,first+i,x,y,z,nodes,X);
+    ElementValues<TetTag,double> v;
+    double sum = 0;
+    for (int q = 0; q < v.numQuadPoints; ++q) { v.reinit(X,q); sum += v.JxW; }
+    volumes[i] = sum;
 }
 
 struct OnBox
@@ -348,14 +376,19 @@ int run(const Options& opt, int rank, int numRanks)
     config.strategy       = opt.marking == "octree" ? amr::MarkingStrategy::OctreeNative :
                                                     amr::MarkingStrategy::Doerfler;
     if (opt.refinement == "lepp") config.tet_refinement = amr::TetRefinement::ConformingBisection;
-    config.refineFraction = 0.5; // the indicator is 0 or 1
+    config.refineFraction = 0.5;
     config.maxLevels      = 64;  // Per-element generation cap; --levels counts adaptation rounds.
     config.maxAdaptations = opt.levels;
     config.bucketSize     = opt.bucketSize;
+    config.storeSideSets = opt.boundary == "side-sets";
+    config.stage_refinement_messages = opt.staged;
+    const auto run_start = PhaseClock::now();
     Manager amr(config);
     amr.initialize(opt.mesh, rank, numRanks);
 
     bool exact = true;
+    double initial_volume = 0;
+    std::vector<double> initial_boundary_areas;
     Vector u;
     cstone::DeviceVector<unsigned> key_failures(opt.diagnose_keys ? 1 : 0);
     for (int level = 0; level <= opt.levels; ++level)
@@ -387,10 +420,13 @@ int run(const Options& opt, int rank, int numRanks)
         };
         check_keys(0); // rebuilt domain
 
+        Vector measured_error(numElements, 0.0);
         auto adapt = [&](bool transfer) {
             Vector indicator(numElements > 0 ? numElements : 1, 0.0);
             if (opt.uniform)
                 thrust::fill(thrust::device, indicator.begin(), indicator.end(), 1.0);
+            else if (opt.error_indicator)
+                cudaCheckCall(cudaMemcpy(indicator.data(), measured_error.data(), numElements*sizeof(double), cudaMemcpyDeviceToDevice));
             else if (numElements > 0)
                 nearCentreKernel<N><<<unsigned((numElements + 255) / 256), 256>>>(
                     c, numElements, x, y, z, p, opt.radius, indicator.data());
@@ -516,21 +552,99 @@ int run(const Options& opt, int rank, int numRanks)
         cudaCheckError();
         clock.lap("assembly");
 
-        // Dirichlet DOFs on the faces of the unit cube, and u_D: the boundary values there, zero elsewhere
-        double lo[3], hi[3];
-        const double* xyz[3] = {x, y, z};
-        for (int d = 0; d < 3; ++d)
+        Vector removed(n, 0.0), uD(n);
+        if (opt.boundary == "side-sets")
         {
-            auto b = thrust::device_pointer_cast(xyz[d]);
-            lo[d]  = mars::reduce(b, b + n, 1e30, thrust::minimum<double>());
-            hi[d]  = mars::reduce(b, b + n, -1e30, thrust::maximum<double>());
+            if constexpr (N == 4)
+            {
+                Vector volumes(own);
+                if (own) volumeKernel<N><<<unsigned((own+255)/256),256>>>(c,first,own,x,y,z,volumes.data());
+                cudaCheckError();
+                double volume = own ? mars::reduce(thrust::device_pointer_cast(volumes.data()),
+                    thrust::device_pointer_cast(volumes.data())+own,0.0,thrust::plus<double>()) : 0.0;
+                MPI_Allreduce(MPI_IN_PLACE,&volume,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+                if (!level) initial_volume=volume;
+                amr::require_collectively(std::isfinite(volume) && volume > 0 &&
+                    std::abs(volume-initial_volume) <= 1e-5*initial_volume,
+                    "AMR changed the domain volume",MPI_COMM_WORLD);
+                if (rank == 0) std::printf("[amr-volume] level=%d volume=%.17g PASS\n",level,volume);
+                auto labels = amr::collect_lepp_boundary<KeyType>(domain, opt.staged);
+                std::array<const KeyType*, 4> owned_conn;
+                for (int v = 0; v < 4; ++v) owned_conn[v] = c.c[v] + first;
+                uint64_t boundary_faces = labels.size();
+                MPI_Allreduce(MPI_IN_PLACE, &boundary_faces, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+                // Exact incidence checks the initial surface. Red interfaces later have one coarse
+                // face opposite four fine faces; inherited labels and per-tag areas check that surface.
+                if (!level || opt.refinement == "lepp")
+                    amr_pde::check_boundary<amr::LeppDeviceExecution, KeyType>(
+                        domain.getLocalToGlobalSfcMap().data(), owned_conn, own, labels,
+                        amr::lepp_node_owner<KeyType>(domain), MPI_COMM_WORLD, opt.staged);
+                const auto names = domain.sideSetNames();
+                if (!level) initial_boundary_areas.resize(names.size());
+                amr::require_collectively(names.size() == initial_boundary_areas.size(),
+                    "AMR changed side-set names", MPI_COMM_WORLD);
+                for (size_t tag = 0; tag < names.size(); ++tag)
+                {
+                    double area = mars::transformReduce(thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(labels.size()),
+                        amr_pde::BoundaryArea<KeyType>{amr::LeppDeviceExecution::data(labels), owned_conn,
+                            x, y, z, int(tag)}, 0.0, thrust::plus<double>());
+                    MPI_Allreduce(MPI_IN_PLACE, &area, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                    if (!level) initial_boundary_areas[tag] = area;
+                    const double area_delta = std::abs(area-initial_boundary_areas[tag]);
+                    const double area_limit = 1e-5*initial_boundary_areas[tag];
+                    if (!(std::isfinite(area) && area > 0 && area_delta <= area_limit) && rank == 0)
+                    {
+                        const auto& box = domain.getBoundingBox();
+                        const auto bits = box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{});
+                        std::fprintf(stderr, "[amr-surface-failure] level=%d tag=%zu initial=%.17g area=%.17g "
+                            "delta=%.17g limit=%.17g cell=(%.17g,%.17g,%.17g)\n", level, tag,
+                            initial_boundary_areas[tag], area, area_delta, area_limit,
+                            box.lx()/double(uint64_t(1)<<bits[0]), box.ly()/double(uint64_t(1)<<bits[1]),
+                            box.lz()/double(uint64_t(1)<<bits[2]));
+                    }
+                    amr::require_collectively(std::isfinite(area) && area > 0 &&
+                        area_delta <= area_limit,
+                        "AMR changed a labelled surface area", MPI_COMM_WORLD);
+                    if (rank == 0) std::printf("[amr-surface] level=%d tag=%zu area=%.17g PASS\n", level, tag, area);
+                }
+                // A node's owner may not hold its labelled face. Add into the owner before choosing DOFs.
+                auto mask = removed.data();
+                for (const auto& name : domain.sideSetNames())
+                {
+                    const auto& nodes = domain.sideSetNodes(name);
+                    auto slots = nodes.data();
+                    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(nodes.size()),
+                        [=] __host__ __device__(size_t i) { mask[slots[i]] = 1.0; });
+                }
+                space.restrict(removed);
+                thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(n), removed.data(),
+                    [=] __host__ __device__(size_t i) { return isDof[i] && mask[i] > 0 ? 1.0 : 0.0; });
+                long long fixed = (long long)mars::reduce(thrust::device_pointer_cast(mask),
+                    thrust::device_pointer_cast(mask)+n, 0.0, thrust::plus<double>());
+                MPI_Allreduce(MPI_IN_PLACE, &fixed, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                if (rank == 0) std::printf("[amr-boundary] level=%d faces=%llu fixed=%lld free=%lld PASS\n",
+                    level, (unsigned long long)boundary_faces, fixed, space.numDofs()-fixed);
+            }
         }
-        MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, hi, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        OnBox onBox{x, y, z, isDof, {lo[0], lo[1], lo[2]}, {hi[0], hi[1], hi[2]}, 1e-8};
-        Vector removed(n), uD(n);
-        thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
-                          removed.data(), onBox);
+        else
+        {
+            double lo[3], hi[3];
+            const double* xyz[3] = {x, y, z};
+            for (int d = 0; d < 3; ++d)
+            {
+                auto b = thrust::device_pointer_cast(xyz[d]);
+                lo[d] = mars::reduce(b, b+n, 1e30, thrust::minimum<double>());
+                hi[d] = mars::reduce(b, b+n, -1e30, thrust::maximum<double>());
+            }
+            MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+            MPI_Allreduce(MPI_IN_PLACE, hi, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            OnBox on_box{x, y, z, isDof, {lo[0],lo[1],lo[2]}, {hi[0],hi[1],hi[2]}, 1e-8};
+            thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(n), removed.data(), on_box);
+        }
         const double* rm = removed.data();
         thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
                           uD.data(), [=] __host__ __device__(size_t s) {
@@ -619,6 +733,7 @@ int run(const Options& opt, int rank, int numRanks)
             l2ErrorKernel<ElementTag, N><<<unsigned((own + 255) / 256), 256>>>(c, first, own, x, y, z, p, u.data(),
                                                                               elementErr.data());
         cudaCheckError();
+        if (own) cudaCheckCall(cudaMemcpy(measured_error.data()+first, elementErr.data(), own*sizeof(double), cudaMemcpyDeviceToDevice));
         double l2 = own > 0 ? mars::reduce(thrust::device_pointer_cast(elementErr.data()),
                                            thrust::device_pointer_cast(elementErr.data()) + own, 0.0,
                                            thrust::plus<double>())
@@ -630,14 +745,19 @@ int run(const Options& opt, int rank, int numRanks)
         l2 = std::sqrt(l2);
         clock.lap("errors");
         check_keys(3);
-        if (iterations < 0 || !std::isfinite(l2) || !std::isfinite(maxErr)) exact = false;
+        if (iterations < 0 || !std::isfinite(l2) || !std::isfinite(maxErr) ||
+            !std::isfinite(solver.lastRelativeResidual()) || solver.lastRelativeResidual() > 1.01*opt.tol) exact = false;
         // The linear field is in the discrete space up to where the nodes sit: positions come from SFC keys, about
         // 2^-21 of the box apart, so a hanging node is up to a key cell off the mean of the nodes it hangs on (a few
         // 1e-6 here). A missing or wrong constraint is off by about h |grad u|, 1e-2 and more.
         if (p.linear && maxErr > 1e-4) exact = false;
 
+        checkGpuErrors(cudaDeviceSynchronize());
+        double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now()-run_start).count();
+        MPI_Allreduce(MPI_IN_PLACE, &elapsed, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if (rank == 0)
         {
+            std::printf("[amr-pde-wall] level=%d cumulative_seconds=%.9g audited=%d\n", level, elapsed, opt.audit_algebra);
             std::printf("[amr-galerkin] level=%d elements=%lld dofs=%lld hanging=%lld iterations=%d relres=%.3e "
                         "l2=%.6e max=%.6e\n",
                         level, elements, space.numDofs(), hanging ? hanging->globalCount() : 0LL, iterations,
@@ -684,7 +804,11 @@ int main(int argc, char** argv)
         if (a.rfind("--mesh=", 0) == 0) opt.mesh = value("--mesh=");
         else if (a.rfind("--element=", 0) == 0) opt.element = value("--element=");
         else if (a == "--problem=linear") opt.problem.linear = true;
-        else if (a == "--problem=peak") opt.problem.linear = false;
+        else if (a == "--problem=peak") { opt.problem.linear = false; opt.problem.quadratic = false; }
+        else if (a == "--problem=quadratic") { opt.problem.linear = false; opt.problem.quadratic = true; }
+        else if (a.rfind("--boundary=", 0) == 0) opt.boundary = value("--boundary=");
+        else if (a == "--staged") opt.staged = true;
+        else if (a == "--error-indicator") opt.error_indicator = true;
         else if (a.rfind("--levels=", 0) == 0) opt.levels = std::stoi(value("--levels="));
         else if (a.rfind("--radius=", 0) == 0) opt.radius = std::stod(value("--radius="));
         else if (a.rfind("--alpha=", 0) == 0) opt.problem.alpha = std::stod(value("--alpha="));
@@ -706,14 +830,18 @@ int main(int argc, char** argv)
             MPI_Abort(MPI_COMM_WORLD, 2);
         }
     }
-    if ((opt.marking != "doerfler" && opt.marking != "octree") || opt.mesh.empty() || (opt.element != "hex" && opt.element != "tet") ||
+    if ((opt.boundary != "box" && opt.boundary != "side-sets") ||
+        (opt.boundary == "side-sets" && opt.element != "tet") ||
+        (opt.error_indicator && (opt.mesh_only || opt.uniform || opt.problem.linear)) ||
+        opt.levels < 0 || !std::isfinite(opt.tol) || opt.tol <= 0 || opt.maxIter <= 0 ||
+        (opt.marking != "doerfler" && opt.marking != "octree") || opt.mesh.empty() || (opt.element != "hex" && opt.element != "tet") ||
         (opt.refinement != "red" && opt.refinement != "lepp") ||
         (opt.refinement == "lepp" && (opt.element != "tet" || opt.audit_mesh)) ||
         (opt.uniform && opt.marking != "doerfler") ||
         (opt.audit_mesh && opt.element != "tet") || (opt.mesh_only && opt.audit_algebra))
     {
         if (rank == 0)
-            std::fprintf(stderr, "usage: %s --mesh=DIR --element=hex|tet [--problem=linear|peak] [--levels=N] "
+            std::fprintf(stderr, "usage: %s --mesh=DIR --element=hex|tet [--problem=linear|peak|quadratic] [--boundary=box|side-sets (tet)] [--staged] [--error-indicator] [--levels=N] "
                                  "[--refinement=red|lepp (tet)] [--uniform (doerfler)] [--radius=R] [--alpha=A] [--tol=T] [--max-iter=N] [--bucket-size=N] [--diagnose] [--mesh-only] [--audit-mesh (tet)] [--audit-algebra] [--marking=doerfler|octree] [--measure-adapt] [--diagnose-keys]\n",
                          argv[0]);
         MPI_Finalize();
@@ -723,9 +851,9 @@ int main(int argc, char** argv)
     if (rank == 0)
     {
         std::printf("[amr-galerkin] %s, %s, %d levels, %d ranks\n",
-                    opt.element.c_str(), opt.problem.linear ? "u = 1 + x + 2y + 3z" : "peak", opt.levels, numRanks);
+                    opt.element.c_str(), opt.problem.linear ? "u = 1 + x + 2y + 3z" : opt.problem.quadratic ? "quadratic" : "peak", opt.levels, numRanks);
         std::printf("[amr-policy] refinement=%s selection=%s radius=%.9g alpha=%.9g centre=(%.9g,%.9g,%.9g)\n",
-                    opt.refinement.c_str(), opt.uniform ? "uniform" : "local", opt.radius,
+                    opt.refinement.c_str(), opt.uniform ? "uniform" : opt.error_indicator ? "manufactured-error" : "local", opt.radius,
                     opt.problem.alpha, opt.problem.c[0], opt.problem.c[1], opt.problem.c[2]);
     }
 

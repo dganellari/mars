@@ -28,7 +28,18 @@ For nonconforming refinement the original bounding box stays fixed. A node uses 
 canonical point inside its SFC cell, so a later emission of the same hanging node
 recovers the same key and position. Fresh element and node key buffers are cleared
 before encoding: Cornerstone preserves removal markers, which must not be inherited
-from reused storage. This policy quantizes coordinates at the key resolution.
+from reused storage. These canonical points define node identity, not physical geometry.
+
+Physical coordinates are transferred as three node fields using the same parent
+interpolation as the solution. A reusable sparse query fills every local node,
+including deeper ghosts outside the usual field halo. Tet4 loading with stored
+coordinates also keeps the file coordinates through the initial redistribution.
+Thus repeated rebuilds do not replace geometry with SFC-decoded positions. Finite
+key resolution still limits which nodes can be distinguished; collisions are
+rejected. This preserves the supplied piecewise-linear geometry, not an analytic
+curved boundary or a CAD projection. Native NVIDIA and AMD validation passes on
+the public labelled Escher Tet4 mesh at 1/4/8 ranks; see the
+[geometry and PDE gate](../tests/amr/README.md#physical-geometry-and-non-box-pde-validation).
 
 An existing node's old owner supplies its value exactly, including when that node
 is emitted again as a new midpoint. If a key is entirely new, a deterministic
@@ -162,15 +173,18 @@ scaling or arbitrary-geometry PDE accuracy.
   red generations and directional bisection generations are not interchangeable.
   Refinement history is not serialized for restart.
 - Nonconforming Galerkin acceptance covers the public nonperiodic single-block
-  cube fixtures, while refinement and constraint checks also cover graded/thin
-  meshes. Periodic constraints, mixed elements, arbitrary-geometry PDE accuracy
-  and nonconforming side-set ancestry remain unvalidated. Use the
-  separately validated conforming Tet4 policy for triangle side-set preservation.
+  cube fixtures and the labelled non-box Escher Tet4 mesh, while refinement and
+  constraint checks also cover graded/thin meshes. Tet4 red triangle-label
+  inheritance and physical geometry preservation pass native NVIDIA/AMD checks.
+  This does not establish accuracy on every admissible imported mesh. Periodic
+  constraints, mixed elements and Hex8 side-set ancestry remain unsupported. See the
+  [comparison example](AMR-Peak-Example.md#labelled-non-box-tetrahedra).
 - Nonconforming CVFEM and Navier–Stokes AMR drivers do not constrain hanging nodes
   or supply the missing coarse/fine interface flux. A successful run does not
   establish a consistent discretization there.
-- Empty local input is covered; a globally undersized mesh with fewer elements
-  than ranks remains unsupported.
+- Empty local input is covered, but a rebuilt SFC partition with no owned cells
+  on any rank is rejected. This can happen on a tiny mesh even when its total
+  cell count exceeds the rank count; use a finer initial mesh or fewer ranks.
 - `--staged` stages AMR sparse messages. It does not replace all Cornerstone or
   assembled-operator GPU-aware MPI traffic with host transport.
 - The gradient-jump indicator is not an error against an exact solution, and its

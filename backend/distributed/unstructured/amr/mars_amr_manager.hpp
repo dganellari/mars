@@ -14,6 +14,7 @@
 #include "mars_amr_octree_native.hpp"
 #include "mars_amr_hex_refine.hpp"
 #include "mars_amr_tet_refine.hpp"
+#include "mars_amr_tet_red_boundary.hpp"
 #include "mars_amr_octree_refine.hpp"
 #include "mars_amr_tet_bisection.hpp"
 #include "mars_amr_field_migration.hpp"
@@ -377,12 +378,13 @@ public:
             config_.maxLevels < 0 || config_.maxAdaptations < 0 ||
             !(config_.refineFraction >= 0 && config_.refineFraction <= 1) || domain_->numBlocks() != 1 ||
             domain_->getPeriodicAxesMask() != 0;
-        if (config_.tet_refinement != TetRefinement::ConformingBisection)
-            invalid_config |= domain_->hasBoundaryInfo() || !domain_->sideSetNames().empty();
+        invalid_config |= domain_->hasBoundaryInfo();
+        if constexpr (!std::is_same_v<ElementTag, TetTag>)
+            invalid_config |= !domain_->sideSetNames().empty();
         MPI_Allreduce(MPI_IN_PLACE, &invalid_config, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if (invalid_config)
             throw std::runtime_error("AMR requires one refinement policy, valid limits and a nonperiodic single-block "
-                                     "mesh; use LEPP to preserve side sets");
+                                     "mesh; side sets require tetrahedra and face labels");
         if (config_.tet_refinement == TetRefinement::ConformingBisection)
         {
             const char* reuse = std::getenv("MARS_AMR_REUSE_DOMAIN");
@@ -613,6 +615,14 @@ public:
                                startIdx, localCount, numNodes, transferred[f]);
         }
 
+        // Interpolate physical geometry separately from the keyed positions used by red refinement.
+        std::array<DevVector, 3> physical;
+        const RealType* old_coordinates[3] = {domain_->getNodeX().data(), domain_->getNodeY().data(),
+                                              domain_->getNodeZ().data()};
+        for (int axis = 0; axis < 3; ++axis)
+            doTransferSolution(d_conn, old_coordinates[axis], d_marks, refined,
+                               startIdx, localCount, numNodes, physical[axis]);
+
         // Save pre-sync coords before they're moved into cstone by rebuild.
         // We need them after rebuild to re-encode SFC keys with the NEW box that
         // cstone derives from the refined geometry. LEPP checks that encoding
@@ -621,22 +631,26 @@ public:
         std::vector<std::string> boundary_names;
         LeppDeviceExecution::Vector<LeppFaceRecord<KeyType>> saved_faces;
         if constexpr (std::is_same_v<ElementTag, TetTag>)
-            if (conforming)
-            {
-                boundary_names = domain_->sideSetNames();
-                saved_faces    = save_lepp_boundary<KeyType>(refined);
-            }
-
-        cstone::DeviceVector<uint8_t> migration_sources;
-        if (!oldFields.empty())
         {
-            // Deep halo nodes may have stale fields. Their old owner supplies
-            // the value; every locally emitted midpoint has current endpoints.
-            migration_sources = cstone::DeviceVector<uint8_t>(preNumNodes, uint8_t(1));
-            if (numNodes)
-                cudaCheckCall(cudaMemcpy(migration_sources.data(), domain_->getNodeOwnershipMap().data(),
-                                         numNodes * sizeof(uint8_t), cudaMemcpyDeviceToDevice));
+            boundary_names = domain_->sideSetNames();
+            if (conforming) saved_faces = save_lepp_boundary<KeyType>(refined);
+            else if (!boundary_names.empty())
+            {
+                auto labels = collect_lepp_boundary<KeyType>(*domain_, config_.stage_refinement_messages);
+                std::array<const KeyType*, 4> owned_conn{std::get<0>(d_conn).data() + startIdx,
+                    std::get<1>(d_conn).data() + startIdx, std::get<2>(d_conn).data() + startIdx,
+                    std::get<3>(d_conn).data() + startIdx};
+                saved_faces = save_red_boundary<LeppDeviceExecution, KeyType>(
+                    labels, owned_conn, d_marks.data() + startIdx,
+                    {refined.d_edgeKeys.data(), refined.numUniqueEdges, KeyType(numNodes)}, MPI_COMM_WORLD);
+            }
         }
+
+        // Only old owners supply old nodes; every emitted midpoint has current endpoints.
+        cstone::DeviceVector<uint8_t> migration_sources(preNumNodes, uint8_t(1));
+        if (numNodes)
+            cudaCheckCall(cudaMemcpy(migration_sources.data(), domain_->getNodeOwnershipMap().data(),
+                                     numNodes * sizeof(uint8_t), cudaMemcpyDeviceToDevice));
         cstone::DeviceVector<RealType> d_preX(preNumNodes), d_preY(preNumNodes), d_preZ(preNumNodes);
         if (preNumNodes)
             cudaCheckCall(cudaMemcpy(d_preX.data(), refined.d_x.data(), preNumNodes * sizeof(RealType),
@@ -703,7 +717,7 @@ public:
             generateSfcKeys<KeyType, RealType>(d_preX.data(), d_preY.data(), d_preZ.data(), d_preKeys.data(),
                                                preNumNodes, newBox);
         if constexpr (std::is_same_v<ElementTag, TetTag>)
-            if (conforming)
+            if (!boundary_names.empty())
                 restore_lepp_boundary<KeyType>(*domain_, boundary_names, saved_faces, d_preKeys.data(),
                                                config_.stage_refinement_messages);
 
@@ -711,21 +725,22 @@ public:
         // authoritative values to the new owner before filling ghost copies.
         const size_t newNumNodes = domain_->getNodeCount();
         const auto& d_newKeys = domain_->getLocalToGlobalSfcMap();
-        std::unique_ptr<AmrFieldMigration<LeppDeviceExecution, KeyType, RealType>> migration;
-        if (!oldFields.empty())
-        {
-            require_collectively(numRanks_ == 1 || domain_->sfcOwnership(),
-                                 "AMR migration requires SFC ownership", MPI_COMM_WORLD);
-            auto owner = domain_->sfcNodeOwner();
-            migration = std::make_unique<AmrFieldMigration<LeppDeviceExecution, KeyType, RealType>>(
-                d_preKeys.data(), preNumNodes, migration_sources.data(), d_newKeys.data(),
-                domain_->getNodeOwnershipMap().data(), newNumNodes,
-                AmrNodeOwner<KeyType, decltype(owner)>{owner, numRanks_}, MPI_COMM_WORLD,
-                config_.stage_refinement_messages, conforming ? SIZE_MAX : numNodes);
-        }
+        require_collectively(numRanks_ == 1 || domain_->sfcOwnership(),
+                             "AMR migration requires SFC ownership", MPI_COMM_WORLD);
+        auto owner = domain_->sfcNodeOwner();
+        AmrFieldMigration<LeppDeviceExecution, KeyType, RealType> migration(
+            d_preKeys.data(), preNumNodes, migration_sources.data(), d_newKeys.data(),
+            domain_->getNodeOwnershipMap().data(), newNumNodes,
+            AmrNodeOwner<KeyType, decltype(owner)>{owner, numRanks_}, MPI_COMM_WORLD,
+            config_.stage_refinement_messages, conforming ? SIZE_MAX : numNodes, true);
+        typename Domain::DeviceCoordsTuple rebuilt_coordinates;
+        migration.apply(physical[0].data(), physical[0].size(), std::get<0>(rebuilt_coordinates), true);
+        migration.apply(physical[1].data(), physical[1].size(), std::get<1>(rebuilt_coordinates), true);
+        migration.apply(physical[2].data(), physical[2].size(), std::get<2>(rebuilt_coordinates), true);
+        domain_->set_physical_coordinates(std::move(rebuilt_coordinates));
         for (size_t f = 0; f < oldFields.size(); ++f)
         {
-            migration->apply(transferred[f].data(), transferred[f].size(), *newFields[f]);
+            migration.apply(transferred[f].data(), transferred[f].size(), *newFields[f]);
             domain_->exchangeNodeHalo(*newFields[f]);
         }
         stats.reorderTimeMs = phaseLap();   // includes halo fill (single loop)

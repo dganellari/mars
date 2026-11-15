@@ -166,6 +166,7 @@ void check_operator(Space& space,
                     int level)
 {
     const auto* dof = space.isDof();
+    const double free_dofs = sum(n, [=] __host__ __device__(size_t s) { return dof[s] && !removed[s] ? 1.0 : 0.0; });
     Vector first(owned), first_action(owned), second(owned), action(owned), reference(owned);
     for (int trial = 0; trial < 3; ++trial)
     {
@@ -191,7 +192,8 @@ void check_operator(Space& space,
         if (trial == 0)
         {
             double energy = sum(owned, [=] __host__ __device__(size_t i) { return input[i] * actual[i]; });
-            require(std::isfinite(energy) && energy > 0, "positive energy", level);
+            // A coarse mesh may have no free DOFs; its zero test vector has zero energy.
+            require(std::isfinite(energy) && (free_dofs ? energy > 0 : energy == 0), "positive energy", level);
         }
         if (trial == 1)
         {

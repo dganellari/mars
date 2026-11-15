@@ -87,5 +87,80 @@ with `--marking=octree`, whose leaf aggregation would change the control.
 The underlying conforming and nonconforming implementations have separate native
 correctness evidence in [AMR](AMR-Module.md) and
 [conforming Tet4 AMR](Conforming-Tet-AMR.md). The combined peak comparison is new:
-CUDA compatibility syntax checks pass locally, while native accuracy-versus-DOF
-results are pending. No measured efficiency or scaling claim is made here.
+the labelled Escher Tet4 comparison below passes native NVIDIA/AMD checks,
+including error versus independent DOFs. This does not validate every peak-driver
+configuration. No measured efficiency or scaling claim is made here.
+
+
+## Labelled non-box tetrahedra
+
+For an initially conforming, single-block, nonperiodic Tet4 Exodus mesh whose
+side sets cover the entire exterior surface, use `--boundary=side-sets` with
+either `--refinement=lepp` or `--refinement=red`. Every exterior face must be labelled
+and no interior face may be labelled. The initial surface is checked by exact
+face incidence. Both methods inherit labels by face ancestry through refinement
+and Cornerstone redistribution. Red refinement replaces each marked boundary
+triangle with its four children, using the refiner's actual midpoint indices.
+The example unions the side sets into one Dirichlet surface and routes membership
+to the independent DOF owners through the constraint restriction.
+
+The driver checks domain volume and each labelled surface area after every adapt.
+LEPP also repeats the full face-incidence check. That conforming incidence check
+is not applied after red refinement: an interior coarse face can meet four fine
+faces. Red surface coverage instead follows the tested parent-face inheritance;
+area conservation alone is not a proof of complete coverage.
+
+The equation is `-laplace(u) = f`, with unit diffusion and exact Dirichlet data on
+that surface. `--problem=linear` remains the affine consistency check.
+`--problem=quadratic` uses `u=x*x+y*y+z*z` and `f=-6`; its squared P1 error is
+integrated with a degree-four-exact tetrahedral rule. `--error-indicator` marks
+from each owned element's integrated squared error against this manufactured
+solution, using the configured maximum-relative threshold. It is an oracle for
+validation, not an estimator available for an unknown physical solution.
+`--uniform` supplies the comparison with all elements marked.
+
+```bash
+./mars_amr_galerkin --mesh=escher.e --element=tet --boundary=side-sets \
+  --refinement=lepp --bucket-size=8 --problem=linear --uniform --levels=4 --audit-algebra
+./mars_amr_galerkin --mesh=escher.e --element=tet --boundary=side-sets \
+  --refinement=lepp --bucket-size=8 --problem=quadratic --error-indicator --levels=4 --audit-algebra
+./mars_amr_galerkin --mesh=escher.e --element=tet --boundary=side-sets \
+  --refinement=red --bucket-size=8 --problem=quadratic --error-indicator --levels=6 --audit-algebra
+```
+
+Compare the same manufactured problem and geometry, with uniform controls for
+both policies. Use error versus independent DOFs, not error versus adaptation
+rounds. `[amr-pde-wall]` reports cumulative wall time from initialization through
+the current solve, including all previous solves/adaptations and enabled checks.
+It takes the maximum over ranks and identifies audited runs. These times are
+useful end-to-end costs, but audited validation runs do not establish a speedup.
+
+The public MFEM Escher fixture can be converted with
+`tests/amr/write_public_tet_exodus.cpp` (link netCDF): provide its input `.mesh`
+and output `.e` paths. The converter normalizes tetrahedral orientation and keeps
+the supplied boundary labels. No private geometry is needed.
+
+Local checks validate exterior-face coverage on 1/4/8 MPI ranks, rejection of
+missing/interior labels, quartic error integration and an independent dense CPU
+P1 solve on four host LEPP rounds. The old box-boundary selection fails the affine
+control on this geometry. Red boundary inheritance and redistribution also pass
+on 1/4/8 local ranks, including a missing-midpoint rejection. An independent
+constrained CPU solve on two 1-irregular host fixtures preserves affine fields
+and reduces quadratic L2 error from 1.18 to 0.359, with nonzero hanging nodes.
+Native NVIDIA and AMD validation now passes all 36 configurations on the same
+2688-tet Escher fixture: two refinement methods, affine/uniform/adaptive solves,
+1/4/8 ranks and direct/staged AMR messages. LEPP uses four rounds; red uses three
+for affine/uniform controls and six for adaptive refinement. Six adaptive red
+rounds reduce L2 error from 0.1274804 to 0.0380450, with 4637 independent DOFs and
+1541 hanging nodes. Counts agree across ranks/platforms; quadratic errors agree
+within relative 1e-5. Boundary area and volume agree with the input file to
+floating-point precision. The unchanged gate requires at least 25% adaptive
+error reduction; the earlier three-round red run reduced it only 18.68% and
+remains a recorded failed control.
+
+The native fixture is the public 42-tet Escher mesh uniformly red-refined twice
+before conversion to Exodus. Use sufficient initial elements for the selected
+rank count: a rebuilt partition with no owned cells is rejected. The commands
+above accept a converted input mesh, but their accuracy is not guaranteed for
+every input or number of rounds. Full job provenance and scope are in the
+[validation record](../tests/amr/README.md#physical-geometry-and-non-box-pde-validation).

@@ -19,6 +19,7 @@ using std::get;
 
 #include "domain_cuda_impl.hpp"
 #include "mars_sfc_ownership.hpp"
+#include "amr/mars_amr_field_migration.hpp"
 
 // stl includes
 // #include <adios2.h>
@@ -848,13 +849,13 @@ public:
         return std::get<I>(d_conn_keys_);
     }
 
-    // User-friendly coordinate access (uses cached coords if available, otherwise decodes on-the-fly)
+    // Prefer stored physical coordinates; otherwise use the decoded coordinate cache.
     auto getElementNodeCoordinates(size_t elemIdx)
     {
         std::array<RealType, NodesPerElement> x, y, z;
 
         // Check if we have cached coordinates
-        bool hasCachedCoords = (coordCache_ != nullptr);
+        bool hasCachedCoords = (originalCoords_ != nullptr || coordCache_ != nullptr);
 
         if (hasCachedCoords)
         {
@@ -870,9 +871,9 @@ public:
                     if (i == 3 && NodesPerElement > 3) return std::get<3>(conn_local)[elemIdx];
                     return KeyType(0);
                 }();
-                x[i] = coordCache_->d_node_x_[localId];
-                y[i] = coordCache_->d_node_y_[localId];
-                z[i] = coordCache_->d_node_z_[localId];
+                x[i] = getNodeX()[localId];
+                y[i] = getNodeY()[localId];
+                z[i] = getNodeZ()[localId];
             }
         }
         else
@@ -1062,6 +1063,22 @@ public:
         // If using original coordinates, they're already stored - no need to cache
         if (originalCoords_) return;
         ensureCoordinateCache();
+    }
+
+    // Keys identify nodes; these arrays retain geometry independently of SFC quantization.
+    // The caller supplies every local node in the current key-map order, including deep ghosts.
+    void set_physical_coordinates(DeviceCoordsTuple&& coordinates)
+    {
+        const size_t nodes = getNodeCount();
+        amr::require_collectively(std::get<0>(coordinates).size() == nodes &&
+            std::get<1>(coordinates).size() == nodes && std::get<2>(coordinates).size() == nodes,
+            "Physical coordinate count differs from the node layout", MPI_COMM_WORLD);
+        auto physical = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(0);
+        physical->d_node_x_ = std::move(std::get<0>(coordinates));
+        physical->d_node_y_ = std::move(std::get<1>(coordinates));
+        physical->d_node_z_ = std::move(std::get<2>(coordinates));
+        originalCoords_ = std::move(physical);
+        coordCache_.reset();
     }
 
     // Exchange halo data for DOF vectors (MPI communication to sum shared node contributions)
@@ -3310,8 +3327,25 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 syncElem();
             }
         } else {
-            // For non-hex elements, always use standard sync (block-aware for multi-block meshes)
             syncElem();
+            if constexpr (std::is_same_v<ElementTag, TetTag>)
+                if (storeOriginalCoords_)
+                {
+                    amr::require_collectively(numBlocks_ == 1 && (numRanks_ == 1 || sfcOwnership_),
+                        "Stored tet coordinates require single-block SFC ownership", MPI_COMM_WORLD);
+                    const auto& keys = getLocalToGlobalSfcMap();
+                    const auto& owned = getNodeOwnershipMap();
+                    auto owner = sfcNodeOwner();
+                    amr::AmrFieldMigration<amr::LeppDeviceExecution, KeyType, RealType> geometry(
+                        d_nodeSfcCodes.data(), d_nodeSfcCodes.size(), nullptr, keys.data(), owned.data(), keys.size(),
+                        amr::AmrNodeOwner<KeyType, decltype(owner)>{owner, numRanks_}, MPI_COMM_WORLD,
+                        false, SIZE_MAX, true);
+                    DeviceCoordsTuple physical;
+                    geometry.apply(d_x.data(), d_x.size(), std::get<0>(physical), true);
+                    geometry.apply(d_y.data(), d_y.size(), std::get<1>(physical), true);
+                    geometry.apply(d_z.data(), d_z.size(), std::get<2>(physical), true);
+                    set_physical_coordinates(std::move(physical));
+                }
         }
     }
 }
