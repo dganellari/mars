@@ -425,3 +425,17 @@ These results validate the listed fixtures and piecewise-linear geometry.
 They do not establish arbitrary-geometry accuracy, CAD/curved-boundary recovery,
 a physical error estimator or a performance/scaling advantage. Documentation
 was updated after the validated snapshot; numerical sources are unchanged.
+
+## Release selection
+
+With `MARS_ENABLE_TESTS=ON`, the main source build registers AMR host checks and,
+for an unstructured CUDA/HIP build, the native AMR checks. The standalone
+`tests/amr` configuration remains available for installed-package and CPU/MPI
+validation. Supported AMR tests carry both `amr` and `release` labels;
+`ctest -L release` includes them in either build. The optional legacy bisection
+comparison is excluded. Enable `MARS_AMR_MPI_CHECKS` with a Cornerstone include
+path for the standalone CPU/MPI suite. Native optional transfer-mesh and Exodus
+checks retain their explicit input/dependency requirements. These labels do not
+by themselves run or validate a configuration; native candidate acceptance is
+recorded separately. The complete non-box PDE campaign also remains an explicit
+package-validation gate.

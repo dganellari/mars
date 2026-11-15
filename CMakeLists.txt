@@ -704,3 +704,17 @@ if(MARS_ENABLE_TESTS)
 endif()
 
 target_format_setup("mars")
+
+# Register the same AMR checks in source builds and installed-package builds.
+if(MARS_ENABLE_TESTS)
+    if(NOT TARGET Mars::mars)
+        add_library(Mars::mars ALIAS mars)
+    endif()
+    if(TARGET mars_unstructured AND NOT TARGET Mars::mars_unstructured)
+        add_library(Mars::mars_unstructured ALIAS mars_unstructured)
+    endif()
+    if(TARGET mars_unstructured AND MARS_GPU_LANGUAGE MATCHES "^(CUDA|HIP)$")
+        option(MARS_AMR_GPU_CHECKS "Build the AMR GPU release checks" ON)
+    endif()
+    add_subdirectory(tests/amr)
+endif()

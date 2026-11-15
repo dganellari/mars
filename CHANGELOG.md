@@ -21,6 +21,9 @@ public API may change between minor releases.
   checks pass on the public Escher mesh on NVIDIA and AMD at 1/4/8 ranks.
   The exact-solution indicator is a validation tool, not an estimator for unknown physics.
 - Partitioned Exodus input and side-set integration with tetrahedral AMR.
+- AMR checks in `ctest -L release`, in both the main build and the standalone
+  AMR validation build. Native checks are enabled by default in unstructured
+  CUDA/HIP test builds; optional legacy bisection comparisons remain separate.
 
 ### Changed
 - Physical coordinates survive imported Tet4 redistribution and AMR rebuilds.

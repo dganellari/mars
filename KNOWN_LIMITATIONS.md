@@ -1,4 +1,4 @@
-# Known Limitations (v0.1.1)
+# Known Limitations (v0.2.0 candidate)
 
 MARS v0.1 is the first public release; v0.1.1 adds AMD GPUs (HIP). This document states plainly what is
 validated, what is experimental, and what is not supported yet, so you can judge
@@ -18,15 +18,9 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   and 64. The release checks require the lid-driven cavity
   to give the same result on 1 and N ranks; it is not compared with a reference solution.
 
-The stable paths are validated on generated structured meshes and the shipped Poiseuille mesh (release checks: `ctest -L release`),
+The assembly and flow paths above are validated on generated structured meshes and the shipped Poiseuille mesh (release checks: `ctest -L release`),
 including element numberings that are not aligned with the coordinate axes.
 
-## Experimental — usable, not yet hardened
-- **High-order matrix-free CVFEM (hexahedra, p = 1 to 8).** The release tests
-  `marsReleaseHoMatfree` and `marsReleaseHoDistApply_npN` check the operator apply on one GPU
-  and on several ranks; no linear solver uses it yet. On several ranks its high-order numbering
-  (p > 1) needs the older vote node ownership, which `mars_ho_dist_apply_test` selects itself
-  (`MARS_OWNERSHIP=vote`). Interfaces may change. See [the tutorial](docs/Matrix-Free-Tutorial.md).
 - **Adaptive mesh refinement (AMR).** Nonconforming red refinement supports
   initially conforming Tet4/Hex8 meshes, with generation-based balance and exact
   split-entity hanging constraints. CPU/MPI checks and native NVIDIA/AMD gates
@@ -42,6 +36,13 @@ including element numberings that are not aligned with the coordinate axes.
   through loading and AMR pass CPU/MPI and native NVIDIA/AMD checks at 1/4/8 ranks.
   The manufactured-error indicator uses a known exact solution; it is not an
   estimator for an unknown physical solution. Hex8 side sets remain unsupported. See [AMR](docs/AMR-Module.md) and [validation](tests/amr/README.md#generation-and-topology-validation).
+
+## Experimental — usable, not yet hardened
+- **High-order matrix-free CVFEM (hexahedra, p = 1 to 8).** The release tests
+  `marsReleaseHoMatfree` and `marsReleaseHoDistApply_npN` check the operator apply on one GPU
+  and on several ranks; no linear solver uses it yet. On several ranks its high-order numbering
+  (p > 1) needs the older vote node ownership, which `mars_ho_dist_apply_test` selects itself
+  (`MARS_OWNERSHIP=vote`). Interfaces may change. See [the tutorial](docs/Matrix-Free-Tutorial.md).
 - **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
   sum-factorization). Interfaces may change.
 - **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
