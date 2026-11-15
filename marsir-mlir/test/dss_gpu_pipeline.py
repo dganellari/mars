@@ -49,6 +49,7 @@ update as mir.dss with an epilogue (first0 / first / next), and the banded block
 structured loops, one lane per block; lines_p{p}_sm90.ptx, CPU gate tools/emu_lines.cpp.
 
 Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond | --bicgstab | --pmg | --lines] [--emulate [--emu-tsan]]
+                        [--dss-warps=N] [--dss-hoist=0|1]   (the standalone DSS kernel's shape)
 """
 import os
 import re
@@ -86,7 +87,15 @@ from marsir.backends import mlir_ir
 sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
 """], "")
     early_cleanup = [] if bicg or pmg or lines else ["--canonicalize", "--cse"]
-    ir = run([MIROPT, "-", "--mir-lower-cellwise", *early_cleanup,
+    # The standalone DSS kernel's shape by degree, from GH200 BP1 timings against the hand
+    # kernel: two elements per block at p = 3, descriptors once per element at p = 7.
+    # --dss-warps=N / --dss-hoist=0|1 override it; the other kernels keep the plain shape.
+    plain = emitter == "emit_dss"
+    warps = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--dss-warps=")), "2" if plain and p == 3 else None)
+    hoist = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--dss-hoist=")), "1" if plain and p == 7 else None)
+    shape = [f"dss-warps={warps}"] * (warps is not None) + \
+            [f"dss-hoist-entities={'true' if hoist == '1' else 'false'}"] * (hoist is not None)
+    ir = run([MIROPT, "-", "--mir-lower-cellwise" + ("=" + " ".join(shape) if shape else ""), *early_cleanup,
               "--mir-warp-per-element", "--canonicalize", "--cse",
               "--loop-invariant-code-motion"], src)
     if "--emulate" in sys.argv:
