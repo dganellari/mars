@@ -22,6 +22,10 @@ set_tests_properties(graded_mesh_checks PROPERTIES LABELS "amr;nonconforming;gra
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME element_coordinate_accessor
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/coordinate_accessor.py
+            --compiler ${CMAKE_CXX_COMPILER} --source ${MARS_SOURCE_DIR} --work ${CMAKE_CURRENT_BINARY_DIR} --sysroot=${CMAKE_OSX_SYSROOT})
+    set_tests_properties(element_coordinate_accessor PROPERTIES LABELS "amr;geometry;host" TIMEOUT 60)
     add_test(NAME nonconforming_diagnostic_harness
         COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/nonconforming/test_diagnostics.py)
     set_tests_properties(nonconforming_diagnostic_harness PROPERTIES

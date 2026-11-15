@@ -7,6 +7,42 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
+## [0.2.0] — release candidate
+
+### Added
+- Optional structured Kokkos backend validated on CPU, NVIDIA and AMD, with
+  sparse reusable MPI exchange plans and partitioning without global mesh replication.
+- Conforming Tet4 LEPP and nonconforming Tet4/Hex8 red refinement on Cornerstone,
+  including refinement generations, exact split-entity hanging constraints and
+  distributed field transfer. Initial meshes must be conforming, single-block
+  and nonperiodic; coarsening and refinement-history restart are not supported.
+- A complete labelled non-box Tet4 Poisson example with repeated solves and
+  refinement using either LEPP or constrained red refinement. Manufactured-solution
+  checks pass on the public Escher mesh on NVIDIA and AMD at 1/4/8 ranks.
+  The exact-solution indicator is a validation tool, not an estimator for unknown physics.
+- Partitioned Exodus input and side-set integration with tetrahedral AMR.
+
+### Changed
+- Physical coordinates survive imported Tet4 redistribution and AMR rebuilds.
+  SFC keys continue to define topology and partitioning; coordinates use parent
+  interpolation and sparse field migration, including deep ghosts.
+- Kokkos helpers and bisection now live under `backend/kokkos`; structured meshes
+  live under `backend/distributed/structured`. Compatibility headers preserve
+  previous include paths. Serial-backend support is unchanged.
+
+### Fixed
+- Initialize SFC key buffers before encoding so stale removal markers cannot
+  silently discard mesh entries.
+- Preserve red Tet4 boundary labels through exact face ancestry and rebuilding.
+- Handle empty constrained matrix output without launching through a null pointer.
+- Return every Hex8 corner from the element-coordinate inspection helper in both
+  cached and decoded modes.
+
+Validation details and limits: [AMR](docs/AMR-Module.md),
+[AMR validation](tests/amr/README.md), [structured Kokkos](docs/Structured-Kokkos.md).
+Final release-candidate package validation remains pending; this entry does not
+announce a published release.
+
 ## [0.1.1] — 2026-11-02
 
 ### Added
