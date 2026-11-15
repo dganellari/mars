@@ -357,7 +357,7 @@ Value dirichletMask(OpBuilder &eb, Location l, Value e, const DirichletTables &d
       })[0];
 }
 
-LogicalResult lowerOne(mir::DssOp op) {
+LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
   const int P = (int)op.getDegree();
   if (P < 1 || P > kMaxDegree)
     return op.emitOpError("degree must be in [1, ") << kMaxDegree << "]";
@@ -430,14 +430,79 @@ LogicalResult lowerOne(mir::DssOp op) {
           z.store(d.local(pb, pl, z.add(base, node)), stage, d.slot(z, node));
         });
 
+        // Entity descriptors, three words per entity bit (the hand kernel keeps them on
+        // lanes and shuffles). Face: other copy, frame codes. Edge: edge_of entry, star
+        // begin, end. Corner: -, star begin, end.
+        Value desc;
+        if (hoist && d.n3 >= 32) {
+          auto a = eb.create<memref::AllocaOp>(l, MemRefType::get({96}, eb.getI32Type()));
+          a->setAttr("mir.scratch", eb.getUnitAttr());
+          desc = a.getResult();
+          lanes(eb, l, 32, [&](OpBuilder &pb, Location pl, Value slot) {
+            Emit z{pb, pl};
+            const Value s32 = z.toI32(slot), at = z.mul(slot, z.idx(3));
+            auto put = [&](Emit &t, Value w0, Value w1, Value w2) {
+              t.store(w0, desc, at);
+              t.store(w1, desc, t.add(at, t.idx(1)));
+              t.store(w2, desc, t.add(at, t.idx(2)));
+            };
+            auto star = [&](OpBuilder &sb, Location sl, Value off, Value g, Value w0) {
+              Emit t{sb, sl};
+              put(t, w0, t.load(off, g), t.load(off, t.add(g, t.idx(1))));
+            };
+            auto inRange = [&](OpBuilder &rb, Location rl, int lo, int hi) {
+              Emit t{rb, rl};
+              return rb.create<arith::AndIOp>(rl, rb.create<arith::CmpIOp>(rl, arith::CmpIPredicate::sge, s32, t.i32(lo)),
+                                              t.lt(s32, t.i32(hi)));
+            };
+            pb.create<scf::IfOp>(
+                pl, z.lt(s32, z.i32(6)),
+                [&](OpBuilder &tb, Location tl) {
+                  Emit t{tb, tl};
+                  const Value at6 = t.add(t.mul(e, t.idx(6)), slot);
+                  put(t, t.load(d.faceNbr, at6),
+                      tb.create<arith::ExtUIOp>(tl, tb.getI32Type(), t.load(d.faceCode, at6)), t.i32(0));
+                  tb.create<scf::YieldOp>(tl);
+                },
+                [&](OpBuilder &fb, Location fl) {
+                  const Value isEdge = inRange(fb, fl, cw::kEdgeBit, cw::kEdgeBit + 12);
+                  const Value isCorner = inRange(fb, fl, cw::kVertexBit, cw::kVertexBit + 8);
+                  fb.create<scf::IfOp>(
+                      fl, isEdge,
+                      [&](OpBuilder &gb, Location gl) {
+                        Emit u{gb, gl};
+                        const Value own = u.load(d.edgeOf, u.add(u.mul(e, u.idx(12)), u.sub(slot, u.idx(cw::kEdgeBit))));
+                        star(gb, gl, d.edgeOff, u.toIndex(u.band(own, u.i32(0x7fffffff))), own);
+                        gb.create<scf::YieldOp>(gl);
+                      },
+                      [&](OpBuilder &hb, Location hl) {
+                        hb.create<scf::IfOp>(hl, isCorner, [&](OpBuilder &cb, Location cl) {
+                          Emit u{cb, cl};
+                          const Value g = u.toIndex(
+                              u.load(d.vertOf, u.add(u.mul(e, u.idx(8)), u.sub(slot, u.idx(cw::kVertexBit)))));
+                          star(cb, cl, d.vertOff, g, u.i32(0));
+                          cb.create<scf::YieldOp>(cl);
+                        });
+                        hb.create<scf::YieldOp>(hl);
+                      });
+                  fb.create<scf::YieldOp>(fl);
+                });
+          });
+        }
+        // Word w of entity bit `bit` (an i32 value) from the descriptors.
+        auto word = [&](Emit &t, Value bit, int w) {
+          return t.load(desc, t.add(t.mul(t.toIndex(bit), t.idx(3)), t.idx(w)));
+        };
+
         if (d.F > 0)
           lanes(eb, l, 6LL * d.F, [&](OpBuilder &pb, Location pl, Value pos) {
             Emit z{pb, pl};
             const Value p32 = z.toI32(pos), F = z.i32(d.F);
             const Value f = z.div(p32, F);
             const Value at = z.add(z.mul(e, z.idx(6)), z.toIndex(f));
-            const Value nbr = z.load(d.faceNbr, at);
-            const Value code = pb.create<arith::ExtUIOp>(pl, pb.getI32Type(), z.load(d.faceCode, at));
+            const Value nbr = desc ? word(z, f, 0) : z.load(d.faceNbr, at);
+            const Value code =
+                desc ? word(z, f, 1) : pb.create<arith::ExtUIOp>(pl, pb.getI32Type(), z.load(d.faceCode, at)).getResult();
             pb.create<scf::IfOp>(pl, pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::sge, nbr, z.i32(0)),
                                  [&](OpBuilder &tb, Location tl) {
                                    Emit t{tb, tl};
@@ -460,12 +525,15 @@ LogicalResult lowerOne(mir::DssOp op) {
           auto corner = [&](OpBuilder &cb, Location cl) {
             Emit t{cb, cl};
             const Value c = t.sub(p32, t.i32(edgeSlots));
-            const Value g = t.toIndex(t.load(d.vertOf, t.add(t.mul(e, t.idx(8)), t.toIndex(c))));
-            const Value s = d.starSum(cb, cl, d.vertEnt, t.load(d.vertOff, g), t.load(d.vertOff, t.add(g, t.idx(1))),
-                                      [&](Emit &u, Value entry) {
-                                        return u.add(u.mul(u.toIndex(u.div(entry, u.i32(8))), u.idx(d.n3)),
-                                                     u.toIndex(u.entry(d.cornerL, u.rem(entry, u.i32(8)))));
-                                      });
+            const Value g = desc ? Value() : t.toIndex(t.load(d.vertOf, t.add(t.mul(e, t.idx(8)), t.toIndex(c))));
+            auto copyOf = [&](Emit &u, Value entry) {
+              return u.add(u.mul(u.toIndex(u.div(entry, u.i32(8))), u.idx(d.n3)),
+                           u.toIndex(u.entry(d.cornerL, u.rem(entry, u.i32(8)))));
+            };
+            const Value cbit = t.add(c, t.i32(cw::kVertexBit));
+            const Value s = desc ? d.starSum(cb, cl, d.vertEnt, word(t, cbit, 1), word(t, cbit, 2), copyOf)
+                                 : d.starSum(cb, cl, d.vertEnt, t.load(d.vertOff, g),
+                                             t.load(d.vertOff, t.add(g, t.idx(1))), copyOf);
             t.store(s, stage, d.slot(t, t.toIndex(t.entry(d.cornerL, c))));
           };
           if (edgeSlots == 0) {
@@ -478,20 +546,22 @@ LogicalResult lowerOne(mir::DssOp op) {
                 Emit t{tb, tl};
                 const Value k = t.div(p32, t.i32(d.Ed));
                 const Value pos1 = t.sub(t.add(p32, t.i32(1)), t.mul(k, t.i32(d.Ed)));   // position t on the edge
-                const Value own = t.load(d.edgeOf, t.add(t.mul(e, t.idx(12)), t.toIndex(k)));
+                const Value ebit = t.add(k, t.i32(cw::kEdgeBit));
+                const Value own = desc ? word(t, ebit, 0) : t.load(d.edgeOf, t.add(t.mul(e, t.idx(12)), t.toIndex(k)));
                 const Value mask = t.i32(0x7fffffff), zero = t.i32(0), Pc = t.i32(P);
                 const Value g = t.toIndex(t.band(own, mask));
                 // Canonical position on the edge: the star's entries are in the edge's
                 // canonical direction, each with its own reversal bit.
                 const Value tc = t.select(t.lt(own, zero), t.sub(Pc, pos1), pos1);
-                const Value s = d.starSum(
-                    tb, tl, d.edgeEnt, t.load(d.edgeOff, g), t.load(d.edgeOff, t.add(g, t.idx(1))),
-                    [&](Emit &u, Value entry) {
-                      const Value m = u.band(entry, mask);
-                      const Value at = u.select(u.lt(entry, zero), u.sub(Pc, tc), tc);
-                      return u.add(u.mul(u.toIndex(u.div(m, u.i32(12))), u.idx(d.n3)),
-                                   u.toIndex(u.entry(d.edgeL, u.add(u.mul(u.rem(m, u.i32(12)), u.i32(d.n)), at))));
-                    });
+                auto copyOf = [&](Emit &u, Value entry) {
+                  const Value m = u.band(entry, mask);
+                  const Value at = u.select(u.lt(entry, zero), u.sub(Pc, tc), tc);
+                  return u.add(u.mul(u.toIndex(u.div(m, u.i32(12))), u.idx(d.n3)),
+                               u.toIndex(u.entry(d.edgeL, u.add(u.mul(u.rem(m, u.i32(12)), u.i32(d.n)), at))));
+                };
+                const Value s = desc ? d.starSum(tb, tl, d.edgeEnt, word(t, ebit, 1), word(t, ebit, 2), copyOf)
+                                     : d.starSum(tb, tl, d.edgeEnt, t.load(d.edgeOff, g),
+                                                 t.load(d.edgeOff, t.add(g, t.idx(1))), copyOf);
                 t.store(s, stage, d.slot(t, t.toIndex(t.entry(d.edgeL, t.add(t.mul(k, t.i32(d.n)), pos1)))));
                 tb.create<scf::YieldOp>(tl);
               },
@@ -526,6 +596,8 @@ LogicalResult lowerOne(mir::DssOp op) {
           y.store(sums[j], d.partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
       });
   markElements(b, elementLoop, d.n3);
+  if (warps > 1 && d.n3 >= 32)
+    elementLoop->setAttr("mir.warps_per_block", b.getI64IntegerAttr(warps));
   op.erase();
   return success();
 }
@@ -935,6 +1007,18 @@ LogicalResult lowerOne(mir::BlockSkeletonOp op) {
 struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerCellwisePass)
 
+  LowerCellwisePass() = default;
+  LowerCellwisePass(const LowerCellwisePass &other) : PassWrapper(other) {}
+  // One warp per block caps occupancy at half, so a DSS with a warp per element may
+  // pack several; whether that or staging the descriptors pays depends on the degree.
+  Option<int64_t> dssWarps{*this, "dss-warps",
+                           llvm::cl::desc("mir.dss with a warp per element: elements per block"),
+                           llvm::cl::init(1)};
+  Option<bool> dssHoist{*this, "dss-hoist-entities",
+                        llvm::cl::desc("mir.dss: load each face/edge/corner descriptor once per "
+                                       "element into scratch instead of once per node"),
+                        llvm::cl::init(false)};
+
   StringRef getArgument() const final { return "mir-lower-cellwise"; }
   StringRef getDescription() const final {
     return "Lower mir.dss (the staged gather: per-element phases over own copies, face "
@@ -953,7 +1037,7 @@ struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<M
         ops.push_back(op);
     });
     for (Operation *op : ops)
-      if (failed(isa<mir::DssOp>(op)           ? lowerOne(cast<mir::DssOp>(op))
+      if (failed(isa<mir::DssOp>(op)           ? lowerOne(cast<mir::DssOp>(op), dssWarps, dssHoist)
                  : isa<mir::CellwiseOp>(op)    ? lowerOne(cast<mir::CellwiseOp>(op))
                  : isa<mir::BlockSumOp>(op)    ? lowerOne(cast<mir::BlockSumOp>(op))
                  : isa<mir::BlockSkeletonOp>(op) ? lowerOne(cast<mir::BlockSkeletonOp>(op))
