@@ -1,5 +1,5 @@
 site_name: MARS Documentation
-site_description: GPU-native unstructured meshes and finite-element assembly (MARS v0.1)
+site_description: GPU-native unstructured meshes and finite-element assembly (MARS v0.2.0)
 site_author: MARS Team
 repo_url: https://github.com/dganellari/mars
 repo_name: mars
@@ -31,7 +31,6 @@ exclude_docs: |
   *.tex
   /requirements.txt
   /Adjacency-Structures.md
-  /AMR-Module.md
   /Characteristic-Sizes.md
   /Connectivity-Management.md
   /Coordinate-Caching.md
@@ -60,9 +59,14 @@ nav:
       - "Step 9: Taylor–Green vortex (periodic)": periodic_tgv_tutorial.md
       - "Step 10a: high-order matrix-free operator": Matrix-Free-Tutorial.md
       - "Step 10b: adaptive mesh refinement": AMR-Module.md
+      - "Step 10c: adaptive Poisson on Escher": AMR-Peak-Example.md
       - "Appendix: your own CMake project": step-appendix-cmake.md
   - Reference:
+      - Structured Kokkos: Structured-Kokkos.md
+      - Conforming tetrahedral AMR: Conforming-Tet-AMR.md
+      - Backend layout: Backend-Layout.md
       - FEM assembly: FEM-Assembly.md
       - CVFEM assembly kernels: CVFEM-Kernels.md
-  - Known limitations: https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md
-  - Changelog: https://github.com/dganellari/mars/blob/master/CHANGELOG.md
+  - Release validation: Release-0.2.0.md
+  - Known limitations: https://github.com/dganellari/mars/blob/cstone/KNOWN_LIMITATIONS.md
+  - Changelog: https://github.com/dganellari/mars/blob/cstone/CHANGELOG.md

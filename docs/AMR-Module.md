@@ -1,6 +1,6 @@
 # AMR Module
 
-*Step 10b of the step-by-step tutorial (see the [index](index.md)). Previous: [step 10a](Matrix-Free-Tutorial.md); next: [the appendix](step-appendix-cmake.md).*
+*Step 10b of the step-by-step tutorial (see the [index](index.md)). Previous: [step 10a](Matrix-Free-Tutorial.md); next: [adaptive Poisson on Escher](AMR-Peak-Example.md#reproduce-the-v020-example).*
 
 The native AMR module in `backend/distributed/unstructured/amr/` refines Hex8 and
 Tet4 meshes on CUDA/HIP devices. `AmrManager` uses `ElementDomain` and Cornerstone
@@ -39,7 +39,7 @@ key resolution still limits which nodes can be distinguished; collisions are
 rejected. This preserves the supplied piecewise-linear geometry, not an analytic
 curved boundary or a CAD projection. Native NVIDIA and AMD validation passes on
 the public labelled Escher Tet4 mesh at 1/4/8 ranks; see the
-[geometry and PDE gate](../tests/amr/README.md#physical-geometry-and-non-box-pde-validation).
+[geometry and PDE gate](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md#physical-geometry-and-non-box-pde-validation).
 
 An existing node's old owner supplies its value exactly, including when that node
 is emitted again as a new midpoint. If a key is entirely new, a deterministic
@@ -131,7 +131,7 @@ checks an affine manufactured solution, allowing for coordinate quantization;
 The [peak comparison](AMR-Peak-Example.md) uses `--refinement=red|lepp` and
 `--uniform` to compare local and uniform resolution at the same equation and solver settings.
 `--audit-mesh` and `--audit-algebra` enable the optional conservation and algebra
-checks described in [the validation guide](../tests/amr/nonconforming/README.md).
+checks described in [the validation guide](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/nonconforming/README.md).
 
 ## Validation scope
 
@@ -141,12 +141,14 @@ campaign covers 1/4/8 ranks, including two nodes, with graded Tet4/Hex8 and thin
 Tet4 refinement, constraint algebra, field transfer, nonbinary marking and
 maximum-generation checks. Conforming LEPP also passes three refinement rounds
 on the public non-box MFEM Escher mesh. All checked mesh/constraint counts agree
-across ranks and platforms. See the [validation record](../tests/amr/README.md#generation-and-topology-validation)
+across ranks and platforms. See the [validation record](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md#generation-and-topology-validation)
 for jobs, source identity and transport scope.
 
 These tests establish mesh and constraint behavior beyond cubes. They do not
-establish PDE accuracy on every distorted mesh. The affine Galerkin solver checks
-still use cube domains; the example's boundary selection is based on its bounding box.
+establish PDE accuracy on every distorted mesh. The labelled Escher Poisson example also passes affine and adaptive quadratic
+checks on NVIDIA and AMD at 1/4/8 ranks. Use `--boundary=side-sets` for that
+non-box mesh; the default box boundary is only appropriate for cube fixtures.
+See the [runnable comparison](AMR-Peak-Example.md#reproduce-the-v020-example).
 
 The source snapshots tested on NVIDIA GH200 and AMD MI300A pass the combined
 Cornerstone/red-refinement cube checks at one, four and eight ranks, including
@@ -194,7 +196,6 @@ scaling or arbitrary-geometry PDE accuracy.
 ## See also
 
 - [Conforming tetrahedral AMR](Conforming-Tet-AMR.md)
-- [Halo Management](Halo-Management.md)
-- [Node Halo Topology](Node-Halo-Topology.md)
-- [Solution Transfer](Solution-Transfer.md)
-- [ElementDomain Overview](ElementDomain-Overview.md)
+- [Adaptive Poisson example](AMR-Peak-Example.md)
+- [Release validation](Release-0.2.0.md)
+- [Backend layout](Backend-Layout.md)

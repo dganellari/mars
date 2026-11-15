@@ -747,9 +747,7 @@ int run(const Options& opt, int rank, int numRanks)
         check_keys(3);
         if (iterations < 0 || !std::isfinite(l2) || !std::isfinite(maxErr) ||
             !std::isfinite(solver.lastRelativeResidual()) || solver.lastRelativeResidual() > 1.01*opt.tol) exact = false;
-        // The linear field is in the discrete space up to where the nodes sit: positions come from SFC keys, about
-        // 2^-21 of the box apart, so a hanging node is up to a key cell off the mean of the nodes it hangs on (a few
-        // 1e-6 here). A missing or wrong constraint is off by about h |grad u|, 1e-2 and more.
+        // Affine fields test the constraints and solve together on the preserved geometry.
         if (p.linear && maxErr > 1e-4) exact = false;
 
         checkGpuErrors(cudaDeviceSynchronize());

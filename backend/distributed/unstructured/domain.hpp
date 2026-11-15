@@ -861,16 +861,12 @@ public:
         {
             // Use cached coordinates via local IDs
             const auto& conn_local = getElementToNodeConnectivity();
+            const auto corners = std::apply([elemIdx](const auto&... columns) {
+                return std::array<KeyType, NodesPerElement>{KeyType(columns[elemIdx])...};
+            }, conn_local);
             for (int i = 0; i < NodesPerElement; ++i)
             {
-                KeyType localId = [&]()
-                {
-                    if (i == 0) return std::get<0>(conn_local)[elemIdx];
-                    if (i == 1) return std::get<1>(conn_local)[elemIdx];
-                    if (i == 2) return std::get<2>(conn_local)[elemIdx];
-                    if (i == 3 && NodesPerElement > 3) return std::get<3>(conn_local)[elemIdx];
-                    return KeyType(0);
-                }();
+                KeyType localId = corners[i];
                 x[i] = getNodeX()[localId];
                 y[i] = getNodeY()[localId];
                 z[i] = getNodeZ()[localId];
@@ -879,16 +875,12 @@ public:
         else
         {
             // Decode from SFC keys on-the-fly
+            const auto corners = std::apply([elemIdx](const auto&... columns) {
+                return std::array<KeyType, NodesPerElement>{KeyType(columns[elemIdx])...};
+            }, d_conn_keys_);
             for (int i = 0; i < NodesPerElement; ++i)
             {
-                KeyType sfcKey = [&]()
-                {
-                    if (i == 0) return std::get<0>(d_conn_keys_)[elemIdx];
-                    if (i == 1) return std::get<1>(d_conn_keys_)[elemIdx];
-                    if (i == 2) return std::get<2>(d_conn_keys_)[elemIdx];
-                    if (i == 3 && NodesPerElement > 3) return std::get<3>(d_conn_keys_)[elemIdx];
-                    return KeyType(0);
-                }();
+                KeyType sfcKey = corners[i];
                 auto [xi, yi, zi] = sfcToPhysicalCoordinate(sfcKey);
                 x[i]              = xi;
                 y[i]              = yi;

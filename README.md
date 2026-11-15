@@ -36,21 +36,24 @@ The main features of MARS are:
 5. Distributed multi-rank execution via MPI, including a per-node halo for solver
    communication (GPU-aware MPI) on top of the cornerstone element halo.
 
-6. Experimental: high-order matrix-free CVFEM operators, and GPU-native adaptive mesh
-   refinement (mark → refine → rebuild → solution transfer).
+6. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer):
+   conforming Tet4 LEPP bisection and nonconforming Tet4/Hex8 refinement with hanging
+   constraints. See [AMR](docs/AMR-Module.md) for supported inputs and validation.
+   High-order matrix-free CVFEM operators remain experimental.
 
 7. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to reduce GPU memory use and startup time.
 
 The GPU backend runs on NVIDIA GPUs with CUDA and on AMD GPUs with HIP (tested on MI300A),
 including the Navier–Stokes examples. The optional [structured Kokkos backend](docs/Structured-Kokkos.md)
-has bounded CPU/MPI checks; native GPU release validation is pending. With the unstructured backend's mesh on the
+is validated on CPU, NVIDIA and AMD. With the unstructured backend's mesh on the
 device, libraries built on MARS can run further operations directly on the GPU without going
 through the host.
 
 ## Releases & status ##
 
-Latest release: **v0.1.1** — see [CHANGELOG.md](CHANGELOG.md). For the stable /
+Latest release: **v0.2.0** — see [CHANGELOG.md](CHANGELOG.md) and
+[release validation](docs/Release-0.2.0.md). For the stable /
 experimental / unsupported breakdown (what to rely on and what is still under
 development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
 `0`, so the public API may change between minor releases.
@@ -294,7 +297,7 @@ option list.
 ### Documentation
 
 The [documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)
-has a quickstart, tutorials for v0.1 and reference pages:
+has a quickstart, tutorials for v0.2.0 and reference pages:
 
 **Getting started & tutorials**
 

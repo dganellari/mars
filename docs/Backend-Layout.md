@@ -16,7 +16,7 @@ The public CMake targets and build-option names stay the same.
 only the older Kokkos bisection module; it does not control native Cornerstone AMR.
 The serial backend is unchanged. The move does not change support status: see
 [Structured Kokkos](Structured-Kokkos.md), [AMR](AMR-Module.md) and
-[Known limitations](../KNOWN_LIMITATIONS.md).
+[Known limitations](https://github.com/dganellari/mars/blob/v0.2.0/KNOWN_LIMITATIONS.md).
 
 ## Include compatibility
 

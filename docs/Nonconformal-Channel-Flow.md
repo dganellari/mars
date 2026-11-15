@@ -134,14 +134,14 @@ There is also an analytic **plug-flow check**. It prescribes uniform axial veloc
 on the inlet **and on the side walls**, so `u = (U,0,0)` and `p = 0` are compatible
 exact fields. It tests the coupling; it is not the stationary no-slip-wall case.
 
-Source: [flow driver](../examples/distributed/unstructured/mars_nonconformal_flow.cpp)
-and [flow runtime](../examples/distributed/unstructured/mars_nonconformal_flow_runtime.hpp).
+Source: [flow driver](https://github.com/dganellari/mars/blob/v0.2.0/examples/distributed/unstructured/mars_nonconformal_flow.cpp)
+and [flow runtime](https://github.com/dganellari/mars/blob/v0.2.0/examples/distributed/unstructured/mars_nonconformal_flow_runtime.hpp).
 
 ## 4. Turning two surface meshes into one conservative interface
 
 ### 4.1 Read and validate the two blocks
 
-[The preparation script](../scripts/prepare_nonconformal_mesh.py) reads Exodus
+[The preparation script](https://github.com/dganellari/mars/blob/v0.2.0/scripts/prepare_nonconformal_mesh.py) reads Exodus
 coordinates, Tet4 connectivity and the five named side sets: inlet, outlet, wall,
 interface left and interface right. Their names can be mapped through the script's
 options. It preserves the file's node and element indexing and does not weld
@@ -175,7 +175,7 @@ There is a limit to this check: it validates the supplied surfaces. If both side
 sets omit the same region, the search alone cannot discover that missing region.
 The input's complete exterior-face labelling is a separate safeguard.
 
-Source: [`NonconformalInterfacePlan`](../backend/distributed/unstructured/fem/mars_nonconformal_search.hpp).
+Source: [`NonconformalInterfacePlan`](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_search.hpp).
 
 ### 4.3 Build shared overlap patches
 
@@ -200,7 +200,7 @@ integrand over a planar polygon; it is not exact quadrature for arbitrary nonlin
 products in the flow flux. Conservation follows from using the same patch rule
 on both sides, independently of that integration accuracy.
 
-Source: [`InterfacePatch` and `nonconformalConservativePair`](../backend/distributed/unstructured/fem/mars_nonconformal_overlap.hpp).
+Source: [`InterfacePatch` and `nonconformalConservativePair`](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_overlap.hpp).
 
 ### 4.4 Insert equal and opposite contributions
 
@@ -283,7 +283,7 @@ The kernel also returns each coefficient `c_qk = d(m_dot_q)/d(p_k)`, holding the
 reconstructed gradients and influence fixed. The pressure-correction assembly
 and later flux correction use these same coefficients.
 
-Source: [`nonconformalFlowFlux`](../backend/distributed/unstructured/fem/mars_nonconformal_flow.hpp).
+Source: [`nonconformalFlowFlux`](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_flow.hpp).
 
 ### 5.3 Momentum uses the same transported mass
 
@@ -350,7 +350,7 @@ the `0.3` factor there would retain part of the continuity defect. Recomputing a
 unrelated velocity-only flux afterwards would likewise lose the flux consistency.
 
 Both linear systems use the existing MARS
-[`outlet_fgmres`](../backend/distributed/unstructured/fem/mars_outlet_fgmres.hpp)
+[`outlet_fgmres`](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_outlet_fgmres.hpp)
 controller with Jacobi preconditioning, restart 100, a 3000-iteration cap and a
 relative residual target of `1e-10`. It recomputes `b-Ax` before accepting a solve.
 The operators are not assumed symmetric positive definite, so the example does
@@ -368,19 +368,19 @@ only uses MARS to read a mesh.
 
 | Component | Role in this implementation |
 |---|---|
-| [Coarse search](../backend/distributed/unstructured/fem/mars_coarse_search.hpp) and [fine search](../backend/distributed/unstructured/fem/mars_fine_search.hpp) | Candidate face discovery and triangular interpolation geometry |
-| [Face extraction](../backend/distributed/unstructured/fem/mars_nonconformal_mesh_faces.hpp) | Builds face records from Tet4 connectivity and side-set tags |
-| [Interface plan](../backend/distributed/unstructured/fem/mars_nonconformal_search.hpp) and [overlap geometry](../backend/distributed/unstructured/fem/mars_nonconformal_overlap.hpp) | Coverage checks, common patches and receiving rows |
-| [Ghost registry](../backend/distributed/unstructured/fem/mars_ghost_registry.hpp) and [donor exchange](../backend/distributed/unstructured/fem/mars_nonconformal_donor_exchange.hpp) | Ownership, remote element import and repeated field refresh |
-| [Interface graph builder](../backend/distributed/unstructured/fem/mars_nonconformal_scalar_graph.hpp) | Adds opposing-element columns to the owned sparse rows |
-| [Tet4 bulk operator](../backend/distributed/unstructured/fem/segregated/mars_segregated_tet_interior.hpp), [geometry](../backend/distributed/unstructured/fem/segregated/mars_segregated_geometry.hpp) and [boundary operator](../backend/distributed/unstructured/fem/segregated/mars_segregated_boundary.hpp) | Existing CVFEM volume and external-boundary algebra |
-| [Flow flux](../backend/distributed/unstructured/fem/mars_nonconformal_flow.hpp) | Shared mass flux, coupled momentum flux and their linear coefficients |
-| [Shared example runtime](../examples/distributed/unstructured/mars_nonconformal_scalar_runtime.hpp) and [flow runtime](../examples/distributed/unstructured/mars_nonconformal_flow_runtime.hpp) | Device arrays, matrix actions, reductions, iteration and diagnostics |
+| [Coarse search](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_coarse_search.hpp) and [fine search](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_fine_search.hpp) | Candidate face discovery and triangular interpolation geometry |
+| [Face extraction](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_mesh_faces.hpp) | Builds face records from Tet4 connectivity and side-set tags |
+| [Interface plan](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_search.hpp) and [overlap geometry](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_overlap.hpp) | Coverage checks, common patches and receiving rows |
+| [Ghost registry](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_ghost_registry.hpp) and [donor exchange](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_donor_exchange.hpp) | Ownership, remote element import and repeated field refresh |
+| [Interface graph builder](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_scalar_graph.hpp) | Adds opposing-element columns to the owned sparse rows |
+| [Tet4 bulk operator](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/segregated/mars_segregated_tet_interior.hpp), [geometry](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/segregated/mars_segregated_geometry.hpp) and [boundary operator](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/segregated/mars_segregated_boundary.hpp) | Existing CVFEM volume and external-boundary algebra |
+| [Flow flux](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal_flow.hpp) | Shared mass flux, coupled momentum flux and their linear coefficients |
+| [Shared example runtime](https://github.com/dganellari/mars/blob/v0.2.0/examples/distributed/unstructured/mars_nonconformal_scalar_runtime.hpp) and [flow runtime](https://github.com/dganellari/mars/blob/v0.2.0/examples/distributed/unstructured/mars_nonconformal_flow_runtime.hpp) | Device arrays, matrix actions, reductions, iteration and diagnostics |
 
-The older [`mars_nonconformal.hpp`](../backend/distributed/unstructured/fem/mars_nonconformal.hpp)
+The older [`mars_nonconformal.hpp`](https://github.com/dganellari/mars/blob/v0.2.0/backend/distributed/unstructured/fem/mars_nonconformal.hpp)
 contains an unfinished integration sketch. It is not the implementation exercised
 by this example. Similarly, the existing
-[search-and-ghosting guide](Interface-Search-And-Ghosting.md) explains enabling
+[search-and-ghosting guide](https://github.com/dganellari/mars/blob/v0.2.0/docs/Interface-Search-And-Ghosting.md) explains enabling
 components; their existence alone does not establish a complete flow coupling.
 
 ### Sparse algebra and MPI ownership
@@ -531,11 +531,11 @@ changes. The earlier refinement runs
 used the replicated layout; no numerical flux or boundary formula changed in the
 storage refactor.
 
-Test sources: [scalar checks](../tests/nonconformal/scalar.cpp),
-[distributed checks](../tests/nonconformal/distributed.cpp),
-[scalar channel](../tests/nonconformal/channel.cpp),
-[flow flux checks](../tests/nonconformal/flow.cpp) and
-[analytic flow fixture](../tests/nonconformal/flow_channel.cpp).
+Test sources: [scalar checks](https://github.com/dganellari/mars/blob/v0.2.0/tests/nonconformal/scalar.cpp),
+[distributed checks](https://github.com/dganellari/mars/blob/v0.2.0/tests/nonconformal/distributed.cpp),
+[scalar channel](https://github.com/dganellari/mars/blob/v0.2.0/tests/nonconformal/channel.cpp),
+[flow flux checks](https://github.com/dganellari/mars/blob/v0.2.0/tests/nonconformal/flow.cpp) and
+[analytic flow fixture](https://github.com/dganellari/mars/blob/v0.2.0/tests/nonconformal/flow_channel.cpp).
 
 ## 9. How the PI uses this work
 

@@ -22,7 +22,7 @@ field migration. The tested Cornerstone correction is published and pinned at
 `c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. The earlier procedural release checks passed:
 10 CPU tests and all 50 release tests in both single-node and two-node layouts
 on each GPU platform. This validates the scope below; it does not establish scaling.
-See [the results and validation instructions](../tests/amr/README.md).
+See [the results and validation instructions](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md).
 
 The distributed Exodus reader and AMR integration pass thirteen checks on each
 platform, including CPU import and LEPP references. Volume and side-set entries
@@ -46,7 +46,7 @@ Its host LEPP test uses three rounds and changed rank ownership. The correspondi
 native manager test is `tet_bisection_gpu --public-mesh tests/amr/data/mfem/escher.mesh`
 (with optional `--staged`). Three rounds pass on NVIDIA GH200 and AMD MI300A at
 1/4/8 ranks, with direct and staged AMR messages. See the
-[validation record](../tests/amr/README.md#generation-and-topology-validation).
+[validation record](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md#generation-and-topology-validation).
 This single fixture does not establish arbitrary-mesh or curved-element support.
 
 Input tetrahedra must already form a conforming, nonperiodic, single-block mesh.

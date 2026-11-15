@@ -5,6 +5,83 @@ unit-cube mesh. A narrow solution peak makes extra resolution useful in one part
 of the domain. Conforming LEPP and nonconforming red refinement share the same
 Poisson assembly, boundary treatment and solver.
 
+## Reproduce the v0.2.0 example
+
+This walkthrough uses the exact public Exodus input from the accepted release
+runs, shipped as `tests/amr/data/mfem/escher-refined.e`. It has 2688 tetrahedra,
+665 nodes and labelled exterior faces. Its provenance and checksum are in the
+[fixture README](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/data/mfem/README.md).
+Run these commands from the repository root in your compiler/MPI environment.
+
+You need C++20, MPI, CUDA or HIP, Hypre built for that GPU backend, and netCDF-C
+for Exodus input. `HYPRE_DIR` and `NETCDF_ROOT` identify those installations
+when they are not on the default search path. For NVIDIA Hopper:
+
+```bash
+cmake -S . -B build-amr -DCMAKE_BUILD_TYPE=Release \
+  -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
+  -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_FEM_EXAMPLES=ON \
+  -DMARS_ENABLE_HYPRE=ON -DMARS_ENABLE_TESTS=ON
+cmake --build build-amr --target mars_amr_galerkin --parallel 2
+```
+
+For AMD MI300, replace the CUDA options with `-DMARS_ENABLE_HIP=ON` and
+`-DCMAKE_HIP_ARCHITECTURES=gfx942`, using the ROCm toolchain and HIP-enabled Hypre.
+Select the architecture for your hardware. Check that CMake found netCDF before
+running an Exodus case; the main [build guide](https://github.com/dganellari/mars#downloading-mars-and-its-dependencies)
+covers dependency configuration.
+
+First run an affine correctness control on one rank per GPU:
+
+```bash
+mpirun -n 4 ./build-amr/examples/distributed/unstructured/mars_amr_galerkin \
+  --mesh=tests/amr/data/mfem/escher-refined.e --element=tet --boundary=side-sets \
+  --refinement=lepp --bucket-size=8 --problem=linear --uniform \
+  --levels=4 --tol=1e-10 --audit-algebra
+```
+
+Then solve the same quadratic manufactured Poisson problem with each policy:
+
+```bash
+mpirun -n 4 ./build-amr/examples/distributed/unstructured/mars_amr_galerkin \
+  --mesh=tests/amr/data/mfem/escher-refined.e --element=tet --boundary=side-sets \
+  --refinement=lepp --bucket-size=8 --problem=quadratic --error-indicator \
+  --levels=4 --tol=1e-10 --audit-algebra
+
+mpirun -n 4 ./build-amr/examples/distributed/unstructured/mars_amr_galerkin \
+  --mesh=tests/amr/data/mfem/escher-refined.e --element=tet --boundary=side-sets \
+  --refinement=red --bucket-size=8 --problem=quadratic --error-indicator \
+  --levels=6 --tol=1e-10 --audit-algebra
+```
+
+Use `-n 1` for a single GPU; the accepted campaign also covers eight ranks.
+On a cluster, run inside an allocation and use the site's MPI/GPU placement
+recipe. With Slurm, use `srun --export=ALL` and the required environment and
+binding flags instead of nesting `mpirun`. GPU-aware MPI is required by the
+underlying distributed solver; `--staged` only stages the AMR sparse messages.
+
+Each level reports the solve before the next refinement, so `--levels=4`
+performs the initial solve plus four adapt-and-solve rounds. Watch `elements`,
+`dofs`, `hanging`, `l2`, the algebra audit and the volume/boundary-area checks.
+The accepted adaptive red run ends with 27328 elements, 4637 independent DOFs,
+1541 hanging nodes and L2 error about 0.0380, down from about 0.1275 initially.
+LEPP keeps zero hanging nodes. Compare error against independent DOFs; the
+methods use different numbers and kinds of refinement steps, so this is not
+an efficiency comparison. Exact-solution marking is a validation tool.
+
+For the registered AMR regression suite, build all test targets before CTest:
+
+```bash
+cmake --build build-amr --parallel 2
+ctest --test-dir build-amr -L amr --output-on-failure
+ctest --test-dir build-amr -L release --output-on-failure
+```
+
+The release label includes AMR alongside the existing checks. Optional checks
+that need additional fixtures retain their documented inputs. The complete
+Escher PDE campaign is a separate package gate, not implied by the CTest label.
+See [release validation](Release-0.2.0.md) for the accepted jobs and limits.
+
 ## Problem
 
 On the dimensionless cube $\Omega=[0,1]^3$, solve the steady equation
@@ -163,4 +240,4 @@ before conversion to Exodus. Use sufficient initial elements for the selected
 rank count: a rebuilt partition with no owned cells is rejected. The commands
 above accept a converted input mesh, but their accuracy is not guaranteed for
 every input or number of rounds. Full job provenance and scope are in the
-[validation record](../tests/amr/README.md#physical-geometry-and-non-box-pde-validation).
+[validation record](https://github.com/dganellari/mars/blob/v0.2.0/tests/amr/README.md#physical-geometry-and-non-box-pde-validation).
