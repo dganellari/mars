@@ -136,7 +136,7 @@ function(addMarsGpuMpiTest source exename testname)
         # Set HIP-specific properties
         set_target_properties(${exename} PROPERTIES
             HIP_SEPARABLE_COMPILATION ON
-            HIP_ARCHITECTURES "${HIP_GPU_ARCHITECTURES}")
+            HIP_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}")
     endif()
 
         # Replace with these lines
