@@ -8,8 +8,9 @@
 //                                                             gpu.barrier
 //                                                           }
 //
-// Shape: L lanes per element (a power of two, at most 32) and W warps per block,
-// so G = 32 W / L elements per block; group = thread / L, glane = thread % L. L
+// Shape: L lanes per element (a power of two up to 32, or a multiple of 32: several
+// warps on one element) and W warps per block, so G = 32 W / L elements per block;
+// group = thread / L, glane = thread % L. L
 // comes from the element loop's {mir.lanes_per_element} (default 32), W from
 // {mir.warps_per_block} (default 1 for L = 32, else 4). With L = 32 and W = 1 a
 // block is one warp on one element at a time. The element loop of the last
@@ -556,8 +557,13 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   };
   const int64_t L = attr("mir.lanes_per_element", kWarp);
   const int64_t W = attr("mir.warps_per_block", L == kWarp ? 1 : 4);
-  if (L < 1 || L > kWarp || (L & (L - 1)) != 0 || W < 1)
-    return elements.emitOpError("lanes per element must be a power of two <= 32, warps per block >= 1");
+  // Several warps per element keep more warps resident when scratch per element limits
+  // the blocks per SM (q = 9: four q^3 buffers per BP3 element).
+  const bool multiWarp = L > kWarp;
+  if (L < 1 || (!multiWarp && (L & (L - 1)) != 0) || (multiWarp && L % kWarp != 0) || W < 1 ||
+      (kWarp * W) % L != 0)
+    return elements.emitOpError("lanes per element must be a power of two <= 32 or a multiple of 32 "
+                                "dividing the block, warps per block >= 1");
   const int64_t G = kWarp * W / L;
   const bool single = G == 1;   // one element per block: the original form
   OpBuilder b(elements);
@@ -596,6 +602,8 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     // phase's dimensions); reductions accumulate in that order per lane, then an
     // xor-shuffle tree combines the group's L lane values in a fixed order.
     const unsigned dims = par.getNumLoops();
+    if (multiWarp && !par.getInitVals().empty())
+      return par.emitOpError("reductions need the element's lanes in one warp");
     Value start, ub, stride;
     if (dims == 1) {
       Value step = par.getStep()[0];

@@ -19,7 +19,7 @@ precision, --warps=W the warps per block.
 Specs bp1_tri / bp3_tri (geometry = trilinear) take gq, wq (q: Gauss points and weights) and the
 corners X (E x 3 x 2 x 2 x 2) instead of G.
 
-Run from marsir-mlir/:  python3 test/bp_gpu_pipeline.py {bp1|bp3|bp1_tri|bp3_tri} [p] [--emulate]
+Run from marsir-mlir/:  python3 test/bp_gpu_pipeline.py {bp1|bp3|bp1_tri|bp3_tri} [p] [--emulate] [--lanes=L] [--maxnreg=N]
 """
 import os
 import re
@@ -37,6 +37,13 @@ FIRST_FIT = {("bp3", 1), ("bp1", 7)}
 # 12%) and for bp3_tri p = 3 (3%), but bp3 p = 3 is 6% slower with it and p = 1 gains
 # nothing (same doc). bp1_tri is not timed; it follows bp1.
 EVEN_ODD = {(s, 7) for s in ("bp1", "bp3", "bp1_tri", "bp3_tri")} | {("bp3_tri", 3)}
+# At p = 7 (q = 9) scratch per element limits the resident warps (BP3: four q^3 buffers,
+# 8 warps per SM), so two warps share an element: GH200 operator -26% BP3, -16% BP1, and
+# BP1 a further -25% with a 72-register cap (28 B spilled; 40.6% occupancy, the shared-
+# memory limit). BP3 is slower with a cap (it spills more). Three or four warps lose the
+# register blocking and are 2.4x slower. --lanes=L / --maxnreg=N override.
+LANES = {("bp1", 7): 64, ("bp3", 7): 64}
+MAXNREG = {("bp1", 7): 72}
 
 
 def main():
@@ -77,13 +84,18 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     # Warps per block: the CVFEM operator's measured default, halved (fewer elements
     # per block) until the static shared memory fits in 48 KB.
     given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
+    # --lanes=L: lanes per element; a multiple of 32 puts L / 32 warps on each element.
+    lanes = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--lanes=")), LANES.get((spec, p), 0))
+    if lanes > 32 and given is None:
+        given = lanes // 32
     warps = given or (4 if p >= 3 else 8)
     bufferized = ir
     while True:
         # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
         # space steers which dimension a thread keeps, so the CPU gate schedules with it too
         # and only drops it before the CPU build.
-        sched = f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
+        sched = (f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
+                 + (f" lanes={lanes}" if lanes else ""))
         even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if (spec, p) in EVEN_ODD and "--no-even-odd" not in sys.argv else []
         ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
                      "--mir-fuse-phases", "--canonicalize", "--cse",
@@ -104,7 +116,8 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
         suffix = "_f32" if real == "f32" else ""
         named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(").replace(
             f"@{spec}_apply__m", f"@{spec}_apply_p{p}{suffix}__m")
-        status = hl.finish(named, p, suffix, no_chain=True, prefix=spec)
+        maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")), MAXNREG.get((spec, p), 0))
+        status = hl.finish(named, p, suffix, no_chain=True, prefix=spec, maxnreg=maxnreg)
         ptx = open(os.path.join(hl.ROOT, "generated", f"{spec}_p{p}{suffix}_sm90.ptx")).read()
         shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
         if shared <= 48 * 1024:
