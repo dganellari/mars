@@ -1,8 +1,10 @@
 # Known Limitations (v0.2.0)
 
-MARS v0.1 is the first public release; v0.1.1 adds AMD GPUs (HIP). This document states plainly what is
-validated, what is experimental, and what is not supported yet, so you can judge
-whether MARS fits your use case. The major version is `0`: APIs may change.
+MARS v0.1 is the first public release; v0.1.1 adds AMD GPUs (HIP). Version 0.2.0
+adds supported structured Kokkos and conforming/nonconforming adaptive refinement,
+within the limits below. This document states what is validated, what is experimental,
+and what is not supported yet, so you can judge whether MARS fits your use case.
+The major version is `0`: APIs may change.
 
 ## Stable — validated and supported
 - Single-rank GPU-native unstructured mesh assembly pipeline

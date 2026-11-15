@@ -48,9 +48,9 @@ releases.
 
 ## Status
 
-- **[Known limitations](https://github.com/dganellari/mars/blob/cstone/KNOWN_LIMITATIONS.md)**:
+- **[Known limitations](https://github.com/dganellari/mars/blob/v0.2.0/KNOWN_LIMITATIONS.md)**:
   what is stable, what is experimental, and what is not supported yet.
-- **[Changelog](https://github.com/dganellari/mars/blob/cstone/CHANGELOG.md)**: what changed in
+- **[Changelog](https://github.com/dganellari/mars/blob/v0.2.0/CHANGELOG.md)**: what changed in
   each release.
 
 Supported in v0.2.0: the GPU mesh and assembly pipeline on one and on several ranks, and the

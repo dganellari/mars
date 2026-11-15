@@ -68,5 +68,5 @@ nav:
       - FEM assembly: FEM-Assembly.md
       - CVFEM assembly kernels: CVFEM-Kernels.md
   - Release validation: Release-0.2.0.md
-  - Known limitations: https://github.com/dganellari/mars/blob/cstone/KNOWN_LIMITATIONS.md
-  - Changelog: https://github.com/dganellari/mars/blob/cstone/CHANGELOG.md
+  - Known limitations: https://github.com/dganellari/mars/blob/v0.2.0/KNOWN_LIMITATIONS.md
+  - Changelog: https://github.com/dganellari/mars/blob/v0.2.0/CHANGELOG.md
