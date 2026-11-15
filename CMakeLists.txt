@@ -696,6 +696,7 @@ endif()
 add_custom_target(mars_complete)
 
 if(MARS_ENABLE_TESTS)
+    add_subdirectory(tests/nonconformal)
     get_property(MARS_TEST_TARGETS GLOBAL PROPERTY MARS_TEST_TARGETS)
     if(MARS_TEST_TARGETS)
         # Only add dependencies if there are actually targets
