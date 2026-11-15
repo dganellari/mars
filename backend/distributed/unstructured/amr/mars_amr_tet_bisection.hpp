@@ -22,7 +22,10 @@ struct TetBisectionRefiner
     using Domain = ElementDomain<TetTag, RealType, KeyType, cstone::execution::Gpu>;
     using Result = typename OctreeAlignedRefine<KeyType, RealType, TetTag>::Result;
 
-    static Result refine(const Domain& domain, const uint8_t* marks, bool host_staged = false)
+    static Result refine(const Domain& domain,
+                         const uint8_t* marks,
+                         bool host_staged           = false,
+                         KeyType maximum_generation = std::numeric_limits<KeyType>::max())
     {
         int ranks;
         MPI_Comm_size(MPI_COMM_WORLD, &ranks);
@@ -43,12 +46,13 @@ struct TetBisectionRefiner
             marks ? marks + start : nullptr,
             count,
             domain.getNodeCount()};
+        if (!domain.refinement_generations().empty()) view.generations = domain.refinement_generations().data() + start;
         if (start)
             for (auto& pointer : view.conn)
                 pointer += start;
-        auto refined =
-            refine_tet_lepp<LeppDeviceExecution>(view, TetNodeKey<KeyType, RealType>{domain.getBoundingBox()},
-                                                 lepp_node_owner<KeyType>(domain), MPI_COMM_WORLD, host_staged, faces);
+        auto refined = refine_tet_lepp<LeppDeviceExecution>(
+            view, TetNodeKey<KeyType, RealType>{domain.getBoundingBox()}, lepp_node_owner<KeyType>(domain),
+            MPI_COMM_WORLD, host_staged, faces, maximum_generation);
         Result result;
         result.transfer_from_parent_edges = true;
         result.oldNumNodes                = refined.old_nodes;
@@ -56,6 +60,7 @@ struct TetBisectionRefiner
         result.numElements                = refined.conn[0].size();
         result.numMarked                  = refined.refined_parents;
         result.numUniqueEdges             = refined.parent_edges.size();
+        result.d_generations              = std::move(refined.generations);
         result.d_x                        = std::move(refined.x);
         result.d_y                        = std::move(refined.y);
         result.d_z                        = std::move(refined.z);

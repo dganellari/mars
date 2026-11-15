@@ -9,14 +9,68 @@ target_include_directories(tet_bisection_host PRIVATE "${MARS_SOURCE_DIR}")
 add_test(NAME tet_bisection_host COMMAND tet_bisection_host)
 set_tests_properties(tet_bisection_host PROPERTIES LABELS "amr;tet-bisection;host" TIMEOUT 60)
 
-option(MARS_AMR_MPI_CHECKS "Build CPU checks of the distributed LEPP engine" OFF)
+add_executable(tet_audit_host tet_audit_host.cpp)
+target_compile_features(tet_audit_host PRIVATE cxx_std_20)
+target_include_directories(tet_audit_host PRIVATE "${MARS_SOURCE_DIR}")
+add_test(NAME tet_audit_host COMMAND tet_audit_host)
+set_tests_properties(tet_audit_host PROPERTIES LABELS "amr;nonconforming;diagnostic;host" TIMEOUT 60)
+
+add_executable(graded_mesh_checks graded_mesh_checks.cpp)
+target_compile_features(graded_mesh_checks PRIVATE cxx_std_20)
+add_test(NAME graded_mesh_checks COMMAND graded_mesh_checks)
+set_tests_properties(graded_mesh_checks PROPERTIES LABELS "amr;nonconforming;graded;host" TIMEOUT 60)
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME nonconforming_diagnostic_harness
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/nonconforming/test_diagnostics.py)
+    set_tests_properties(nonconforming_diagnostic_harness PROPERTIES
+        ENVIRONMENT "MARS_TEST_TMP=${CMAKE_CURRENT_BINARY_DIR}"
+        LABELS "amr;nonconforming;diagnostic;host" TIMEOUT 60)
+endif()
+
+option(MARS_AMR_MPI_CHECKS "Build CPU MPI checks for AMR exchange and tree layout" OFF)
 if(MARS_AMR_MPI_CHECKS)
     find_package(MPI REQUIRED COMPONENTS CXX)
     find_path(MARS_CSTONE_INCLUDE_DIR cstone/primitives/mpi_wrappers.hpp REQUIRED)
+    add_executable(nonconforming_topology nonconforming_topology.cpp)
+    target_compile_features(nonconforming_topology PRIVATE cxx_std_20)
+    target_include_directories(nonconforming_topology PRIVATE "${MARS_SOURCE_DIR}" "${MARS_CSTONE_INCLUDE_DIR}")
+    target_link_libraries(nonconforming_topology PRIVATE MPI::MPI_CXX)
+    foreach(ranks IN ITEMS 1 2 4 8)
+        add_test(NAME nonconforming_topology_mpi${ranks}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nonconforming_topology> ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(nonconforming_topology_mpi${ranks} PROPERTIES
+            LABELS "amr;nonconforming;topology;host;mpi" PROCESSORS ${ranks} TIMEOUT 120)
+    endforeach()
+    add_executable(amr_field_migration field_migration.cpp)
+    target_compile_features(amr_field_migration PRIVATE cxx_std_20)
+    target_include_directories(amr_field_migration PRIVATE "${MARS_SOURCE_DIR}" "${MARS_CSTONE_INCLUDE_DIR}")
+    target_link_libraries(amr_field_migration PRIVATE MPI::MPI_CXX)
+    foreach(ranks IN ITEMS 1 2 4 8)
+        add_test(NAME amr_field_migration_mpi${ranks}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                ${MPIEXEC_PREFLAGS} $<TARGET_FILE:amr_field_migration> ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(amr_field_migration_mpi${ranks} PROPERTIES
+            LABELS "amr;nonconforming;field-transfer;host;mpi" PROCESSORS ${ranks} TIMEOUT 120)
+    endforeach()
     add_executable(tet_lepp_mpi tet_lepp_mpi.cpp)
     target_compile_features(tet_lepp_mpi PRIVATE cxx_std_20)
     target_include_directories(tet_lepp_mpi PRIVATE "${MARS_SOURCE_DIR}" "${MARS_CSTONE_INCLUDE_DIR}")
     target_link_libraries(tet_lepp_mpi PRIVATE MPI::MPI_CXX)
+    target_compile_definitions(tet_lepp_mpi PRIVATE MARS_PUBLIC_TET_MESH="${CMAKE_CURRENT_SOURCE_DIR}/data/mfem/escher.mesh")
+    add_executable(amr_tree_layout tree_layout.cpp)
+    target_compile_features(amr_tree_layout PRIVATE cxx_std_20)
+    target_include_directories(amr_tree_layout PRIVATE "${MARS_SOURCE_DIR}" "${MARS_CSTONE_INCLUDE_DIR}")
+    target_link_libraries(amr_tree_layout PRIVATE MPI::MPI_CXX)
+    foreach(ranks IN ITEMS 1 2 4 8)
+        add_test(NAME amr_tree_layout_mpi${ranks}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                ${MPIEXEC_PREFLAGS} $<TARGET_FILE:amr_tree_layout> ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(amr_tree_layout_mpi${ranks} PROPERTIES
+            LABELS "amr;cornerstone;tree-layout;host;mpi" PROCESSORS ${ranks} TIMEOUT 120)
+    endforeach()
     add_executable(tet_domain_layout tet_domain_layout.cpp)
     target_compile_features(tet_domain_layout PRIVATE cxx_std_20)
     target_include_directories(tet_domain_layout PRIVATE "${MARS_SOURCE_DIR}" "${MARS_CSTONE_INCLUDE_DIR}")
@@ -55,7 +109,7 @@ if(MARS_AMR_LEGACY_CHECKS)
 endif()
 
 option(MARS_AMR_EXODUS_CHECKS "Check public Tet4 Exodus import, labels and AMR" OFF)
-option(MARS_AMR_GPU_CHECKS "Build the installed MARS GPU/MPI conforming tet AMR gate" OFF)
+option(MARS_AMR_GPU_CHECKS "Build the installed MARS GPU/MPI AMR checks" OFF)
 if(MARS_AMR_GPU_CHECKS)
     find_package(Mars REQUIRED)
     find_package(MPI REQUIRED COMPONENTS CXX)
@@ -76,7 +130,7 @@ if(MARS_AMR_GPU_CHECKS)
     set(CMAKE_${MARS_GPU_LANGUAGE}_STANDARD 20)
     enable_language(${MARS_GPU_LANGUAGE})
 endif()
-set(MARS_AMR_TEST_RANKS "1;2;4" CACHE STRING "MPI rank counts for conforming tetrahedral AMR")
+set(MARS_AMR_TEST_RANKS "1;2;4" CACHE STRING "MPI rank counts for AMR checks")
 foreach(ranks IN LISTS MARS_AMR_TEST_RANKS)
     if(NOT ranks MATCHES "^[1-9][0-9]*$")
         message(FATAL_ERROR "MARS_AMR_TEST_RANKS must contain positive integers.")
@@ -134,7 +188,90 @@ if(MARS_AMR_GPU_CHECKS)
             "${Python3_EXECUTABLE};${CMAKE_CURRENT_SOURCE_DIR}/compile_cuda.py;${CMAKE_CURRENT_BINARY_DIR}/compile-receipts")
     endif()
 
+    set_source_files_properties(nonconforming_safety.cu PROPERTIES LANGUAGE ${MARS_GPU_LANGUAGE})
+    add_executable(nonconforming_amr_safety nonconforming_safety.cu)
+    target_compile_features(nonconforming_amr_safety PRIVATE cxx_std_20)
+    target_link_libraries(nonconforming_amr_safety PRIVATE Mars::mars Mars::mars_unstructured MPI::MPI_CXX)
+    set_source_files_properties(nonconforming_transfer.cu PROPERTIES LANGUAGE ${MARS_GPU_LANGUAGE})
+    add_executable(nonconforming_amr_transfer nonconforming_transfer.cu)
+    target_compile_features(nonconforming_amr_transfer PRIVATE cxx_std_20)
+    target_link_libraries(nonconforming_amr_transfer PRIVATE Mars::mars Mars::mars_unstructured MPI::MPI_CXX)
+    if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
+        set_target_properties(nonconforming_amr_transfer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+        set_property(TARGET nonconforming_amr_transfer PROPERTY CUDA_COMPILER_LAUNCHER
+            "${Python3_EXECUTABLE};${CMAKE_CURRENT_SOURCE_DIR}/compile_cuda.py;${CMAKE_CURRENT_BINARY_DIR}/compile-receipts")
+    endif()
+    set(MARS_AMR_TRANSFER_MESH_DIR "" CACHE PATH "Directory with cube16.mesh and cube16_tet.mesh for transfer checks")
+
     foreach(ranks IN LISTS MARS_AMR_TEST_RANKS)
+        add_test(NAME nonconforming_amr_safety_mpi${ranks}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nonconforming_amr_safety> ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(nonconforming_amr_safety_mpi${ranks} PROPERTIES
+            LABELS "amr;nonconforming;gpu;mpi;tet-transfer;field-transfer;empty-rank;mesh-balance;node-identity"
+            PROCESSORS ${ranks} TIMEOUT 120)
+        foreach(mode IN ITEMS direct staged)
+            set(mode_arg)
+            if(mode STREQUAL "staged")
+                set(mode_arg --staged)
+            endif()
+            add_test(NAME public_tet_lepp_${mode}_mpi${ranks}
+                COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:tet_bisection_gpu> ${MPIEXEC_POSTFLAGS}
+                    --public-mesh "${CMAKE_CURRENT_SOURCE_DIR}/data/mfem/escher.mesh" ${mode_arg})
+            set_tests_properties(public_tet_lepp_${mode}_mpi${ranks} PROPERTIES
+                LABELS "amr;tet-lepp;gpu;mpi;public-mesh;tet-boundary" PROCESSORS ${ranks} TIMEOUT 600)
+        endforeach()
+        foreach(case IN ITEMS graded_tet graded_hex thin_tet)
+            string(REPLACE "_" ";" parts "${case}")
+            list(GET parts 0 fixture)
+            list(GET parts 1 element)
+            foreach(mode IN ITEMS direct staged)
+                set(mode_arg)
+                if(mode STREQUAL "staged")
+                    set(mode_arg --staged)
+                endif()
+                add_test(NAME nonconforming_${case}_${mode}_mpi${ranks}
+                    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nonconforming_amr_transfer> ${MPIEXEC_POSTFLAGS}
+                        --fixture=${fixture} --element=${element} ${mode_arg})
+                set_tests_properties(nonconforming_${case}_${mode}_mpi${ranks} PROPERTIES
+                    LABELS "amr;nonconforming;gpu;mpi;graded;constraints;field-transfer"
+                    PROCESSORS ${ranks} TIMEOUT 600)
+            endforeach()
+        endforeach()
+        foreach(element IN ITEMS tet hex)
+            if(ranks LESS_EQUAL 8)
+                add_test(NAME nonconforming_empty_input_${element}_mpi${ranks}
+                    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nonconforming_amr_transfer> ${MPIEXEC_POSTFLAGS}
+                        --empty-input --element=${element})
+                set_tests_properties(nonconforming_empty_input_${element}_mpi${ranks} PROPERTIES
+                    LABELS "amr;nonconforming;gpu;mpi;field-transfer;empty-rank"
+                    PROCESSORS ${ranks} TIMEOUT 300)
+            endif()
+            if(MARS_AMR_TRANSFER_MESH_DIR)
+                set(mesh cube16.mesh)
+                if(element STREQUAL "tet")
+                    set(mesh cube16_tet.mesh)
+                endif()
+                foreach(policy IN ITEMS doerfler octree staged)
+                    set(policy_flag)
+                    if(policy STREQUAL "octree")
+                        set(policy_flag --octree)
+                    elseif(policy STREQUAL "staged")
+                        set(policy_flag --staged)
+                    endif()
+                    add_test(NAME nonconforming_transfer_${element}_${policy}_mpi${ranks}
+                        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                            ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nonconforming_amr_transfer> ${MPIEXEC_POSTFLAGS}
+                            --mesh=${MARS_AMR_TRANSFER_MESH_DIR}/${mesh} --element=${element} ${policy_flag})
+                    set_tests_properties(nonconforming_transfer_${element}_${policy}_mpi${ranks} PROPERTIES
+                        LABELS "amr;nonconforming;gpu;mpi;field-transfer;${policy}"
+                        PROCESSORS ${ranks} TIMEOUT 300)
+                endforeach()
+            endif()
+        endforeach()
         foreach(mode IN ITEMS needed full staged)
             set(mode_flag)
             if(mode STREQUAL "full")

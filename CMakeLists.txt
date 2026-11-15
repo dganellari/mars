@@ -400,7 +400,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
     endif()
 endif()
 
-set(MARS_MODULES base core examples io kokkos)
+set(MARS_MODULES base core examples io backend/kokkos/common)
 
 foreach(MODULE ${MARS_MODULES})
   add_subdirectory("${MODULE}")
@@ -415,7 +415,7 @@ if(MARS_ENABLE_DISTRIBUTED_BACKEND)
 endif()
 
 if(MARS_ENABLE_AMR_BACKEND)
-    add_subdirectory("backend/amr")
+    add_subdirectory("backend/kokkos/bisection")
 endif()
 
 if(MARS_ENABLE_MOONOLITH)
@@ -603,6 +603,8 @@ foreach(_header ${MARS_HEADERS})
   install(FILES "${_header}" DESTINATION include/${_dir})
 endforeach()
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
+include(cmake/MarsHeaderCompatibility.cmake)
+mars_compatibility_headers(mars)
 # The unstructured backend whole (fem, solvers, amr, ...), which its programs include by path from the
 # repository root: #include "backend/distributed/unstructured/domain.hpp".
 if(MARS_ENABLE_UNSTRUCTURED)

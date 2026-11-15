@@ -3,6 +3,7 @@
 #include "backend/distributed/unstructured/amr/mars_amr_field_migration.hpp"
 
 #include <iostream>
+#include "public_tet_mesh.hpp"
 #include <map>
 #include <set>
 #include <string>
@@ -528,6 +529,71 @@ void check_sparse_plan(MPI_Comm comm, bool staged)
     }
 }
 
+void check_public_mesh(MPI_Comm comm, bool staged, const std::string& path)
+{
+    auto fixture = amr_test::read_public_tet(path);
+    std::vector<TaggedTet> mesh(fixture.mesh.conn[0].size());
+    std::map<std::array<uint64_t, 3>, int> tags;
+    for (const auto& [tag, faces] : fixture.boundary)
+        for (auto face : faces)
+        {
+            std::sort(face.begin(), face.end());
+            tags[face] = tag;
+        }
+    for (size_t e = 0; e < mesh.size(); ++e)
+    {
+        for (int c = 0; c < 4; ++c)
+            for (int d = 0; d < 3; ++d)
+                mesh[e].points[c][d] = fixture.mesh.xyz[d][fixture.mesh.conn[c][e]];
+        for (int f = 0; f < 4; ++f)
+        {
+            std::array<uint64_t, 3> face;
+            int at = 0;
+            for (int c = 0; c < 4; ++c)
+                if (c != f) face[at++] = fixture.mesh.conn[c][e];
+            std::sort(face.begin(), face.end());
+            auto it = tags.find(face);
+            if (it != tags.end()) mesh[e].tags[f] = it->second;
+        }
+    }
+    for (int round = 0; round < 3; ++round)
+    {
+        for (size_t e = 0; e < mesh.size(); ++e)
+            mesh[e].marked = (e + round) % 3 == 0;
+        auto after = run(mesh, comm, staged, round % 2);
+        require(after.size() > mesh.size(), "Public mesh did not refine");
+        check_geometry(mesh, after);
+        mesh = std::move(after);
+    }
+}
+
+void check_generations(MPI_Comm comm, bool staged)
+{
+    int rank, ranks;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &ranks);
+    for (KeyType initial : {KeyType(0), KeyType(5)})
+    {
+        auto input = partition(witness(), rank, ranks, 1);
+        std::vector<KeyType> generations(input.marks.size(), initial);
+        auto view        = input.view();
+        view.generations = generations.data();
+        auto result      = mars::amr::refine_tet_lepp<Execution>(view, NodeKey{}, node_owner(comm), comm, staged,
+                                                                 input.faces, initial + 2);
+        auto all         = gather(result.generations, comm);
+        std::sort(all.begin(), all.end());
+        require(all == std::vector<KeyType>({initial + 1, initial + 1, initial + 1, initial + 2, initial + 2}),
+                "LEPP generation does not count actual parent bisections");
+        reject_collectively(
+            [&]
+            {
+                mars::amr::refine_tet_lepp<Execution>(view, NodeKey{}, node_owner(comm), comm, staged, input.faces,
+                                                      initial + 1);
+            },
+            comm);
+    }
+}
+
 void check_rejections(MPI_Comm comm, bool staged)
 {
     int rank, ranks;
@@ -606,6 +672,8 @@ int main(int argc, char** argv)
         check_case(propagation, staged, 2, true);
         check_face_migration(MPI_COMM_WORLD, staged);
         check_field_migration(MPI_COMM_WORLD, staged);
+        check_public_mesh(MPI_COMM_WORLD, staged, MARS_PUBLIC_TET_MESH);
+        check_generations(MPI_COMM_WORLD, staged);
         check_rejections(MPI_COMM_WORLD, staged);
         MPI_Comm split;
         MPI_Comm_split(MPI_COMM_WORLD, rank % 2, rank, &split);

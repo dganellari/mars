@@ -296,6 +296,14 @@ if(MARS_ENABLE_HYPRE)
     install(TARGETS mars_lid_driven_cavity RUNTIME DESTINATION bin/examples)
 endif()
 
+# Galerkin Poisson on adapted non-conforming hex and tet meshes: hanging-node constraints (HangingNodes,
+# DofSpace) and P^T A P solved with Hypre BoomerAMG.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_amr_galerkin mars_amr_galerkin.cu)
+    target_link_libraries(mars_amr_galerkin PRIVATE mars)
+    install(TARGETS mars_amr_galerkin RUNTIME DESTINATION bin/examples)
+endif()
+
 # Development drivers, not part of the v0.1 docs, so off by default (-DMARS_ENABLE_DEV_EXAMPLES=ON).
 if(MARS_ENABLE_DEV_EXAMPLES)
     # Coupled collocated solver, phase 0 model operator. Its solve paths use HypreGMRESSolver directly,

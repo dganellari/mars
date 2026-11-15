@@ -24,7 +24,7 @@ option(MARS_ENABLE_PETSC "Enable the optional PETSc momentum backend for segrega
 # FIXME  and turn on!
 option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabling the serial backend" OFF)
 option(MARS_ENABLE_DISTRIBUTED_BACKEND "Use -DMARS_ENABLE_DISTRIBUTED_BACKEND=ON for enabling the distributed backend" ON)
-option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling the AMR backend" OFF)
+option(MARS_ENABLE_AMR_BACKEND "Enable the older Kokkos mesh/bisection backend (not Cornerstone AMR)" OFF)
 
 option(MARS_ENABLE_EXAMPLES "Enable examples" OFF)
 option(MARS_ENABLE_FEM_EXAMPLES "Enable FEM examples (unstructured)" OFF)

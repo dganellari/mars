@@ -20,8 +20,15 @@
 // (periodicMasterKey), and the DOF lives on the SFC owner of that key. So P and
 // P^T are one exchange each, straight between a slot and the owner of its DOF,
 // however a point is split over ranks and periodic faces.
+//
+// On a non-conforming mesh a hanging node (mars_hanging_nodes.hpp) has no DOF:
+// P gives its slot the weighted sum of the DOFs it depends on, and P^T adds the
+// slot into those DOFs with the same weights. Its DOFs travel in the same single
+// exchange, as copies; one that no slot of this rank holds is an extra value
+// next to the slots.
 
 #include "backend/distributed/unstructured/fem/mars_periodic_bc.hpp"
+#include "backend/distributed/unstructured/fem/mars_hanging_nodes.hpp"
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -130,26 +137,112 @@ __global__ void dofSlotKernel(const KeyType* keys, const uint8_t* isDof, size_t 
     slot[k]            = (j < n && keys[j] == query[k] && isDof[j]) ? int(j) : -1;
 }
 
-// buf[i * count + c] = field c at slot ids[i]
+// Field c at id: a slot below numSlots, else entry id - numSlots of the extra values (DOFs that hanging nodes
+// depend on and no slot of this rank holds)
 template<typename T>
-__global__ void dofPackKernel(const int* ids, size_t n, DofFields<T> f, T* buf)
+__device__ inline T& dofValue(DofFields<T>& f, T* extra, size_t numSlots, int id, int c)
+{
+    return size_t(id) < numSlots ? f.f[c][id] : extra[(size_t(id) - numSlots) * f.count + c];
+}
+
+// buf[i * count + c] = field c at ids[i]
+template<typename T>
+__global__ void dofPackKernel(const int* ids, size_t n, DofFields<T> f, T* extra, size_t numSlots, T* buf)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
     for (int c = 0; c < f.count; ++c)
-        buf[i * f.count + c] = f.f[c][ids[i]];
+        buf[i * f.count + c] = dofValue(f, extra, numSlots, ids[i], c);
 }
 
-// field c at slot ids[i] = (or +=) buf[i * count + c]; a DOF can receive from several copies, so += is atomic
+// field c at ids[i] = (or +=) buf[i * count + c]; a DOF can receive from several copies, so += is atomic
 template<typename T>
-__global__ void dofUnpackKernel(const int* ids, size_t n, DofFields<T> f, const T* buf, bool add)
+__global__ void dofUnpackKernel(const int* ids, size_t n, DofFields<T> f, T* extra, size_t numSlots, const T* buf,
+                                bool add)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
     for (int c = 0; c < f.count; ++c)
     {
-        if (add) atomicAdd(&f.f[c][ids[i]], buf[i * f.count + c]);
-        else f.f[c][ids[i]] = buf[i * f.count + c];
+        if (add) atomicAdd(&dofValue(f, extra, numSlots, ids[i], c), buf[i * f.count + c]);
+        else dofValue(f, extra, numSlots, ids[i], c) = buf[i * f.count + c];
+    }
+}
+
+// Hanging slots and the DOFs they depend on (links offset[h] to offset[h + 1]: source id and weight). Prolong:
+// slot = sum of weight * source. Restrict: every source += weight * slot. Sources are DOFs, copies or extra values,
+// never hanging slots, so a slot is not read while another thread adds into it.
+template<typename T>
+__global__ void dofHangingKernel(const int* slot, const int* offset, const int* source, const T* weight,
+                                 size_t numHanging, DofFields<T> f, T* extra, size_t numSlots, bool restrict)
+{
+    size_t h = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (h >= numHanging) return;
+    for (int c = 0; c < f.count; ++c)
+    {
+        if (restrict)
+        {
+            const T v = f.f[c][slot[h]];
+            for (int l = offset[h]; l < offset[h + 1]; ++l)
+                atomicAdd(&dofValue(f, extra, numSlots, source[l], c), weight[l] * v);
+        }
+        else
+        {
+            T v = 0;
+            for (int l = offset[h]; l < offset[h + 1]; ++l)
+                v += weight[l] * dofValue(f, extra, numSlots, source[l], c);
+            f.f[c][slot[h]] = v;
+        }
+    }
+}
+
+// A hanging slot is neither a DOF nor a copy.
+__global__ void dofHangingSlotsKernel(const int* slot, size_t numHanging, uint8_t* isDof, int* rank)
+{
+    size_t h = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (h >= numHanging) return;
+    isDof[slot[h]] = 0;
+    rank[slot[h]]  = -1;
+}
+
+// The source of each hanging link: the DOF slot when this rank owns the DOF, a copy of it that the exchanges keep
+// current, or -1: an extra value to request from the owner.
+template<typename KeyType>
+__global__ void dofLinkSourceKernel(const KeyType* linkKey, const int* linkOwner, size_t numLinks, int rank,
+                                    const KeyType* keys, const uint8_t* isDof, const int* slotRank, size_t n,
+                                    int* source)
+{
+    size_t l = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (l >= numLinks) return;
+    const KeyType* pos = thrust::lower_bound(thrust::seq, keys, keys + n, linkKey[l]);
+    const size_t j     = pos - keys;
+    const bool held    = j < n && keys[j] == linkKey[l];
+    if (linkOwner[l] == rank) source[l] = (held && isDof[j]) ? int(j) : -2; // -2: the DOF is missing
+    else source[l] = (held && slotRank[j] == linkOwner[l]) ? int(j) : -1;
+}
+
+// Links that need an extra value point past the slots, at the extra entry of their key.
+template<typename KeyType>
+__global__ void dofLinkExtraKernel(const KeyType* linkKey, size_t numLinks, const KeyType* extraKeys,
+                                   size_t numExtra, size_t n, int* source)
+{
+    size_t l = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (l >= numLinks || source[l] != -1) return;
+    const KeyType* pos = thrust::lower_bound(thrust::seq, extraKeys, extraKeys + numExtra, linkKey[l]);
+    source[l]          = int(n + size_t(pos - extraKeys));
+}
+
+// Compacts the fixed-width links of HangingNodes into rows: keys and weights of hanging slot h from offset[h] on.
+template<typename KeyType, typename T>
+__global__ void dofCompactLinksKernel(const int* numLinks, const KeyType* keys, const T* weights, const int* offset,
+                                      size_t numHanging, int stride, KeyType* outKey, T* outWeight)
+{
+    size_t h = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (h >= numHanging) return;
+    for (int l = 0; l < numLinks[h]; ++l)
+    {
+        outKey[offset[h] + l]    = keys[size_t(stride) * h + l];
+        outWeight[offset[h] + l] = weights[size_t(stride) * h + l];
     }
 }
 
@@ -171,6 +264,24 @@ struct DofNonNegative
     HOST_DEVICE_FUN bool operator()(int v) const { return v >= 0; }
 };
 
+struct DofNeedsExtra
+{
+    HOST_DEVICE_FUN bool operator()(int source) const { return source == -1; }
+};
+
+// The global id of each received DOF that lands in an extra value
+struct DofExtraGid
+{
+    const int* recvCopy;
+    const long long* received;
+    size_t numSlots;
+    long long* extraGid;
+    HOST_DEVICE_FUN void operator()(size_t i) const
+    {
+        if (size_t(recvCopy[i]) >= numSlots) extraGid[size_t(recvCopy[i]) - numSlots] = received[i];
+    }
+};
+
 // Length of the CSR row of each listed slot.
 template<typename IndexType>
 __global__ void dofRowLengthKernel(const IndexType* slots, size_t count, const IndexType* rowPtr, IndexType* length)
@@ -180,11 +291,12 @@ __global__ void dofRowLengthKernel(const IndexType* slots, size_t count, const I
 }
 
 // The entries of each listed slot row from offset[k] on: the global id of the column slot's DOF
-// and the value; with outRow, also the row the entries go to (target[k]).
+// (colGid[j] instead when the columns are global ids already) and the value; with outRow, also the
+// row the entries go to (target[k]).
 template<typename T>
 __global__ void dofRowEntriesKernel(const int* slots, const int* target, const long long* offset, size_t count,
                                     const int* rowPtr, const int* cols, const T* values, const long long* slotGid,
-                                    int* outRow, long long* outCol, T* outVal)
+                                    const long long* colGid, int* outRow, long long* outCol, T* outVal)
 {
     size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= count) return;
@@ -193,10 +305,89 @@ __global__ void dofRowEntriesKernel(const int* slots, const int* target, const l
     for (int j = rowPtr[s]; j < rowPtr[s + 1]; ++j, ++o)
     {
         if (outRow) outRow[o] = target[k];
-        outCol[o] = slotGid[cols[j]];
+        outCol[o] = colGid ? colGid[j] : slotGid[cols[j]];
         outVal[o] = values[j];
     }
 }
+
+// P^T A P with hanging nodes, first step, per slot row r of A: a hanging row goes to the sources of its links
+// (DOF slots, copies or extra rows past the slots), a hanging column to the global ids of its links' DOFs, scaled
+// by both weights; other rows and columns stay. hangIndex == nullptr: no hanging slot on this rank. Entries whose
+// row or column DOF is removed (removedSlot/removedExtra non-zero, both nullptr for none) are dropped.
+// Count pass (outRow == nullptr): count[r]; fill pass from offset[r].
+template<typename T>
+__global__ void dofExpandKernel(const int* rowPtr, const int* cols, const T* values, size_t n, const int* hangIndex,
+                                const int* linkOffset, const int* linkSource, const T* linkWeight,
+                                const long long* slotGid, const long long* extraGid, const T* removedSlot,
+                                const T* removedExtra, const long long* offset, long long* count, int* outRow,
+                                long long* outCol, T* outVal)
+{
+    size_t r = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (r >= n) return;
+    auto removed = [&](int s) {
+        if (!removedSlot) return false;
+        return (size_t(s) < n ? removedSlot[s] : removedExtra[size_t(s) - n]) != T(0);
+    };
+    const int hr     = hangIndex ? hangIndex[r] : -1;
+    const int rFirst = hr < 0 ? 0 : linkOffset[hr];
+    const int rLast  = hr < 0 ? 1 : linkOffset[hr + 1];
+    long long o      = outRow ? offset[r] : 0;
+    for (int a = rFirst; a < rLast; ++a)
+    {
+        const int row = hr < 0 ? int(r) : linkSource[a];
+        const T wr    = hr < 0 ? T(1) : linkWeight[a];
+        if (removed(row)) continue;
+        for (int j = rowPtr[r]; j < rowPtr[r + 1]; ++j)
+        {
+            const int c  = cols[j];
+            const int hc = hangIndex ? hangIndex[c] : -1;
+            const int b0 = hc < 0 ? 0 : linkOffset[hc];
+            const int b1 = hc < 0 ? 1 : linkOffset[hc + 1];
+            for (int b = b0; b < b1; ++b)
+            {
+                const int s = hc < 0 ? c : linkSource[b];
+                if (removed(s)) continue;
+                if (outRow)
+                {
+                    outRow[o] = row;
+                    outCol[o] = size_t(s) < n ? slotGid[s] : extraGid[size_t(s) - n];
+                    outVal[o] = hc < 0 ? wr * values[j] : wr * linkWeight[b] * values[j];
+                }
+                ++o;
+            }
+        }
+    }
+    if (!outRow) count[r] = o;
+}
+
+// The identity row of every removed DOF slot
+template<typename T>
+__global__ void dofIdentityRowsKernel(const int* slots, size_t count, const int* dofRow, const long long* slotGid,
+                                      int* outRow, long long* outCol, T* outVal)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= count) return;
+    outRow[k] = dofRow[slots[k]];
+    outCol[k] = slotGid[slots[k]];
+    outVal[k] = T(1);
+}
+
+// The flag at a DOF slot, 0 at every other slot
+template<typename T>
+struct DofFlagAtDof
+{
+    const T* flag;
+    const uint8_t* isDof;
+    HOST_DEVICE_FUN T operator()(size_t i) const { return isDof[i] ? flag[i] : T(0); }
+};
+
+template<typename T>
+struct DofIsRemoved
+{
+    const T* removed;
+    const uint8_t* isDof;
+    HOST_DEVICE_FUN bool operator()(int i) const { return isDof[i] && removed[i] != T(0); }
+};
 
 // The row of each received entry: those of request k belong to DOF slot dofSlot[k].
 template<typename IndexType>
@@ -214,36 +405,48 @@ template<typename KeyType, typename RealType, typename DomainT>
 class DofSpace
 {
 public:
-    using Vector = cstone::DeviceVector<RealType>;
-    using Map    = PeriodicMap<KeyType, RealType>;
-    using Fields = DofFields<RealType>;
+    using Vector  = cstone::DeviceVector<RealType>;
+    using Map     = PeriodicMap<KeyType, RealType>;
+    using Fields  = DofFields<RealType>;
+    using Hanging = HangingNodes<KeyType, RealType>;
 
     // periodic == nullptr: no periodic box. On several ranks the domain must use SFC node ownership.
     DofSpace(const DomainT& domain, const Map* periodic, int blockSize = 256)
+        : DofSpace(domain, periodic, nullptr, blockSize)
+    {
+    }
+
+    // hanging: the hanging nodes of a non-conforming mesh, built on the same domain; nullptr for none. Not
+    // together with a periodic box yet.
+    DofSpace(const DomainT& domain, const Map* periodic, const Hanging* hanging, int blockSize = 256)
         : n_(domain.getNodeCount())
         , blockSize_(blockSize)
         , isDof_(n_)
         , synced_(n_)
     {
         MPI_Comm_dup(MPI_COMM_WORLD, &comm_);
-        build(domain, periodic);
+        build(domain, periodic, hanging);
     }
     DofSpace(const DofSpace&)            = delete;
     DofSpace& operator=(const DofSpace&) = delete;
     ~DofSpace() { MPI_Comm_free(&comm_); }
 
-    // P: every copy takes the value of its DOF. The fields share one exchange.
+    // P: every copy takes the value of its DOF, every hanging slot the weighted sum of its DOFs. The fields
+    // share one exchange.
     void prolong(Vector* const* fields, int count) const
     {
         Fields f = pointers(fields, count);
         local(f, false);
         exchange(f, false);
+        hanging(f, false);
     }
 
-    // P^T: every copy adds into its DOF. Must be applied to a scatter over this rank's own elements.
+    // P^T: every copy adds into its DOF, every hanging slot into its DOFs with their weights. Must be applied
+    // to a scatter over this rank's own elements.
     void restrict(Vector* const* fields, int count) const
     {
         Fields f = pointers(fields, count);
+        hanging(f, true);
         exchange(f, true);
         local(f, true);
     }
@@ -261,14 +464,173 @@ public:
 
     // P^T A P for a matrix A over this rank's slots: the row of every copy is added into the
     // row of its DOF, on whatever rank owns it, in one exchange (row lengths, then entries),
-    // the reverse direction of prolong. rowPtr/cols/values: A as a CSR over the local slots.
-    // slotGid: the global id of each slot's DOF. dofRow: the local row of each DOF slot, -1
-    // elsewhere. Out: the entries of this rank's DOF rows (local row, global column, value),
-    // unsorted and with duplicates.
+    // the reverse direction of prolong. A hanging row is added into the rows of its DOFs and a
+    // hanging column into their columns, with the weights. rowPtr/cols/values: A as a CSR over
+    // the local slots. slotGid: the global id of each slot's DOF (any value on hanging slots).
+    // dofRow: the local row of each DOF slot, -1 elsewhere. removed (read at DOF slots, nullptr
+    // for none; on all ranks or none): DOFs whose rows and columns leave the system, each with
+    // an identity row instead, as for Dirichlet values eliminated symmetrically. Out: the entries
+    // of this rank's DOF rows (local row, global column, value), unsorted and with duplicates.
     template<typename T>
     void restrictMatrix(const int* rowPtr, const int* cols, const T* values, const long long* slotGid,
                         const int* dofRow, thrust::device_vector<int>& outRow, thrust::device_vector<long long>& outCol,
-                        thrust::device_vector<T>& outVal) const
+                        thrust::device_vector<T>& outVal, const T* removed = nullptr) const
+    {
+        if (!anyHanging_ && !removed)
+        {
+            restrictRows(rowPtr, cols, values, slotGid, nullptr, dofRow, outRow, outCol, outVal);
+            return;
+        }
+        static_assert(std::is_same_v<T, RealType>, "hanging-node weights and removed flags are RealType");
+        // The DOF global ids of the extra values, from their owners.
+        thrust::device_vector<long long> extraGid;
+        exchangeExtraGid(slotGid, extraGid);
+
+        // The removed flags of the DOFs at their copies and extra values: one prolong.
+        Vector removedSlot, removedExtra;
+        if (removed)
+        {
+            removedSlot.resize(n_);
+            thrust::transform(thrust::device, thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(n_), removedSlot.data(),
+                              DofFlagAtDof<T>{removed, isDof_.data()});
+            prolong(removedSlot);
+            removedExtra.resize(numExtra_);
+            if (numExtra_ > 0)
+                thrust::copy(thrust::device, extraBuf_.data(), extraBuf_.data() + numExtra_, removedExtra.data());
+        }
+        const T* removedS = removed ? removedSlot.data() : nullptr;
+        const T* removedE = removed ? removedExtra.data() : nullptr;
+
+        // Every entry to (row, DOF global id, value) with the hanging rows and columns expanded and the removed
+        // ones dropped, then sorted into rows over the slots and the extra values.
+        const int* hangIndex = anyHanging_ ? hangIndex_.data() : nullptr;
+        thrust::device_vector<long long> count(n_ + 1, 0), at(n_ + 1, 0);
+        if (n_ > 0)
+            dofExpandKernel<T><<<grid(), blockSize_>>>(
+                rowPtr, cols, values, n_, hangIndex, hangOffset_.data(), hangSource_.data(), hangWeight_.data(),
+                slotGid, thrust::raw_pointer_cast(extraGid.data()), removedS, removedE, nullptr,
+                thrust::raw_pointer_cast(count.data()), nullptr, nullptr, nullptr);
+        cudaCheckError();
+        thrust::exclusive_scan(thrust::device, count.begin(), count.end(), at.begin(), 0LL);
+        const long long total = at.back();
+        if (total > (long long)INT_MAX)
+        {
+            std::fprintf(stderr, "DofSpace: %lld matrix entries on one rank exceed the int row pointers\n", total);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        thrust::device_vector<int> row(total);
+        thrust::device_vector<long long> col(total);
+        thrust::device_vector<T> val(total);
+        if (n_ > 0)
+            dofExpandKernel<T><<<grid(), blockSize_>>>(
+                rowPtr, cols, values, n_, hangIndex, hangOffset_.data(), hangSource_.data(), hangWeight_.data(),
+                slotGid, thrust::raw_pointer_cast(extraGid.data()), removedS, removedE,
+                thrust::raw_pointer_cast(at.data()), nullptr, thrust::raw_pointer_cast(row.data()),
+                thrust::raw_pointer_cast(col.data()), thrust::raw_pointer_cast(val.data()));
+        cudaCheckError();
+        thrust::stable_sort_by_key(thrust::device, row.begin(), row.end(),
+                                   thrust::make_zip_iterator(thrust::make_tuple(col.begin(), val.begin())));
+        thrust::device_vector<int> rowPtrX(n_ + numExtra_ + 1);
+        thrust::lower_bound(thrust::device, row.begin(), row.end(), thrust::counting_iterator<int>(0),
+                            thrust::counting_iterator<int>(int(n_ + numExtra_ + 1)), rowPtrX.begin());
+        restrictRows(thrust::raw_pointer_cast(rowPtrX.data()), nullptr, thrust::raw_pointer_cast(val.data()),
+                     nullptr, thrust::raw_pointer_cast(col.data()), dofRow, outRow, outCol, outVal);
+        if (!removed) return;
+
+        thrust::device_vector<int> removedDofs(n_);
+        const size_t numRemoved =
+            thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(n_)),
+                            removedDofs.begin(), DofIsRemoved<T>{removed, isDof_.data()}) -
+            removedDofs.begin();
+        const size_t at0 = outRow.size();
+        outRow.resize(at0 + numRemoved);
+        outCol.resize(at0 + numRemoved);
+        outVal.resize(at0 + numRemoved);
+        if (numRemoved > 0)
+            dofIdentityRowsKernel<T><<<int((numRemoved + 255) / 256), 256>>>(
+                thrust::raw_pointer_cast(removedDofs.data()), numRemoved, dofRow, slotGid,
+                thrust::raw_pointer_cast(outRow.data()) + at0, thrust::raw_pointer_cast(outCol.data()) + at0,
+                thrust::raw_pointer_cast(outVal.data()) + at0);
+        cudaCheckError();
+    }
+
+    // The exchanges of prolong and restrict on this rank since the last reset: how many,
+    // their time from pack to the end of the MPI wait, and the MPI part of it. With
+    // MARS_EXCHANGE_PROFILE set, a barrier before the MPI part splits it: waitMs is the wait for the
+    // last rank to arrive (skew from the work before), mpiMs the transfer after it.
+    struct ExchangeStats
+    {
+        long count    = 0;
+        double ms     = 0;
+        double mpiMs  = 0;
+        double waitMs = 0;
+    };
+    const ExchangeStats& exchangeStats() const { return stats_; }
+    void resetExchangeStats() { stats_ = {}; }
+    bool profiling() const { return profile_; }
+
+    // This rank's peers and the values it sends per field in a forward exchange, split by whether
+    // the peer runs on the same node. Collective.
+    struct ExchangeShape
+    {
+        int peers = 0, peersOnNode = 0;
+        long long sendValues = 0, sendValuesOffNode = 0;
+    };
+    ExchangeShape exchangeShape() const
+    {
+        int rank = 0, size = 1;
+        MPI_Comm_rank(comm_, &rank);
+        MPI_Comm_size(comm_, &size);
+        MPI_Comm node;
+        MPI_Comm_split_type(comm_, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node);
+        int leader = rank;
+        MPI_Allreduce(MPI_IN_PLACE, &leader, 1, MPI_INT, MPI_MIN, node);
+        MPI_Comm_free(&node);
+        std::vector<int> nodeOf(size);
+        MPI_Allgather(&leader, 1, MPI_INT, nodeOf.data(), 1, MPI_INT, comm_);
+        ExchangeShape s;
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            const long long sent = sendOffsets_[p + 1] - sendOffsets_[p];
+            const bool onNode    = nodeOf[peers_[p]] == nodeOf[rank];
+            s.peers += 1;
+            s.peersOnNode += onNode ? 1 : 0;
+            s.sendValues += sent;
+            if (!onNode) s.sendValuesOffNode += sent;
+        }
+        return s;
+    }
+
+    // reps exchanges of these fields back to back, each after a barrier, so no skew from earlier work
+    // is in them: the cost of the exchange pattern alone. Per exchange, this rank's time in ms from
+    // the barrier to the end of the unpack. Collective; the exchange statistics are left unchanged.
+    std::vector<double> benchmark(Vector* const* fields, int count, int reps, bool reverse) const
+    {
+        const ExchangeStats saved = stats_;
+        Fields f                  = pointers(fields, count);
+        std::vector<double> t(reps);
+        for (int r = 0; r < reps; ++r)
+        {
+            MPI_Barrier(comm_);
+            const double start = MPI_Wtime();
+            exchange(f, reverse);
+            cudaDeviceSynchronize();
+            t[r] = 1e3 * (MPI_Wtime() - start);
+        }
+        stats_ = saved;
+        return t;
+    }
+
+private:
+    int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
+
+    // The rows of A (rowPtr over the slots, then the extra values) to the rows of their DOFs. Columns: slot ids
+    // mapped by slotGid, or global ids already (colGid; cols unused).
+    template<typename T>
+    void restrictRows(const int* rowPtr, const int* cols, const T* values, const long long* slotGid,
+                      const long long* colGid, const int* dofRow, thrust::device_vector<int>& outRow,
+                      thrust::device_vector<long long>& outCol, thrust::device_vector<T>& outVal) const
     {
         // Rows that stay: the DOF slots, then the copies of DOFs on this rank.
         const size_t numLocal = localCopy_.size();
@@ -347,13 +709,13 @@ public:
         if (numStay > 0)
             dofRowEntriesKernel<T><<<int((numStay + 255) / 256), 256>>>(
                 thrust::raw_pointer_cast(stay.data()), thrust::raw_pointer_cast(target.data()),
-                thrust::raw_pointer_cast(stayOffset.data()), numStay, rowPtr, cols, values, slotGid,
+                thrust::raw_pointer_cast(stayOffset.data()), numStay, rowPtr, cols, values, slotGid, colGid,
                 thrust::raw_pointer_cast(outRow.data()), thrust::raw_pointer_cast(outCol.data()),
                 thrust::raw_pointer_cast(outVal.data()));
         if (numSend > 0)
             dofRowEntriesKernel<T><<<int((numSend + 255) / 256), 256>>>(
                 recvCopy_.data(), nullptr, thrust::raw_pointer_cast(sendOffset.data()), numSend, rowPtr, cols, values,
-                slotGid, nullptr, thrust::raw_pointer_cast(sendCol.data()), thrust::raw_pointer_cast(sendVal.data()));
+                slotGid, colGid, nullptr, thrust::raw_pointer_cast(sendCol.data()), thrust::raw_pointer_cast(sendVal.data()));
         cudaCheckError();
         cudaDeviceSynchronize();
 
@@ -396,75 +758,6 @@ public:
         cudaCheckError();
     }
 
-    // The exchanges of prolong and restrict on this rank since the last reset: how many,
-    // their time from pack to the end of the MPI wait, and the MPI part of it. With
-    // MARS_EXCHANGE_PROFILE set, a barrier before the MPI part splits it: waitMs is the wait for the
-    // last rank to arrive (skew from the work before), mpiMs the transfer after it.
-    struct ExchangeStats
-    {
-        long count    = 0;
-        double ms     = 0;
-        double mpiMs  = 0;
-        double waitMs = 0;
-    };
-    const ExchangeStats& exchangeStats() const { return stats_; }
-    void resetExchangeStats() { stats_ = {}; }
-    bool profiling() const { return profile_; }
-
-    // This rank's peers and the values it sends per field in a forward exchange, split by whether
-    // the peer runs on the same node. Collective.
-    struct ExchangeShape
-    {
-        int peers = 0, peersOnNode = 0;
-        long long sendValues = 0, sendValuesOffNode = 0;
-    };
-    ExchangeShape exchangeShape() const
-    {
-        int rank = 0, size = 1;
-        MPI_Comm_rank(comm_, &rank);
-        MPI_Comm_size(comm_, &size);
-        MPI_Comm node;
-        MPI_Comm_split_type(comm_, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node);
-        int leader = rank;
-        MPI_Allreduce(MPI_IN_PLACE, &leader, 1, MPI_INT, MPI_MIN, node);
-        MPI_Comm_free(&node);
-        std::vector<int> nodeOf(size);
-        MPI_Allgather(&leader, 1, MPI_INT, nodeOf.data(), 1, MPI_INT, comm_);
-        ExchangeShape s;
-        for (size_t p = 0; p < peers_.size(); ++p)
-        {
-            const long long sent = sendOffsets_[p + 1] - sendOffsets_[p];
-            const bool onNode    = nodeOf[peers_[p]] == nodeOf[rank];
-            s.peers += 1;
-            s.peersOnNode += onNode ? 1 : 0;
-            s.sendValues += sent;
-            if (!onNode) s.sendValuesOffNode += sent;
-        }
-        return s;
-    }
-
-    // reps exchanges of these fields back to back, each after a barrier, so no skew from earlier work
-    // is in them: the cost of the exchange pattern alone. Per exchange, this rank's time in ms from
-    // the barrier to the end of the unpack. Collective; the exchange statistics are left unchanged.
-    std::vector<double> benchmark(Vector* const* fields, int count, int reps, bool reverse) const
-    {
-        const ExchangeStats saved = stats_;
-        Fields f                  = pointers(fields, count);
-        std::vector<double> t(reps);
-        for (int r = 0; r < reps; ++r)
-        {
-            MPI_Barrier(comm_);
-            const double start = MPI_Wtime();
-            exchange(f, reverse);
-            cudaDeviceSynchronize();
-            t[r] = 1e3 * (MPI_Wtime() - start);
-        }
-        stats_ = saved;
-        return t;
-    }
-
-private:
-    int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
 
     static Fields pointers(Vector* const* fields, int count)
     {
@@ -482,7 +775,7 @@ private:
 
     // Classifies the slots, then asks the owner of every remote DOF key which slot holds it
     // (one sparse exchange): peers_, the DOF slots sent to each peer and the copies received.
-    void build(const DomainT& domain, const Map* periodic)
+    void build(const DomainT& domain, const Map* periodic, const Hanging* hanging)
     {
         const int numRanks  = domain.numRanks();
         const int rank      = domain.rank();
@@ -514,6 +807,16 @@ private:
             minZ = z0;
         }
 
+        const bool full = nodeHaloExchangeFull();
+        anyHanging_     = hanging && hanging->globalCount() > 0;
+        if (anyHanging_ && (periodic || full || hanging->slotCount() != n_))
+        {
+            if (rank == 0)
+                std::fprintf(stderr, "DofSpace: hanging nodes need their own domain, no periodic box and the one-layer "
+                                     "node exchange (unset MARS_HALO_EXCHANGE)\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
         cstone::DeviceVector<KeyType> dofKey(n_);
         thrust::device_vector<int> owner(n_);
         int* ownerPtr = thrust::raw_pointer_cast(owner.data());
@@ -528,11 +831,14 @@ private:
                 dofOwnerKernel<<<grid(), blockSize_>>>(dofKey.data(), isDof_.data(), n_, SingleRankOwner<KeyType>{},
                                                        ownerPtr);
         }
+        const size_t numHanging = anyHanging_ ? hanging->size() : 0;
+        if (numHanging > 0)
+            dofHangingSlotsKernel<<<int((numHanging + 255) / 256), 256>>>(hanging->slots(), numHanging,
+                                                                         isDof_.data(), ownerPtr);
         // Only the copies this rank's own elements touch: the solver loops over own elements, so a node that
         // only halo elements hold is never read or added into. cornerstone's halo is made of whole octree
         // leaves, several element layers deep, and exchanging all of it would multiply the halo volume.
         // MARS_HALO_EXCHANGE=full keeps every copy.
-        const bool full = nodeHaloExchangeFull();
         thrust::device_vector<uint8_t> used(n_, full ? 1 : 0);
         uint8_t* usedPtr   = thrust::raw_pointer_cast(used.data());
         const size_t first = domain.startIndex(), count = domain.localElementCount();
@@ -549,16 +855,31 @@ private:
         long long dofs = mars::count(isDof_.data(), isDof_.data() + n_, uint8_t(1));
         MPI_Allreduce(&dofs, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
-        // The copies grouped by the rank of their DOF; within a rank, slot ids ascend.
-        size_t numCopies = mars::countIf(owner.begin(), owner.end(), DofIsCopy{});
+        // The DOF of each hanging link: a DOF slot here, a copy the exchanges keep current, or an extra value.
+        thrust::device_vector<KeyType> extraKeys;
+        thrust::device_vector<int> extraOwner;
+        if (anyHanging_) resolveLinks(domain, *hanging, keys, ownerPtr, extraKeys, extraOwner);
+        numExtra_ = extraKeys.size();
+
+        // The copies grouped by the rank of their DOF; within a rank, slot ids ascend, the extra values after.
+        const size_t numSlotCopies = mars::countIf(owner.begin(), owner.end(), DofIsCopy{});
+        const size_t numCopies     = numSlotCopies + numExtra_;
         thrust::device_vector<int> copySlot(numCopies), copyOwner(numCopies);
         thrust::device_vector<KeyType> copyKey(numCopies);
         thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(n_)),
                         owner.begin(), copySlot.begin(), DofIsCopy{});
-        thrust::gather(thrust::device, copySlot.begin(), copySlot.end(), owner.begin(), copyOwner.begin());
-        thrust::stable_sort_by_key(thrust::device, copyOwner.begin(), copyOwner.end(), copySlot.begin());
-        thrust::gather(thrust::device, copySlot.begin(), copySlot.end(), thrust::device_pointer_cast(dofKey.data()),
-                       copyKey.begin());
+        thrust::gather(thrust::device, copySlot.begin(), copySlot.begin() + numSlotCopies, owner.begin(),
+                       copyOwner.begin());
+        thrust::gather(thrust::device, copySlot.begin(), copySlot.begin() + numSlotCopies,
+                       thrust::device_pointer_cast(dofKey.data()), copyKey.begin());
+        if (numExtra_ > 0)
+        {
+            thrust::sequence(thrust::device, copySlot.begin() + numSlotCopies, copySlot.end(), int(n_));
+            thrust::copy(extraOwner.begin(), extraOwner.end(), copyOwner.begin() + numSlotCopies);
+            thrust::copy(extraKeys.begin(), extraKeys.end(), copyKey.begin() + numSlotCopies);
+        }
+        thrust::stable_sort_by_key(thrust::device, copyOwner.begin(), copyOwner.end(),
+                                   thrust::make_zip_iterator(thrust::make_tuple(copySlot.begin(), copyKey.begin())));
 
         thrust::device_vector<int> d_owners(numCopies), d_counts(numCopies);
         auto ends        = thrust::reduce_by_key(thrust::device, copyOwner.begin(), copyOwner.end(),
@@ -698,7 +1019,7 @@ private:
         double start = MPI_Wtime();
         if (packTotal > 0)
             dofPackKernel<RealType><<<int((packTotal + 255) / 256), 256>>>(packIds.data(), packTotal, f,
-                                                                           sendBuf_.data());
+                                                                           extraBuf_.data(), n_, sendBuf_.data());
         cudaDeviceSynchronize();
         double packed = MPI_Wtime();
         if (profile_) MPI_Barrier(comm_);
@@ -732,8 +1053,140 @@ private:
         stats_.mpiMs += 1e3 * (done - synced);
 
         if (unpackTotal > 0)
-            dofUnpackKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(unpackIds.data(), unpackTotal, f,
-                                                                               recvBuf_.data(), reverse);
+            dofUnpackKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(
+                unpackIds.data(), unpackTotal, f, extraBuf_.data(), n_, recvBuf_.data(), reverse);
+        cudaCheckError();
+    }
+
+    // Prolong: every hanging slot from its DOFs, after the exchange. Restrict: every hanging slot into its DOFs,
+    // before it; the extra values start from zero.
+    void hanging(Fields f, bool restrict) const
+    {
+        const size_t h = hangSlot_.size();
+        if (h == 0 || f.count == 0) return;
+        if (restrict && numExtra_ > 0)
+            cudaCheckCall(cudaMemsetAsync(extraBuf_.data(), 0, numExtra_ * f.count * sizeof(RealType)));
+        dofHangingKernel<RealType><<<int((h + 255) / 256), 256>>>(hangSlot_.data(), hangOffset_.data(),
+                                                                  hangSource_.data(), hangWeight_.data(), h, f,
+                                                                  extraBuf_.data(), n_, restrict);
+        cudaCheckError();
+    }
+
+    // The source of every link of the hanging slots, and the DOF keys and owners of the extra values.
+    void resolveLinks(const DomainT& domain, const Hanging& nodes, const KeyType* keys, const int* slotRank,
+                      thrust::device_vector<KeyType>& extraKeys, thrust::device_vector<int>& extraOwner)
+    {
+        const int rank       = domain.rank();
+        const size_t numHang = nodes.size();
+        hangIndex_.resize(n_);
+        thrust::fill(thrust::device, hangIndex_.data(), hangIndex_.data() + n_, -1);
+        hangSlot_.resize(numHang);
+        hangOffset_.resize(numHang + 1);
+        thrust::fill(thrust::device, hangOffset_.data(), hangOffset_.data() + numHang + 1, 0);
+        if (numHang > 0)
+        {
+            thrust::copy(thrust::device, nodes.slots(), nodes.slots() + numHang, hangSlot_.data());
+            thrust::scatter(thrust::device, thrust::counting_iterator<int>(0),
+                            thrust::counting_iterator<int>(int(numHang)), hangSlot_.data(), hangIndex_.data());
+            thrust::inclusive_scan(thrust::device, nodes.numLinks(), nodes.numLinks() + numHang,
+                                   hangOffset_.data() + 1);
+            // A hanging slot is kept current by prolong.
+            thrust::fill(thrust::device, thrust::make_permutation_iterator(synced_.data(), hangSlot_.data()),
+                         thrust::make_permutation_iterator(synced_.data(), hangSlot_.data() + numHang), uint8_t(1));
+        }
+        int numLinks = 0;
+        cudaCheckCall(cudaMemcpy(&numLinks, hangOffset_.data() + numHang, sizeof(int), cudaMemcpyDeviceToHost));
+        thrust::device_vector<KeyType> linkKey(numLinks);
+        thrust::device_vector<int> linkOwner(numLinks);
+        hangSource_.resize(numLinks);
+        hangWeight_.resize(numLinks);
+        if (numHang > 0)
+            dofCompactLinksKernel<KeyType, RealType><<<int((numHang + 255) / 256), 256>>>(
+                nodes.numLinks(), nodes.linkKeys(), nodes.linkWeights(), hangOffset_.data(), numHang,
+                MaxHangingLinks, thrust::raw_pointer_cast(linkKey.data()), hangWeight_.data());
+        if (numLinks > 0)
+        {
+            const int g = (numLinks + 255) / 256;
+            if (domain.numRanks() > 1)
+                hangingOwnerKernel<<<g, 256>>>(thrust::raw_pointer_cast(linkKey.data()), 1, size_t(numLinks),
+                                               domain.sfcNodeOwner(), thrust::raw_pointer_cast(linkOwner.data()));
+            else
+                thrust::fill(linkOwner.begin(), linkOwner.end(), 0);
+            dofLinkSourceKernel<KeyType><<<g, 256>>>(thrust::raw_pointer_cast(linkKey.data()),
+                                                     thrust::raw_pointer_cast(linkOwner.data()), size_t(numLinks), rank,
+                                                     keys, isDof_.data(), slotRank, n_, hangSource_.data());
+        }
+        cudaCheckError();
+
+        long long missing = mars::count(hangSource_.data(), hangSource_.data() + numLinks, -2);
+        MPI_Allreduce(MPI_IN_PLACE, &missing, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (missing > 0)
+        {
+            if (rank == 0)
+                std::fprintf(stderr, "DofSpace: %lld hanging-node links name a node that is not a DOF on its owner\n",
+                             missing);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        // Links to DOFs no slot here keeps current: one extra value per DOF key.
+        extraKeys.resize(numLinks);
+        const size_t numWanted =
+            thrust::copy_if(thrust::device, linkKey.begin(), linkKey.end(), hangSource_.data(), extraKeys.begin(),
+                            DofNeedsExtra{}) -
+            extraKeys.begin();
+        extraKeys.resize(numWanted);
+        thrust::sort(thrust::device, extraKeys.begin(), extraKeys.end());
+        extraKeys.resize(thrust::unique(thrust::device, extraKeys.begin(), extraKeys.end()) - extraKeys.begin());
+        extraOwner.resize(extraKeys.size());
+        if (!extraKeys.empty())
+        {
+            const int g = int((extraKeys.size() + 255) / 256);
+            hangingOwnerKernel<<<g, 256>>>(thrust::raw_pointer_cast(extraKeys.data()), 1, extraKeys.size(),
+                                           domain.sfcNodeOwner(), thrust::raw_pointer_cast(extraOwner.data()));
+        }
+        if (numLinks > 0)
+            dofLinkExtraKernel<KeyType><<<(numLinks + 255) / 256, 256>>>(
+                thrust::raw_pointer_cast(linkKey.data()), size_t(numLinks), thrust::raw_pointer_cast(extraKeys.data()),
+                extraKeys.size(), n_, hangSource_.data());
+        cudaCheckError();
+        extraBuf_.resize(extraKeys.size() * Fields::Max);
+    }
+
+    // The DOF global ids of the extra values: slotGid of their DOF slots, sent by the owners over the peers of
+    // the forward exchange.
+    void exchangeExtraGid(const long long* slotGid, thrust::device_vector<long long>& extraGid) const
+    {
+        extraGid.assign(numExtra_, -1LL);
+        const size_t numSend = sendDof_.size(), numRecv = recvCopy_.size();
+        thrust::device_vector<long long> sendBuf(numSend), recvBuf(numRecv);
+        if (numSend > 0)
+            thrust::gather(thrust::device, sendDof_.data(), sendDof_.data() + numSend,
+                           thrust::device_pointer_cast(slotGid), sendBuf.begin());
+        cudaCheckCall(cudaDeviceSynchronize());
+        std::vector<MPI_Request> requests;
+        requests.reserve(2 * peers_.size());
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            int count = recvOffsets_[p + 1] - recvOffsets_[p];
+            if (count == 0) continue;
+            requests.emplace_back();
+            MPI_Irecv(thrust::raw_pointer_cast(recvBuf.data()) + recvOffsets_[p], count, MPI_LONG_LONG, peers_[p],
+                      0x4e63, comm_, &requests.back());
+        }
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            int count = sendOffsets_[p + 1] - sendOffsets_[p];
+            if (count == 0) continue;
+            requests.emplace_back();
+            MPI_Isend(thrust::raw_pointer_cast(sendBuf.data()) + sendOffsets_[p], count, MPI_LONG_LONG, peers_[p],
+                      0x4e63, comm_, &requests.back());
+        }
+        MPI_Waitall(int(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+        if (numRecv > 0)
+            thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                             thrust::counting_iterator<size_t>(numRecv),
+                             DofExtraGid{recvCopy_.data(), thrust::raw_pointer_cast(recvBuf.data()), n_,
+                                         thrust::raw_pointer_cast(extraGid.data())});
         cudaCheckError();
     }
 
@@ -747,6 +1200,14 @@ private:
     std::vector<int> peers_, sendOffsets_, recvOffsets_;
     cstone::DeviceVector<int> sendDof_, recvCopy_;   // per peer: DOF slots sent, copies received
     mutable Vector sendBuf_, recvBuf_;
+    // Hanging nodes: anyHanging_ on every rank when some rank has one. hangIndex_: per slot, its row in
+    // hangSlot_ or -1; links hangOffset_[h] to hangOffset_[h + 1] of hanging slot h: source (a slot, or n_ +
+    // the extra value) and weight. The extra values sit next to the slots in the exchanges, one per field.
+    bool anyHanging_ = false;
+    size_t numExtra_ = 0;
+    cstone::DeviceVector<int> hangIndex_, hangSlot_, hangOffset_, hangSource_;
+    Vector hangWeight_;
+    mutable Vector extraBuf_;
     mutable ExchangeStats stats_;
     bool profile_ = std::getenv("MARS_EXCHANGE_PROFILE") != nullptr;
 };

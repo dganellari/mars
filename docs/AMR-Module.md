@@ -2,251 +2,185 @@
 
 *Step 10b of the step-by-step tutorial (see the [index](index.md)). Previous: [step 10a](Matrix-Free-Tutorial.md); next: [the appendix](step-appendix-cmake.md).*
 
-The AMR (Adaptive Mesh Refinement) module in `backend/distributed/unstructured/amr/` provides GPU-native, multi-rank h-refinement for unstructured hex and tet meshes built on top of `ElementDomain`. The pipeline is octree-aligned: each rank emits children for its locally-owned, marked elements, and `cstone` redistributes them by SFC during the rebuild.
+The native AMR module in `backend/distributed/unstructured/amr/` refines Hex8 and
+Tet4 meshes on CUDA/HIP devices. `AmrManager` uses `ElementDomain` and Cornerstone
+for SFC partitioning, redistribution, tree construction and halo exchange. It
+supports nonconforming red refinement and an optional
+[conforming tetrahedral LEPP policy](Conforming-Tet-AMR.md). Neither requires Kokkos. The separate older Kokkos bisection module lives in
+`backend/kokkos/bisection/`; see [the backend layout](Backend-Layout.md).
 
-## What's in the module
+## Refinement and field transfer
 
-| File | Class / kernels | Purpose |
-|---|---|---|
-| `mars_amr.hpp` | umbrella include | exposes the public API |
-| `mars_amr_octree.hpp` | `AmrOctree` | refinement-level tracking, Doerfler marking, 1-irregular enforcement |
-| `mars_amr_octree_native.hpp` | `OctreeNativeAmr` | drives marking from the cstone leaf decomposition |
-| `mars_amr_octree_refine.hpp` | `OctreeAlignedRefine` | hex8 1→8 child emission with new edge/face/body nodes; solution interpolation kernel |
-| `mars_amr_hex_refine.hpp` | `HexRefiner` | legacy hex refiner (replaced by `OctreeAlignedRefine` for the multi-rank path) |
-| `mars_amr_tet_refine.hpp` | `TetRefiner` | tet4 1→8 red refinement (Bey's algorithm) |
-| `mars_amr_error_indicator.hpp` | `HexErrorIndicator`, `TetErrorIndicator`, `ErrorIndicator` | per-element gradient-jump error proxy + Doerfler marking helpers |
-| `mars_amr_solution_transfer.hpp` | `SolutionTransfer` | parentage-based interpolation (legacy hex/tet path) |
-| `mars_amr_manager.hpp` | `AmrManager` | orchestrates the full cycle: mark → refine → rebuild → transfer |
+Each adaptation performs these steps:
 
-## Refinement cycle (one level)
+1. Mark owned elements from their errors, using a threshold or Cornerstone leaves.
+2. For red refinement, exchange generation requests at shared vertices and enforce mesh 2:1 balance until
+   every rank reports no further changes. LEPP instead closes shared edge stars.
+3. Emit children only for owned parents. Red refinement produces eight children
+   per marked parent; LEPP bisects terminal edges and may refine neighbouring tets.
+4. Fill old field halos before interpolating new edge, face and interior values.
+5. Rebuild through Cornerstone, which redistributes elements and their properties,
+   rebuilds its trees and halos, and lets `ElementDomain` reconstruct node storage.
+6. Route authoritative field values to the new SFC node owners, then fill needed
+   ghost nodes. Reuse one sparse migration plan for all fields in that adaptation.
 
-```
-   d_errorPerElement (size = numElements)
-            │
-            ▼
-   ┌─────────────────────────────────────┐
-   │  marking (Doerfler or OctreeNative) │  AmrOctree / OctreeNativeAmr
-   │  → d_marks (size = numElements)     │
-   └─────────────────────────────────────┘
-            │
-            ▼
-   ┌─────────────────────────────────────┐
-   │  octree-aligned refinement          │  OctreeAlignedRefine::refineLocal
-   │  → 8 children per marked parent     │
-   │    + 19 new node coords / parent    │
-   │    (no dedup; cstone handles it)    │
-   └─────────────────────────────────────┘
-            │
-            ▼
-   ┌─────────────────────────────────────┐
-   │  solution transfer (per field)      │  OctreeAlignedRefine::transferSolution
-   │  → trilinear interp at the same     │
-   │    19 positions emitted by refine   │
-   └─────────────────────────────────────┘
-            │
-            ▼
-   ┌─────────────────────────────────────┐
-   │  rebuildDomainFromDevice            │  ElementDomain device-data ctor
-   │  → cstone re-derives box, sorts by  │
-   │    SFC, redistributes, dedupes,     │
-   │    rebuilds halos                   │
-   └─────────────────────────────────────┘
-            │
-            ▼
-   ┌─────────────────────────────────────┐
-   │  post-sync key re-encode + lookup   │
-   │  → match transferred values onto    │
-   │    new local node IDs by SFC key    │
-   │  → exchangeNodeHalo to fill ghosts  │
-   └─────────────────────────────────────┘
-            │
-            ▼
-   d_nodeSolution (warm start for next level's CG)
-```
+For nonconforming refinement the original bounding box stays fixed. A node uses a
+canonical point inside its SFC cell, so a later emission of the same hanging node
+recovers the same key and position. Fresh element and node key buffers are cleared
+before encoding: Cornerstone preserves removal markers, which must not be inherited
+from reused storage. This policy quantizes coordinates at the key resolution.
 
-## Public API
+An existing node's old owner supplies its value exactly, including when that node
+is emitted again as a new midpoint. If a key is entirely new, a deterministic
+emitter supplies the interpolated value. Conflicting old owners and missing
+sources cause collective failure instead of silently inserting zeros. Ranks with
+no local input elements still participate in the rebuild and communication.
 
-### `AmrManager` (the orchestrator)
+## Marking and Cornerstone reuse
 
-```cpp
-template<typename ElementTag, typename KeyType, typename RealType>
-class AmrManager {
-public:
-    struct Config {
-        int    maxLevels        = 3;
-        RealType refineFraction = 0.3;     // Doerfler fraction
-        RealType errorTolerance = 1e-6;    // stop refining below this error
-        int    blockSize        = 256;
-        int    bucketSize       = 64;
-        MarkingStrategy strategy = MarkingStrategy::OctreeNative;
-    };
+`MarkingStrategy::OctreeNative` uses Cornerstone's existing global leaves and
+sorted element keys. Each rank computes errors for its owned leaf ranges and calls
+`computeNodeOpsGpu` to decide splits. A scalar maximum is reduced across ranks;
+there is no additional global array reduction of leaf errors. Assignment boundaries
+align with global leaves, and counts forbid sibling merging, so remote leaf errors
+are not needed for the owned split decisions.
 
-    AmrManager(Config cfg = {});
+Both policies use `refineFraction` as a **maximum-relative threshold**. The
+historical `Doerfler` name does not mean bulk-error marking: an element is marked
+when its error is strictly greater than `refineFraction * globalMaximum`.
+`OctreeNative` applies that test to each global leaf's largest owned-element
+error, then marks the elements in that leaf. It passes `bucketSize + 1` to
+Cornerstone for a selected leaf and `bucketSize` otherwise. Thus changing the
+bucket size changes spatial grouping, but not the error threshold. Zero error
+marks nothing. A finest-resolution SFC leaf can no longer split spatially, but
+its selected elements still refine up to their mesh-generation cap. Several
+elements can share one key; spatial tree depth is not their refinement limit.
+Coarsening remains disabled.
 
-    void initialize(const std::string& meshFile, int rank, int numRanks);
+Mesh generations are separate from Cornerstone tree depth. Input cells start at
+zero; every red split or LEPP bisection increments its parent's generation.
+Cornerstone carries this integer alongside connectivity through its existing
+sort, redistribution and halo exchange. No second partition or replicated mesh
+is constructed. Cornerstone still retains its global spatial tree.
 
-    // Single-field overload
-    AmrStats adaptMesh(const RealType* d_errorPerElement,
-                       const RealType* d_nodeSolution,
-                       cstone::DeviceVector<RealType>& d_newNodeSolution);
+Red closure compares generations at shared vertices and at the regular masters
+of hanging vertices. A reusable sparse communication plan collects the maximum
+requested generation at each SFC node owner. Sweeps continue to collective
+convergence. Physical edge lengths do not enter this decision, so an initially
+graded conforming mesh does not refine merely because neighbouring cells differ
+in size. This is a conservative vertex-balance rule, not a minimal face-only closure.
 
-    // Multi-field overload — takes any number of node-keyed fields
-    // (e.g. pressure, velocity components)
-    AmrStats adaptMeshMultiField(const RealType* d_errorPerElement,
-                                  const std::vector<const RealType*>& oldFields,
-                                  const std::vector<DevVector*>& newFields);
-
-    bool shouldContinue(const AmrStats& stats) const;
-    int  currentLevel() const;
-    ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>& domain();
-    static void printStats(const AmrStats& stats, int rank);
-};
-```
-
-`AmrStats` reports per-level: elements before/after (local + global), nodes before/after, elements refined, error norm, total time.
-
-`shouldContinue(stats)` returns false when any of: `currentLevel >= maxLevels`, `errorNorm <= errorTolerance`, or `elementsRefined == 0`.
-
-### Marking strategies
+## Using the manager
 
 ```cpp
-enum class MarkingStrategy {
-    Doerfler,        // mark elements with err > refineFraction * maxError
-    OctreeNative,    // mark via cstone leaf-error reduction + computeNodeOpsGpu
-};
+using Manager = mars::amr::AmrManager<mars::TetTag, uint64_t, double>;
+Manager::Config config;
+config.strategy = mars::amr::MarkingStrategy::OctreeNative;
+config.maxLevels = 3;
+Manager manager(config);
+manager.initialize(meshFile, rank, numRanks);
+
+// Errors cover local elements, including halos; marking counts owned elements.
+cstone::DeviceVector<double> next;
+auto stats = manager.adaptMesh(errors.data(), solution.data(), next);
+solution = std::move(next);
 ```
 
-`Doerfler` runs `AmrOctree::markForRefinement` then enforces 1-irregular at mesh level (with an extra halo exchange of `int`-promoted marks for cross-rank consistency).
+`adaptMeshMultiField(errors, oldFields, newFields)` transfers several node fields.
+Every rank must supply equally sized field lists and valid pointers for its local
+arrays. Use SFC node ownership for distributed transfer. `AmrStats` records owned
+element counts, refined parents and phase timings; `shouldContinue(stats)` checks
+the adaptation-round/error limits and whether any elements were refined.
+`maxLevels` limits each element's refinement generation; `maxAdaptations` separately
+limits manager calls that change the mesh. Neither is a Cornerstone leaf depth.
+Red marking cannot exceed the generation cap. If LEPP conformity would require a
+bisection beyond that cap, the call fails collectively before replacing the domain;
+it never returns a partially conforming mesh.
 
-`OctreeNative` reduces per-leaf errors via `MPI_Allreduce(MAX)` on the global cstone tree, then calls cstone's `computeNodeOpsGpu` for split decisions. Per-leaf split conformity is the octree's invariant — no extra mark exchange needed.
+## Galerkin equations with hanging nodes
 
-### `OctreeAlignedRefine`
+Red refinement leaves hanging edge nodes and, for hexes, face nodes. A continuous
+P1/Q1 field expresses their values as weighted combinations of independent nodes.
+The refiner records each split edge or hex face by its sorted parent corner
+keys and the key of the node it emitted. After redistribution, exact entity
+matching retains records only where a coarse edge or face still exists.
+`HangingNodes` consumes these records, routes them through SFC owners and resolves
+dependent constraints. There is no distance tolerance. Equal midpoint keys alone
+do not establish incidence: reusing an old key requires the same recorded parent,
+and an unrelated collision fails collectively. Hex body-centre collisions are
+also rejected. `HangingNodes` requires manager refinement history; a file containing
+an already nonconforming mesh cannot reconstruct that history from coordinates. `DofSpace` then supplies prolongation `P`, additive
+restriction `P^T` and the constrained operator `P^T A P`. Dirichlet unknowns are
+removed symmetrically before PCG.
 
-```cpp
-template<typename KeyType, typename RealType>
-struct OctreeAlignedRefine {
-    struct Result {
-        DeviceVector<KeyType>  d_conn0..d_conn7;   // hex connectivity
-        DeviceVector<RealType> d_x, d_y, d_z;       // node coords
-        size_t numNodes, numElements;
-    };
+`mars_amr_galerkin` exercises this path for Poisson on public cube meshes, with
+P1 tetrahedra or Q1 hexahedra and BoomerAMG-preconditioned CG. `--problem=linear`
+checks an affine manufactured solution, allowing for coordinate quantization;
+`--problem=peak` reports an error against the localized exact solution.
+The [peak comparison](AMR-Peak-Example.md) uses `--refinement=red|lepp` and
+`--uniform` to compare local and uniform resolution at the same equation and solver settings.
+`--audit-mesh` and `--audit-algebra` enable the optional conservation and algebra
+checks described in [the validation guide](../tests/amr/nonconforming/README.md).
 
-    static Result refineLocal(/* parent conn, coords, marks, sizes */);
+## Validation scope
 
-    static void transferSolution(/* parent conn, oldSolution, marks, sizes */,
-                                 DeviceVector<RealType>& newSolution);
-};
-```
+The generation, exact-incidence and explicit-threshold changes pass 23 local
+CPU/MPI checks and 46 cases on each of NVIDIA GH200 and AMD MI300A. The native
+campaign covers 1/4/8 ranks, including two nodes, with graded Tet4/Hex8 and thin
+Tet4 refinement, constraint algebra, field transfer, nonbinary marking and
+maximum-generation checks. Conforming LEPP also passes three refinement rounds
+on the public non-box MFEM Escher mesh. All checked mesh/constraint counts agree
+across ranks and platforms. See the [validation record](../tests/amr/README.md#generation-and-topology-validation)
+for jobs, source identity and transport scope.
 
-`refineLocal` emits 8 children per marked element with 19 new local nodes per parent (12 edge midpoints + 6 face centers + 1 body center). No dedup — `cstone::Domain::sync` handles it during the rebuild.
+These tests establish mesh and constraint behavior beyond cubes. They do not
+establish PDE accuracy on every distorted mesh. The affine Galerkin solver checks
+still use cube domains; the example's boundary selection is based on its bounding box.
 
-`transferSolution` runs trilinear interpolation at the same 19 positions used by the geometry kernel. See [Solution Transfer](Solution-Transfer.md).
+The source snapshots tested on NVIDIA GH200 and AMD MI300A pass the combined
+Cornerstone/red-refinement cube checks at one, four and eight ranks, including
+repeated eight-rank tet cases across two nodes. Audited rebuilds preserve owned
+cell counts and two cell fingerprints, with no invalid or inverted tets.
+Assembled and composed constrained operators agree within the `1e-10` gate.
 
-### `ErrorIndicator` + `HexErrorIndicator`
+Separate immediate-transfer checks pass twelve cases per GPU platform: tet/hex,
+one/eight ranks, both marking policies, staged AMR messages and empty local input.
+Every case performs three adaptations before checking preserved old values and
+constant/affine fields, independently of a subsequent PDE solve. CPU/MPI checks
+exercise the shared sparse migration and tree-layout logic at one/two/four/eight
+ranks, plus actual CPU Cornerstone redistribution and property exchange.
+These CPU checks do not turn the native GPU manager into a CPU backend.
 
-```cpp
-template<typename KeyType, typename RealType>
-class HexErrorIndicator {
-public:
-    static cstone::DeviceVector<RealType> computeError(/* hex conn, sol, coords, n2d, count */);
-};
+See the validation guide for job IDs, source seals, exact tolerances and the
+separate status of integration/package testing. These results do not establish
+scaling or arbitrary-geometry PDE accuracy.
 
-template<typename KeyType, typename RealType>
-class ErrorIndicator {
-public:
-    // sums over ALL local elements (incl. halos) — double-counts at boundaries
-    static RealType globalErrorNorm(DeviceVector<RealType>& d_error);
+## Limits
 
-    // sums only over [startIdx, endIdx) — owned elements only, correct for distributed
-    static RealType globalErrorNormOwned(DeviceVector<RealType>& d_error,
-                                          size_t startIdx, size_t endIdx);
-};
-```
-
-Use `globalErrorNormOwned` whenever `d_error` includes halo elements, which is always the case when computed via per-element kernels over the full local element array. `globalErrorNorm` is kept for cases where `d_error` is already filtered.
-
-## Working example: `mars_amr_cvfem_graph.cu`
-
-Distributed Poisson with adaptive refinement and warm-start CG. Located at `examples/distributed/unstructured/mars_amr_cvfem_graph.cu`.
-
-```cpp
-// Setup
-amr.initialize(meshFile, rank, numRanks);
-
-cstone::DeviceVector<RealType> d_nodeSolution;
-cstone::DeviceVector<RealType> d_errorPerElement;
-
-for (int level = 0; level <= amrLevels; ++level) {
-    // Solve the current level. d_nodeSolution arrives non-empty from the
-    // previous level (transferred + halo-filled), so CG warm-starts from it.
-    solvePoissonGraph(amr.domain(), sourceTerm, kernelVariant, ...,
-                      d_nodeSolution, d_errorPerElement);
-
-    if (level >= amrLevels) break;
-
-    // Refine + transfer
-    cstone::DeviceVector<RealType> d_newSolution;
-    auto stats = amr.adaptMesh(d_errorPerElement.data(),
-                                d_nodeSolution.data(), d_newSolution);
-    AmrManager<HexTag, KeyType, RealType>::printStats(stats, rank);
-
-    d_nodeSolution = std::move(d_newSolution);
-    if (!amr.shouldContinue(stats)) break;
-}
-```
-
-The solver itself (`solvePoissonGraph`) uses the standard distributed CG path:
-
-```cpp
-ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
-solver.setOwnedSize(numOwnedDofs);
-solver.setHaloExchangeCallback(
-    [&domain, dofMap = d_node_to_dof.data()](cstone::DeviceVector<RealType>& p) {
-        domain.exchangeNodeHalo(p, dofMap);
-    });
-solver.solve(A, b, x);
-
-// Halo-exchange the per-node solution before the error indicator,
-// so per-element gradient kernels see correct ghost-corner values.
-domain.exchangeNodeHalo(d_nodeSolution);
-```
-
-See [Halo Management](Halo-Management.md) for the halo layering, [Node Halo Topology](Node-Halo-Topology.md) for `exchangeNodeHalo` internals, [Solution Transfer](Solution-Transfer.md) for the warm-start mechanism.
-
-## Verified results
-
-**cube16 mesh (16³ hex), 4 ranks, `--amr-levels=2`:**
-
-| Level | Elements (global) | `||u||` | `||err||` | Solve time |
-|---|---|---|---|---|
-| L0 | 4096 | 1.588786 | 0.0753 | 384 ms (cold) |
-| L1 | 32768 | 4.513941 | 0.0796 | 70 ms (warm-started) |
-
-L1 is ~3× faster than a cold-start L1 (~209 ms) thanks to the trilinear-interpolated initial guess for CG. See [Solution Transfer](Solution-Transfer.md).
-
-**Single-rank baseline:**
-- L0: `||u||=1.588588`, matches 4-rank to 0.012%.
-- `globalDofs` matches exactly (4913) thanks to the lowest-rank-wins ownership tiebreaker in `NodeHaloTopology`.
-
-## Multi-rank correctness invariants
-
-Maintained by the AMR pipeline:
-
-1. **Each globally-shared node has exactly one owner.** Enforced by Allgatherv tiebreaker in `NodeHaloTopology` build, triggered automatically by `ensureHalo()` after every refinement.
-2. **Ghost-DOF values are sourced from each node's TRUE owner**, not from intermediate ranks holding stale ghost data. Enforced by the per-node send/recv lists.
-3. **Per-rank emitted children with coincident coords across ranks dedupe via cstone SFC.** Both ranks compute the same trilinear value (same parent corners), so dedup preserves correctness.
-4. **Solution transfer preserves the converged value on coincident pre/post-sync nodes.** Enforced by post-sync key re-encode (re-encode pre-sync coords with cstone's new box, look up by SFC key).
-
-## Known limitations
-
-- **No coarsening (de-refinement) yet.** AMR is monotonic: marked elements split, others stay. Adding coarsening is straightforward but unimplemented.
-- **`||err||` discrepancy.** 4-rank `||err||` runs ~2.17× higher than single-rank for the same mesh. Traced to ~9 corner-shared nodes whose RHS gets contributions only from one rank's owned elements (cstone halo-width gap). Doesn't block AMR; tracked separately.
-- **Tet path partially tested.** `TetRefiner` and `TetErrorIndicator` exist; multi-rank tet AMR end-to-end is on the validation list.
+- Refinement only: coarsening is not implemented. Initial meshes must be conforming,
+  single-block and nonperiodic. Keep one refinement policy per mesh history:
+  red generations and directional bisection generations are not interchangeable.
+  Refinement history is not serialized for restart.
+- Nonconforming Galerkin acceptance covers the public nonperiodic single-block
+  cube fixtures, while refinement and constraint checks also cover graded/thin
+  meshes. Periodic constraints, mixed elements, arbitrary-geometry PDE accuracy
+  and nonconforming side-set ancestry remain unvalidated. Use the
+  separately validated conforming Tet4 policy for triangle side-set preservation.
+- Nonconforming CVFEM and Navier–Stokes AMR drivers do not constrain hanging nodes
+  or supply the missing coarse/fine interface flux. A successful run does not
+  establish a consistent discretization there.
+- Empty local input is covered; a globally undersized mesh with fewer elements
+  than ranks remains unsupported.
+- `--staged` stages AMR sparse messages. It does not replace all Cornerstone or
+  assembled-operator GPU-aware MPI traffic with host transport.
+- The gradient-jump indicator is not an error against an exact solution, and its
+  current CVFEM implementation can depend on the partition. Old warm-start timing
+  examples are not performance evidence for this implementation.
 
 ## See also
 
+- [Conforming tetrahedral AMR](Conforming-Tet-AMR.md)
 - [Halo Management](Halo-Management.md)
 - [Node Halo Topology](Node-Halo-Topology.md)
 - [Solution Transfer](Solution-Transfer.md)
 - [ElementDomain Overview](ElementDomain-Overview.md)
-- [Multi-Rank Support](Multi-Rank-Support.md)

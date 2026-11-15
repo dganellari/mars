@@ -31,6 +31,7 @@ struct TetLeppView
     const RealType* z;
     const uint8_t* marks;
     size_t elements, nodes;
+    const KeyType* generations = nullptr;
 };
 
 template<class Execution, class KeyType, class RealType>
@@ -39,7 +40,7 @@ struct TetLeppResult
     template<class T>
     using Vector = typename Execution::template Vector<T>;
     std::array<Vector<KeyType>, 4> conn;
-    Vector<KeyType> keys;
+    Vector<KeyType> keys, generations;
     Vector<RealType> x, y, z;
     Vector<uint64_t> parent_edges;
     Vector<LeppTaggedFace> tagged_faces;
@@ -261,7 +262,8 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
                 NodeOwner node_owner,
                 MPI_Comm parent_comm,
                 bool host_staged                                                       = false,
-                const typename Execution::template Vector<LeppTaggedFace>& input_faces = {})
+                const typename Execution::template Vector<LeppTaggedFace>& input_faces = {},
+                KeyType maximum_generation = std::numeric_limits<KeyType>::max())
 {
     using namespace lepp_detail;
     using Edge         = bisection::Edge<KeyType>;
@@ -281,6 +283,10 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
     require_collectively(pointers_valid, "Missing LEPP input array", comm);
 
     TetLeppResult<Execution, KeyType, RealType> result;
+    result.generations.resize(input.elements);
+    auto initial_generation = Execution::data(result.generations);
+    Execution::for_each(input.elements, [=] MARS_LEPP_HD(size_t e)
+                        { initial_generation[e] = input.generations ? input.generations[e] : 0; });
     result.old_nodes = input.nodes;
     result.birth_offsets.push_back(input.nodes);
     result.keys.resize(input.nodes);
@@ -570,6 +576,12 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
                                 bad[e]     = split && old[e];
                             });
         result.refined_parents += Execution::sum(bad, cells);
+        auto generation = Execution::data(result.generations);
+        Execution::for_each(
+            cells, [=] MARS_LEPP_HD(size_t e)
+            { bad[e] = generation[e] > maximum_generation || (count[e] == 2 && generation[e] >= maximum_generation); });
+        require_collectively(Execution::sum(bad, cells) == 0,
+                             "LEPP conformity closure exceeds the maximum refinement generation", comm);
         Execution::scan(count, cells + 1, child_offset);
         size_t new_cells = Execution::read(child_offset + cells);
         require_collectively(new_cells <= SIZE_MAX / (6 * sizeof(Incident)), "LEPP child mesh exceeds index capacity",
@@ -579,6 +591,8 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
             column.resize(new_cells);
         KeyType* child[4] = {Execution::data(children[0]), Execution::data(children[1]), Execution::data(children[2]),
                              Execution::data(children[3])};
+        KeyVector child_generations(new_cells);
+        auto next_generation = Execution::data(child_generations);
         U64Vector next_needed(new_cells), next_original(new_cells);
         auto next_need = Execution::data(next_needed);
         auto next_old  = Execution::data(next_original);
@@ -589,6 +603,8 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
                                 for (int c = 0; c < 4; ++c)
                                     nodes[c] = mesh.conn[c][e];
                                 size_t out = child_offset[e];
+                                for (size_t j = 0; j < count[e]; ++j)
+                                    next_generation[out + j] = generation[e] + (count[e] == 2);
                                 if (count[e] == 1)
                                 {
                                     for (int c = 0; c < 4; ++c)
@@ -653,6 +669,7 @@ refine_tet_lepp(TetLeppView<KeyType, RealType> input,
         Execution::synchronize();
         for (int c = 0; c < 4; ++c)
             result.conn[c].swap(children[c]);
+        result.generations.swap(child_generations);
         result.tagged_faces.swap(child_faces);
         needed.swap(next_needed);
         original.swap(next_original);

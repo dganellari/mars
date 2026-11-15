@@ -16,6 +16,7 @@ struct AmrFieldRecord
 {
     KeyType key;
     RealType value;
+    uint64_t priority;
 };
 
 namespace amr_detail
@@ -37,12 +38,14 @@ struct PackFieldSources
     AmrFieldRecord<KeyType, RealType>* packets;
     int* destinations;
     Owner owner;
+    size_t old_count;
+    int rank, ranks;
     MARS_AMR_FIELD_HD void operator()(size_t i) const
     {
         if (!flags[i]) return;
         size_t j        = offsets[i];
         indices[j]      = i;
-        packets[j]      = {keys[i], RealType(0)};
+        packets[j]      = {keys[i], RealType(0), uint64_t(rank) + (i < old_count ? 0 : uint64_t(ranks))};
         destinations[j] = owner(keys[i]);
     }
 };
@@ -52,10 +55,29 @@ struct InitializeFieldOrder
     MARS_AMR_FIELD_HD void operator()(size_t i) const { order[i] = i; }
 };
 template<class KeyType, class RealType>
+struct CheckOldFieldOwners
+{
+    const AmrFieldRecord<KeyType, RealType>* records;
+    const uint64_t* order;
+    uint64_t* invalid;
+    int ranks;
+    MARS_AMR_FIELD_HD void operator()(size_t i) const
+    {
+        invalid[i] = i > 0 && records[order[i - 1]].key == records[order[i]].key &&
+                     records[order[i - 1]].priority < uint64_t(ranks) &&
+                     records[order[i]].priority < uint64_t(ranks);
+    }
+};
+template<class KeyType, class RealType>
 struct FieldKeyLess
 {
     const AmrFieldRecord<KeyType, RealType>* records;
-    MARS_AMR_FIELD_HD bool operator()(uint64_t a, uint64_t b) const { return records[a].key < records[b].key; }
+    MARS_AMR_FIELD_HD bool operator()(uint64_t a, uint64_t b) const
+    {
+        if (records[a].key != records[b].key) return records[a].key < records[b].key;
+        if (records[a].priority != records[b].priority) return records[a].priority < records[b].priority;
+        return a < b;
+    }
 };
 template<class KeyType, class RealType>
 struct FindFieldSources
@@ -99,6 +121,8 @@ class AmrFieldMigration
     using Record = AmrFieldRecord<KeyType, RealType>;
 
 public:
+    // An old-node prefix selects one source, preserving existing hanging nodes
+    // ahead of new interpolants. Without it, duplicate values must agree exactly.
     template<class Owner>
     AmrFieldMigration(const KeyType* pre_keys,
                       size_t pre_count,
@@ -108,13 +132,20 @@ public:
                       size_t new_count,
                       Owner owner,
                       MPI_Comm comm,
-                      bool staged = false)
+                      bool staged = false,
+                      size_t old_node_count = SIZE_MAX)
         : comm_(comm)
         , input_count_(pre_count)
         , lookup_(new_count)
+        , select_source_(old_node_count != SIZE_MAX)
     {
         require_collectively(pre_count < SIZE_MAX && (!pre_count || pre_keys) && (!new_count || (new_keys && owned)),
                              "Invalid AMR migration arrays", comm_);
+        require_collectively(!select_source_ || old_node_count <= pre_count,
+                             "Invalid AMR old-node prefix", comm_);
+        int rank, ranks;
+        MPI_Comm_rank(comm_, &rank);
+        MPI_Comm_size(comm_, &ranks);
         Vector<uint64_t> flags(pre_count + 1), offsets(pre_count + 1);
         auto flag   = Execution::data(flags);
         auto offset = Execution::data(offsets);
@@ -128,7 +159,8 @@ public:
         auto packets     = Execution::data(packets_);
         auto destination = Execution::data(destinations);
         Execution::for_each(pre_count, amr_detail::PackFieldSources<KeyType, RealType, Owner>{
-                                           flag, offset, pre_keys, index, packets, destination, owner});
+                                           flag, offset, pre_keys, index, packets, destination, owner,
+                                           old_node_count, rank, ranks});
         plan_                = std::make_unique<AmrSparsePlan<Execution, Record>>(destinations, comm_, staged);
         const auto& received = plan_->forward(packets_);
         auto records         = Execution::data(received);
@@ -137,6 +169,15 @@ public:
         auto order = Execution::data(received_order_);
         Execution::for_each(n, amr_detail::InitializeFieldOrder{order});
         Execution::sort(order, n, amr_detail::FieldKeyLess<KeyType, RealType>{records});
+        if (select_source_)
+        {
+            // Existing nodes have one authoritative old owner. Otherwise select
+            // the lowest emitting rank, then its first local interpolation.
+            invalid_.resize(n);
+            auto invalid = Execution::data(invalid_);
+            Execution::for_each(n, amr_detail::CheckOldFieldOwners<KeyType, RealType>{records, order, invalid, ranks});
+            require_collectively(Execution::sum(invalid, n) == 0, "AMR node has multiple old owners", comm_);
+        }
         auto lookup = Execution::data(lookup_);
         invalid_.resize(new_count);
         auto invalid = Execution::data(invalid_);
@@ -157,15 +198,18 @@ public:
         auto records         = Execution::data(received);
         auto order           = Execution::data(received_order_);
         size_t n             = received.size();
-        invalid_.resize(n);
-        auto invalid = Execution::data(invalid_);
-        Execution::for_each(n,
-                            [=] MARS_AMR_FIELD_HD(size_t i)
-                            {
-                                invalid[i] = i > 0 && records[order[i - 1]].key == records[order[i]].key &&
-                                             records[order[i - 1]].value != records[order[i]].value;
-                            });
-        require_collectively(Execution::sum(invalid, n) == 0, "AMR authoritative field copies disagree", comm_);
+        if (!select_source_)
+        {
+            invalid_.resize(n);
+            auto invalid = Execution::data(invalid_);
+            Execution::for_each(n,
+                                [=] MARS_AMR_FIELD_HD(size_t i)
+                                {
+                                    invalid[i] = i > 0 && records[order[i - 1]].key == records[order[i]].key &&
+                                                 records[order[i - 1]].value != records[order[i]].value;
+                                });
+            require_collectively(Execution::sum(invalid, n) == 0, "AMR authoritative field copies disagree", comm_);
+        }
         field.resize(lookup_.size());
         auto output = Execution::data(field);
         auto lookup = Execution::data(lookup_);
@@ -180,6 +224,7 @@ private:
     Vector<uint64_t> source_indices_, received_order_, lookup_, invalid_;
     Vector<Record> packets_;
     std::unique_ptr<AmrSparsePlan<Execution, Record>> plan_;
+    bool select_source_;
 };
 
 #if defined(__CUDACC__) || defined(__HIPCC__)

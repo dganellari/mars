@@ -1,4 +1,19 @@
 #include <mars.hpp>
+// Both public path forms must resolve to the same implementation after relocation.
+#include <kokkos/mars_utils_kokkos.hpp>
+#include <backend/kokkos/common/mars_utils_kokkos.hpp>
+#include <kokkos/mesh/mars_point.hpp>
+#include <backend/kokkos/common/mesh/mars_point.hpp>
+#include <backend/distributed/mesh/mars_distributed_mesh_kokkos.hpp>
+#include <backend/distributed/structured/mesh/mars_distributed_mesh_kokkos.hpp>
+#include <backend/distributed/mesh_manager/mars_distributed_dof_management.hpp>
+#include <backend/distributed/structured/mesh_manager/mars_distributed_dof_management.hpp>
+#include <backend/distributed/sfc/mars_sfc_code.hpp>
+#include <backend/distributed/structured/sfc/mars_sfc_code.hpp>
+#ifdef MARS_ENABLE_AMR_BACKEND
+#include <backend/amr/mars_mesh_kokkos.hpp>
+#include <backend/kokkos/bisection/mars_mesh_kokkos.hpp>
+#endif
 #include "../mars_structured_runtime.hpp"
 
 #include <iostream>

@@ -27,10 +27,18 @@ including element numberings that are not aligned with the coordinate axes.
   and on several ranks; no linear solver uses it yet. On several ranks its high-order numbering
   (p > 1) needs the older vote node ownership, which `mars_ho_dist_apply_test` selects itself
   (`MARS_OWNERSHIP=vote`). Interfaces may change. See [the tutorial](docs/Matrix-Free-Tutorial.md).
-- **Adaptive mesh refinement (AMR).** Mark/refine/rebuild/transfer works on one rank and runs
-  distributed on cornerstone (hexahedra, red-refined tetrahedra). The refined solution has not
-  been compared across rank counts, multi-rank tetrahedral AMR is only partly tested, and
-  conforming tetrahedral bisection is not released.
+- **Adaptive mesh refinement (AMR).** Nonconforming red refinement supports
+  initially conforming Tet4/Hex8 meshes, with generation-based balance and exact
+  split-entity hanging constraints. CPU/MPI checks and native NVIDIA/AMD gates
+  pass on graded and thin fixtures at 1/4/8 ranks across two nodes. Conforming
+  Tet4 LEPP also passes three rounds on the public non-box Escher mesh, preserving
+  boundary labels. The constrained P1/Q1 Galerkin Poisson solver is validated on
+  cube fixtures; the general-mesh gates check refinement, transfer and constraint
+  algebra rather than arbitrary-geometry PDE accuracy or scaling.
+  Initial meshes must be single-block and nonperiodic. Coarsening, refinement
+  history restart, periodic hanging constraints and nonconforming CVFEM/flow are
+  unsupported. Red refinement rejects side sets; use LEPP to preserve triangle
+  labels. See [AMR](docs/AMR-Module.md) and [validation](tests/amr/README.md#generation-and-topology-validation).
 - **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
   sum-factorization). Interfaces may change.
 - **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
