@@ -33,12 +33,15 @@ including element numberings that are not aligned with the coordinate axes.
   pass on graded and thin fixtures at 1/4/8 ranks across two nodes. Conforming
   Tet4 LEPP also passes three rounds on the public non-box Escher mesh, preserving
   boundary labels. The constrained P1/Q1 Galerkin Poisson solver is validated on
-  cube fixtures; the general-mesh gates check refinement, transfer and constraint
-  algebra rather than arbitrary-geometry PDE accuracy or scaling.
+  cube fixtures, and P1 Tet4 Poisson now passes on the labelled non-box Escher
+  mesh with both LEPP and red refinement. These fixture results do not establish
+  accuracy on every admissible imported geometry or scaling.
   Initial meshes must be single-block and nonperiodic. Coarsening, refinement
   history restart, periodic hanging constraints and nonconforming CVFEM/flow are
-  unsupported. Red refinement rejects side sets; use LEPP to preserve triangle
-  labels. See [AMR](docs/AMR-Module.md) and [validation](tests/amr/README.md#generation-and-topology-validation).
+  unsupported. Tet4 red side-set inheritance and physical-coordinate preservation
+  through loading and AMR pass CPU/MPI and native NVIDIA/AMD checks at 1/4/8 ranks.
+  The manufactured-error indicator uses a known exact solution; it is not an
+  estimator for an unknown physical solution. Hex8 side sets remain unsupported. See [AMR](docs/AMR-Module.md) and [validation](tests/amr/README.md#generation-and-topology-validation).
 - **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
   sum-factorization). Interfaces may change.
 - **Coarse search and ghost registry** (`mars_coarse_search.hpp`,

@@ -522,7 +522,8 @@ public:
         thrust::device_vector<int> row(total);
         thrust::device_vector<long long> col(total);
         thrust::device_vector<T> val(total);
-        if (n_ > 0)
+        // With no surviving entries, an empty output pointer would select the counting path.
+        if (total > 0)
             dofExpandKernel<T><<<grid(), blockSize_>>>(
                 rowPtr, cols, values, n_, hangIndex, hangOffset_.data(), hangSource_.data(), hangWeight_.data(),
                 slotGid, thrust::raw_pointer_cast(extraGid.data()), removedS, removedE,

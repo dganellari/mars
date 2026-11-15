@@ -85,6 +85,46 @@ void check_field_sources(MPI_Comm comm, bool staged)
     Execution::download(Execution::data(output), 1, &value);
     mars::amr::require_collectively(value == (rank == 0 ? 17 : 0), "Stale ghost became a field source", comm);
 
+    // Geometry also fills deep ghosts that the ordinary field halo does not request.
+    Migration geometry(Execution::data(ghost_key), 1, Execution::data(ghost_valid),
+                       Execution::data(single_key), Execution::data(single_owned), 1,
+                       owner, comm, staged, 1, true);
+    for (double coordinate : {0.123456789012345, -2.34567890123456, 4.56789012345678})
+    {
+        auto input = field_upload<Execution>(std::vector<double>{rank == ranks - 1 ? coordinate : -1.e8});
+        geometry.apply(Execution::data(input), input.size(), output, true);
+        Execution::download(Execution::data(output), 1, &value);
+        mars::amr::require_collectively(value == coordinate, "Physical geometry was rounded or a ghost was missed", comm);
+    }
+    auto sparse_queries = field_upload<Execution>(rank == ranks - 1 ? std::vector<KeyType>{40} : std::vector<KeyType>{});
+    auto sparse_owned = field_upload<Execution>(rank == ranks - 1 ? std::vector<uint8_t>{uint8_t(rank == 0)} : std::vector<uint8_t>{});
+    Migration empty_queries(Execution::data(ghost_key), 1, Execution::data(ghost_valid),
+                            Execution::data(sparse_queries), Execution::data(sparse_owned), sparse_queries.size(),
+                            owner, comm, staged, 1, true);
+    empty_queries.apply(Execution::data(ghost_value), 1, output, true);
+    bool query_ok = output.size() == sparse_queries.size();
+    if (!output.empty())
+    {
+        Execution::download(Execution::data(output), 1, &value);
+        query_ok = query_ok && value == 17;
+    }
+    mars::amr::require_collectively(query_ok, "Empty geometry query rank failed", comm);
+
+    auto absent_key = field_upload<Execution>(std::vector<KeyType>{99});
+    auto no_owner = field_upload<Execution>(std::vector<uint8_t>{0});
+    bool ghost_rejected = false;
+    try
+    {
+        Migration absent(Execution::data(ghost_key), 1, Execution::data(ghost_valid),
+                         Execution::data(absent_key), Execution::data(no_owner), 1,
+                         owner, comm, staged, 1, true);
+    }
+    catch (const std::runtime_error& e)
+    {
+        ghost_rejected = std::string(e.what()) == "AMR migration is missing a ghost node";
+    }
+    mars::amr::require_collectively(ghost_rejected, "Missing ghost coordinate was accepted", comm);
+
     // Missing sources and duplicate old owners must fail collectively.
     for (bool duplicate : {false, true})
     {

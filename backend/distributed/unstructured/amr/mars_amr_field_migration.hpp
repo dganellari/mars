@@ -109,6 +109,41 @@ struct FindFieldSources
             lookup[i] = order[lo];
     }
 };
+template<class KeyType, class RealType, class Owner>
+struct PackFieldQueries
+{
+    const KeyType* keys;
+    AmrFieldRecord<KeyType, RealType>* queries;
+    int* destinations;
+    Owner owner;
+    MARS_AMR_FIELD_HD void operator()(size_t i) const
+    {
+        queries[i] = {keys[i], RealType(0), 0};
+        destinations[i] = owner(keys[i]);
+    }
+};
+template<class KeyType, class RealType>
+struct FindFieldQueries
+{
+    const AmrFieldRecord<KeyType, RealType>* records;
+    const uint64_t* order;
+    const AmrFieldRecord<KeyType, RealType>* queries;
+    uint64_t* lookup;
+    uint64_t* invalid;
+    size_t count;
+    MARS_AMR_FIELD_HD void operator()(size_t i) const
+    {
+        size_t lo = 0, hi = count;
+        while (lo < hi)
+        {
+            size_t mid = lo + (hi - lo) / 2;
+            if (records[order[mid]].key < queries[i].key) lo = mid + 1;
+            else hi = mid;
+        }
+        invalid[i] = lo == count || records[order[lo]].key != queries[i].key;
+        lookup[i] = invalid[i] ? count : order[lo];
+    }
+};
 } // namespace amr_detail
 
 // The node layout changes once per rebuild, while every field uses the same
@@ -133,7 +168,8 @@ public:
                       Owner owner,
                       MPI_Comm comm,
                       bool staged = false,
-                      size_t old_node_count = SIZE_MAX)
+                      size_t old_node_count = SIZE_MAX,
+                      bool include_ghosts = false)
         : comm_(comm)
         , input_count_(pre_count)
         , lookup_(new_count)
@@ -184,9 +220,27 @@ public:
         Execution::for_each(new_count, amr_detail::FindFieldSources<KeyType, RealType>{records, order, new_keys, owned,
                                                                                        lookup, invalid, n});
         require_collectively(Execution::sum(invalid, new_count) == 0, "AMR migration is missing an owned node", comm_);
+        if (include_ghosts)
+        {
+            // Geometry needs every local node, including ghosts outside the field halo.
+            Vector<Record> queries(new_count);
+            Vector<int> query_destinations(new_count);
+            Execution::for_each(new_count, amr_detail::PackFieldQueries<KeyType, RealType, Owner>{
+                new_keys, Execution::data(queries), Execution::data(query_destinations), owner});
+            query_plan_ = std::make_unique<AmrSparsePlan<Execution, Record>>(query_destinations, comm_, staged);
+            const auto& incoming = query_plan_->forward(queries);
+            query_lookup_.resize(incoming.size());
+            query_values_.resize(incoming.size());
+            invalid_.resize(incoming.size());
+            Execution::for_each(incoming.size(), amr_detail::FindFieldQueries<KeyType, RealType>{
+                records, order, Execution::data(incoming), Execution::data(query_lookup_),
+                Execution::data(invalid_), n});
+            require_collectively(Execution::sum(Execution::data(invalid_), incoming.size()) == 0,
+                                 "AMR migration is missing a ghost node", comm_);
+        }
     }
 
-    void apply(const RealType* values, size_t count, Vector<RealType>& field)
+    void apply(const RealType* values, size_t count, Vector<RealType>& field, bool include_ghosts = false)
     {
         require_collectively(count == input_count_ && (!count || values),
                              "AMR field size does not match its migration plan", comm_);
@@ -215,15 +269,27 @@ public:
         auto lookup = Execution::data(lookup_);
         Execution::for_each(field.size(), [=] MARS_AMR_FIELD_HD(size_t i)
                             { output[i] = lookup[i] == n ? RealType(0) : records[lookup[i]].value; });
+        if (include_ghosts)
+        {
+            require_collectively(bool(query_plan_), "AMR migration has no ghost query plan", comm_);
+            auto replies = Execution::data(query_values_);
+            auto query_lookup = Execution::data(query_lookup_);
+            Execution::for_each(query_values_.size(), [=] MARS_AMR_FIELD_HD(size_t i)
+                                { replies[i] = records[query_lookup[i]]; });
+            const auto& returned = query_plan_->reverse(query_values_);
+            auto all_values = Execution::data(returned);
+            Execution::for_each(field.size(), [=] MARS_AMR_FIELD_HD(size_t i)
+                                { output[i] = all_values[i].value; });
+        }
         Execution::synchronize();
     }
 
 private:
     AmrCommunicator comm_;
     size_t input_count_;
-    Vector<uint64_t> source_indices_, received_order_, lookup_, invalid_;
-    Vector<Record> packets_;
-    std::unique_ptr<AmrSparsePlan<Execution, Record>> plan_;
+    Vector<uint64_t> source_indices_, received_order_, lookup_, invalid_, query_lookup_;
+    Vector<Record> packets_, query_values_;
+    std::unique_ptr<AmrSparsePlan<Execution, Record>> plan_, query_plan_;
     bool select_source_;
 };
 

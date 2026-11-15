@@ -46,7 +46,7 @@ LeppDeviceExecution::Vector<LeppTaggedFace> collect_lepp_boundary(const Domain& 
         valid &= domain.has_side_set_face_keys(name) && domain.side_set_face_keys(name).size() % 3 == 0;
         count += domain.side_set_face_keys(name).size() / 3;
     }
-    require_collectively(valid, "Conforming AMR requires face labels; node-only side sets have no face ancestry",
+    require_collectively(valid, "Tet AMR requires face labels; node-only side sets have no face ancestry",
                          MPI_COMM_WORLD);
     Execution::Vector<Record> sources(count);
     auto records  = Execution::data(sources);

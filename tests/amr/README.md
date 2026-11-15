@@ -373,3 +373,55 @@ thin Tet 229376. Public Escher LEPP produces 96/192/384 cells over three rounds.
 Native binaries and installed trees were not downloaded for an independent rehash.
 These results cover correctness on the listed fixtures, not scaling or arbitrary
 geometry PDE accuracy.
+
+
+## Physical geometry and non-box PDE validation
+
+Accepted on 2026-11-15 for the coordinate-preserving, labelled Tet4 extension:
+
+| Platform | Build and validation jobs | Accepted gate |
+| --- | --- | --- |
+| NVIDIA GH200 | Build 5352185; validation 5352186, 5352567 and 5357228 | 95 commands, reusing unchanged binaries and prior passing cases |
+| AMD MI300A | Build 743513; validation 743514 | 95 commands in the final run |
+
+Each platform covers 46 core AMR cases, nine field/geometry migration cases,
+three red boundary cases, 36 non-box PDE cases and one expected old-box-boundary
+failure. Eighteen commands exercise CPU/MPI shared algorithms; this does not
+make the GPU ElementDomain manager a native CPU backend. The separate clean
+CPU/MPI suite passes 32/32 tests. Twenty coordinate-migration rounds preserve
+values exactly, including deeper ghosts, in both transport modes.
+
+All PDE configurations start from the same 2688-tet public Escher fixture with
+48 side sets and 768 exterior faces. They solve affine and quadratic manufactured
+Poisson problems with complete side-set Dirichlet data. The indicator uses the
+known exact solution; it is not a residual estimator. Direct/staged modes apply
+to AMR messages, not every Cornerstone or solver exchange. Eight ranks span two
+nodes. LEPP uses four adaptations; red uses three for affine/uniform controls and
+six for adaptive solves. The six-round adaptive red result is identical in
+reported error on both platforms: L2 0.1274804 to 0.0380450, 27328 elements,
+4637 independent DOFs and 1541 hanging nodes. All 36 configurations agree in
+counts across ranks/platforms; quadratic errors agree within relative 1e-5.
+
+The first NVIDIA run hit the documented empty-partition guard on a smaller
+fixture. The second passed 30 PDE cases before its three-round adaptive red
+case missed the unchanged 25% error-reduction gate. That failed control is
+retained. An independent serial constrained FEM replay reproduces its counts
+and errors, and reaches the gate after more refinement. Only the six adaptive
+red cases were extended to six rounds; no solver, marking policy or tolerance
+changed. The final NVIDIA run reuses 58 earlier core/migration/boundary cases
+and 30 accepted PDE cases, and runs six adaptive cases plus the negative control.
+
+The final kit manifest SHA-256 is
+`5ca793b02ab2c60c53d9e4a949aee48568cc11ac32fc78f9016b475c81bdbcdf`;
+the unchanged source archive SHA-256 is
+`8141ba571036c6924bddae3bf855e29c970f0e11b7ec798b2e150c0bd4a0eae6`.
+Raw archived logs, process exits, commands, source/installed-header identities,
+447 new per-rank binary/library records and retained NVIDIA records were checked.
+The final new PDE cases preserve every labelled area and the file volume within
+relative 2.23e-16, below the unchanged 1e-10 file-geometry gate. Binaries were
+verified through per-rank receipts rather than independently downloaded.
+
+These results validate the listed fixtures and piecewise-linear geometry.
+They do not establish arbitrary-geometry accuracy, CAD/curved-boundary recovery,
+a physical error estimator or a performance/scaling advantage. Documentation
+was updated after the validated snapshot; numerical sources are unchanged.
