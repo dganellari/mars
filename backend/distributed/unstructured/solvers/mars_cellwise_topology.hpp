@@ -41,6 +41,8 @@
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
+
+#include <type_traits>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -1035,6 +1037,183 @@ __global__ void keep_kernel(const int* __restrict__ need, const long long* __res
     if (t < n) keep[t] = need[index[t]];
 }
 
+// The entries of the counted-sum exchange (SummedHalo), one item per local face, edge star
+// and vertex star. A send entry carries the sender's own copies of one node (sources, in
+// canonical order); a receive entry the ghost slot its value goes to and the slots that get
+// zero. Keys (element id, local node) are those of the counting element for stars and of the
+// sending element for faces, so both sides list them alike.
+struct SummedSend {
+    int* peer;
+    unsigned long long* gid;
+    int* node;
+    long long* begin;   // into sources
+    int* len;
+    long long* sources;
+};
+struct SummedRecv {
+    int* peer;
+    unsigned long long* gid;
+    int* node;
+    long long* target;
+    long long* begin;   // into zeros
+    int* len;
+    long long* zeros;
+};
+
+template <bool FILL>
+__global__ void summed_entries_kernel(TopologyView T, long long edges, long long vertices,
+                                      const unsigned long long* __restrict__ gid, const int* __restrict__ owner,
+                                      int p, int me, long long* __restrict__ send_at, long long* __restrict__ src_at,
+                                      long long* __restrict__ recv_at, long long* __restrict__ zero_at,
+                                      SummedSend send, SummedRecv recv)
+{
+    const long long n3 = (long long)(p + 1) * (p + 1) * (p + 1);
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    const long long faces = T.local * 6;
+    if (t >= faces + edges + vertices) return;
+    long long so = FILL ? send_at[t] : 0, sso = FILL ? src_at[t] : 0, ro = FILL ? recv_at[t] : 0,
+              zo = FILL ? zero_at[t] : 0;
+    auto slot = [&](long long elem, int l) {
+        return elem < T.local ? elem * n3 + l : (elem - T.local) * n3 + l;
+    };
+    if (t < faces) {
+        const long long e = t / 6;
+        const int f = (int)(t % 6), c = T.face_nbr[t];
+        if (c >= 0 && c / 6 >= T.local) {
+            const long long ghost = c / 6;
+            const int n = entity_nodes(1, p);
+            const bool counted = (T.counting[e] >> f) & 1u;
+            for (int j = 0; j < n; ++j) {
+                if (counted) {
+                    if (FILL) {
+                        const int l = entity_node(1, c % 6, j, p);
+                        recv.peer[ro] = owner[ghost];
+                        recv.gid[ro] = gid[ghost];
+                        recv.node[ro] = l;
+                        recv.target[ro] = slot(ghost, l);
+                        recv.begin[ro] = zo;
+                        recv.len[ro] = 0;
+                    }
+                    ++ro;
+                } else {
+                    if (FILL) {
+                        const int l = entity_node(1, f, j, p);
+                        send.peer[so] = owner[ghost];
+                        send.gid[so] = gid[e];
+                        send.node[so] = l;
+                        send.begin[so] = sso;
+                        send.len[so] = 1;
+                        send.sources[sso] = slot(e, l);
+                    }
+                    ++so;
+                    ++sso;
+                }
+            }
+        }
+    } else {
+        const bool edge = t < faces + edges;
+        const long long g = edge ? t - faces : t - faces - edges;
+        const int* off = edge ? T.edge_off : T.vert_off;
+        const int* ent = edge ? T.edge_ent : T.vert_ent;
+        const int per = edge ? 12 : 8, kind = edge ? 2 : 3;
+        const int b = off[g], end = off[g + 1];
+        bool any_local = false, any_ghost = false;
+        for (int m = b; m < end; ++m) ((ent[m] & 0x7fffffff) / per < T.local ? any_local : any_ghost) = true;
+        if (any_local && any_ghost) {
+            const int first = ent[b], fc = first & 0x7fffffff;
+            const long long fe = fc / per;
+            const int counter = fe < T.local ? me : owner[fe];
+            const int n = entity_nodes(kind, p);
+            for (int j = 0; j < n; ++j) {
+                // Node j in the counting element's frame, at canonical position tc; an entry
+                // with the reversed bit holds it at p - 2 - tc (edge interiors, 0-based).
+                const int tc = edge && first < 0 ? p - 2 - j : j;
+                auto local_node = [&](int c) {
+                    return entity_node(kind, (c & 0x7fffffff) % per, edge && c < 0 ? p - 2 - tc : tc, p);
+                };
+                const int key_node = entity_node(kind, fc % per, j, p);
+                if (counter == me) {
+                    for (int m = b; m < end; ++m) {
+                        const long long em = (ent[m] & 0x7fffffff) / per;
+                        if (em < T.local) continue;
+                        bool head = true;   // the first ghost copy of its owner
+                        for (int i = b; i < m && head; ++i) {
+                            const long long ei = (ent[i] & 0x7fffffff) / per;
+                            head = !(ei >= T.local && owner[ei] == owner[em]);
+                        }
+                        if (!head) continue;
+                        if (FILL) {
+                            recv.peer[ro] = owner[em];
+                            recv.gid[ro] = gid[fe];
+                            recv.node[ro] = key_node;
+                            recv.target[ro] = slot(em, local_node(ent[m]));
+                            recv.begin[ro] = zo;
+                        }
+                        int zeros = 0;
+                        for (int i = m + 1; i < end; ++i) {
+                            const long long ei = (ent[i] & 0x7fffffff) / per;
+                            if (ei < T.local || owner[ei] != owner[em]) continue;
+                            if (FILL) recv.zeros[zo + zeros] = slot(ei, local_node(ent[i]));
+                            ++zeros;
+                        }
+                        if (FILL) recv.len[ro] = zeros;
+                        ++ro;
+                        zo += zeros;
+                    }
+                } else {
+                    if (FILL) {
+                        send.peer[so] = counter;
+                        send.gid[so] = gid[fe];
+                        send.node[so] = key_node;
+                        send.begin[so] = sso;
+                    }
+                    int count = 0;
+                    for (int m = b; m < end; ++m) {
+                        const long long em = (ent[m] & 0x7fffffff) / per;
+                        if (em >= T.local) continue;
+                        if (FILL) send.sources[sso + count] = slot(em, local_node(ent[m]));
+                        ++count;
+                    }
+                    if (FILL) send.len[so] = count;
+                    ++so;
+                    sso += count;
+                }
+            }
+        }
+    }
+    if (!FILL) {
+        send_at[t] = so;
+        src_at[t] = sso;
+        recv_at[t] = ro;
+        zero_at[t] = zo;
+    }
+}
+
+// out[k] = the sum of b - q (b when q is null) over entry k's sources, in their order.
+__global__ void summed_pack_kernel(const double* __restrict__ b, const double* __restrict__ q,
+                                   const long long* __restrict__ begin, const int* __restrict__ len,
+                                   const long long* __restrict__ sources, long long n, double* __restrict__ out)
+{
+    const long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= n) return;
+    double s = 0.0;
+    for (int i = 0; i < len[k]; ++i) {
+        const long long c = sources[begin[k] + i];
+        s += q ? b[c] - q[c] : b[c];
+    }
+    out[k] = s;
+}
+
+__global__ void summed_unpack_kernel(const double* __restrict__ in, const long long* __restrict__ target,
+                                     const long long* __restrict__ begin, const int* __restrict__ len,
+                                     const long long* __restrict__ zeros, long long n, double* __restrict__ ghost)
+{
+    const long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= n) return;
+    ghost[target[k]] = in[k];
+    for (int i = 0; i < len[k]; ++i) ghost[zeros[begin[k] + i]] = 0.0;
+}
+
 }  // namespace halo_detail
 
 // The ghost exchange of one rank's tables for values of degree p. gid: a global id of each
@@ -1162,6 +1341,13 @@ public:
     long long values_sent_summed() const { return summed_total_; }
     int peers() const { return (int)peers_.size(); }
 
+    // Overwrites every ghost value with the bytes `byte` (a test poisons the slots that a
+    // narrower exchange leaves alone).
+    void fill_ghost(int byte, cudaStream_t stream) const
+    {
+        if (ghost_values_ > 0) MARS_CELLWISE_CK(cudaMemsetAsync(ghost_, byte, ghost_values_ * sizeof(double), stream));
+    }
+
     // Sends b - q (b when q is null) at the copies the peers need.
     void start(const double* b, const double* q, cudaStream_t stream)
     {
@@ -1183,6 +1369,7 @@ public:
 
 private:
     friend class RequestedHalo;
+    friend class SummedHalo;
     struct Peer {
         int rank;
         long long send_offset, send_count, recv_offset, recv_count;
@@ -1354,13 +1541,7 @@ public:
     const double* ghost() const { return full_.ghost_; }
     long long values_sent() const { return send_total_; }
 
-    // Overwrites every ghost value with the bytes `byte` (a test can poison the slots the
-    // requested exchange leaves alone).
-    void fill_ghost(int byte, cudaStream_t stream) const
-    {
-        if (full_.ghost_values_ > 0)
-            MARS_CELLWISE_CK(cudaMemsetAsync(full_.ghost_, byte, full_.ghost_values_ * sizeof(double), stream));
-    }
+    void fill_ghost(int byte, cudaStream_t stream) const { full_.fill_ghost(byte, stream); }
 
     void start(const double* b, const double* q, cudaStream_t stream)
     {
@@ -1403,9 +1584,185 @@ private:
     std::vector<MPI_Request> requests_;
 };
 
+// The residual exchange of the node-line smoother. Only the rank that counts a shared node
+// (the rank of its canonically first copy) uses that node's sum: the residual is read at
+// counting copies alone. So every other rank that shares the node sends that rank one value,
+// the sum of its own copies of b - q in canonical order, where the full exchange sends every
+// copy to every rank holding a ghost copy. The counting rank files the value into the
+// sender's first ghost copy in the node's star and zero into the sender's other ghost copies,
+// so the gather adds the same terms grouped by rank: the sum changes in its rounding only. A
+// face node has one copy per side, so only the non-counting side sends it, and its sum is
+// unchanged. Sums at non-counting copies read stale or zero ghost values: only consumers
+// that use counting copies alone may run on this exchange.
+class SummedHalo {
+public:
+    SummedHalo(UnstructuredHalo& full, const UnstructuredTopology& T, const unsigned long long* d_gid,
+               const int* d_owner, int p)
+        : full_(full)
+    {
+        using namespace halo_detail;
+        int rank = 0, size = 1;
+        MARS_CELLWISE_MPI(MPI_Comm_rank(full.comm_, &rank));
+        MARS_CELLWISE_MPI(MPI_Comm_size(full.comm_, &size));
+        const TopologyView v = view(T);
+        const long long items = T.local * 6 + T.edges() + T.vertices();
+        thrust::device_vector<long long> send_at(items), src_at(items), recv_at(items), zero_at(items);
+        const SummedSend no_send{};
+        const SummedRecv no_recv{};
+        if (items > 0)
+            summed_entries_kernel<false><<<blocks(items), kThreads>>>(v, T.edges(), T.vertices(), d_gid, d_owner, p,
+                                                                      rank, raw(send_at), raw(src_at), raw(recv_at),
+                                                                      raw(zero_at), no_send, no_recv);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        const auto plus = thrust::plus<long long>();
+        send_total_ = mars::reduce(send_at.begin(), send_at.end(), 0LL, plus);
+        const long long sources = mars::reduce(src_at.begin(), src_at.end(), 0LL, plus);
+        recv_total_ = mars::reduce(recv_at.begin(), recv_at.end(), 0LL, plus);
+        const long long zeros = mars::reduce(zero_at.begin(), zero_at.end(), 0LL, plus);
+        for (auto* at : {&send_at, &src_at, &recv_at, &zero_at})
+            thrust::exclusive_scan(thrust::device, at->begin(), at->end(), at->begin());
+        thrust::device_vector<int> speer(send_total_), snode(send_total_), rpeer(recv_total_), rnode(recv_total_);
+        thrust::device_vector<unsigned long long> sgid(send_total_), rgid(recv_total_);
+        thrust::device_vector<long long> sbegin(send_total_), rtarget(recv_total_), rbegin(recv_total_);
+        thrust::device_vector<int> slen(send_total_), rlen(recv_total_);
+        sources_.resize(sources);
+        zeros_.resize(zeros);
+        if (items > 0)
+            summed_entries_kernel<true><<<blocks(items), kThreads>>>(
+                v, T.edges(), T.vertices(), d_gid, d_owner, p, rank, raw(send_at), raw(src_at), raw(recv_at),
+                raw(zero_at), SummedSend{raw(speer), raw(sgid), raw(snode), raw(sbegin), raw(slen), raw(sources_)},
+                SummedRecv{raw(rpeer), raw(rgid), raw(rnode), raw(rtarget), raw(rbegin), raw(rlen), raw(zeros_)});
+        MARS_CELLWISE_CK(cudaGetLastError());
+
+        // Both sides in (peer, element id, node) order; the entries' other fields follow.
+        auto order = [](thrust::device_vector<int>& peer, thrust::device_vector<unsigned long long>& gid,
+                        thrust::device_vector<int>& node) {
+            thrust::device_vector<long long> perm(peer.size());
+            thrust::sequence(thrust::device, perm.begin(), perm.end());
+            sort_entries(peer, gid, node, perm);
+            return perm;
+        };
+        auto permuted = [](const thrust::device_vector<long long>& perm, auto& v) {
+            std::remove_reference_t<decltype(v)> out(v.size());
+            thrust::gather(thrust::device, perm.begin(), perm.end(), v.begin(), out.begin());
+            v.swap(out);
+        };
+        const thrust::device_vector<long long> sperm = order(speer, sgid, snode);
+        permuted(sperm, sbegin);
+        permuted(sperm, slen);
+        const thrust::device_vector<long long> rperm = order(rpeer, rgid, rnode);
+        permuted(rperm, rtarget);
+        permuted(rperm, rbegin);
+        permuted(rperm, rlen);
+        send_begin_.swap(sbegin);
+        send_len_.swap(slen);
+        recv_target_.swap(rtarget);
+        recv_begin_.swap(rbegin);
+        recv_len_.swap(rlen);
+
+        std::vector<long long> scount(size, 0), rcount(size, 0), expect(size, 0);
+        UnstructuredHalo::count_by_peer(speer, scount);
+        UnstructuredHalo::count_by_peer(rpeer, rcount);
+        MARS_CELLWISE_MPI(MPI_Alltoall(scount.data(), 1, MPI_LONG_LONG, expect.data(), 1, MPI_LONG_LONG, full.comm_));
+        int bad = 0;
+        for (int q = 0; q < size; ++q) bad |= expect[q] != rcount[q];
+        long long sofs = 0, rofs = 0;
+        for (int q = 0; q < size; ++q) {
+            if (scount[q] == 0 && rcount[q] == 0) continue;
+            peers_.push_back({q, sofs, scount[q], rofs, rcount[q]});
+            sofs += scount[q];
+            rofs += rcount[q];
+        }
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_BOR, full.comm_));
+        if (bad) {
+            if (rank == 0) fprintf(stderr, "summed halo: send and receive counts disagree between ranks\n");
+            MPI_Abort(full.comm_, 1);
+        }
+        requests_.reserve(2 * peers_.size());
+
+        // The keys in send order must equal the keys the peer expects in its receive order.
+        thrust::device_vector<unsigned long long> sent(send_total_), expected(recv_total_), got(recv_total_);
+        thrust::transform(thrust::device, sgid.begin(), sgid.end(), snode.begin(), sent.begin(), KeyHash{});
+        thrust::transform(thrust::device, rgid.begin(), rgid.end(), rnode.begin(), expected.begin(), KeyHash{});
+        MARS_CELLWISE_CK(cudaDeviceSynchronize());   // MPI reads sent next
+        post(raw(sent), raw(got), MPI_UINT64_T, kKeyTag);
+        MARS_CELLWISE_MPI(MPI_Waitall((int)requests_.size(), requests_.data(), MPI_STATUSES_IGNORE));
+        bad = !thrust::equal(thrust::device, got.begin(), got.end(), expected.begin());
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_BOR, full.comm_));
+        if (bad) {
+            if (rank == 0) fprintf(stderr, "summed halo: the ranks list their shared nodes in different orders\n");
+            MPI_Abort(full.comm_, 1);
+        }
+        if (send_total_ > 0) MARS_CELLWISE_CK(cudaMalloc(&send_, send_total_ * sizeof(double)));
+        if (recv_total_ > 0) MARS_CELLWISE_CK(cudaMalloc(&recv_, recv_total_ * sizeof(double)));
+    }
+    ~SummedHalo()
+    {
+        cudaFree(send_);
+        cudaFree(recv_);
+    }
+    SummedHalo(const SummedHalo&) = delete;
+    SummedHalo& operator=(const SummedHalo&) = delete;
+
+    bool active() const { return full_.active(); }
+    const ElementList& interior() const { return full_.interior(); }
+    const ElementList& boundary() const { return full_.boundary(); }
+    const double* ghost() const { return full_.ghost_; }
+    long long values_sent() const { return send_total_; }
+    void fill_ghost(int byte, cudaStream_t stream) const { full_.fill_ghost(byte, stream); }
+
+    void start(const double* b, const double* q, cudaStream_t stream)
+    {
+        using namespace halo_detail;
+        if (send_total_ > 0)
+            summed_pack_kernel<<<blocks(send_total_), kThreads, 0, stream>>>(
+                b, q, raw(send_begin_), raw(send_len_), raw(sources_), send_total_, send_);
+        MARS_CELLWISE_CK(cudaGetLastError());
+        MARS_CELLWISE_CK(cudaStreamSynchronize(stream));   // MPI reads send_ next
+        post(send_, recv_, MPI_DOUBLE, kTag);
+    }
+    void finish(cudaStream_t stream)
+    {
+        using namespace halo_detail;
+        MARS_CELLWISE_MPI(MPI_Waitall((int)requests_.size(), requests_.data(), MPI_STATUSES_IGNORE));
+        if (recv_total_ > 0)
+            summed_unpack_kernel<<<blocks(recv_total_), kThreads, 0, stream>>>(
+                recv_, raw(recv_target_), raw(recv_begin_), raw(recv_len_), raw(zeros_), recv_total_, full_.ghost_);
+        MARS_CELLWISE_CK(cudaGetLastError());
+    }
+
+private:
+    static constexpr int kTag = 0x3303, kKeyTag = 0x3304;   // next to the other cell-wise exchanges
+    template <typename T>
+    void post(const T* send, T* recv, MPI_Datatype type, int tag)
+    {
+        requests_.clear();
+        for (const auto& q : peers_)
+            if (q.recv_count > 0) {
+                requests_.emplace_back();
+                MARS_CELLWISE_MPI(MPI_Irecv(recv + q.recv_offset, (int)q.recv_count, type, q.rank, tag, full_.comm_,
+                                            &requests_.back()));
+            }
+        for (const auto& q : peers_)
+            if (q.send_count > 0) {
+                requests_.emplace_back();
+                MARS_CELLWISE_MPI(MPI_Isend(send + q.send_offset, (int)q.send_count, type, q.rank, tag, full_.comm_,
+                                            &requests_.back()));
+            }
+    }
+
+    UnstructuredHalo& full_;
+    std::vector<UnstructuredHalo::Peer> peers_;
+    thrust::device_vector<long long> sources_, zeros_, send_begin_, recv_target_, recv_begin_;
+    thrust::device_vector<int> send_len_, recv_len_;
+    long long send_total_ = 0, recv_total_ = 0;
+    double *send_ = nullptr, *recv_ = nullptr;
+    std::vector<MPI_Request> requests_;
+};
+
 // Runs a pass over the local elements on the values b - q (q may be null): one launch on
 // one rank; otherwise start the exchange, launch the elements that read no ghost copies,
-// wait, launch the rest. Halo: UnstructuredHalo or RequestedHalo.
+// wait, launch the rest. Halo: UnstructuredHalo, RequestedHalo or SummedHalo.
 // launch(set, ghost, first) returns its number of thread blocks; `first` is how many
 // blocks earlier launches used (for partial sums). Returns the total.
 template <typename Halo, typename Launch>

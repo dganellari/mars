@@ -63,6 +63,10 @@
 // --lines-update requested: the line update exchanges only the ghost copies it reads (one
 // counting copy per node) instead of every copy of the shared nodes; checked bit for bit
 // against the full exchange at setup, with the other ghost slots poisoned.
+// --lines-residual summed: the line residual, read at counting copies only, exchanges one
+// summed value per (rank, shared node), sent to the rank that counts the node, instead of
+// every copy (cellwise::SummedHalo). The sums change in their rounding; checked at setup
+// against the full exchange (at most 1e-11 apart on random values in [-1, 1)).
 // p = 1 with --mg --amg: FCG on the rows of the assembled p = 1 matrix that BoomerAMG uses,
 // as MFEM does (assembled at p = 1, matrix-free above: 2x faster than the cell-wise operator
 // here, docs/design/cellwise_bp_fcg.md); b is assembled onto the rows before the timing and
@@ -941,6 +945,7 @@ struct Options {
     bool p1_assembled = false;   // set from the others after parsing
     bool lines_ptx = false;      // --smoother lines with the MARSIR-generated passes
     std::string lines_update = "full";   // --lines-update full|requested
+    std::string lines_residual = "full";   // --lines-residual full|summed
     std::string cheb_interval = "mars", rhs = "discrete", mesh, smoother = "jacobi";
     double deform = 0.05, stretch = 1.0, tol = 1e-10;
     // PASS needs the true assembled residual at or below this. FCG stops on sqrt(<r,z>/<r0,z0>):
@@ -1270,7 +1275,11 @@ int run(const Options& o)
         // one summed value per (peer, node), and the requested update's (0 without it).
         double sent, sent_max, summed, summed_max, requested, requested_max, peers_max;
         long long differ_hand, differ_gen;   // requested-update check; -1: not run
+        // The summed residual's values and its largest difference from the full exchange
+        // (hand, generated; -1: not run).
+        double residual_sent, residual_sent_max, residual_hand, residual_gen;
     };
+    std::unique_ptr<cellwise::SummedHalo> summed_top, summed_three;   // --lines-residual summed
     std::vector<LineSizes> line_sizes;
     if (o.mg) {
         BP_CK(cudaEventRecord(t0, stream));
@@ -1326,6 +1335,24 @@ int run(const Options& o)
                 // after 300), and the V-cycle was indefinite (docs/design/cellwise_bp_fcg.md).
                 const int line_steps = o.power_steps > 0 ? o.power_steps : 100;
                 long long differ_hand = -1, differ_gen = -1;
+                double residual_hand = -1.0, residual_gen = -1.0;
+                auto sum_residual = [&](auto& nl, int lp, cellwise::UnstructuredHalo* hx,
+                                        std::unique_ptr<cellwise::SummedHalo>& summed) {
+                    residual_hand = residual_gen = -1.0;
+                    if (o.lines_residual != "summed" || !hx) return;
+                    summed = std::make_unique<cellwise::SummedHalo>(*hx, topo, d_gid, raw(owner), lp);
+                    nl.use_summed_residual(summed.get());
+                    residual_hand = nl.check_summed_residual(MPI_COMM_WORLD, true);
+                    if (o.lines_ptx) residual_gen = nl.check_summed_residual(MPI_COMM_WORLD, false);
+                    if (!(residual_hand <= 1e-11) || !(residual_gen <= 1e-11)) {
+                        if (root)
+                            fprintf(stderr,
+                                    "FAIL: summed line residual at p=%d differs from the full exchange by %.3e (hand) "
+                                    "and %.3e (generated)\n",
+                                    lp, residual_hand, residual_gen);
+                        MPI_Abort(MPI_COMM_WORLD, 1);
+                    }
+                };
                 auto request_update = [&](auto& nl, int lp) {
                     differ_hand = differ_gen = -1;
                     if (o.lines_update != "requested") return;
@@ -1345,10 +1372,12 @@ int run(const Options& o)
                     const double sent = hx ? (double)hx->values_sent() : 0.0;
                     const double summed = hx ? (double)hx->values_sent_summed() : 0.0;
                     const double req = nl.requested_halo() ? (double)nl.requested_halo()->values_sent() : 0.0;
+                    const double res = nl.summed_halo() ? (double)nl.summed_halo()->values_sent() : 0.0;
                     line_sizes.push_back({lp, all_sum((double)nl.element_lines()), all_max((double)nl.longest()),
                                           all_sum((double)nl.blocks()), all_sum((double)nl.rows()), all_sum(sent),
                                           all_max(sent), all_sum(summed), all_max(summed), all_sum(req), all_max(req),
-                                          all_max(hx ? (double)hx->peers() : 0.0), differ_hand, differ_gen});
+                                          all_max(hx ? (double)hx->peers() : 0.0), differ_hand, differ_gen,
+                                          all_sum(res), all_max(res), residual_hand, residual_gen});
                 };
                 lines_top = std::make_unique<cellwise::NodeLines<P>>(lines, topo, h, raw(G), raw(dB), raw(dDB),
                                                                      mg->diag<P>(), MPI_COMM_WORLD, stream);
@@ -1357,6 +1386,7 @@ int run(const Options& o)
                     lines_top->set_kernels(lines_gen_top.get());
                 }
                 request_update(*lines_top, P);
+                sum_residual(*lines_top, P, h, summed_top);
                 mg->set_smoother(
                     P,
                     [&nl = *lines_top](const double* in, const double* y, double* d, double* xs, double c1, double c2,
@@ -1372,6 +1402,7 @@ int run(const Options& o)
                         lines_three->set_kernels(lines_gen_three.get());
                     }
                     request_update(*lines_three, 3);
+                    sum_residual(*lines_three, 3, h3, summed_three);
                     mg->set_smoother(
                         3,
                         [&nl = *lines_three](const double* in, const double* y, double* d, double* xs, double c1,
@@ -1641,6 +1672,11 @@ int run(const Options& o)
                 printf("  line update at p=%d exchanges the copies it reads: %.0f values (largest rank %.0f); bits "
                        "against the full exchange: %lld copies differ (hand), %lld (generated)\n",
                        ls.p, ls.requested, ls.requested_max, ls.differ_hand, ls.differ_gen);
+            if (ls.residual_hand >= 0)
+                printf("  line residual at p=%d sends one summed value per (rank, node) to the counting rank: %.0f "
+                       "values (largest rank %.0f); largest difference from the full exchange: %.3e (hand), %.3e "
+                       "(generated)\n",
+                       ls.p, ls.residual_sent, ls.residual_sent_max, ls.residual_hand, ls.residual_gen);
         }
         if (o.amg)
             printf("  BoomerAMG: strong threshold %.2f, %d aggressive levels, coarsest at most %d rows\n", o.amg_theta,
@@ -1798,6 +1834,7 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--cheb-interval")) o.cheb_interval = argv[i + 1];
         else if (!strcmp(argv[i], "--smoother")) o.smoother = argv[i + 1];
         else if (!strcmp(argv[i], "--lines-update")) o.lines_update = argv[i + 1];
+        else if (!strcmp(argv[i], "--lines-residual")) o.lines_residual = argv[i + 1];
         else if (!strcmp(argv[i], "--power-steps")) o.power_steps = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--rhs")) o.rhs = argv[i + 1];
         else if (!strcmp(argv[i], "--mesh")) o.mesh = argv[i + 1];
@@ -1895,6 +1932,10 @@ int main(int argc, char** argv)
         error = "--lines-update is full or requested";
     if (!error && o.lines_update == "requested" && o.smoother != "lines")
         error = "--lines-update requested goes with --smoother lines";
+    if (!error && o.lines_residual != "full" && o.lines_residual != "summed")
+        error = "--lines-residual is full or summed";
+    if (!error && o.lines_residual == "summed" && o.smoother != "lines")
+        error = "--lines-residual summed goes with --smoother lines";
     if (!error && o.smoother == "lines" && (!o.mg || o.p == 1 || o.block || o.rotate || !o.block_dss.empty()))
         error = "--smoother lines goes with --mg at p = 3 or 7, without --block, --rotate or --block-dss";
     if (!error && o.rhs != "discrete" && !(o.rhs == "pde" && o.spec.rfind("bp3", 0) == 0))
@@ -1938,7 +1979,7 @@ int main(int argc, char** argv)
     if (error) {
         if (rank == 0)
             fprintf(stderr, "%s\nusage: %s --ptx-dir <dir> --spec bp1|bp3|bp1_tri|bp3_tri --p 1|3|7 [--ne N] [--deform a] [--stretch s] [--tol t] [--true-tol t] "
-                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx] [--lines-update full|requested]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e [--domain]] [--heat-case wing|slab [--export-slice prefix] [--slice-window xmin,xmax,ymin,ymax,z]] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
+                            "[--h-levels -1|0|1|2|3] [--maxit k] [--reps r] [--solves k] [--profile] [--cheb-interval mars|mfem] [--smoother jacobi|lines [--lines-ptx] [--lines-update full|requested] [--lines-residual full|summed]] [--power-steps k] [--p1-matrix-free] [--rhs discrete|pde] [--mesh file.e [--domain]] [--heat-case wing|slab [--export-slice prefix] [--slice-window xmin,xmax,ymin,ymax,z]] [--dss-ptx file] [--block B] [--rotate] [--block-dss passes|nodes|generated] [--mg [--pre k] [--post k] [--coarse k] [--amg [--amg-cycles k] [--amg-consolidate root|-1|0|rows] [--amg-theta t] [--amg-agg k] [--amg-coarse-size n] [--amg-print]]]\n", error, argv[0]);
         MPI_Finalize();
         return 1;
     }
