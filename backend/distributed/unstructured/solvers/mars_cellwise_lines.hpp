@@ -774,8 +774,8 @@ public:
 
     // update() through the requested exchange against the full one, from random z, d and x,
     // with every ghost value poisoned (NaN) before each requested exchange: the number of
-    // copies of d or x whose bits differ, summed over the ranks. Two variants (first step
-    // with assign, later step adding to x). hand: the hand kernels even when generated ones
+    // copies of d or x whose bits differ, summed over the ranks. Three variants (first step
+    // with assign, first step adding to x, later step). hand: the hand kernels even when generated ones
     // are set. Leaves z arbitrary (solve() rewrites it) and the ghost values zero, as built.
     long long check_requested_update(MPI_Comm comm, bool hand)
     {
@@ -792,15 +792,16 @@ public:
             thrust::transform(thrust::device, it, it + copies, x0.begin(), RandomValue{3});
             thrust::device_vector<double> d1(d0), x1(x0);
             MARS_CELLWISE_CK(cudaDeviceSynchronize());
-            for (int variant = 0; variant < 2; ++variant) {
-                const bool first = variant == 0;
+            for (int variant = 0; variant < 3; ++variant) {
+                const bool first = variant != 2;
+                const bool assign = variant == 0;
                 auto requested = std::move(requested_);
                 update(thrust::raw_pointer_cast(d0.data()), thrust::raw_pointer_cast(x0.data()), 0.75, -1.25, first,
-                       first);
+                       assign);
                 requested_ = std::move(requested);
                 requested_->fill_ghost(0xff, stream_);
                 update(thrust::raw_pointer_cast(d1.data()), thrust::raw_pointer_cast(x1.data()), 0.75, -1.25, first,
-                       first);
+                       assign);
                 MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
                 differ += mars::transformReduce(
                     it, it + copies,

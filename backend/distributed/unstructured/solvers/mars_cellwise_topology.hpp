@@ -1020,7 +1020,7 @@ __global__ void need_kernel(const int* __restrict__ src, long long copies, long 
                             int* __restrict__ need)
 {
     const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < copies && src[t] >= local_values) need[src[t] - local_values] = 1;
+    if (t < copies && src[t] >= local_values) atomicExch(need + src[t] - local_values, 1);
 }
 
 // A functor: nvcc allows no device lambda inside a constructor.
