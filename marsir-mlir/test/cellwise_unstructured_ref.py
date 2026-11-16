@@ -335,7 +335,7 @@ def main():
                         g = ids[(e, l)]
                         if min(copies[g]) == (e, l):        # the counting copy
                             d = abs(got[e][l] - y[e][l]) / max(1.0, abs(y[e][l]))
-                            worst = d if not np.isfinite(d) else max(worst, d)
+                            worst = max(worst, d) if np.isfinite(d) else float("inf")
                             if not np.isfinite(d): break
             sent = sum(1 for (g, r) in sums if r != counter[g])
             full = sum(1 for (e, l), g in ids.items() for r in {part[e2] for (e2, l2) in copies[g]}

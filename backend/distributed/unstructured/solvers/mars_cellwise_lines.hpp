@@ -806,14 +806,16 @@ public:
     {
         using namespace line_detail;
         double worst = 0.0;
+        int rank = 0;
+        MARS_CELLWISE_MPI(MPI_Comm_rank(comm, &rank));
         if (summed_) {
             LineKernels* gen = gen_;
             if (hand) gen_ = nullptr;
             const long long copies = local_ * n3;
             thrust::device_vector<double> b(copies), y(copies), reference(copies);
             const auto it = thrust::counting_iterator<long long>(0);
-            thrust::transform(thrust::device, it, it + copies, b.begin(), RandomValue{4});
-            thrust::transform(thrust::device, it, it + copies, y.begin(), RandomValue{5});
+            thrust::transform(thrust::device, it, it + copies, b.begin(), RandomValue{4 + 2ULL * (unsigned)rank});
+            thrust::transform(thrust::device, it, it + copies, y.begin(), RandomValue{5 + 2ULL * (unsigned)rank});
             for (int variant = 0; variant < 2; ++variant) {
                 const double* yv = variant ? thrust::raw_pointer_cast(y.data()) : nullptr;
                 SummedHalo* summed = summed_;

@@ -1340,7 +1340,8 @@ int run(const Options& o)
                                         std::unique_ptr<cellwise::SummedHalo>& summed) {
                     residual_hand = residual_gen = -1.0;
                     if (o.lines_residual != "summed" || !hx) return;
-                    summed = std::make_unique<cellwise::SummedHalo>(*hx, topo, d_gid, raw(owner), lp);
+                    summed = std::make_unique<cellwise::SummedHalo>(
+                        *hx, topo, d_gid, thrust::raw_pointer_cast(owner.data()), lp);
                     nl.use_summed_residual(summed.get());
                     residual_hand = nl.check_summed_residual(MPI_COMM_WORLD, true);
                     if (o.lines_ptx) residual_gen = nl.check_summed_residual(MPI_COMM_WORLD, false);

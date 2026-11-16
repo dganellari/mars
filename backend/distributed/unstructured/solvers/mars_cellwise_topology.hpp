@@ -41,14 +41,14 @@
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
-
-#include <type_traits>
 #include <thrust/transform.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <type_traits>
 #include <vector>
 
 namespace mars {
@@ -1601,9 +1601,8 @@ public:
         : full_(full)
     {
         using namespace halo_detail;
-        int rank = 0, size = 1;
+        int rank = 0;
         MARS_CELLWISE_MPI(MPI_Comm_rank(full.comm_, &rank));
-        MARS_CELLWISE_MPI(MPI_Comm_size(full.comm_, &size));
         const TopologyView v = view(T);
         const long long items = T.local * 6 + T.edges() + T.vertices();
         thrust::device_vector<long long> send_at(items), src_at(items), recv_at(items), zero_at(items);
@@ -1660,18 +1659,53 @@ public:
         recv_begin_.swap(rbegin);
         recv_len_.swap(rlen);
 
-        std::vector<long long> scount(size, 0), rcount(size, 0), expect(size, 0);
-        UnstructuredHalo::count_by_peer(speer, scount);
-        UnstructuredHalo::count_by_peer(rpeer, rcount);
-        MARS_CELLWISE_MPI(MPI_Alltoall(scount.data(), 1, MPI_LONG_LONG, expect.data(), 1, MPI_LONG_LONG, full.comm_));
+        // Counts use the existing sparse peers, including peers whose new count is zero.
         int bad = 0;
-        for (int q = 0; q < size; ++q) bad |= expect[q] != rcount[q];
+        auto counts = [&](const thrust::device_vector<int>& peer) {
+            std::vector<long long> count(full.peers_.size(), 0);
+            thrust::device_vector<int> ranks(peer.size());
+            thrust::device_vector<long long> values(peer.size());
+            const auto end = thrust::reduce_by_key(thrust::device, peer.begin(), peer.end(),
+                                                   thrust::constant_iterator<long long>(1), ranks.begin(),
+                                                   values.begin());
+            const long long n = end.first - ranks.begin();
+            std::vector<int> h_rank(n);
+            std::vector<long long> h_count(n);
+            thrust::copy(ranks.begin(), ranks.begin() + n, h_rank.begin());
+            thrust::copy(values.begin(), values.begin() + n, h_count.begin());
+            for (long long i = 0; i < n; ++i) {
+                const auto it = std::lower_bound(full.peers_.begin(), full.peers_.end(), h_rank[i],
+                                                 [](const auto& p, int q) { return p.rank < q; });
+                if (it == full.peers_.end() || it->rank != h_rank[i] || h_count[i] > INT_MAX) bad = 1;
+                else count[it - full.peers_.begin()] = h_count[i];
+            }
+            return count;
+        };
+        const auto scount = counts(speer), rcount = counts(rpeer);
+        MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_BOR, full.comm_));
+        if (bad) {
+            if (rank == 0) fprintf(stderr, "summed halo: invalid peer or message exceeds the MPI count limit\n");
+            MPI_Abort(full.comm_, 1);
+        }
+        std::vector<long long> expect(full.peers_.size());
+        std::vector<MPI_Request> req;
+        req.reserve(2 * full.peers_.size());
+        for (size_t i = 0; i < full.peers_.size(); ++i) {
+            req.emplace_back();
+            MARS_CELLWISE_MPI(MPI_Irecv(&expect[i], 1, MPI_LONG_LONG, full.peers_[i].rank, kCountTag,
+                                        full.comm_, &req.back()));
+            req.emplace_back();
+            MARS_CELLWISE_MPI(MPI_Isend(&scount[i], 1, MPI_LONG_LONG, full.peers_[i].rank, kCountTag,
+                                        full.comm_, &req.back()));
+        }
+        MARS_CELLWISE_MPI(MPI_Waitall((int)req.size(), req.data(), MPI_STATUSES_IGNORE));
         long long sofs = 0, rofs = 0;
-        for (int q = 0; q < size; ++q) {
-            if (scount[q] == 0 && rcount[q] == 0) continue;
-            peers_.push_back({q, sofs, scount[q], rofs, rcount[q]});
-            sofs += scount[q];
-            rofs += rcount[q];
+        for (size_t i = 0; i < full.peers_.size(); ++i) {
+            bad |= expect[i] != rcount[i];
+            if (scount[i] == 0 && rcount[i] == 0) continue;
+            peers_.push_back({full.peers_[i].rank, sofs, scount[i], rofs, rcount[i]});
+            sofs += scount[i];
+            rofs += rcount[i];
         }
         MARS_CELLWISE_MPI(MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_BOR, full.comm_));
         if (bad) {
@@ -1732,7 +1766,7 @@ public:
     }
 
 private:
-    static constexpr int kTag = 0x3303, kKeyTag = 0x3304;   // next to the other cell-wise exchanges
+    static constexpr int kTag = 0x3303, kKeyTag = 0x3304, kCountTag = 0x3305;   // next to the other cell-wise exchanges
     template <typename T>
     void post(const T* send, T* recv, MPI_Datatype type, int tag)
     {
