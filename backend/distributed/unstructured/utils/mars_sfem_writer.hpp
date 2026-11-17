@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <type_traits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -57,6 +59,12 @@ inline size_t sfemGatherDisplacements(const std::vector<int>& counts, std::vecto
 // smesh/SFEM or numpy.fromfile.
 //
 // Collective: every rank calls writeFields with the same fields. The domain layout must stay fixed.
+//
+// Compressed output: setArrayWriter routes every array (the mesh's coordinates and connectivity, the
+// frames' fields) through a writer of the caller's choice instead of the raw fwrite on rank 0. It
+// receives the path the raw file would have had, rank 0's gathered values and their type; e.g.
+// smesh's .smz writer then writes <path>.smz straight from that buffer (nothing raw is written).
+// meta.yaml keeps the raw names: smesh's and SFEM's readers find <name>.smz in their place.
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 class SfemWriter
 {
@@ -177,14 +185,14 @@ private:
                     std::vector<double> v(n_nodes_);
                     for (size_t i = 0; i < n_nodes_; ++i)
                         v[order_[i]] = gathered[i];
-                    writeRaw(name.c_str(), v.data(), v.size());
+                    writeArray(name, v.data(), v.size());
                 }
                 else
                 {
                     std::vector<float> v(n_nodes_);
                     for (size_t i = 0; i < n_nodes_; ++i)
                         v[order_[i]] = float(gathered[i]);
-                    writeRaw(name.c_str(), v.data(), v.size());
+                    writeArray(name, v.data(), v.size());
                 }
             }
         }
@@ -202,9 +210,22 @@ private:
         time_started_ = true;
     }
 
+public:
+    // Rank 0's writer for every array (see the file comment); returns false on failure.
+    enum class ArrayType
+    {
+        Float32,
+        Float64,
+        Int32,
+        Int64
+    };
+    using ArrayWriter = std::function<bool(const std::string& path, const void* data, size_t n, ArrayType type)>;
+    void setArrayWriter(ArrayWriter writer) { array_writer_ = std::move(writer); }
+
 private:
     std::string dir_;
     bool full_precision_;
+    ArrayWriter array_writer_;
     bool mesh_written_     = false;
     bool time_started_     = false;
     const DomainT* domain_ = nullptr;
@@ -217,6 +238,25 @@ private:
     std::vector<int> displs_;   // rank 0
     std::vector<size_t> order_; // rank 0: gathered position -> serial node number
     size_t n_nodes_ = 0;        // rank 0: serial node count
+
+    // An array through the caller's writer, else raw.
+    template<typename T>
+    void writeArray(const std::string& path, const T* data, size_t n)
+    {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double> || std::is_same_v<T, int32_t> ||
+                          std::is_same_v<T, int64_t>,
+                      "SfemWriter: float32, float64, int32 or int64 arrays");
+        if (!array_writer_)
+        {
+            writeRaw(path.c_str(), data, n);
+            return;
+        }
+        constexpr ArrayType type = std::is_same_v<T, float>     ? ArrayType::Float32
+                                   : std::is_same_v<T, double>  ? ArrayType::Float64
+                                   : std::is_same_v<T, int32_t> ? ArrayType::Int32
+                                                                : ArrayType::Int64;
+        if (!array_writer_(path, data, n, type)) throw std::runtime_error("SfemWriter: the array writer failed on " + path);
+    }
 
     template<typename T>
     static void writeRaw(const char* path, const T* data, size_t n)
@@ -367,7 +407,7 @@ private:
             {
                 for (size_t i = 0; i < n_nodes_; ++i)
                     c[order_[i]] = float((*g[d])[i]);
-                writeRaw((dir_ + "/mesh/" + xyz[d] + ".float32").c_str(), c.data(), n_nodes_);
+                writeArray(dir_ + "/mesh/" + xyz[d] + ".float32", c.data(), n_nodes_);
             }
 
             const char* idx = "int32";
@@ -382,7 +422,7 @@ private:
                     ids[e] = int32_t(it - sorted.begin());
                 }
                 const std::string path = dir_ + "/mesh/i" + std::to_string(kk) + "." + idx;
-                writeRaw(path.c_str(), ids.data(), n_elements);
+                writeArray(path, ids.data(), n_elements);
             }
 
             const std::string path = dir_ + "/mesh/meta.yaml";
