@@ -20,13 +20,13 @@ ctest --test-dir build-hex-flow --output-on-failure
 Use a CUDA or HIP installation of this candidate with Hypre enabled. Configure the `MPIEXEC_*`
 CMake variables for the system's launcher.
 
-The mesh is a box of 4³ hexes with warped interior nodes: inflow at x0, a do-nothing outlet at x1,
+The mesh is a box of 6³ hexes with warped interior nodes: inflow at x0, a do-nothing outlet at x1,
 no-slip walls. It runs the path ldp_fsi uses: Hypre, assembled DDT, divT gradient, implicit
 convection, SUPG, and the penalised projection with β = 1/2.
 
 | test | checks |
 |---|---|
-| `hex_flow_{1,2,4}` | six steps; on each, the pressure solve converges below the iteration cap and the fields stay finite; after the first, the projection removes at least 90 % of the predictor's divergence |
+| `hex_flow_{1,2,4}` | six steps; on each, the pressure solve converges below the iteration cap and the fields stay finite; the largest nodal divergence is no worse than twice that of the same stepper without the penalty (two separate checks; the largest divergence sits at the inlet's Dirichlet corners, which no projection changes) |
 | `hex_invalid_{1,2,4}` | one inverted hex, on one rank; setup refuses it on every rank |
 | `hex_flow_ranks_{2,4}` | the kinetic energy after six steps equals the 1-rank value to 1e-6 (`tests/release/check_rank_value.py`) |
 

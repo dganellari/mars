@@ -34,7 +34,7 @@ ctest --test-dir build-face-flux --output-on-failure
 Use a CUDA or HIP installation of this candidate with Hypre enabled. Configure the `MPIEXEC_*`
 CMake variables for the system's launcher.
 
-The fifteen tests run five modes at 1, 2 and 4 ranks. The boxes are 4³ cubes: five Tet4 each, or
+The fifteen tests run five modes at 1, 2 and 4 ranks. The boxes are 6³ cubes: five Tet4 each, or
 one Hex8 with warped interior nodes. Each has inflow at x0, a do-nothing outlet at x1 and no-slip
 walls, with the openings' areas given per node as the rectangular dual of the face grid.
 

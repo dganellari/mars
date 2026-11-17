@@ -28,12 +28,13 @@ Use a CUDA or HIP installation of this candidate with Hypre enabled. Configure t
 CMake variables for the system's launcher.
 
 The eighteen tests run six modes at 1, 2 and 4 ranks on the public Tet4 box of
-`tests/outlet_pressure`:
+`tests/outlet_pressure`, with 6³ cubes: on 4³, BoomerAMG under GMRES fails the first pressure solve
+with inflow (Hypre error 1), with or without the penalty.
 
 | mode | checks |
 |---|---|
 | `baseline` | W = 0 leaves the setup operator, and three inflow steps equal those of a stepper without the penalty |
-| `varying` | W piecewise constant in slabs, with jumps: every interior plane's rows sum to the layered operator's flux, exactly |
+| `varying` | W piecewise constant in slabs, with jumps: every interior plane's rows sum to the layered operator's flux, to 1e-4 (MARS's CVFEM K meets the Galerkin identity to ~1e-5 even with a uniform beta); the same identity with the largest nodal beta per tet in place of the mean must miss by more than 1e-2 |
 | `update` | W = w V gives a uniform beta, so K becomes beta K0; after changes of W, eta and dt, and of dt alone |
 | `bdf2` | the first step at dtEff = dt, the following ones at 2 dt / 3 |
 | `flow` | with inflow and beta = 1/2: the pressure solve converges, and continuity is no worse than without the penalty (two separate checks) |
