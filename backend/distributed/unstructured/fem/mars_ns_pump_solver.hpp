@@ -3055,14 +3055,17 @@ __global__ void addScsOpeningBoundaryDivergenceKernel(const RealType* vx,
                                                       const RealType* outAz,
                                                       const uint8_t* ownership,
                                                       RealType* divAccNode,
-                                                      size_t numNodes)
+                                                      size_t numNodes,
+                                                      const uint8_t* skipOutlet = nullptr)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
-    const RealType ax = inAx[i] + outAx[i];
-    const RealType ay = inAy[i] + outAy[i];
-    const RealType az = inAz[i] + outAz[i];
+    // skipOutlet (face flux): the node's outlet flux is the face-flux projection's, added once there.
+    const RealType o  = (skipOutlet && skipOutlet[i]) ? RealType(0) : RealType(1);
+    const RealType ax = inAx[i] + o * outAx[i];
+    const RealType ay = inAy[i] + o * outAy[i];
+    const RealType az = inAz[i] + o * outAz[i];
     divAccNode[i] += vx[i] * ax + vy[i] * ay + vz[i] * az;
 }
 
@@ -3846,6 +3849,9 @@ struct NSStepper
     // The pressure outlets' nodes with free velocity (owned, by node): their control volumes keep the
     // continuity row, closed by the boundary face's flux (mars_face_flux.hpp); built on first use.
     cstone::DeviceVector<uint8_t> d_faceFluxOutlet;
+    long long faceFluxOutletCount = 0;                  // eligible outlet nodes over all ranks
+    cstone::DeviceVector<RealType> d_faceFluxOpeningSource;  // what the pressure RHS added at the other
+                                                             // opening nodes (inlet, ineligible outlets)
     bool faceFluxOutletsBuilt = false;
     bool faceFluxOperatorBuilt = false;
     RealType lastFaceFluxDivMax = 0;   // max |sum F| over control volumes with free pressure rows
@@ -4366,6 +4372,7 @@ void faceFluxEnsureOutlets(NSStepper<KeyType, RealType, ElementTag>& s)
                               uint8_t(1));
     }
     MPI_Allreduce(&local, &global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    s.faceFluxOutletCount = global;
     if (s.rank == 0)
         std::cout << "face flux: " << global << " outlet nodes with free velocity keep their continuity rows\n";
 }
@@ -4393,11 +4400,20 @@ void faceFluxPressureOperator(NSStepper<KeyType, RealType, ElementTag>& s, const
             s.d_faceFluxOutlet.data(), gamma, s.d_massNode.data(), s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(),
             s.d_outletAreaVecZ.data(), s.d_node_to_dof.data(), s.d_diagPtr.data(), s.d_valuesPre.data(), s.numOwnedDofs,
             s.nodeCount);
-        cudaDeviceSynchronize();
+        cudaCheckError();
+        cudaCheckCall(cudaDeviceSynchronize());
+    }
+    // The gauge without outlets (validateFaceFlux): the pin is a real row here, as its RHS is zeroed.
+    if (s.pressurePinDof >= 0)
+    {
+        enforcePinRowMatrixKernel<RealType><<<1, 1>>>(s.pressurePinDof, s.d_rowPtr.data(), s.d_colInd.data(),
+                                                      s.d_diagPtr.data(), s.d_valuesPre.data());
+        cudaCheckError();
     }
     if (s.nnz > 0)
-        cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(), size_t(s.nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice);
-    cudaDeviceSynchronize();
+        cudaCheckCall(cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(), size_t(s.nnz) * sizeof(RealType),
+                                 cudaMemcpyDeviceToDevice));
+    cudaCheckCall(cudaDeviceSynchronize());
     s.faceFluxOperatorBuilt = true;
 }
 
@@ -4428,9 +4444,15 @@ void faceFluxAddOutletFlux(NSStepper<KeyType, RealType, ElementTag>& s, const Re
     cudaDeviceSynchronize();
 }
 
+template<typename KeyType, typename RealType, typename ElementTag>
+void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s, bool report_rms = true);
+
 // Once, before the first face-flux pressure solve: the face form of K_gamma against the assembled
-// pressure matrix on a smooth non-linear field, over the free rows. They must agree to round-off,
-// or the corrected flux is not divergence-free.
+// pressure matrix on a smooth non-linear field, over every row but the pin. At an outlet node the
+// row is the face form minus beta_i g_i . A_b, g the corrector's own nodal gradient of the field
+// (compute_pressure_increment_gradient and the outlet closure), so the outlet rows check that the
+// operator matches the corrector's boundary flux as well. They must agree to round-off, or the
+// corrected flux is not divergence-free.
 template<typename KeyType, typename RealType, typename ElementTag>
 void faceFluxSelfCheck(NSStepper<KeyType, RealType, ElementTag>& s)
 {
@@ -4480,6 +4502,26 @@ void faceFluxSelfCheck(NSStepper<KeyType, RealType, ElementTag>& s)
         cudaDeviceSynchronize();
     }
     s.domain.reverseExchangeNodeHaloAdd(acc);
+    // the outlet rows: - beta_i g_i . A_b with the corrector's gradient of phi (owned nodes, after the fold)
+    faceFluxEnsureOutlets(s);
+    if (s.nodeCount > 0 && s.d_outletAreaVecX.size() == s.nodeCount)
+    {
+        std::swap(s.d_phi, phi);
+        compute_pressure_increment_gradient<KeyType, RealType, ElementTag>(s, false);
+        faceFluxCloseGradient<KeyType, RealType, ElementTag>(s, s.d_phi.data(), nullptr, s.d_gradPhix, s.d_gradPhiy,
+                                                             s.d_gradPhiz);
+        std::swap(s.d_phi, phi);
+        const uint8_t* outlet = s.d_faceFluxOutlet.data();
+        const RealType *gx = s.d_gradPhix.data(), *gy = s.d_gradPhiy.data(), *gz = s.d_gradPhiz.data();
+        const RealType *ax = s.d_outletAreaVecX.data(), *ay = s.d_outletAreaVecY.data(), *az = s.d_outletAreaVecZ.data();
+        RealType* a           = acc.data();
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [outlet, gamma, gx, gy, gz, ax, ay, az, a] __device__ (size_t i) {
+                             if (!outlet[i]) return;
+                             const RealType b = gamma ? gamma[i] : RealType(1);
+                             a[i] -= b * (gx[i] * ax[i] + gy[i] * ay[i] + gz[i] * az[i]);
+                         });
+    }
     // the assembled K on the DOF vector of phi
     cstone::DeviceVector<RealType> xDof, yDof;
     faceFluxZero(xDof, size_t(s.numTotalDofs));
@@ -4523,8 +4565,8 @@ void faceFluxSelfCheck(NSStepper<KeyType, RealType, ElementTag>& s)
                          });
     }
     RealType dMax, dSum, rMax, rSum;
-    faceFluxFreeRowNorms(s, diff, dMax, dSum);
-    faceFluxFreeRowNorms(s, ref, rMax, rSum);
+    faceFluxFreeRowNorms(s, diff, dMax, dSum, true);
+    faceFluxFreeRowNorms(s, ref, rMax, rSum, true);
     const RealType rel = rMax > RealType(0) ? dMax / rMax : dMax;
     if (s.rank == 0)
         std::cout << "face flux: self-check of K's face form against the assembled K: max |difference| / max |K phi| = "
@@ -8117,7 +8159,8 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         // forceGmres wins over the env knob: PCG on a non-symmetric matrix is
         // wrong, not just slow, so it must not be reachable by mistake.
         // Retained boundary columns make a nonzero Dirichlet row system nonsymmetric.
-        const bool outletPressure = (s.outletBeta >= RealType(0) || s.outletPressureLift) && &A == &s.Apre;
+        // So do the face-flux projection's outlet rows (Robin rows: row-only).
+        const bool outletPressure = (s.outletBeta >= RealType(0) || s.outletPressureLift || s.useFaceFlux) && &A == &s.Apre;
         KrylovHint krylovEff = (forceGmres || outletPressure) ? KrylovHint::GMRES : krylov;
         // Both outlet variants require GMRES regardless of the debug override.
         if (!forceGmres && !outletPressure)
@@ -10126,8 +10169,10 @@ void addScsOpeningBoundaryTerm(NSStepper<KeyType, RealType, ElementTag>& s,
         vx, vy, vz,
         s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data(),
         s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
-        ownership, divAccNode.data(), s.nodeCount);
-    cudaDeviceSynchronize();
+        ownership, divAccNode.data(), s.nodeCount,
+        s.useFaceFlux && s.d_faceFluxOutlet.size() == s.nodeCount ? s.d_faceFluxOutlet.data() : nullptr);
+    cudaCheckError();
+    cudaCheckCall(cudaDeviceSynchronize());
 }
 
 // -------------------------------------------------------------------------
@@ -10453,6 +10498,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         faceFluxAddOutletFlux<KeyType, RealType, ElementTag>(s, uIter ? uIter : s.d_uStarStar.data(),
                                                              vIter ? vIter : s.d_vStarStar.data(),
                                                              wIter ? wIter : s.d_wStarStar.data(), d_divAccNode);
+    // Face flux: what the other openings add below (the SCS term at the inlet and the ineligible outlet
+    // nodes, or the prescribed source), kept for the final balance (runCorrectorStep): each opening
+    // flux enters the RHS and the balance exactly once.
+    cstone::DeviceVector<RealType> faceFluxBefore;
+    if (s.useFaceFlux) faceFluxBefore = d_divAccNode;
 
     // Closing term for the CVFEM control volumes at the openings, on the SOLVED
     // velocity. divAccNode and the per-node area-vectors are both owner-complete
@@ -10659,6 +10709,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                       << " inletDir=(" << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")"
                       << " coef=rho/dt" << std::defaultfloat << "\n";
         }
+    }
+    if (s.useFaceFlux)
+    {
+        s.d_faceFluxOpeningSource.resize(s.nodeCount);
+        if (s.nodeCount > 0)
+            thrust::transform(thrust::device, thrust::device_pointer_cast(d_divAccNode.data()),
+                              thrust::device_pointer_cast(d_divAccNode.data() + s.nodeCount),
+                              thrust::device_pointer_cast(faceFluxBefore.data()),
+                              thrust::device_pointer_cast(s.d_faceFluxOpeningSource.data()), thrust::minus<RealType>());
     }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
@@ -11224,7 +11283,7 @@ inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
 // Writes s.lastDivMax for monitoring.
 // -------------------------------------------------------------------------
 template<typename KeyType, typename RealType, typename ElementTag>
-void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s, bool report_rms = true)
+void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s, bool report_rms)
 {
     auto finish_launch = [&] {
         if (s.outletBeta < RealType(0)) { cudaDeviceSynchronize(); return; }
@@ -11630,6 +11689,12 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         cstone::DeviceVector<RealType> balance;
         faceFluxDivergence<KeyType, RealType, ElementTag>(s, balance);
         faceFluxAddOutletFlux<KeyType, RealType, ElementTag>(s, s.d_u.data(), s.d_v.data(), s.d_w.data(), balance);
+        // ... and the other openings' flux, as the pressure RHS took it (inlet included).
+        if (s.d_faceFluxOpeningSource.size() == s.nodeCount && s.nodeCount > 0)
+            thrust::transform(thrust::device, thrust::device_pointer_cast(balance.data()),
+                              thrust::device_pointer_cast(balance.data() + s.nodeCount),
+                              thrust::device_pointer_cast(s.d_faceFluxOpeningSource.data()),
+                              thrust::device_pointer_cast(balance.data()), thrust::plus<RealType>());
         faceFluxFreeRowNorms<KeyType, RealType, ElementTag>(s, balance, s.lastFaceFluxDivMax, s.lastFaceFluxDivSum, true);
     }
 
@@ -13234,11 +13299,48 @@ void validateOutletPressureLift(const NSStepper<KeyType, RealType, ElementTag>& 
                                     "Pump/do-nothing DDT/Hypre K/GMRES path");
 }
 
+// The face-flux projection's configuration, collectively, before a step changes anything:
+//   - Hypre's assembled operator (DDT assembled into Apre, or K), solved with GMRES (forced: the outlet
+//     rows are row-only), without MARS_HYPRE_USE_DDT;
+//   - the corrector's gradient the outlet rows assume: the difference (divT) form. DDT always uses it;
+//     K needs useLegacyGradient = false (the legacy gradient carries its own boundary closure, which
+//     doubles the outlet correction against the operator);
+//   - none of the options setup refuses (Rhie-Chow/VMS, FEM projection, periodic, outlet beta);
+//   - a pressure gauge: eligible outlets (their rows fix the level) and no pin, or no eligible outlet
+//     and a pin (a real row of the operator).
+// Throws std::invalid_argument on every rank.
+template<typename KeyType, typename RealType, typename ElementTag>
+void validateFaceFlux(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (!s.useFaceFlux) return;
+    using Stepper = NSStepper<KeyType, RealType, ElementTag>;
+    int bad = s.solverKind != SolverKind::Hypre || (s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT == 0) ||
+              (s.pressureSolve == PressureSolveKind::K && s.useLegacyGradient) ||
+              std::getenv("MARS_HYPRE_USE_DDT") != nullptr || s.useRhieChow || s.useVMSStab || s.useRcImplicit ||
+              s.useRcOnly || s.useRcBlend || s.useFemProjection || s.bcKind == Stepper::BCKind::Periodic ||
+              s.outletBeta >= RealType(0);
+#ifndef MARS_ENABLE_HYPRE
+    bad = 1;
+#endif
+    faceFluxEnsureOutlets(s);  // collective: the eligible outlets over all ranks
+    int pin = s.pressurePinDof >= 0 ? 1 : 0, anyPin = 0;
+    MPI_Allreduce(&pin, &anyPin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if ((s.faceFluxOutletCount == 0) == (anyPin == 0)) bad = 1;
+    int global = 0;
+    MPI_Allreduce(&bad, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (global)
+        throw std::invalid_argument("useFaceFlux requires Hypre's assembled pressure operator (assembled DDT, or K with "
+                                    "the divT gradient: useLegacyGradient = false), no MARS_HYPRE_USE_DDT, none of the "
+                                    "Rhie-Chow/VMS/FEM-projection/periodic/outlet-beta options, and a pressure gauge: "
+                                    "eligible pressure outlets, or a pin when there is none");
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
     validateOutletPressureLift(s);
     validatePenalisedProjection(s, dt);
+    validateFaceFlux(s);
     s.nuCached = nu;
     bool dbg = (g_nsDebugStepsLeft > 0);
 
