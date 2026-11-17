@@ -75,6 +75,42 @@ else()
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
 
+if(MARS_ENABLE_MPI)
+    if(MARS_ENABLE_HYPRE)
+        add_executable(mars_mixed_nonconformal_flow mars_mixed_nonconformal_flow.cu)
+        target_link_libraries(mars_mixed_nonconformal_flow PRIVATE mars MPI::MPI_CXX)
+        if(MARS_ENABLE_PETSC)
+            include(${CMAKE_SOURCE_DIR}/cmake/MarsPetsc.cmake)
+            target_link_libraries(mars_mixed_nonconformal_flow PRIVATE mars_petsc)
+            target_compile_definitions(mars_mixed_nonconformal_flow PRIVATE MARS_MIXED_PETSC)
+        endif()
+        install(TARGETS mars_mixed_nonconformal_flow RUNTIME DESTINATION bin/examples)
+    endif()
+    add_executable(mars_nonconformal_flow mars_nonconformal_flow.cu)
+    target_link_libraries(mars_nonconformal_flow PRIVATE mars MPI::MPI_CXX)
+    install(TARGETS mars_nonconformal_flow RUNTIME DESTINATION bin/examples)
+    add_executable(mars_nonconformal_mesh mars_nonconformal_mesh.cu)
+    target_link_libraries(mars_nonconformal_mesh PRIVATE mars MPI::MPI_CXX)
+    install(TARGETS mars_nonconformal_mesh RUNTIME DESTINATION bin/examples)
+    install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/prepare_nonconformal_mesh.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/prepare_mixed_nonconformal_mesh.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/partition_nonconformal_mesh.py
+            DESTINATION bin/examples)
+endif()
+
+if(MARS_ENABLE_TESTS)
+    add_executable(mars_nonconformal_scalar_check mars_nonconformal_scalar_check.cu)
+    target_link_libraries(mars_nonconformal_scalar_check PRIVATE mars)
+    if(MARS_ENABLE_MPI)
+        add_executable(mars_nonconformal_flow_accuracy mars_nonconformal_flow_accuracy.cu)
+        target_link_libraries(mars_nonconformal_flow_accuracy PRIVATE mars MPI::MPI_CXX)
+        add_executable(mars_nonconformal_channel_check mars_nonconformal_channel_check.cu)
+        target_link_libraries(mars_nonconformal_channel_check PRIVATE mars MPI::MPI_CXX)
+        add_executable(mars_nonconformal_distributed_check mars_nonconformal_distributed_check.cu)
+        target_link_libraries(mars_nonconformal_distributed_check PRIVATE mars MPI::MPI_CXX)
+    endif()
+endif()
+
 if(MARS_ENABLE_TESTS AND MARS_ENABLE_HIP)
     add_executable(mars_cvfem_tensor_early_check mars_cvfem_tensor_early_check.cu)
     target_link_libraries(mars_cvfem_tensor_early_check PRIVATE mars)
@@ -294,6 +330,14 @@ if(MARS_ENABLE_HYPRE)
     add_executable(mars_lid_driven_cavity mars_lid_driven_cavity.cu)
     target_link_libraries(mars_lid_driven_cavity PRIVATE mars)
     install(TARGETS mars_lid_driven_cavity RUNTIME DESTINATION bin/examples)
+endif()
+
+# Galerkin Poisson on adapted non-conforming hex and tet meshes: hanging-node constraints (HangingNodes,
+# DofSpace) and P^T A P solved with Hypre BoomerAMG.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_amr_galerkin mars_amr_galerkin.cu)
+    target_link_libraries(mars_amr_galerkin PRIVATE mars)
+    install(TARGETS mars_amr_galerkin RUNTIME DESTINATION bin/examples)
 endif()
 
 # Development drivers, not part of the v0.1 docs, so off by default (-DMARS_ENABLE_DEV_EXAMPLES=ON).
@@ -521,6 +565,9 @@ if(MARS_ENABLE_MARSIR)
     # (solvers/mars_cellwise_fcg.hpp).
     add_executable(mars_marsir_bp mars_marsir_bp.cu)
     target_link_libraries(mars_marsir_bp PRIVATE mars CUDA::cuda_driver)
+    if(MARS_BP3_COARSE_REQUESTED)
+        include(${CMAKE_SOURCE_DIR}/cmake/MarsBP3Coarse.cmake)
+    endif()
     install(TARGETS mars_marsir_bp RUNTIME DESTINATION bin/examples)
 endif()
 

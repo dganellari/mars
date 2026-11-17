@@ -1,5 +1,7 @@
 // domain_cuda_impl.cpp
 #include "domain_cuda_impl.hpp"
+#include "amr/mars_amr_tet_audit.hpp"
+#include <optional>
 
 #include "utils/mars_gpu_runtime.hpp"
 #include "cstone/cuda/cuda_utils.hpp"
@@ -128,16 +130,30 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* d
         auto properties_refs = std::tie(std::get<0>(d_conn_keys_), std::get<1>(d_conn_keys_), 
                                       std::get<2>(d_conn_keys_), std::get<3>(d_conn_keys_));
         
+        std::optional<amr::TetAuditSnapshot<KeyType>> audit;
+        const auto audit_box = domain->box();
+        auto audit_stage = [&](const char* stage, size_t begin, size_t end) {
+            auto current = amr::audit_tets<KeyType, RealType>(stage,
+                {std::get<0>(d_conn_keys_).data(), std::get<1>(d_conn_keys_).data(),
+                 std::get<2>(d_conn_keys_).data(), std::get<3>(d_conn_keys_).data()}, begin, end, audit_box);
+            amr::audit_require(!current.totals.invalid, "invalid tet connectivity", current);
+            if (audit) amr::audit_compare(*audit, current);
+            audit = std::move(current);
+        };
+        if (amr::tet_audit_enabled()) audit_stage("sync-input", 0, elementCount);
         try {
             // Call sync with 4 properties + 7 scratch buffers
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,                                  // 4 properties of KeyType
                        std::tie(s1, s2, s3, s4, s5, s6, s7));           // Mixed scratch types
             syncTrace("cstone sync");
+            if (audit) audit_stage("cstone-sync", domain->startIndex(), domain->endIndex());
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
                          std::tie(s1, s2, s3, s4, s5, s6, s7));
+            if (audit) audit_stage("star-halos", domain->startIndex(), domain->endIndex());
             domain->exchangeHalos(properties_refs, s4, s5);
             syncTrace("property halos");
+            if (audit) audit_stage("property-halos", domain->startIndex(), domain->endIndex());
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             // If there's any sync error and element count is low, provide a more helpful message

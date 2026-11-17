@@ -7,6 +7,48 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-15
+
+### Added
+- Optional structured Kokkos backend validated on CPU, NVIDIA and AMD, with
+  sparse reusable MPI exchange plans and partitioning without global mesh replication.
+- Conforming Tet4 LEPP and nonconforming Tet4/Hex8 red refinement on Cornerstone,
+  including refinement generations, exact split-entity hanging constraints and
+  distributed field transfer. Initial meshes must be conforming, single-block
+  and nonperiodic; coarsening and refinement-history restart are not supported.
+- A complete labelled non-box Tet4 Poisson example with repeated solves and
+  refinement using either LEPP or constrained red refinement. Manufactured-solution
+  checks pass on the public Escher mesh on NVIDIA and AMD at 1/4/8 ranks.
+  The exact-solution indicator is a validation tool, not an estimator for unknown physics.
+- Partitioned Exodus input and side-set integration with tetrahedral AMR.
+- AMR checks in `ctest -L release`, in both the main build and the standalone
+  AMR validation build. Native checks are enabled by default in unstructured
+  CUDA/HIP test builds; optional legacy bisection comparisons remain separate.
+
+### Changed
+- Physical coordinates survive imported Tet4 redistribution and AMR rebuilds.
+  SFC keys continue to define topology and partitioning; coordinates use parent
+  interpolation and sparse field migration, including deep ghosts.
+- Kokkos helpers and bisection now live under `backend/kokkos`; structured meshes
+  live under `backend/distributed/structured`. Compatibility headers preserve
+  previous include paths. Serial-backend support is unchanged.
+
+### Fixed
+- Initialize SFC key buffers before encoding so stale removal markers cannot
+  silently discard mesh entries.
+- Preserve red Tet4 boundary labels through exact face ancestry and rebuilding.
+- Handle empty constrained matrix output without launching through a null pointer.
+- Return every Hex8 corner from the element-coordinate inspection helper in both
+  cached and decoded modes.
+
+Validation details and limits: [AMR](docs/AMR-Module.md),
+[AMR validation](tests/amr/README.md), [structured Kokkos](docs/Structured-Kokkos.md).
+Release validation passed on CPU, NVIDIA and AMD. On each GPU platform, the
+main-build suites passed all 37 AMR/mesh checks and all 48 distinct core,
+flow and tutorial checks. The separate AMR/PDE package campaign passed all
+95 commands on each GPU platform. See [release validation](docs/Release-0.2.0.md)
+for revisions, job IDs and the tested scope.
+
 ## [0.1.1] — 2026-11-02
 
 ### Added

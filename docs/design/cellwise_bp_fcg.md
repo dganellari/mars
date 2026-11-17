@@ -222,6 +222,185 @@ The remaining 1.24x instructions in block_sum are not attributed (the copy loops
 dynamic scf.for nests; the hand kernel's SASS was not compared). Left there: about 1.4%
 of the FCG iteration at p = 3, where the hand block nodes are used anyway.
 
+## Against the cell-wise reference: BP1 on 128^3 (9f4fcd1b)
+
+Table 7 of arXiv 2607.02335 gives the whole mass operator (volumetric apply, then a full DSS)
+per unique DoF on a 128^3 mesh, A100 80 GB SXM. The same here: BP1, 128^3 elements, deform 0.05,
+every element rotated, stored geometry (one value per Gauss point), one GH200, every run PASS.
+
+| BP1 operator + DSS, GDoF/s per unique DoF | p = 1 | p = 3 | p = 7 |
+|---|---|---|---|
+| MARS, block DSS, hand / generated (GH200) | 3.15 / 3.16 | 13.55 / 13.19 | does not fit |
+| MARS, unstructured gather, hand / generated (GH200) | 1.02 / 2.31 | 10.29 / 9.17 | 13.23 at 64^3 |
+| reference, structured DSS, general geometry (A100) | 2.7 | 13.9 | omitted (memory) |
+| reference, unstructured DSS, general geometry (A100) | 2.7 | 12.3 | omitted (memory) |
+
+At p = 7, 128^3 (1.07G element-local DoFs) did not fit on one 96 GB GPU with any DSS, nor with
+the trilinear geometry; the reference omits that case for the same reason.
+
+The rates are about equal, but on a GPU with about twice the bandwidth (GH200 HBM3 up to 4.0
+TB/s, A100 2.04 TB/s), so per unit of bandwidth these are about half of the reference's (p = 3,
+structured: 3.4 against 6.8 GDoF/s per TB/s; p = 1: 0.79 against 1.32). The volumetric operator
+is where: it moves 1405-1565 GB/s at p = 1 and 3 (35-39% of 4.0 TB/s) and 643 GB/s at p = 7
+(64^3), while the reference's Cartesian mass operator moves 1526-1774 GB/s on the A100 (75-87%,
+its Table 3; its general-geometry volumetric rate is not given on its own). The block DSS moves
+1225 (p = 1) and 2054 GB/s (p = 3), against the reference's structured DSS at 1605-1686 GB/s
+(78-85%, its Table 6). The generated block DSS is within 3% of the hand one.
+
+Nsight Compute (one GH200, the operators of the runs above, one launch each, base clock):
+
+| | BP1 p = 1 | BP1 p = 3 | BP3 p = 3 | BP1 p = 7 (64^3) |
+|---|---|---|---|---|
+| L1/TEX throughput | 90% | 96% | 90% | 83% |
+| DRAM throughput | 31% | 28% | 36% | 14% |
+| registers, block size | 40, 256 | 64, 128 | 72, 64 | 212, 64 |
+| achieved occupancy | 61% | 50% | 22% | 12% |
+
+Every operator is bound by L1/shared memory, not DRAM: each sum-factorization pass goes through
+shared memory, and that pipe is full at a third of the DRAM bandwidth. Also, none of their FP64
+instructions is fused (BP1 p = 3: 428M FP64 instructions, 0 fma), so every contraction step is a
+multiply and an add. The reference reaches DRAM speed with an even-odd factorization and FP64
+tensor cores for p >= 3 (its Section 2), both of which cut the shared-memory traffic per DoF.
+
+Step 1 (this commit): `--mir-cellwise-schedule` turns each contraction step out + a b into one
+`math.fma` (BP1 p = 3: 120 fma and 1 multiply in the PTX, before 0 and 121). The BP gates pass
+for bp1, bp3, bp1_tri and bp3_tri at p = 1, 3, 7 (the gate is a tolerance against direct sums,
+so the new rounding is fine). The CVFEM operators of the same schedule are not regenerated yet.
+
+GPU (df67598a, one GH200, 128^3 or 64^3 at p = 7, every run PASS except one, see below), operator ms
+before -> after: BP1 p = 1 0.461-0.468 -> 0.466, p = 3 2.92-3.02 -> 2.920, p = 7 5.715 -> 5.569
+(-2.6%); BP3 p = 3 8.435 -> 8.391, p = 7 16.760 -> 16.172 (-3.5%). Nsight Compute, BP1 p = 3: 3.79 ->
+3.73 ms, L1/TEX 95.7% -> 96.3%. Half the arithmetic instructions buy almost nothing: the operators
+are bound by L1/TEX requests, not by arithmetic. (BP3 p = 7 with DSS-Jacobi and no multigrid
+stopped at the 2000-iteration limit, error 3.5e-10 against the 1e-10 test; that run had no
+multigrid by mistake, not a wrong result.)
+
+Where the L1/TEX requests come from (BP1 p = 3, the scheduled IR): the 1D matrices B and Bt are
+kernel arguments in global memory, and every sweep re-reads them for every element and reduction
+step. The x-sweep keeps a field value in a register for its 5 outputs but loads each B(i, j) once
+per output: 5 matrix loads per field load. The y- and z-sweeps keep B(i, j) and read 5 field values
+from shared memory. The reference's mass operator needs neither: its even-odd factorization
+halves the matrices and its tensor-core tiles hold them in registers.
+
+Step 2 (this commit): the matrices move to constant memory and every sweep becomes one thread
+per 1D line. `--mir-cellwise-schedule` turns {mir.constant} arguments into globals
+`<kernel>__m0 .. __m3` in the GPU's constant memory, which `GalerkinPtx` fills from the host's
+matrices when their pointers change; with `max-block = q` a sweep keeps the field line in the
+thread (constant inputs no longer count as reuse), and `unroll-reductions` unrolls the reduction
+loops, so every matrix entry is read at a constant address (BP1 p = 3: 20 `ld.const` and no
+`ld.global` of a matrix left in the PTX). All 12 BP gates pass, TSan clean at bp1 p = 3 and bp3
+p = 7; filling the gate's B with Bt fails it. Shared memory per element +3-15%; launch shapes as
+before except BP1 p = 7, one element per block instead of two (2 x 24976 B > 48 KB). The options
+are opt-in: the CVFEM cell-wise operators keep their schedule (only the fma of step 1 changes
+them; not regenerated yet).
+
+GPU (bf087b34, one GH200, same runs as step 1), operator ms step 1 -> step 2: BP1 p = 1 0.466 ->
+0.437 (-6%), p = 3 2.920 -> 2.373 (-19%), p = 7 5.569 -> 5.395 (-3%); BP3 p = 3 8.391 -> 6.859
+(-18%), p = 7 16.172 -> 15.600 (-4%). BP1 operator + block DSS at p = 3: 15.95 GDoF/s (was 14.01;
+the reference's A100 Table 7: 13.9). Nsight Compute, BP1 p = 3: L1/TEX 96% -> 67%, DRAM 28% -> 38%
+(1789 GB/s on the timer, 45% of 4.0 TB/s); BP3 p = 3: DRAM 36% -> 47% (2148 GB/s). p = 3 is no longer
+bound by L1. p = 7 is now bound by occupancy: one or two warps per block with 25-48 KB of shared
+memory per element, achieved occupancy 12%, L1 23% and DRAM 15% (BP1).
+The p-multigrid solve (128^3 p = 3, 64^3 p = 7, BoomerAMG, warm): 14 and 15 iterations as before
+(true residuals 3.084e-11 and 2.628e-11, were 3.105e-11 and 2.793e-11: the rounding changed), solve
+1198 -> 1066 ms (-11%) at p = 3 and 1854 -> 1751 ms (-6%) at p = 7. BP3 p = 7 with DSS-Jacobi alone
+reached the FCG tolerance after 2458 iterations with a true residual of 1.6e-10, above the 1e-10
+test (error 2.3e-12): the gap between FCG's and the true residual over many Jacobi iterations,
+not this change; the step-1 run stopped at 2000 iterations before that.
+
+No staging of the field (this commit). The schedule copied u into shared memory and y out of it,
+which paid while threads read the field many times. With one thread per 1D line the first sweep
+reads u once and the last writes y once, so both now go straight to global memory. Shared memory
+per element falls 8-35% (BP1 p = 3 3776 -> 2720 B, p = 7 24976 -> 16272 B, two elements per block
+again; BP3 p = 7 48304 -> 39600 B; BP3 p = 1 32 elements per block instead of 16). Same binary,
+staged against unstaged PTX in separate runs, one GH200, operator ms (GB/s):
+
+| | staged | unstaged |
+|---|---|---|
+| BP1 p = 1 (128^3) | 0.437 (1651) | 0.415 (1738) |
+| BP1 p = 3 (128^3) | 2.383 (1781) | 1.825 (2326) |
+| BP1 p = 7 (64^3) | 5.395 (681) | 4.412 (833) |
+| BP3 p = 1 (128^3) | 2.007 (1488) | 1.515 (1972) |
+| BP3 p = 3 (128^3) | 6.901 (2134) | 6.313 (2333) |
+| BP3 p = 7 (64^3) | 15.593 (726) | 11.352 (997) |
+
+The p-multigrid solve, warm: 1037.5 -> 1010.5 ms at p = 3 and 1747.7 -> 1405.3 ms at p = 7, the same
+iterations and true residuals (14, 3.084e-11; 15, 2.628e-11). From before step 1 the operators are
+1.3-1.6x faster at p = 3 and 7 (BP1 p = 3 2.92 -> 1.83 ms, p = 7 5.72 -> 4.41; BP3 p = 3 8.44 -> 6.31,
+p = 7 16.76 -> 11.35).
+The 12 BP gates pass and TSan is clean at bp1 p = 7 and bp3 p = 3; the trilinear kernels are
+regenerated the same way but have not run on a GPU yet.
+
+### Scratch reuse
+
+Three rewrites cut shared memory per element: (A) a pointwise result is written into the
+buffer of the input that dies there (`--convert-mir-to-linalg=reuse-buffers`); (B) with it, a
+transposed sweep accumulates into the sum of the sweeps instead of a buffer of its own, which
+also removes the separate sum; (C) scratch is packed largest first when that needs fewer slots
+(`--mir-warp-per-element=largest-first`). BP3 p = 7 falls 39600 -> 23328 B per element, so two
+elements share a block instead of one; BP3 p = 3 goes from 4 to 8 elements per block.
+
+Less scratch is not always faster. Same binary, PTX from the generator with each rewrite left
+out in turn, three rounds in rotated order on one GH200, operator ms (median; the three rounds
+agree within 0.1 ms):
+
+| | none | A+B+C | B+C | A+C | A+B |
+|---|---|---|---|---|---|
+| BP3 p = 1 (128^3) | 1.524 | 1.907 | 1.957 | 1.927 | 1.907 |
+| BP3 p = 3 (128^3) | 6.469 | 5.574 | 6.539 | 6.325 | 6.060 |
+| BP3 p = 7 (64^3) | 11.404 | 6.891 | 9.588 | 8.514 | 7.562 |
+| BP1 p = 7 (64^3) | 4.432 | 4.653 | 4.640 | 4.654 | 4.447 |
+
+An earlier run with one allocation per case (15 nodes) gave the same picture and BP1 p = 1 0.416 ->
+0.386, p = 3 1.81 -> 1.74 ms with all three. At p = 3 and 7 every rewrite helps. BP3 p = 1 keeps
+its launch shape (32 elements per block) and the same instruction mix (90 FMAs, 11 barriers,
+36-40 shared loads) with any two of them and is 26% slower; the likely cause is the shared-memory
+layout, not measured. BP1 p = 7 with C goes from 2 to 4 elements per block and is 5% slower.
+So `test/bp_gpu_pipeline.py` keeps the measured fastest form for those two (BP3 p = 1 none, BP1
+p = 7 A+B); before even-odd, every stored-geometry BP kernel matched PTX timed above byte for byte. The
+p-multigrid solve with A+B+C everywhere: 1039.6 -> 998.2 ms at p = 3 and 1406.3 -> 1052.5 ms at
+p = 7, the same iterations (14, 15). With the per-kernel choice (f6 below, PTX of 97334ab2)
+the p = 3 solve is 996.2 ms. The trilinear BP3 kernels, all three rewrites against none:
+p = 1 1.470 -> 1.396, p = 3 7.054 -> 6.752, p = 7 10.757 -> 6.974 ms.
+
+### Even-odd sweeps
+
+GLL nodes and Gauss points are symmetric about the element centre, so the 1D matrices are
+mirror-symmetric (B, Bt) or antisymmetric (D, Dt): M[r-1-i][c-1-j] = s M[i][j].
+`--mir-even-odd` (`lib/EvenOdd.cpp`) rewrites each unrolled sweep y = M x into sums and
+differences of mirrored inputs, two half-size products and a recombination, about half the
+multiply-adds; the kernel reads folded coefficients that the launcher forms on the device from
+M (`mars_marsir_fold.hpp`). BP3 p = 7 per thread: 933 -> 695 floating-point operations, 922 ->
+466 constant loads, 216 -> 128 registers. Shared memory and launch shapes do not change.
+
+One GH200, the same binary (f0509285), base = scratch reuse as above (97334ab2), three rounds in
+rotated order, operator ms (median; max/min of the rounds at most 1.017):
+
+| | none | base | base + even-odd |
+|---|---|---|---|
+| BP3 p = 1 (128^3) | 1.520 | 1.523 | 1.521 |
+| BP3 p = 3 (128^3) | 6.463 | 5.611 | 5.955 |
+| BP3 p = 7 (64^3) | 11.356 | 6.792 | 6.144 |
+| BP1 p = 1 (128^3) | 0.417 | 0.387 | 0.388 |
+| BP1 p = 3 (128^3) | 1.830 | 1.765 | 1.796 |
+| BP1 p = 7 (64^3) | 4.426 | 4.457 | 3.034 |
+| BP3 trilinear p = 1 | 1.470 | 1.396 | 1.416 |
+| BP3 trilinear p = 3 | 7.054 | 6.752 | 6.576 |
+| BP3 trilinear p = 7 | 10.757 | 6.974 | 6.106 |
+
+The direct-quadrature check on the first four elements agrees to 1e-16 relative in every
+variant. Even-odd wins at p = 7 (10%, 32%, 12%) and on trilinear p = 3; BP3 p = 3 is 6% slower
+with it although its registers fall 80 -> 56 (cause not measured), and p = 1 has little to fold.
+`test/bp_gpu_pipeline.py` applies it to p = 7 and bp3_tri p = 3 only, a choice tuned on GH200, not
+shown optimal in general. The nine BP1, BP3 and BP3 trilinear kernels are byte-identical to ones
+timed here. The three bp1_tri kernels were not timed; their choice follows bp1 and is unmeasured.
+`--mir-even-odd` folds a table only when every access to it is a load inside a recognized sweep;
+anything else (an alias such as reinterpret_cast, a read outside a sweep, an unused load) keeps
+the table unfolded (`test/even_odd_gate.py`). The p-multigrid solve
+(V-cycle p -> 3 -> 1, AMG x3, tol 3e-13, 64^3) at p = 7: 1407.9 (none) -> 1049.9 (base) -> 1004.4 ms
+(even-odd at every level), 15 iterations each; with even-odd only on the p = 7 level, as now
+generated, it has not run.
+
 ## BP3 p-multigrid (7cefa3e8, 643c9c68)
 
 `--mg`: FCG preconditioned by one V-cycle p -> 3 -> 1 on the same mesh, the BP3 Galerkin form
@@ -630,6 +809,59 @@ DSS-Jacobi needs no matrix, and the matrix exists only with BoomerAMG. GPU check
 p = 1, ne 128, warm): 85.9 ms against 169.2 ms with `--p1-matrix-free`, both 14 iterations,
 PASS; the SpMV takes 0.26 ms (7.9 GDoF/s; MFEM's 0.33 ms).
 
+
+## Strong scaling, 1 / 4 / 16 / 64 GPUs (52b53e71)
+
+A fixed problem of 134M element-local DoFs (p = 3: 128^3 elements, 57.1M unique; p = 7: 64^3,
+90.5M unique), defaults, tol 3e-13, warm solves (--solves 3, the last reported), every run PASS.
+MARS with its own Chebyshev interval, MARS with MFEM's (`--cheb-interval mfem`, the same
+algorithm as MFEM), and MFEM with MARS's Hypre settings. Solve ms (iterations):
+
+| | 1 GPU | 4 | 16 | 64 |
+|---|---|---|---|---|
+| p = 3, MARS | 1198 (14) | 372 (14) | 189 (14) | 142 (14) |
+| p = 3, MARS, MFEM's interval | 1356 (16) | 423 (16) | 224 (17) | 160 (16) |
+| p = 3, MFEM | failed | 577 (16) | 232 (16) | 164 (16) |
+| p = 7, MARS | 1854 (15) | 551 (15) | 241 (15) | 155 (15) |
+| p = 7, MARS, MFEM's interval | 2195 (18) | 655 (18) | 286 (18) | 185 (18) |
+| p = 7, MFEM | 3298 (19) | 894 (19) | 352 (19) | 243 (19) |
+
+MFEM at p = 3 on one GPU stopped in its setup with an illegal memory access (not investigated).
+Its 4-GPU runs end with a Cray MPICH assertion in MPI_Finalize after printing their results, so
+those numbers stand.
+
+From 1 to 64 GPUs MARS solves 8.4x faster at p = 3 and 11.9x at p = 7 (MFEM 13.6x at p = 7); from
+4 to 64 GPUs 2.6x and 3.6x (MFEM 3.5x and 3.7x). MARS is faster at every point: with the same
+algorithm 1.36 / 1.03 / 1.02x at p = 3 (4 / 16 / 64 GPUs) and 1.50 / 1.37 / 1.23 / 1.31x at p = 7
+(1 / 4 / 16 / 64), with its own interval 1.55 / 1.23 / 1.15x and 1.78 / 1.62 / 1.46 / 1.56x.
+
+What stops the scaling is the coarse solve (BoomerAMG x3 and two p = 1 DSS per V-cycle):
+
+| MARS, ms per iteration: all / coarse | 1 GPU | 4 | 16 | 64 |
+|---|---|---|---|---|
+| p = 3 | 85.6 / 9.0 | 26.6 / 7.3 | 13.5 / 7.6 | 10.1 / 7.5 |
+| p = 7 | 123.6 / 1.8 | 36.8 / 5.2 | 16.1 / 6.3 | 10.3 / 6.3 |
+
+Without the coarse solve an iteration is 29.6x (p = 3) and 29.9x (p = 7) faster on 64 GPUs than
+on one (46-47% efficiency, at 2.1M element-local DoFs per GPU). The coarse solve gets no faster
+after 4 GPUs at p = 3 and slower than on one GPU at p = 7 (1.8 to 6.3 ms; one rank sends no
+messages); on 64 GPUs it is 74% (p = 3) and 61% (p = 7) of an iteration. MFEM ends at the same
+floor, 10.2 and 12.8 ms per iteration on 64 GPUs.
+
+Wing, p = 3, node lines (generated passes), tol 3e-13, one solve each, every run PASS:
+
+| GPUs | 8 | 16 | 32 | 64 |
+|---|---|---|---|---|
+| iterations | 242 | 252 | 261 | 262 |
+| solve, s | 25.10 | 16.69 | 12.54 | 9.17 |
+| ms per iteration: all / coarse | 103.7 / 18.1 | 66.2 / 16.9 | 48.0 / 16.6 | 35.0 / 15.6 |
+| smoothing step, ms | 10.60 | 7.56 | 6.24 | 4.32 |
+
+From 8 to 64 GPUs the solve is 2.74x faster: an iteration 2.96x, less a few more iterations (the
+lines are cut at more rank boundaries). The coarse solve stays at 16-18 ms, 18% of the solve on 8
+GPUs and 45% on 64; the rest of an iteration is 4.4x faster (85.6 to 19.4 ms). On 8 GPUs the
+generated residual pass took 4.53 ms against 3.76 hand (+20%), on 16-64 GPUs 3% more (one run
+each).
 
 ## Convergence: -lap u = f on the deformed cube (c6d6d88e)
 
@@ -1215,4 +1447,26 @@ step at p = 3 is as fast as the hand one or 1% faster. Two tests ran in the same
 Why the generated solve is faster is still open. In the SASS both loops do a row the same way
 (its 6 loads, the division, the multiply-adds, then the next row). But that SASS came from the
 ptxas of CUDA 12.9, and the driver compiles the generated PTX itself when it loads it
-(`cuModuleLoadData`), so the code that ran may differ.
+(`cuModuleLoadData`), so the code that ran might differ. It does not matter: the same PTX compiled
+by that ptxas into a cubin, loaded in its place (the loader takes either), gives the same times.
+
+| one step, ms (2b994f55, hand solve at 256) | residual DSS | block solves | update | step |
+|---|---|---|---|---|
+| p = 3, MARSIR, driver JIT / cubin | 1.760 / 1.743 | 0.996 / 1.002 | 1.659 / 1.629 | 4.415 / 4.374 |
+| p = 3, hand | 1.701 / 1.685 | 1.071 / 1.076 | 1.632 / 1.632 | 4.404 / 4.393 |
+| p = 7, MARSIR, driver JIT / cubin | 5.927 / 5.895 | 5.831 / 5.816 | 5.899 / 5.917 | 17.657 / 17.628 |
+| p = 7, hand | 6.098 / 5.957 | 6.179 / 6.167 | 5.904 / 6.005 | 18.182 / 18.128 |
+
+The same printed numbers again. With the hand solve back at 256 threads a step is within 0.4% of
+the hand one at p = 3 and 3% faster at p = 7. Why the generated solve is 6-7% faster than the hand
+one is still not explained: not the block size, not the instruction order, not the compiler that
+turns the PTX into SASS. What is left is how the two kernels stall, which needs a profile.
+
+Nsight Compute on rank 0 of the 64-GPU wing run (52b53e71), each solve once: hand 513.6 us,
+generated 510.6 us; 13.8M and 14.2M instructions; DRAM at 41% of peak in both; achieved occupancy
+25.6% and 22.4% (theoretical 62.5% and 56.3%); in 95% of the cycles no warp can issue, so both are
+latency-bound, and both grids are under one wave (0.70 and 0.78). On rank 0 the two kernels are
+equally fast. The timer reports the slowest rank (`all_max`), and there a solve takes about 1 ms,
+at least twice rank 0's (Nsight Compute runs at the base clock): the node-line blocks are not
+balanced across ranks, whose Morton chunks balance elements. The 6-7% is on that rank, which is
+the one to profile next.

@@ -1,141 +1,90 @@
-
-#include <gtest/gtest.h>
-#include "mars_template_mesh_manager.hpp"
+#include "mars_structured_test.hpp"
+#include "mars_structured_design_check.hpp"
 
 using namespace mars;
 
-TEST(GhostLayer, MeshGeneration3D_HilbertKey_before_ghost_layer) {
-    const int x = 512;
-    const int y = 128;
-    const int z = 256;
-    auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D<HilbertKey<Unsigned>>(x, y, z);
-    auto expected_num_elements = x * y * z;
-    ASSERT_EQ(num_elements, expected_num_elements);
+TEST(StructuredHalo, MortonQuad4Q1) { test::check_dofs<ElementType::Quad4, 1, MortonKey<Unsigned>>(5, 3, 0, true); }
+
+TEST(StructuredHalo, MortonQuad4Q2) { test::check_dofs<ElementType::Quad4, 2, MortonKey<Unsigned>>(5, 3, 0, true); }
+
+TEST(StructuredHalo, MortonHex8Q1) { test::check_dofs<ElementType::Hex8, 1, MortonKey<Unsigned>>(5, 3, 2, true); }
+
+TEST(StructuredHalo, MortonHex8Q2) { test::check_dofs<ElementType::Hex8, 2, MortonKey<Unsigned>>(5, 3, 2, true); }
+
+TEST(StructuredHalo, MortonQuad4PeriodicCells)
+{
+    test::check_mesh<ElementType::Quad4, MortonKey<Unsigned>>(5, 3, 0, true);
 }
 
-#ifdef KOKKOS_ENABLE_CUDA
-// Test the mesh generation for 2D meshes for the morton key
-TEST(GhostLayer, MeshGhostLayer2D_Small) {
-    const int x = 10;
-    const int y = 10;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(x, y));
+TEST(StructuredHalo, MortonHex8PeriodicCells)
+{
+    test::check_mesh<ElementType::Hex8, MortonKey<Unsigned>>(5, 3, 2, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_Medium) {
-    const int x = 100;
-    const int y = 100;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(x, y));
+TEST(StructuredHalo, HilbertQuad4Q1) { test::check_dofs<ElementType::Quad4, 1, HilbertKey<Unsigned>>(5, 3, 0, true); }
+
+TEST(StructuredHalo, HilbertQuad4Q2) { test::check_dofs<ElementType::Quad4, 2, HilbertKey<Unsigned>>(5, 3, 0, true); }
+
+TEST(StructuredHalo, HilbertHex8Q1) { test::check_dofs<ElementType::Hex8, 1, HilbertKey<Unsigned>>(5, 3, 2, true); }
+
+TEST(StructuredHalo, HilbertHex8Q2) { test::check_dofs<ElementType::Hex8, 2, HilbertKey<Unsigned>>(5, 3, 2, true); }
+
+TEST(StructuredHalo, MortonQuad4Q1Vector)
+{
+    test::check_dofs<ElementType::Quad4, 1, MortonKey<Unsigned>, 2>(5, 3, 0, true);
+    test::check_dofs<ElementType::Quad4, 1, MortonKey<Unsigned>, 0>(5, 3, 0, true, 2);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_Large) {
-    const int x = 1000;
-    const int y = 1000;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(x, y));
+TEST(StructuredHalo, MortonQuad4Q2Vector)
+{
+    test::check_dofs<ElementType::Quad4, 2, MortonKey<Unsigned>, 2>(5, 3, 0, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_NonSquare) {
-    const int x = 100;
-    const int y = 200;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(x, y));
+TEST(StructuredHalo, MortonHex8Q1Vector)
+{
+    test::check_dofs<ElementType::Hex8, 1, MortonKey<Unsigned>, 2>(5, 3, 2, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer3D_Small) {
-    const int x = 10;
-    const int y = 10;
-    const int z = 10;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(x, y, z));
+TEST(StructuredHalo, MortonHex8Q2Vector)
+{
+    test::check_dofs<ElementType::Hex8, 2, MortonKey<Unsigned>, 2>(5, 3, 2, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer3D_Medium) {
-    const int x = 100;
-    const int y = 100;
-    const int z = 100;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(x, y, z));
+TEST(StructuredHalo, HilbertQuad4Q1Vector)
+{
+    test::check_dofs<ElementType::Quad4, 1, HilbertKey<Unsigned>, 2>(5, 3, 0, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer3D_Large) {
-    const int x = 1000;
-    const int y = 1000;
-    const int z = 1000;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(x, y, z));
+TEST(StructuredHalo, HilbertQuad4Q2Vector)
+{
+    test::check_dofs<ElementType::Quad4, 2, HilbertKey<Unsigned>, 2>(5, 3, 0, true);
 }
 
-
-TEST(GhostLayer, MeshGhostLayer3D_NonCube) {
-    const int x = 100;
-    const int y = 200;
-    const int z = 300;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(x, y, z));
+TEST(StructuredHalo, HilbertHex8Q1Vector)
+{
+    test::check_dofs<ElementType::Hex8, 1, HilbertKey<Unsigned>, 2>(5, 3, 2, true);
 }
 
-// Test the mesh generation for 2D meshes for the hilbert key
-TEST(GhostLayer, MeshGhostLayer2D_HilbertKey) {
-    const int x = 10;
-    const int y = 10;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D<HilbertKey<Unsigned>>(x, y));
+TEST(StructuredHalo, HilbertHex8Q2Vector)
+{
+    test::check_dofs<ElementType::Hex8, 2, HilbertKey<Unsigned>, 2>(5, 3, 2, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_HilbertKey_Medium) {
-    const int x = 100;
-    const int y = 100;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D<HilbertKey<Unsigned>>(x, y));
+TEST(StructuredHalo, HilbertQuad4PeriodicCells)
+{
+    test::check_mesh<ElementType::Quad4, HilbertKey<Unsigned>>(5, 3, 0, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_HilbertKey_Large) {
-    const int x = 1000;
-    const int y = 1000;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D<HilbertKey<Unsigned>>(x, y));
+TEST(StructuredHalo, HilbertHex8PeriodicCells)
+{
+    test::check_mesh<ElementType::Hex8, HilbertKey<Unsigned>>(5, 3, 2, true);
 }
 
-TEST(GhostLayer, MeshGhostLayer2D_HilbertKey_NonSquare) {
-    const int x = 100;
-    const int y = 200;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_2D<HilbertKey<Unsigned>>(x, y));
+TEST(StructuredHalo, DeviceSnapshotsAndIsolatedPlans) { test::check_device_snapshots_and_plans(); }
+TEST(StructuredHalo, SparseSubsetPlan) { test::check_sparse_subset_plan(); }
+TEST(StructuredHalo, SharedManagerCopies) { test::check_manager_copies(); }
+
+int main(int argc, char** argv)
+{
+    return mars::test::run_structured_tests(argc, argv, 23);
 }
-
-// Test the mesh generation for 3D meshes for the hilbert key
-TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Small) {
-    const int x = 10;
-    const int y = 10;
-    const int z = 10;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
-}
-
-TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Medium) {
-    const int x = 100;
-    const int y = 100;
-    const int z = 100;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
-}
-
-TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Large) {
-    const int x = 1000;
-    const int y = 1000;
-    const int z = 1000;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
-}
-
-
-TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_NonCube) {
-    const int x = 100;
-    const int y = 200;
-    const int z = 300;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
-}
-
-TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Large_power_of_2) {
-    const int x = 1024;
-    const int y = 256;
-    const int z = 512;
-    ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
-}
-
-#endif
-
-int main(int argc, char **argv) {
-    mars::Env env(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
-
-
