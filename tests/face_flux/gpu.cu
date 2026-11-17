@@ -135,6 +135,7 @@ std::unique_ptr<mars::ElementDomain<Tag, Real, Key, cstone::execution::Gpu>> mak
 template<class Stepper, class Domain>
 void openings(Stepper& s, const Domain& domain, const Box& box, bool outlet_area)
 {
+    // The domain rebuilds node coordinates from the SFC keys (quantized to ~1e-6): planes within 1e-5.
     const auto x = host(domain.getNodeX());
     const auto y = host(domain.getNodeY());
     const auto z = host(domain.getNodeZ());
@@ -144,18 +145,18 @@ void openings(Stepper& s, const Domain& domain, const Box& box, bool outlet_area
     {
         const int j = int(std::lround((y[i] - Box::y0) / hy)), k = int(std::lround((z[i] - Box::z0) / hz));
         const double w = (j == 0 || j == box.cells ? .5 : 1.) * (k == 0 || k == box.cells ? .5 : 1.) * hy * hz;
-        if (std::abs(x[i] - Box::x0) < 1e-9)
+        if (std::abs(x[i] - Box::x0) < 1e-5)
         {
             s.inletNodes.push_back(int(i));
             ax[i] = -w;
         }
-        else if (std::abs(x[i] - x1) < 1e-9)
+        else if (std::abs(x[i] - x1) < 1e-5)
         {
             s.outletNodes.push_back(int(i));
             bx[i] = outlet_area ? w : 0;
         }
-        else if (std::abs(y[i] - Box::y0) < 1e-9 || std::abs(y[i] - (Box::y0 + Box::ly)) < 1e-9 ||
-                 std::abs(z[i] - Box::z0) < 1e-9 || std::abs(z[i] - (Box::z0 + Box::lz)) < 1e-9)
+        else if (std::abs(y[i] - Box::y0) < 1e-5 || std::abs(y[i] - (Box::y0 + Box::ly)) < 1e-5 ||
+                 std::abs(z[i] - Box::z0) < 1e-5 || std::abs(z[i] - (Box::z0 + Box::lz)) < 1e-5)
             s.wallNodes.push_back(int(i));
     }
     upload(ax, s.d_inletAreaVecX);
@@ -171,7 +172,7 @@ struct Case
 {
     using Domain  = mars::ElementDomain<Tag, Real, Key, cstone::execution::Gpu>;
     using Stepper = NSStepper<Key, Real, Tag>;
-    Box box{4};
+    Box box{6};
     std::unique_ptr<Domain> domain;
     std::unique_ptr<Stepper> s;
     Case(int rank, int ranks, bool source, bool outlet_area = true)
