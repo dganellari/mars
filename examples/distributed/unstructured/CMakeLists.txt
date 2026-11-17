@@ -361,14 +361,21 @@ if(MARS_ENABLE_DEV_EXAMPLES)
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
     )
     install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
+endif()
 
-    # The pump solver's hex pieces on one element, and its hex instantiation.
+# The pump solver's hex pieces on one element (lumped mass, convection, SUPG against closed forms)
+# and its hex instantiation: a CTest gate, built with the tests as well as with the dev examples.
+if(MARS_ENABLE_DEV_EXAMPLES OR MARS_ENABLE_TESTS)
     add_executable(mars_pump_hex_gate mars_pump_hex_gate.cu)
     target_link_libraries(mars_pump_hex_gate PRIVATE mars)
     target_include_directories(mars_pump_hex_gate PRIVATE
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
     )
     install(TARGETS mars_pump_hex_gate RUNTIME DESTINATION bin/examples)
+    if(MARS_ENABLE_TESTS)
+        add_test(NAME marsPumpHexGate COMMAND mars_pump_hex_gate)
+        set_tests_properties(marsPumpHexGate PROPERTIES LABELS "gpu" TIMEOUT 120)
+    endif()
 endif()
 
 # Segregated SIMPLE solver (experimental), and the gates that compare it and the pump solver's

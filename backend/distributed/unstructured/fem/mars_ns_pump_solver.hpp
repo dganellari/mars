@@ -2372,7 +2372,7 @@ __global__ void assembleConvectionHexKernel(
     {
         const RealType xi[3] = {(q & 1) ? gp : -gp, (q & 2) ? gp : -gp, (q & 4) ? gp : -gp};
         const RealType det   = fem::hexBasisGradients<RealType>(coords, xi, N, dNdx);
-        if (!(det > RealType(0))) return;   // an inverted hex: leave it out (as the tet kernel does)
+        if (!(det > RealType(0))) return;   // unreachable: setup refuses such a hex (validateHexGeometry)
         for (int j = 0; j < 8; ++j) aDotG[j] = ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2];
         for (int i = 0; i < 8; ++i)
             for (int j = 0; j < 8; ++j) c[i][j] += det * (N[i] + tau * aDotG[i]) * aDotG[j];
@@ -3117,6 +3117,66 @@ template<typename KeyType, typename RealType, typename ElementTag = HexTag> stru
 
 template<typename KeyType, typename RealType, typename ElementTag>
 void validate_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s);
+
+// Every local hex (owned and halo: the kernels read both) has a map with a finite, positive Jacobian
+// determinant at its centre and at the 2x2x2 Gauss points, and finite, positive sub-control volumes.
+// The convection/SUPG kernel and the lumped mass would otherwise leave such a hex out silently.
+// Collective, at setup: throws std::invalid_argument on every rank.
+template<typename KeyType, typename RealType, typename ElementTag>
+void validateHexGeometry(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+    {
+        const size_t elements = s.domain.getElementCount();
+        const size_t n        = s.domain.getNodeX().size();
+        int bad               = 0;
+        if (elements > 0)
+        {
+            const auto cp = connPtrs<ElementTag, KeyType>(s.domain.getElementToNodeConnectivity());
+            const KeyType *c0 = cp[0], *c1 = cp[1], *c2 = cp[2], *c3 = cp[3];
+            const KeyType *c4 = cp[4], *c5 = cp[5], *c6 = cp[6], *c7 = cp[7];
+            const RealType *x = s.domain.getNodeX().data(), *y = s.domain.getNodeY().data();
+            const RealType* z = s.domain.getNodeZ().data();
+            bad = mars::transformReduce(
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(elements),
+                [=] __device__(size_t e) -> int {
+                    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+                    RealType coords[8][3];
+                    for (int i = 0; i < 8; ++i)
+                    {
+                        const size_t node = size_t(cc[i][e]);
+                        if (node >= n) return 1;
+                        coords[i][0] = x[node];
+                        coords[i][1] = y[node];
+                        coords[i][2] = z[node];
+                    }
+                    RealType N[8], dNdx[8][3];
+                    const RealType centre[3] = {0, 0, 0};
+                    RealType det             = fem::hexBasisGradients<RealType>(coords, centre, N, dNdx);
+                    if (!isfinite(det) || !(det > RealType(0))) return 1;
+                    const RealType gp = RealType(0.57735026918962576451);
+                    for (int q = 0; q < 8; ++q)
+                    {
+                        const RealType xi[3] = {(q & 1) ? gp : -gp, (q & 2) ? gp : -gp, (q & 4) ? gp : -gp};
+                        det                  = fem::hexBasisGradients<RealType>(coords, xi, N, dNdx);
+                        if (!isfinite(det) || !(det > RealType(0))) return 1;
+                    }
+                    for (int c = 0; c < 8; ++c)
+                    {
+                        const RealType v = hexSubVolume(coords, c);
+                        if (!isfinite(v) || !(v > RealType(0))) return 1;
+                    }
+                    return 0;
+                },
+                0, thrust::maximum<int>());
+        }
+        int global = 0;
+        MPI_Allreduce(&bad, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (global)
+            throw std::invalid_argument("hex mesh: an element has a nonpositive or nonfinite Jacobian determinant "
+                                        "or sub-control volume (inverted or degenerate)");
+    }
+}
 
 template<typename KeyType, typename RealType, typename ElementTag>
 void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s,
@@ -4503,6 +4563,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // another rank). Without this, every assembled row that has a ghost
     // neighbor is systematically wrong (entry magnitude ~halved), AMG sees
     // an unbalanced operator, and DDT+Hypre diverges on cube16 step 1.
+    // Hexes: refuse an inverted or degenerate element before the lumped mass and the convection
+    // kernel would leave it out (validateHexGeometry).
+    validateHexGeometry(s);
     s.d_massNode.resize(s.nodeCount);
     thrust::fill(thrust::device_pointer_cast(s.d_massNode.data()),
                  thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
@@ -10836,8 +10899,10 @@ int penaltyWeightsInvalid(const RealType* d_W, size_t n)
 
 // Whether the stepper's configuration supports the penalised projection: Hypre's assembled Galerkin
 // pressure operator (DDT assembled into Apre, or K) on tets or hexes, without MARS_HYPRE_USE_DDT, an
-// outlet beta, the FEM projection or the Rhie-Chow/VMS options. Matrix-free DDT CG (nnzDDT == 0) never
-// reads the refreshed operator although the corrector would scale its gradient.
+// outlet beta, the FEM projection, the Rhie-Chow/VMS options or the Bochev-Dohrmann stabilization (the
+// refreshed operator is rebuilt without it, and how beta should weight it is not settled). Matrix-free
+// DDT CG (nnzDDT == 0) never reads the refreshed operator although the corrector would scale its
+// gradient.
 template<typename KeyType, typename RealType, typename ElementTag>
 bool penalisedProjectionSupported(const NSStepper<KeyType, RealType, ElementTag>& s)
 {
@@ -10847,7 +10912,7 @@ bool penalisedProjectionSupported(const NSStepper<KeyType, RealType, ElementTag>
     return (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>) &&
            s.solverKind == SolverKind::Hypre && !(s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT == 0) &&
            std::getenv("MARS_HYPRE_USE_DDT") == nullptr && s.outletBeta < RealType(0) && !s.useFemProjection &&
-           !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly;
+           !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly && !s.stabBochevDohrmann;
 #endif
 }
 
@@ -10899,8 +10964,8 @@ void validatePenalisedProjection(const NSStepper<KeyType, RealType, ElementTag>&
     if (global)
         throw std::invalid_argument("the penalised projection requires a finite positive dt, finite nonnegative W "
                                     "and invEta, and Hypre's assembled Galerkin pressure operator on tets or hexes "
-                                    "(no matrix-free DDT CG, MARS_HYPRE_USE_DDT, outlet beta, FEM projection or "
-                                    "Rhie-Chow/VMS options)");
+                                    "(no matrix-free DDT CG, MARS_HYPRE_USE_DDT, outlet beta, FEM projection, "
+                                    "Rhie-Chow/VMS options or Bochev-Dohrmann stabilization)");
 }
 
 // Rebuild beta and the pressure matrix when W, eta or dtEff changed: the same steps as setup (K with
