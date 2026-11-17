@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.24)
+project(mars_sfem_writer_checks LANGUAGES CXX)
+enable_testing()
+find_package(MPI REQUIRED COMPONENTS CXX)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Mars REQUIRED)
+if(NOT TARGET Mars::mars_unstructured OR NOT MARS_GPU_LANGUAGE MATCHES "^(CUDA|HIP)$")
+    message(FATAL_ERROR "Install the candidate GPU unstructured MARS library first")
+endif()
+if(NOT DEFINED CMAKE_${MARS_GPU_LANGUAGE}_ARCHITECTURES)
+    set(CMAKE_${MARS_GPU_LANGUAGE}_ARCHITECTURES "${MARS_GPU_ARCHITECTURES}")
+endif()
+set(CMAKE_${MARS_GPU_LANGUAGE}_STANDARD 20)
+enable_language(${MARS_GPU_LANGUAGE})
+set_source_files_properties(gpu.cu PROPERTIES LANGUAGE ${MARS_GPU_LANGUAGE})
+add_executable(sfem_writer_gpu gpu.cu)
+target_link_libraries(sfem_writer_gpu PRIVATE Mars::mars Mars::mars_unstructured MPI::MPI_CXX)
+if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
+    set_target_properties(sfem_writer_gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
+foreach(ranks IN ITEMS 1 2 4)
+    foreach(tag IN ITEMS tet hex)
+        set(output "${CMAKE_CURRENT_BINARY_DIR}/gpu-${tag}-${ranks}")
+        add_test(NAME writer_gpu_${tag}_${ranks} COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/check.py" pass "${output}"
+            ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:sfem_writer_gpu> ${MPIEXEC_POSTFLAGS} roundtrip "${output}" ${tag})
+        set_tests_properties(writer_gpu_${tag}_${ranks} PROPERTIES TIMEOUT 150 PROCESSORS ${ranks})
+    endforeach()
+    foreach(mode IN ITEMS shape path)
+        set(output "${CMAKE_CURRENT_BINARY_DIR}/gpu-${mode}-${ranks}")
+        add_test(NAME writer_gpu_${mode}_${ranks} COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/check.py" fail "${output}"
+            ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:sfem_writer_gpu> ${MPIEXEC_POSTFLAGS} ${mode} "${output}" tet)
+        set_tests_properties(writer_gpu_${mode}_${ranks} PROPERTIES TIMEOUT 150 PROCESSORS ${ranks})
+    endforeach()
+endforeach()

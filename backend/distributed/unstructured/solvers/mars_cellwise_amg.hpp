@@ -31,6 +31,10 @@
 #include <thrust/sort.h>
 #include <thrust/tuple.h>
 
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+#include "mars_cellwise_amg_consolidate.hpp"
+#endif
+
 #include <functional>
 #include <span>
 #include <vector>
@@ -154,6 +158,7 @@ struct AmgSettings {
     int aggressive_levels = 0;
     int max_coarse_size = 9;   // coarsening stops below this many rows
     bool print = false;        // Hypre's setup statistics (levels, complexities)
+    int consolidate_rows = 0;
 };
 
 class P1Amg {
@@ -288,13 +293,23 @@ public:
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
         HYPRE_BoomerAMGSetMaxIter(amg_, cycles);
         HYPRE_BoomerAMGSetPrintLevel(amg_, settings.print ? 1 : 0);
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+        const HYPRE_Int error = mars_bp3_amg_setup(amg_, matrix(), f_, u_, settings.consolidate_rows);
+#else
+        fem::hypreCheck(comm, settings.consolidate_rows == 0,
+                        "BP3 coarse consolidation is not enabled for this target");
         const HYPRE_Int error = HYPRE_BoomerAMGSetup(amg_, matrix(), f_, u_);
+#endif
         fem::hypreCheck(comm, error == 0 && HYPRE_GetError() == 0, "cell-wise p = 1 BoomerAMG setup failed");
         rows_global_ = total;
     }
     ~P1Amg()
     {
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+        if (amg_) mars_bp3_amg_destroy(amg_);
+#else
         if (amg_) HYPRE_BoomerAMGDestroy(amg_);
+#endif
         if (f_) HYPRE_ParVectorDestroy(f_);
         if (u_) HYPRE_ParVectorDestroy(u_);
     }
@@ -313,7 +328,7 @@ public:
         MARS_CELLWISE_CK(cudaGetLastError());
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));   // Hypre runs on its own stream
         HYPRE_ParVectorSetConstantValues(u_, 0.0);
-        HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
+        solve_amg();
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
         MARS_CELLWISE_CK(cudaMemsetAsync(raw(v_), 0, v_.size() * sizeof(double), stream_));
         if (rows_ > 0)
@@ -357,11 +372,20 @@ public:
     {
         MARS_CELLWISE_CK(cudaMemsetAsync(z, 0, rows_ * sizeof(double), stream_));
         MARS_CELLWISE_CK(cudaStreamSynchronize(stream_));
-        wrapped(z, r, [&] { HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_); });
+        wrapped(z, r, [&] { solve_amg(); });
         MARS_CELLWISE_CK(cudaDeviceSynchronize());
     }
 
 private:
+    void solve_amg() const
+    {
+#ifdef MARS_BP3_COARSE_CONSOLIDATION
+        mars_bp3_amg_solve(amg_, matrix(), f_, u_);
+#else
+        HYPRE_BoomerAMGSolve(amg_, matrix(), f_, u_);
+#endif
+    }
+
     // Runs f with u_ and f_ pointing at u and f instead of their own data (no copies, as
     // MFEM wraps its vectors for Hypre).
     template <class F>

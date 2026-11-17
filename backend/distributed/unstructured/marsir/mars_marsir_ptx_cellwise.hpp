@@ -17,8 +17,9 @@
 // Kernel contract: the arguments of mir.dss in order (values, ghost, elements,
 // face_nbr, face_code, edge_of, edge_off, edge_ent, vert_of, vert_off, vert_ent,
 // then flags, copies, outs, partials), each a 1-D memref descriptor (allocated
-// ptr, aligned ptr, offset, size, stride), integers (index) last; block = 32, one block per listed
-// element (measured faster than fewer blocks striding over them). The size of
+// ptr, aligned ptr, offset, size, stride), integers (index) last; one warp per listed element,
+// one element per block unless the module publishes <kernel>__launch (dss_p3 packs two per
+// block); never fewer blocks striding over the elements (measured slower). The size of
 // `values` is where ghost copies start, so it must be the local copy count
 // exactly.
 

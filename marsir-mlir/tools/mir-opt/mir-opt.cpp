@@ -36,6 +36,7 @@ int main(int argc, char **argv) {
   mir::registerCellwiseSchedulePass();
   mir::registerFusePhasesPass();
   mir::registerTraceSharedPass();
+  mir::registerEvenOddPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

@@ -1,3 +1,4 @@
+#include "mars_structured_gtest.hpp"
 #include <gtest/gtest.h>
 #include "mars_sfc_code.hpp"
 #include <iostream>
@@ -70,6 +71,5 @@ TEST(MortonCode, decodeMorton64)
 }
 
 int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    return mars::test::run_structured_tests(argc, argv, 4);
 }

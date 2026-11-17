@@ -60,6 +60,8 @@ namespace mars {
             rank_ = mpi::rank(comm_);
         }
 
+        MPI_Comm mpi_comm() const { return comm_; }
+
         gathered_vector<Integer> gather_gids(const std::vector<Integer> &local_gids) const {
             return mpi::gather_all_with_partition(local_gids, comm_);
         }

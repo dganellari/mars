@@ -23,6 +23,7 @@ add_mlir_dialect_library(MLIRMir
   CellwiseSchedule.cpp
   FusePhases.cpp
   TraceShared.cpp
+  EvenOdd.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
