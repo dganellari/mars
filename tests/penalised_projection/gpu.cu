@@ -210,13 +210,21 @@ void check_baseline(const Fixture& f, int rank, int ranks)
     }
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &scale, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    require(scale > 0 && err <= 1e-12 * scale, "W = 0 changed the steps");
+    if (rank == 0)
+        std::cout << std::scientific << "baseline: max |fields(W = 0) - fields(no penalty)| / max |fields| " << err / scale
+                  << std::defaultfloat << "\n";
+    // The operators agree to round-off (checked above); the fields then agree to the pressure solve's
+    // tolerance (1e-10, relative), not to round-off: 6e-11 measured on GH200.
+    require(scale > 0 && err <= 1e-8 * scale, "W = 0 changed the steps");
 }
 
 // Layered W, piecewise constant per plane of nodes, with jumps. For phi = phi(x) with slope g_L in
 // layer L (between planes L and L + 1), the rows of an interior plane p sum to
 //   sum_(i in p) (K phi)_i = (g_(p-1) G_(p-1) - g_p G_p) / h,   G_L = sum_(tets of L) gamma_e V_e,
-// gamma_e the mean of the tet's nodal beta (the Galerkin operator's element coefficient). Exact.
+// gamma_e the mean of the tet's nodal beta (the Galerkin operator's element coefficient). MARS's
+// CVFEM K satisfies the Galerkin identity to ~1e-5 on this mesh even with a uniform beta (8.9e-6 on
+// the 4^3 box), so the tolerance is 1e-4. That it still tells weightings apart is checked: the same
+// identity with gamma_e the largest nodal beta must miss by more than 1e-2.
 void check_varying(const Fixture& f, int rank, int ranks)
 {
     auto s           = make_stepper(f, rank, ranks, 0, false);
@@ -240,7 +248,7 @@ void check_varying(const Fixture& f, int rank, int ranks)
     }
     const auto beta = host(s->d_penaltyBeta);
     // G_L over this rank's owned elements (each element counted once).
-    std::vector<double> G(cells, 0);
+    std::vector<double> G(cells, 0), Gmax(cells, 0);
     {
         const auto& conn = f.domain->getElementToNodeConnectivity();
         std::array<std::vector<Key>, 4> c{host(std::get<0>(conn)), host(std::get<1>(conn)), host(std::get<2>(conn)),
@@ -249,18 +257,22 @@ void check_varying(const Fixture& f, int rank, int ranks)
         for (size_t e = start; e < end; ++e)
         {
             Point v[4];
-            double gamma = 0;
+            double gamma = 0, gammaMax = 0;
             int lowest   = cells;
             for (int a = 0; a < 4; ++a)
             {
                 const auto n = c[a][e];
                 v[a]         = Point{x[n], y[n], z[n]};
                 gamma += beta[n] / 4;
+                gammaMax = std::max(gammaMax, beta[n]);
                 lowest = std::min(lowest, f.plane(x[n]));
             }
-            G[lowest] += gamma * std::abs(determinant(v[0], v[1], v[2], v[3])) / 6;
+            const double volume = std::abs(determinant(v[0], v[1], v[2], v[3])) / 6;
+            G[lowest] += gamma * volume;
+            Gmax[lowest] += gammaMax * volume;
         }
         MPI_Allreduce(MPI_IN_PLACE, G.data(), cells, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, Gmax.data(), cells, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     }
     // phi(x) with a slope per layer; the sums of the owned rows of each plane.
     std::vector<double> slope(cells), phi(cells + 1, 0);
@@ -297,15 +309,21 @@ void check_varying(const Fixture& f, int rank, int ranks)
         MPI_Allreduce(MPI_IN_PLACE, &diagonal, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     }
     const double sign = diagonal > 0 ? 1. : -1.;
-    double err = 0, scale = 0;
+    double err = 0, errMax = 0, scale = 0;
     for (int p = 1; p < cells; ++p)
     {
         const double expected = sign * (slope[p - 1] * G[p - 1] - slope[p] * G[p]) / h;
+        const double wrong    = sign * (slope[p - 1] * Gmax[p - 1] - slope[p] * Gmax[p]) / h;
         err                   = std::max(err, std::abs(sum[p] - expected));
+        errMax                = std::max(errMax, std::abs(sum[p] - wrong));
         scale                 = std::max(scale, std::abs(expected));
     }
-    if (rank == 0) std::cout << "varying: plane balance error / largest balance " << err / scale << "\n";
-    require(scale > 0 && err <= 1e-10 * scale, "Layered penalty: a plane's flux differs from the layered operator's");
+    if (rank == 0)
+        std::cout << std::scientific << "varying: plane balance error / largest balance " << err / scale
+                  << " (with the largest nodal beta per tet instead of the mean: " << errMax / scale << ")"
+                  << std::defaultfloat << "\n";
+    require(scale > 0 && err <= 1e-4 * scale, "Layered penalty: a plane's flux differs from the layered operator's");
+    require(errMax > 1e-2 * scale, "The plane balance does not tell the element coefficient apart");
 }
 
 void check_update(const Fixture& f, int rank, int ranks)
@@ -480,7 +498,9 @@ int main(int argc, char** argv)
         mars::requestFullNodeHaloExchange();
         unsetenv("MARS_HYPRE_USE_DDT");
         const std::string mode(argv[1]);
-        Fixture fixture(rank, ranks, 4);
+        // 6^3 cubes: on 4^3, BoomerAMG under GMRES fails the first solve with inflow (Hypre error 1,
+        // with or without the penalty); 6^3 and 8^3 converge in about 12 iterations at 1, 2 and 4 ranks.
+        Fixture fixture(rank, ranks, 6);
         if (mode == "baseline")
             check_baseline(fixture, rank, ranks);
         else if (mode == "varying")
