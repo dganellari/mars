@@ -135,7 +135,9 @@ std::unique_ptr<mars::ElementDomain<Tag, Real, Key, cstone::execution::Gpu>> mak
 template<class Stepper, class Domain>
 void openings(Stepper& s, const Domain& domain, const Box& box, bool outlet_area)
 {
-    const auto x = host(domain.getNodeX()), y = host(domain.getNodeY()), z = host(domain.getNodeZ());
+    const auto x = host(domain.getNodeX());
+    const auto y = host(domain.getNodeY());
+    const auto z = host(domain.getNodeZ());
     const double hy = Box::ly / box.cells, hz = Box::lz / box.cells, x1 = Box::x0 + 1;
     std::vector<double> ax(x.size(), 0), zero(x.size(), 0), bx(x.size(), 0);
     for (size_t i = 0; i < x.size(); ++i)
@@ -193,9 +195,13 @@ struct Case
     // eligible outlets (u . A_b).
     std::array<double, 2> opening_fluxes() const
     {
-        const auto own = host(s->ownershipMap()), out = host(s->d_faceFluxOutlet);
-        const auto u = host(s->d_u), v = host(s->d_v), w = host(s->d_w);
-        const auto ix = host(s->d_inletAreaVecX), ox = host(s->d_outletAreaVecX);
+        const auto own = host(s->ownershipMap());
+        const auto out = host(s->d_faceFluxOutlet);
+        const auto u = host(s->d_u);
+        const auto v = host(s->d_v);
+        const auto w = host(s->d_w);
+        const auto ix = host(s->d_inletAreaVecX);
+        const auto ox = host(s->d_outletAreaVecX);
         std::array<double, 2> q{0, 0};
         for (size_t i = 0; i < u.size(); ++i)
         {
@@ -231,7 +237,10 @@ void check_conservation(int rank, int ranks, bool source)
 
 void rejected_without_mutation(NSStepper<Key, Real, mars::TetTag>& s)
 {
-    const auto p = host(s.d_p), u = host(s.d_u), v = host(s.d_v), w = host(s.d_w);
+    const auto p = host(s.d_p);
+    const auto u = host(s.d_u);
+    const auto v = host(s.d_v);
+    const auto w = host(s.d_w);
     const int history = s.bdfStep;
     bool rejected     = false;
     try
