@@ -108,7 +108,9 @@ struct Fixture
 };
 void boundaries(Stepper& s, const Fixture& f)
 {
-    auto x = host(f.domain->getNodeX()), y = host(f.domain->getNodeY()), z = host(f.domain->getNodeZ());
+    auto x = host(f.domain->getNodeX());
+    auto y = host(f.domain->getNodeY());
+    auto z = host(f.domain->getNodeZ());
     for (size_t i = 0; i < x.size(); ++i)
     {
         if (std::abs(x[i] - f.x0) < 1e-5)
@@ -143,7 +145,9 @@ std::vector<double> matrix(const Stepper& s) { return host(s.Apre.valuesPtr(), s
 // to max |K0|.
 double scaled_operator_error(const Stepper& s, const std::vector<double>& K0, double b)
 {
-    const auto A = matrix(s), row = host(s.d_rowPtr), bdry = host(s.d_isPressureBdryDof);
+    const auto A = matrix(s);
+    const auto row = host(s.d_rowPtr);
+    const auto bdry = host(s.d_isPressureBdryDof);
     double err = 0, scale = 0;
     for (int r = 0; r < s.numOwnedDofs; ++r)
     {
@@ -183,7 +187,8 @@ void check_baseline(const Fixture& f, int rank, int ranks)
         require(scaled_operator_error(*s, K0, 1) < 1e-14, "W = 0 changed the pressure operator");
     }
     // The steps: with inflow, W = 0 gives the fields of a stepper without the penalty.
-    auto a = make_stepper(f, rank, ranks, 1, true), b = make_stepper(f, rank, ranks, 1, true);
+    auto a = make_stepper(f, rank, ranks, 1, true);
+    auto b = make_stepper(f, rank, ranks, 1, true);
     cstone::DeviceVector<double> W;
     upload(std::vector<double>(a->nodeCount, 0), W);
     setPenalisedProjection(*a, W.data(), 1e6);
@@ -195,7 +200,8 @@ void check_baseline(const Fixture& f, int rank, int ranks)
     double err = 0, scale = 0;
     for (auto field : {&Stepper::d_u, &Stepper::d_v, &Stepper::d_w, &Stepper::d_p})
     {
-        const auto x = host((*a).*field), y = host((*b).*field);
+        const auto x = host((*a).*field);
+        const auto y = host((*b).*field);
         for (size_t i = 0; i < x.size(); ++i)
         {
             err   = std::max(err, std::abs(x[i] - y[i]));
@@ -215,7 +221,9 @@ void check_varying(const Fixture& f, int rank, int ranks)
 {
     auto s           = make_stepper(f, rank, ranks, 0, false);
     const int cells  = f.cells;
-    const auto x     = host(f.domain->getNodeX()), y = host(f.domain->getNodeY()), z = host(f.domain->getNodeZ());
+    const auto x = host(f.domain->getNodeX());
+    const auto y = host(f.domain->getNodeY());
+    const auto z = host(f.domain->getNodeZ());
     const double eta = 1e-2, h = 1. / cells;
     std::vector<double> w_plane(cells + 1);
     for (int p = 0; p <= cells; ++p)
@@ -261,7 +269,10 @@ void check_varying(const Fixture& f, int rank, int ranks)
         slope[L]   = 1 + 0.37 * L * L;
         phi[L + 1] = phi[L] + slope[L] * h;
     }
-    const auto A = matrix(*s), row = host(s->d_rowPtr), col = host(s->d_colInd), dof = host(s->d_node_to_dof);
+    const auto A = matrix(*s);
+    const auto row = host(s->d_rowPtr);
+    const auto col = host(s->d_colInd);
+    const auto dof = host(s->d_node_to_dof);
     std::vector<int> dof_plane(s->numTotalDofs, -1);
     for (size_t i = 0; i < dof.size(); ++i)
         if (dof[i] >= 0) dof_plane[dof[i]] = f.plane(x[i]);
@@ -279,7 +290,8 @@ void check_varying(const Fixture& f, int rank, int ranks)
     // K's sign convention, from its interior diagonal (the identity holds for +stiffness).
     double diagonal = 0;
     {
-        const auto diag = host(s->d_diagPtr), bdry = host(s->d_isPressureBdryDof);
+        const auto diag = host(s->d_diagPtr);
+        const auto bdry = host(s->d_isPressureBdryDof);
         for (int r = 0; r < s->numOwnedDofs; ++r)
             if (!bdry[r] && r != s->pressurePinDof && diag[r] >= 0) diagonal += A[diag[r]];
         MPI_Allreduce(MPI_IN_PLACE, &diagonal, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -337,7 +349,8 @@ void check_bdf2(const Fixture& f, int rank, int ranks)
 
 void check_flow(const Fixture& f, int rank, int ranks)
 {
-    auto with = make_stepper(f, rank, ranks, 1, true), without = make_stepper(f, rank, ranks, 1, true);
+    auto with = make_stepper(f, rank, ranks, 1, true);
+    auto without = make_stepper(f, rank, ranks, 1, true);
     auto W = proportional_W(*with, 1);
     setPenalisedProjection(*with, W.data(), 1e3);  // beta = 0.5 at dt = 1e-3
     for (int step = 0; step < 4; ++step)
@@ -359,7 +372,11 @@ void check_flow(const Fixture& f, int rank, int ranks)
 
 void rejected_without_mutation(Stepper& s, double dt)
 {
-    const auto p = host(s.d_p), u = host(s.d_u), v = host(s.d_v), w = host(s.d_w), A = matrix(s);
+    const auto p = host(s.d_p);
+    const auto u = host(s.d_u);
+    const auto v = host(s.d_v);
+    const auto w = host(s.d_w);
+    const auto A = matrix(s);
     const int history = s.bdfStep;
     const auto nu     = s.nuCached;
     bool rejected     = false;

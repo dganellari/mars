@@ -85,7 +85,9 @@ struct Fixture
 };
 void boundaries(Stepper& s, const Fixture& f)
 {
-    auto x = host(f.domain->getNodeX()), y = host(f.domain->getNodeY()), z = host(f.domain->getNodeZ());
+    auto x = host(f.domain->getNodeX());
+    auto y = host(f.domain->getNodeY());
+    auto z = host(f.domain->getNodeZ());
     for (size_t i = 0; i < x.size(); ++i)
     {
         if (std::abs(x[i] - f.x0) < 1e-9)
@@ -141,8 +143,11 @@ void check_flow(const Fixture& f, int rank, int ranks)
                     "The projection did not remove most of the divergence");
     }
     // The kinetic energy, sum over owned nodes of V |u|^2 / 2: the same on every rank count.
-    const auto own = host(s->ownershipMap()), V = host(s->d_massNode);
-    const auto u = host(s->d_u), v = host(s->d_v), w = host(s->d_w);
+    const auto own = host(s->ownershipMap());
+    const auto V = host(s->d_massNode);
+    const auto u = host(s->d_u);
+    const auto v = host(s->d_v);
+    const auto w = host(s->d_w);
     double ke = 0;
     for (size_t i = 0; i < u.size(); ++i)
         if (own[i] == 1) ke += .5 * V[i] * (u[i] * u[i] + v[i] * v[i] + w[i] * w[i]);
