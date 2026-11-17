@@ -41,6 +41,7 @@ target_include_directories(mars_unstructured SYSTEM PUBLIC
 target_sources(mars_unstructured PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/domain_cuda_impl.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/amr/mars_amr_tet_audit.cu
 )
 
 # Set language properties based on enabled features
@@ -48,6 +49,7 @@ if(MARS_ENABLE_CUDA)
     # Use CUDA for GPU files
     set_source_files_properties(
         ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu 
+        ${CMAKE_CURRENT_SOURCE_DIR}/amr/mars_amr_tet_audit.cu
         PROPERTIES LANGUAGE CUDA
     )
     
@@ -72,6 +74,7 @@ elseif(MARS_ENABLE_HIP)
     # Source-file properties are directory-scoped: the top-level LANGUAGE HIP glob does not
     # reach targets defined here, so set it for this target's .cu file explicitly.
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/amr/mars_amr_tet_audit.cu PROPERTIES LANGUAGE HIP)
     target_sources(mars_unstructured PRIVATE cstone_instantiations.cu)
     set_source_files_properties(cstone_instantiations.cu PROPERTIES LANGUAGE HIP)
 endif()

@@ -1,0 +1,441 @@
+# Conforming tetrahedral AMR checks
+
+These checks cover the optional LEPP policy documented in
+[Conforming-Tet-AMR.md](../../docs/Conforming-Tet-AMR.md). Native GPU validation
+uses the installed MARS package. Run all three platforms against the same source
+snapshot before considering this policy for release.
+
+## CPU
+
+The standalone geometry test needs only a C++20 compiler. The distributed tests
+also need MPI and the pinned cornerstone headers. The legacy adapter test uses
+an installed CPU MARS library with Kokkos and its AMR backend enabled.
+The recipe pins `Kokkos_DIR` for both the library and the installed consumer;
+the gate rejects a GPU Kokkos or a version other than 4.4.1.
+
+`prepare.sh` builds that library and the tests from offline dependencies:
+
+```bash
+bash tests/amr/prepare.sh cpu "$PWD/build-amr-cpu" /path/to/cornerstone /path/to/kokkos
+ctest --test-dir build-amr-cpu/checks --output-on-failure --no-tests=error -V \
+  --output-junit "$PWD/build-amr-cpu/results.xml"
+```
+
+Set `CXX` to the intended C++ compiler and `MARS_AMR_BUILD_JOBS` to the build
+parallelism. The geometry-only shortcut is:
+
+```bash
+cmake -S tests/amr -B build-tet-geometry
+cmake --build build-tet-geometry
+ctest --test-dir build-tet-geometry --output-on-failure
+```
+
+The complete CPU suite has nine CTests:
+
+- Geometry: all 144 vertex-permutation/edge choices, 720 equal-length traversal
+  orders, complete edge stars, signed volume, paired interior faces and affine transfer.
+  All eight red-refinement children are also checked under all 24 parent permutations.
+- Actual legacy Kokkos LEPP: the two-tet case produces five active tets and seven
+  nodes after splitting the neighbour's longer edge first. The requested-edge
+  control produces four tets and six nodes.
+- Shared LEPP engine at one, two and four MPI ranks, each with direct and staged
+  messages. Fixtures exercise changed local numbering, empty ranks, a 48-cell
+  edge star, successive midpoint generations, constant/affine transfer, boundary
+  ancestry and repeated partition changes. Canonical topology is compared with
+  one rank. Sparse boundary matching tests overlapping labels, duplicate source
+  records and lost-face rejection. One migration plan transfers three fields,
+  excluding poisoned replicas and rejecting missing or conflicting owner values.
+  Malformed connectivity, faces, geometry, midpoint identities and parentage are
+  rejected collectively; split communicators are also tested.
+  A PMPI send counter checks that disconnected local partitions send no edge,
+  node or face records. Sparse-plan checks cover mixed local/remote records,
+  reverse ordering and reuse, in direct and staged modes.
+
+- Cornerstone layout on four CPU ranks with 32- and 64-bit keys. Shared tet
+  representative nodes force deep SFC leaves. Every element slot must have one
+  supplier, poisoned halo connectivity must be replaced, and node owners must
+  hold complete stars. The old ten-retry limit fails this check for 64-bit keys.
+
+CPU LEPP partition changes are fixture redistributions. They do not execute the
+GPU-only device-data `ElementDomain` constructor or cornerstone GPU kernels.
+
+## CUDA and HIP
+
+Within the intended compiler/runtime environment, build and install the candidate:
+
+```bash
+bash tests/amr/prepare.sh cuda "$PWD/build-amr-cuda" /path/to/cornerstone
+# On the AMD system instead:
+bash tests/amr/prepare.sh hip "$PWD/build-amr-hip" /path/to/cornerstone
+```
+
+`MARS_AMR_GPU_ARCH` defaults to `90` for CUDA and `gfx942` for HIP. `CUDACXX`
+and `HIPCXX` can select the GPU compiler. Cornerstone is supplied through CMake's
+existing source-tree override; no download is needed. Tests link the installed
+`Mars::mars` and `Mars::mars_unstructured` targets, including the installed
+shared bisection header.
+
+The native checks compile in separate CUDA/HIP files for mesh setup, migration,
+direct LEPP, red refinement and manager integration. The CPU oracle and `main`
+compile as ordinary C++. Test compilation is serial and keeps going after an
+independent file fails, so one build records all failing units.
+
+CUDA compilation uses `compile_cuda.py`. Each invocation keeps the Release flags,
+records its command, exit status, elapsed time and peak child RSS under
+`checks/compile-receipts/`, and has a ten-minute timeout. On Linux, each compiler
+process inherits a 64 GiB virtual-address-space limit. This bounds individual
+processes, not the sum of their RSS. Compiler core dumps are disabled so a crash
+cannot fill scratch with an image of that address space. `MARS_AMR_COMPILE_MEMORY_GIB` and
+`MARS_AMR_COMPILE_TIMEOUT` override these diagnostic bounds. The launcher does not
+change the compiler's optimization or target architecture.
+
+There are ten CTests per GPU platform: the host geometry test plus nine native
+cases. The native matrix is one, two and four ranks with needed-node halos,
+full halos and staged AMR messages. Each native case checks:
+
+- The existing device sparse exchange over three variable-size rounds, before
+  mesh setup. The unrefined cube is checked for positive cells, CPU/device SFC
+  owner agreement, complete element-halo coverage and node presence on the owner
+  before lazy halo construction.
+- A two-tet device LEPP fixture with dependent midpoint generations and empty
+  ranks; connectivity and boundary labels must match the CPU core.
+- A partition-crossing longest-edge request on a 320-tet procedural cube,
+  checked against CPU LEPP, positive volumes and paired interior faces.
+- Constant and affine fields through actual midpoint birth batches.
+- Forced field ownership changes and exclusion of poisoned replicas.
+- Default red refinement, its P1 transfer, and a fresh device-data rebuild.
+- Three asymmetric `AmrManager` refinement/repartition cycles, with poisoned
+  ghost inputs, unique ownership, consistent shared coordinates, conformity,
+  transferred fields and seven preserved face labels (one overlaps another).
+- Coarsening marks leaving the direct refiner unchanged.
+
+The MPI library must support device buffers even in staged AMR mode: that option
+stages only the new LEPP/boundary/migration messages. Cornerstone and the existing
+node halo retain their transport. Device selection uses node-local rank modulo
+visible GPUs, or device zero when only one is visible. Logs report host, rank,
+local rank, PCI identity and GPU name; verify placement before accepting a run.
+
+## Cluster matrix
+
+`cluster.sh` prepares and runs the suite inside an existing **two-node Slurm
+batch allocation**. `mpi-launch.sh` uses one node for one rank and two nodes for
+two/four ranks. It supplies `--export=ALL`, CPU binding and failure propagation.
+It expects the CSCS uenv/default-view workflow; set `MARS_AMR_UENV` to the chosen
+image. The user submits the allocation; none of these instructions authorize
+an assistant to execute cluster commands.
+
+For a frozen bundle, submit `batch.sh` with two arguments: the backend and the
+absolute bundle directory. Slurm copies the script into its spool directory,
+so the bundle must not be resolved from the batch script's own path. The local
+regression checks this behavior and failure propagation:
+
+```bash
+python3 tests/amr/test_batch.py
+```
+
+The batch command is:
+
+```bash
+bash tests/amr/cluster.sh cpu /absolute/results/cpu /absolute/cornerstone /absolute/kokkos
+# Or, in the corresponding GPU environment:
+bash tests/amr/cluster.sh cuda /absolute/results/cuda /absolute/cornerstone
+bash tests/amr/cluster.sh hip /absolute/results/hip /absolute/cornerstone
+```
+
+The frozen recipe uses `--mem=0` with the exclusive batch allocation and build
+step. This alone did not solve the CUDA failure: job 5299797 had 849.61 GB on the
+build node and reached 787.56 GB RSS before nvcc was killed. The split compilation
+and compiler bounds isolated that failure.
+Job 5303947 compiled the driver and mesh units but exposed unsupported extended
+CUDA lambdas in constructors, private captured types, and a function with deduced
+return type. Its two largest units reached the compiler limit. The current code
+uses named device-callable operations for those paths. The separately compiled
+CPU oracle now explicitly requests C++20. CUDA jobs 5304289 and 5305197 compile
+and link all seven units successfully with these corrections.
+
+Use a fresh result directory for each backend. Keep `build.log`, `ctest.log`,
+`results.xml`, `ctest-exit.txt`, compiler versions, CMake caches/compile commands,
+installed headers and binaries. A missing status file or nonzero process/CTest
+exit is not a pass. Do not infer completion from a printed PASS line. Retain
+failures; use the exact tested source/dependency manifest for any release claim.
+
+## Numerical bounds and status
+
+The affine field is `1 + 2*x - 3*y + 0.5*z`. Direct refinement allows `1e-12`;
+constants allow `1e-13`. Each cornerstone rebuild may move a coordinate within
+an SFC interval `h_d = box_length_d / (2^axis_bits_d - 1)`, so the manager test
+accumulates `2*h_x + 3*h_y + 0.5*h_z` per rebuild. Midpoint averaging cannot
+increase an existing maximum field error. Interior faces must still match
+exactly. The small test oracle gathers geometry on the host; production closure,
+face matching and migration do not gather a global mesh.
+
+The frozen v6 candidate passed all three native gates on 2026-11-09:
+
+| Platform | Job | Result |
+| --- | --- | --- |
+| Daint CPU | 5305220 | 9/9 CTests |
+| Daint NVIDIA GH200 | 5305197 | 10/10 CTests |
+| Beverin AMD MI300A | 729093 | 10/10 CTests |
+
+All batch and CTest exits are zero, with no skipped tests. The source manifest is
+`a7c8f8c4db50a830a64504899f97bd4ef58a0c7d9e969666a4e43af036a5b6f4`.
+Rank receipts confirm one node for one rank, two nodes for two/four ranks and a
+distinct GPU for each rank. Both GPU platforms pass needed/full node halos and
+staged AMR messages, including all three manager refinement/repartition rounds.
+This validates the one-rank halo accessor, red-child orientation and four-rank
+halo-depth corrections on the tested paths. Earlier failures remain retained.
+
+The final manager fixture contains 3315 tetrahedra on NVIDIA and 3309 on AMD.
+These counts repeat across each platform's tested rank counts and modes; both
+pass the geometric and field invariants. Cross-vendor identical topology is not
+claimed. The cause of the count difference has not been isolated.
+
+These gates do not establish coarsening, periodic/multiblock support, mesh-quality
+bounds, geometric generation limits, Exodus file-ingestion coverage or scaling.
+The tested dependency correction is published and pinned. The integrated release
+checks below complete the validation matrix for this scope.
+
+## Integrated release results
+
+The integrated numerical/runtime source is commit
+`2ee88f1fc84b2fdd634bbc7aaf01631780d07002`, with the same Cornerstone pin as above.
+Commit `a4ece5961307c5f3e81de6a5657c30c12b675239` changes only the validation
+runner, its tests and instructions. Results audited on 2026-11-09:
+
+| Platform | Job | Result |
+| --- | --- | --- |
+| Daint CPU | 5307495 | 9 AMR checks plus red-tet geometry: 10/10 |
+| Daint NVIDIA GH200 | 5307505 | Single-node release suite: 50/50 |
+| Daint NVIDIA GH200 | 5310365 | Two-node release suite: 50/50, batch exit 0 |
+| Beverin AMD MI300A | 729339 | Single-node release suite: 50/50 |
+| Beverin AMD MI300A | 729814 | Two-node release suite: 50/50, batch exit 0 |
+
+The release suite includes the existing unstructured solver/assembly checks,
+red-tet orientation and single-rank halo access. Four-rank cases in the two-node
+layout span both nodes. All expected cases ran, with no skips or failed tests.
+
+Both original GPU jobs exited 1 after their single-node suites passed: the
+auditor expected a GoogleTest footer that CTest had truncated from JUnit output.
+The matching full logs establish that the named halo test ran and passed. The
+corrected auditor rechecked those results, and the continuation jobs ran only
+the missing two-node suites using the original executables. No numerical test
+or tolerance changed; the original failure records are retained.
+
+The continuation verifies source/dependency manifests and 37 original files,
+including all 17 executables per platform, before and after execution. It
+preserves test commands and properties while relocating output directories.
+Executable hashes were first recorded after the original jobs completed, before
+continuation; they were not captured during those original executions. Result
+audits also checked exact inventories, artifact hashes and rank placement.
+
+The integrated bundle manifest is
+`ca2379b65dcccef25447e72aa0194fae86bcd7adeaaa5fc984404dc5c48fd492`;
+its full source manifest is
+`5c0b857cea04f017c9a0db16da361a6ac92acca06ae657ada8f1988f13aee526`.
+The continuation manifest is
+`0a1535a97ef8fcb770eae14098103ed74895bd563565f06429437b928eb6fb77`.
+These are correctness results, not scaling measurements.
+
+## Exodus import extension
+
+Set `MARS_AMR_EXODUS_CHECKS=ON` when preparing the tests to enable the additional
+`tet-exodus` label. The installed MARS GPU package must have netCDF support;
+configuration fails if it is absent. The CPU reader also requires netCDF.
+
+```bash
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cpu /absolute/results/cpu /path/to/cornerstone /path/to/kokkos
+# On each GPU platform, use its matching toolchain:
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh cuda /absolute/results/cuda /path/to/cornerstone
+MARS_AMR_EXODUS_CHECKS=ON bash tests/amr/prepare.sh hip /absolute/results/hip /path/to/cornerstone
+ctest --test-dir /absolute/results/cuda/checks -L tet-exodus --no-tests=error \
+  --output-on-failure -V --test-output-size-passed 1048576 \
+  --output-junit /absolute/results/cuda/exodus.xml
+```
+
+The fixture writer creates a public unit cube with 125 vertices and 384 Tet4
+elements. Node and element numbering are shuffled; positive vertex permutations
+exercise the four Exodus side ordinals. Seven named side sets cover the six
+planes plus an overlapping label, with nonsequential block and side-set IDs.
+Coordinates use the split `coordx/coordy/coordz` layout in classic netCDF.
+
+CPU checks read the actual file at one, two and four MPI ranks and verify exact
+geometry/connectivity, orientation, volume, block indexing, face labels and
+boundary-node lists. Together with fixture generation these are four CTests.
+Each GPU configuration adds nine cases: needed/full halos and staged AMR messages
+at one, two and four ranks. They call the manager's file initializer with side-set
+storage enabled, then reuse the three-round conformity, identity, constant/affine
+transfer and boundary-ancestry checks. They never replace imported labels with
+procedural ones. Imported ranks may hold a tagged node without holding a complete
+incident boundary face; after rebuild, boundary nodes are derived from tagged faces.
+
+The integration of distributed volume and boundary reads with AMR passed on all
+three platforms on 2026-11-10:
+
+| Platform | Job | Result |
+|---|---:|---|
+| CPU (Daint) | 5321270 | 13/13 |
+| NVIDIA GH200 | 5321275 | 13/13 |
+| AMD MI300A | 732594 | 13/13 |
+
+The CPU campaign includes the four import checks above and nine bisection, LEPP
+and domain-layout references. Every job exited zero with no skipped tests.
+Multi-rank cases span two nodes, with distinct devices for GPU ranks. All eighteen
+GPU cases completed three manager rounds each. Independent audits verified all
+39 cases, 81 rank records, source and executable hashes, native compiler commands,
+mode flags and 46 sealed result artifacts.
+
+The final source is based on `f6224a9b` plus reader patch
+`71dc9dec086bc297d98b0883384c6e0e06962db7c366c50ae769b7686f5ae948`.
+The AMR bundle manifest is
+`3b603d5b9ecad761a783e43bf5944bd72580e15a59ca5852575a8fe53c48ebea`.
+It reuses the installations accepted by reader jobs 5320689 (CUDA) and 732474
+(HIP). The continuation checked 633 CPU, 346 CUDA and 347 HIP installation and
+receipt files before and after execution. AMR fixtures, assertions and tolerances
+are unchanged from the predecessor checks; only the reader snapshot changed.
+
+Earlier import jobs 5317462/5316393/731385 and AMR jobs
+5320346/5320350/732380 validate preceding reader snapshots. They do not replace
+this final check of distributed boundary-list reads and routing. Reader-specific
+coverage and limits are documented in [the reader tests](../mesh_io/README.md).
+
+CPU reading does not exercise GPU domain rebuilding or manager field transfer.
+The fixture does not establish general Exodus, multiblock, periodic,
+arbitrary-mesh or scaling coverage.
+
+## Cornerstone halo-depth correction
+
+CUDA job 5304289 compiled all seven native units successfully (peak child RSS
+1.58 GiB) and passed seven of ten tests. All three four-rank cases failed before
+refinement. The same failure is reproducible with Cornerstone's CPU domain:
+the old ten-retry limit leaves a leaf spanning a rank boundary, with 21 allocated
+halo elements that no rank supplies. Checking only known node stars missed
+these unfilled slots.
+
+The corrected dependency uses `maxTreeLevel<KeyType>` retries in `sync`,
+`syncGrav` and `addHalos`. A failed layout is reduced as a boolean so positive and
+negative error codes cannot cancel. `sync` and `syncGrav` throw collectively
+before publishing an invalid layout. Halo requests are exchanged after the
+layout converges. This changes no AMR decision or MPI message protocol.
+
+MARS pins Cornerstone's `mars-extensions` commit
+`c13b9a9a6c0f5897ec4f23283e4ff53716303c5e`. Its production header is identical to
+the correction used by all three v6 jobs. Those frozen bundles retain their
+original provenance: `2a95e63b0ca5454712ab83f27505055c078887dc` plus the recorded
+`cornerstone-halo-depth.patch`. The published commit also adds a four-rank
+32/64-bit regression; it fails with the old header and passes with the fix.
+
+## Generation and topology validation
+
+`nonconforming_topology_mpi{1,2,4,8}` checks sparse split-entity matching, empty
+ranks, changed ownership, unrelated-key rejection, non-binary error thresholds
+and iterative generation closure, with direct and staged messages. `amr_tree_layout`
+now co-moves generation and identity properties through real Cornerstone sync/halos.
+`tet_lepp_*` also checks generation caps and three rounds on the pinned public
+[Escher mesh](data/mfem/README.md).
+
+`graded_mesh_checks` proves the thin fixture is a conforming positive-volume mesh
+and reproduces the former detector's false edge constraint. Native
+`nonconforming_{graded_tet,graded_hex,thin_tet}_{direct,staged}_mpiN` tests zero-mark
+invariance, three transfer rounds, P/P^T adjointness, constant/affine constraint
+reproduction and the generation cap. `public_tet_lepp_*` checks the public geometry
+through the real device manager.
+
+Accepted on 2026-11-13:
+
+| Platform | Job | Result |
+| --- | --- | --- |
+| NVIDIA GH200 | 5344783, reusing the successful builds from 5344272 | 46/46 cases; 211 MPI rank runtime records |
+| AMD MI300A | 740158 | 46/46 cases; 211 MPI rank runtime records |
+
+Each campaign contains 12 CPU/MPI shared-algorithm cases, 21 graded/thin refinement
+cases, 6 public LEPP cases, 2 device safety cases and 5 affine Poisson cases.
+Runs use 1/4/8 ranks; eight ranks span two nodes. Graded/thin threshold marking
+and public LEPP cover direct and staged AMR messages. The extra octree-marking
+cases run at eight ranks. Staging AMR messages does not stage all Cornerstone or
+solver MPI traffic. The separate local CPU/MPI suite passes 23/23 checks; this is
+not a native CPU ElementDomain manager backend.
+
+The source manifest SHA-256 is
+`21ffb4a96989de1814203c154c6bc7011d291cb4798877407c3491a5dc6c2805`.
+Publication updates only the validation documentation after that snapshot.
+The AMD kit manifest is
+`9ae97ca0b93c5da07c0bf36e88ecfdc75206f2e3c3fc7452e60a06a498f04e58`;
+the NVIDIA continuation manifest is
+`a31ee3053a27584afa252feb7b24059ed1a7faf3c19a5da5a4ba18112daa89ef`.
+The continuation corrects a versioned-Hypre filename check in the preparation
+harness and runs the unchanged tests with the previously built binaries.
+
+Raw log/command hashes, source manifests, per-rank binary/package/library
+verification records, and the unchanged numerical gates were checked. All
+checked counts agree across ranks and platforms. Octree-marked refinement reaches
+the generation-three saturation counts: graded Tet 196608, graded Hex 32768 and
+thin Tet 229376. Public Escher LEPP produces 96/192/384 cells over three rounds.
+Native binaries and installed trees were not downloaded for an independent rehash.
+These results cover correctness on the listed fixtures, not scaling or arbitrary
+geometry PDE accuracy.
+
+
+## Physical geometry and non-box PDE validation
+
+Accepted on 2026-11-15 for the coordinate-preserving, labelled Tet4 extension:
+
+| Platform | Build and validation jobs | Accepted gate |
+| --- | --- | --- |
+| NVIDIA GH200 | Build 5352185; validation 5352186, 5352567 and 5357228 | 95 commands, reusing unchanged binaries and prior passing cases |
+| AMD MI300A | Build 743513; validation 743514 | 95 commands in the final run |
+
+Each platform covers 46 core AMR cases, nine field/geometry migration cases,
+three red boundary cases, 36 non-box PDE cases and one expected old-box-boundary
+failure. Eighteen commands exercise CPU/MPI shared algorithms; this does not
+make the GPU ElementDomain manager a native CPU backend. The separate clean
+CPU/MPI suite passes 32/32 tests. Twenty coordinate-migration rounds preserve
+values exactly, including deeper ghosts, in both transport modes.
+
+All PDE configurations start from the same 2688-tet public Escher fixture with
+48 side sets and 768 exterior faces. They solve affine and quadratic manufactured
+Poisson problems with complete side-set Dirichlet data. The indicator uses the
+known exact solution; it is not a residual estimator. Direct/staged modes apply
+to AMR messages, not every Cornerstone or solver exchange. Eight ranks span two
+nodes. LEPP uses four adaptations; red uses three for affine/uniform controls and
+six for adaptive solves. The six-round adaptive red result is identical in
+reported error on both platforms: L2 0.1274804 to 0.0380450, 27328 elements,
+4637 independent DOFs and 1541 hanging nodes. All 36 configurations agree in
+counts across ranks/platforms; quadratic errors agree within relative 1e-5.
+
+The first NVIDIA run hit the documented empty-partition guard on a smaller
+fixture. The second passed 30 PDE cases before its three-round adaptive red
+case missed the unchanged 25% error-reduction gate. That failed control is
+retained. An independent serial constrained FEM replay reproduces its counts
+and errors, and reaches the gate after more refinement. Only the six adaptive
+red cases were extended to six rounds; no solver, marking policy or tolerance
+changed. The final NVIDIA run reuses 58 earlier core/migration/boundary cases
+and 30 accepted PDE cases, and runs six adaptive cases plus the negative control.
+
+The final kit manifest SHA-256 is
+`5ca793b02ab2c60c53d9e4a949aee48568cc11ac32fc78f9016b475c81bdbcdf`;
+the unchanged source archive SHA-256 is
+`8141ba571036c6924bddae3bf855e29c970f0e11b7ec798b2e150c0bd4a0eae6`.
+Raw archived logs, process exits, commands, source/installed-header identities,
+447 new per-rank binary/library records and retained NVIDIA records were checked.
+The final new PDE cases preserve every labelled area and the file volume within
+relative 2.23e-16, below the unchanged 1e-10 file-geometry gate. Binaries were
+verified through per-rank receipts rather than independently downloaded.
+
+These results validate the listed fixtures and piecewise-linear geometry.
+They do not establish arbitrary-geometry accuracy, CAD/curved-boundary recovery,
+a physical error estimator or a performance/scaling advantage. Documentation
+was updated after the validated snapshot; numerical sources are unchanged.
+
+## Release selection
+
+With `MARS_ENABLE_TESTS=ON`, the main source build registers AMR host checks and,
+for an unstructured CUDA/HIP build, the native AMR checks. The standalone
+`tests/amr` configuration remains available for installed-package and CPU/MPI
+validation. Supported AMR tests carry both `amr` and `release` labels;
+`ctest -L release` includes them in either build. The optional legacy bisection
+comparison is excluded. Enable `MARS_AMR_MPI_CHECKS` with a Cornerstone include
+path for the standalone CPU/MPI suite. Native optional transfer-mesh and Exodus
+checks retain their explicit input/dependency requirements. These labels do not
+by themselves run or validate a configuration; native candidate acceptance is
+recorded separately. The complete non-box PDE campaign also remains an explicit
+package-validation gate.

@@ -11,7 +11,7 @@ finite element method (CVFEM), which its Navier–Stokes solver uses.
 The mesh is read, partitioned and stored on the device; the DOF numbering, the sparsity pattern and
 the assembly run there too, and MPI connects the GPUs.
 
-This documentation covers **v0.1.1**. The major version is 0, so the API can change between minor
+This documentation covers **v0.2.0**. The major version is 0, so the API can change between minor
 releases.
 
 ## Start here
@@ -23,7 +23,8 @@ releases.
   [5. your own operator](step-05-galerkin.md), [6. the heat equation](step-06-heat.md),
   [7. the lid-driven cavity](step-07-cavity.md), [8. Poiseuille flow](poiseuille_tutorial.md),
   [9. the Taylor–Green vortex](periodic_tgv_tutorial.md),
-  [10. high-order matrix-free](Matrix-Free-Tutorial.md) and [adaptive refinement](AMR-Module.md);
+  [10. high-order matrix-free](Matrix-Free-Tutorial.md) and [adaptive refinement](AMR-Module.md), followed by
+  [adaptive Poisson on Escher](AMR-Peak-Example.md#reproduce-the-v020-example);
   appendix: [your own CMake project](step-appendix-cmake.md).
 
 ## Tutorials
@@ -35,22 +36,29 @@ releases.
 - **[High-order matrix-free operator](Matrix-Free-Tutorial.md)**: the experimental high-order
   CVFEM operator apply, on one GPU and on many.
 
+- **[Adaptive Poisson on Escher](AMR-Peak-Example.md#reproduce-the-v020-example)**: build and run both
+  refinement policies on the same public non-box mesh, with boundary labels and repeated solves.
+
 ## Reference
 
+- **[Structured Kokkos](Structured-Kokkos.md)**: optional Cartesian meshes, DOFs and checked field exchange.
+- **[Conforming tetrahedral AMR](Conforming-Tet-AMR.md)**: native LEPP refinement, face labels and validation status.
 - **[FEM Assembly](FEM-Assembly.md)**: mesh → DOF map → sparsity → assembled CSR, on the GPU.
 - **[CVFEM Kernels](CVFEM-Kernels.md)**: the hex assembly kernel variants and how to choose one.
 
 ## Status
 
-- **[Known limitations](https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md)**:
+- **[Known limitations](https://github.com/dganellari/mars/blob/v0.2.0/KNOWN_LIMITATIONS.md)**:
   what is stable, what is experimental, and what is not supported yet.
-- **[Changelog](https://github.com/dganellari/mars/blob/master/CHANGELOG.md)**: what changed in
+- **[Changelog](https://github.com/dganellari/mars/blob/v0.2.0/CHANGELOG.md)**: what changed in
   each release.
 
-Stable in v0.1: the GPU mesh and assembly pipeline on one and on several ranks, and the
+Supported in v0.2.0: the GPU mesh and assembly pipeline on one and on several ranks, and the
 incompressible Navier–Stokes solver on hexahedral meshes (`mars_poiseuille_flow`, `mars_tgv`,
-`mars_lid_driven_cavity`). Experimental, among others: the high-order matrix-free operators,
-adaptive mesh refinement, and the segregated SIMPLE solver.
+`mars_lid_driven_cavity`), optional structured Kokkos, and conforming/nonconforming
+adaptive refinement within their documented scope. High-order matrix-free operators
+and the segregated SIMPLE solver remain experimental. The [release validation](Release-0.2.0.md)
+records the CPU, NVIDIA and AMD checks.
 
 ## The mesh in code
 

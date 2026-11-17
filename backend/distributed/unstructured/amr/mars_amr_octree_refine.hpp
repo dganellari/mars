@@ -20,6 +20,7 @@
 #include "backend/distributed/unstructured/domain.hpp"   // HexTag, TetTag
 #include "mars_amr_tet_refine.hpp"
 #include "mars_amr_solution_transfer.hpp"   // SolutionTransfer::transferByParentageTet
+#include "mars_amr_lepp.hpp"
 
 namespace mars
 {
@@ -108,9 +109,19 @@ __global__ void emitChildHexesKernel(const KeyType* conn0,
     };
     auto mid4 = [&](int a, int b, int c, int d, RealType& X, RealType& Y, RealType& Z)
     {
-        X = RealType(0.25) * (px[a] + px[b] + px[c] + px[d]);
-        Y = RealType(0.25) * (py[a] + py[b] + py[c] + py[d]);
-        Z = RealType(0.25) * (pz[a] + pz[b] + pz[c] + pz[d]);
+        int order[4] = {a, b, c, d};
+        for (int i = 1; i < 4; ++i)
+            for (int j = i; j > 0; --j)
+            {
+                int u = order[j - 1], v = order[j];
+                bool less = px[v] < px[u] || (px[v] == px[u] && (py[v] < py[u] || (py[v] == py[u] && pz[v] < pz[u])));
+                if (!less) break;
+                order[j - 1] = v;
+                order[j]     = u;
+            }
+        X = RealType(.25) * ((px[order[0]] + px[order[1]]) + (px[order[2]] + px[order[3]]));
+        Y = RealType(.25) * ((py[order[0]] + py[order[1]]) + (py[order[2]] + py[order[3]]));
+        Z = RealType(.25) * ((pz[order[0]] + pz[order[1]]) + (pz[order[2]] + pz[order[3]]));
     };
 
     // Edge node indices (0..11)
@@ -244,17 +255,21 @@ struct OctreeAlignedRefine
     {
         std::array<cstone::DeviceVector<KeyType>, NodesPerElement> d_conn;
         cstone::DeviceVector<RealType> d_x, d_y, d_z;
+        cstone::DeviceVector<KeyType> d_generations;
         size_t numNodes    = 0;
         size_t numElements = 0;
 
-        // Reserved for tet parentage-based solution transfer (mars_amr_tet_refine).
-        // Hex path leaves these empty.
+        // Tet parentage; bisection records actual parent edges in midpoint order.
+        // The red path also keeps marks and a marked-prefix array; hex leaves these empty.
         cstone::DeviceVector<uint64_t> d_edgeKeys;
         cstone::DeviceVector<uint64_t> d_markedPrefix;
         cstone::DeviceVector<uint8_t>  d_marks;
         size_t numUniqueEdges = 0;
         size_t numMarked      = 0;
         size_t oldNumNodes    = 0;
+        bool transfer_from_parent_edges = false;
+        std::vector<size_t> parent_birth_offsets;
+        LeppDeviceExecution::Vector<LeppTaggedFace> d_tagged_faces;
     };
 
     // Hex entry: takes 8 conn pointers, drives emitChildHexesKernel.
@@ -266,6 +281,19 @@ struct OctreeAlignedRefine
         size_t numElements, size_t numNodes,
         int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            Result res;
+            res.numNodes = res.oldNumNodes = numNodes;
+            res.d_x.resize(numNodes); res.d_y.resize(numNodes); res.d_z.resize(numNodes);
+            if (numNodes)
+            {
+                cudaCheckCall(cudaMemcpy(res.d_x.data(), nodeX, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_y.data(), nodeY, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+                cudaCheckCall(cudaMemcpy(res.d_z.data(), nodeZ, numNodes * sizeof(RealType), cudaMemcpyDeviceToDevice));
+            }
+            return res;
+        }
         // Per-element child count (1 or 8)
         cstone::DeviceVector<uint64_t> d_childCount(numElements);
         cstone::DeviceVector<uint64_t> d_isMarked(numElements);
@@ -367,6 +395,14 @@ struct OctreeAlignedRefine
         cstone::DeviceVector<RealType>& newSolution,
         int blockSize = 256)
     {
+        if (numElements == 0)
+        {
+            newSolution.resize(numNodes);
+            if (numNodes)
+                cudaCheckCall(cudaMemcpy(newSolution.data(), oldSolution, numNodes * sizeof(RealType),
+                                         cudaMemcpyDeviceToDevice));
+            return;
+        }
         // Recompute markedPrefix locally (cheap; same logic as refineLocal)
         cstone::DeviceVector<uint64_t> d_isMarked(numElements);
         thrust::transform(thrust::device, marks, marks + numElements,
@@ -411,6 +447,13 @@ struct OctreeAlignedRefine
         cstone::DeviceVector<RealType>& newSolution,
         int blockSize = 256)
     {
+        if (refined.transfer_from_parent_edges)
+        {
+            newSolution = transfer_lepp_field<LeppDeviceExecution>(oldSolution, refined.oldNumNodes,
+                                                                   refined.d_edgeKeys.data(), refined.numUniqueEdges,
+                                                                   refined.parent_birth_offsets, MPI_COMM_WORLD);
+            return;
+        }
         newSolution = SolutionTransfer<KeyType, RealType>::transferByParentageTet(
             conn0, conn1, conn2, conn3,
             refined.d_marks.data(), numElements,

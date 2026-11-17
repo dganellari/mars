@@ -19,6 +19,7 @@ using std::get;
 
 #include "domain_cuda_impl.hpp"
 #include "mars_sfc_ownership.hpp"
+#include "amr/mars_amr_field_migration.hpp"
 
 // stl includes
 // #include <adios2.h>
@@ -35,6 +36,7 @@ using std::get;
 #include <thrust/scan.h>
 #include <thrust/fill.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/tuple.h>
@@ -61,9 +63,23 @@ using std::get;
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
 #include "mars_read_exodus_mesh.hpp"
+#include "utils/mars_sideset_lookup.hpp"
+#include "utils/mars_sideset_distribution.hpp"
 
 namespace mars
 {
+
+template<typename RealType, typename KeyType>
+struct SideSetNodeKey
+{
+    cstone::Box<RealType> box;
+
+    __host__ __device__ KeyType operator()(const ExodusSideSetNode& node) const
+    {
+        return cstone::sfc3D<cstone::HilbertKey<KeyType>>(RealType(node.x), RealType(node.y), RealType(node.z), box)
+            .value();
+    }
+};
 
 // Element type tags
 struct TetTag
@@ -89,6 +105,43 @@ struct QuadTag
     static constexpr int NodesPerElement = 4;
     static constexpr const char* Name    = "Quadrilateral";
 };
+
+// The smallest and largest coordinate over all ranks, per axis
+template<class RealType>
+void device_mesh_extent(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm,
+                        RealType (&lower)[3], RealType (&upper)[3])
+{
+    const RealType* coordinates[3] = {x, y, z};
+    for (int d = 0; d < 3; ++d)
+    {
+        lower[d] = std::numeric_limits<RealType>::max();
+        upper[d] = std::numeric_limits<RealType>::lowest();
+        if (nodes)
+        {
+            auto begin = thrust::device_pointer_cast(coordinates[d]);
+            lower[d]   = mars::reduce(begin, begin + nodes, lower[d], thrust::minimum<RealType>());
+            upper[d]   = mars::reduce(begin, begin + nodes, upper[d], thrust::maximum<RealType>());
+        }
+    }
+    auto datatype = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(MPI_IN_PLACE, lower, 3, datatype, MPI_MIN, comm);
+    MPI_Allreduce(MPI_IN_PLACE, upper, 3, datatype, MPI_MAX, comm);
+}
+
+template<class RealType>
+cstone::Box<RealType>
+device_mesh_box(const RealType* x, const RealType* y, const RealType* z, size_t nodes, MPI_Comm comm)
+{
+    RealType lower[3], upper[3];
+    device_mesh_extent(x, y, z, nodes, comm, lower, upper);
+    for (int d = 0; d < 3; ++d)
+    {
+        RealType padding = RealType(0.05) * (upper[d] - lower[d]);
+        lower[d] -= padding;
+        upper[d] += padding;
+    }
+    return cstone::Box<RealType>(lower[0], upper[0], lower[1], upper[1], lower[2], upper[2]);
+}
 
 // Forward declarations of CUDA kernels
 template<typename ElementTag, typename KeyType, typename RealType>
@@ -699,12 +752,39 @@ public:
     // computed on GPU + MPI. Used for AMR mesh rebuild after refinement.
     // The input vectors are consumed (moved into the domain's owned buffers
     // for sync scratch space; coords are passed straight to sync()).
+    // fixedBox: the box to encode the node keys with instead of one fitted to
+    // the coordinates, which must lie inside it. Non-conforming AMR keeps the
+    // box of the first mesh, so node keys and positions survive rebuilds.
     ElementDomain(DeviceCoordsTuple&& d_coords,
                   DeviceConnectivityTuple&& d_conn,
                   int rank,
                   int numRanks,
-                  int bucketSize = 64,
-                  unsigned bucketSizeFocus = 8);
+                  int bucketSize                        = 64,
+                  unsigned bucketSizeFocus              = 8,
+                  const cstone::Box<RealType>* fixedBox = nullptr,
+                  DeviceVector<KeyType>* generations    = nullptr);
+
+    enum class RefinementKind
+    {
+        Initial,
+        Red,
+        Bisection
+    };
+    RefinementKind refinement_kind() const { return refinement_kind_; }
+    void set_refinement_kind(RefinementKind kind) { refinement_kind_ = kind; }
+    bool has_refinement_history() const { return refinement_generations_enabled_; }
+    const DeviceVector<KeyType>& refinement_generations() const { return d_refinement_generations_; }
+    void initialize_refinement_generations()
+    {
+        if (!refinement_generations_enabled_)
+        {
+            d_refinement_generations_       = DeviceVector<KeyType>(elementCount_, KeyType(0));
+            refinement_generations_enabled_ = true;
+        }
+    }
+    // Six keys per active split entity: node, parent count, sorted parent keys (unused slots are ~0).
+    const DeviceVector<KeyType>& refinement_constraints() const { return d_refinement_constraints_; }
+    void set_refinement_constraints(DeviceVector<KeyType>&& records) { d_refinement_constraints_ = std::move(records); }
 
     // Per-phase timings populated by the ctor (in ms, rank-local).
     // All cudaDeviceSynchronize-fenced so they reflect actual elapsed time.
@@ -769,46 +849,38 @@ public:
         return std::get<I>(d_conn_keys_);
     }
 
-    // User-friendly coordinate access (uses cached coords if available, otherwise decodes on-the-fly)
+    // Prefer stored physical coordinates; otherwise use the decoded coordinate cache.
     auto getElementNodeCoordinates(size_t elemIdx)
     {
         std::array<RealType, NodesPerElement> x, y, z;
 
         // Check if we have cached coordinates
-        bool hasCachedCoords = (coordCache_ != nullptr);
+        bool hasCachedCoords = (originalCoords_ != nullptr || coordCache_ != nullptr);
 
         if (hasCachedCoords)
         {
             // Use cached coordinates via local IDs
             const auto& conn_local = getElementToNodeConnectivity();
+            const auto corners = std::apply([elemIdx](const auto&... columns) {
+                return std::array<KeyType, NodesPerElement>{KeyType(columns[elemIdx])...};
+            }, conn_local);
             for (int i = 0; i < NodesPerElement; ++i)
             {
-                KeyType localId = [&]()
-                {
-                    if (i == 0) return std::get<0>(conn_local)[elemIdx];
-                    if (i == 1) return std::get<1>(conn_local)[elemIdx];
-                    if (i == 2) return std::get<2>(conn_local)[elemIdx];
-                    if (i == 3 && NodesPerElement > 3) return std::get<3>(conn_local)[elemIdx];
-                    return KeyType(0);
-                }();
-                x[i] = coordCache_->d_node_x_[localId];
-                y[i] = coordCache_->d_node_y_[localId];
-                z[i] = coordCache_->d_node_z_[localId];
+                KeyType localId = corners[i];
+                x[i] = getNodeX()[localId];
+                y[i] = getNodeY()[localId];
+                z[i] = getNodeZ()[localId];
             }
         }
         else
         {
             // Decode from SFC keys on-the-fly
+            const auto corners = std::apply([elemIdx](const auto&... columns) {
+                return std::array<KeyType, NodesPerElement>{KeyType(columns[elemIdx])...};
+            }, d_conn_keys_);
             for (int i = 0; i < NodesPerElement; ++i)
             {
-                KeyType sfcKey = [&]()
-                {
-                    if (i == 0) return std::get<0>(d_conn_keys_)[elemIdx];
-                    if (i == 1) return std::get<1>(d_conn_keys_)[elemIdx];
-                    if (i == 2) return std::get<2>(d_conn_keys_)[elemIdx];
-                    if (i == 3 && NodesPerElement > 3) return std::get<3>(d_conn_keys_)[elemIdx];
-                    return KeyType(0);
-                }();
+                KeyType sfcKey = corners[i];
                 auto [xi, yi, zi] = sfcToPhysicalCoordinate(sfcKey);
                 x[i]              = xi;
                 y[i]              = yi;
@@ -844,8 +916,8 @@ public:
     const DomainType& getDomain() const { return *domain_; }
 
     // Per-element SFC keys (one per local element, in cstone's local order).
-    // Filled by sync(). Used by AMR to compute per-element refinement level
-    // from the cstone focus-tree leaves.
+    // Filled by sync(). Spatial marking uses these keys with Cornerstone leaves;
+    // mesh refinement generations are carried separately.
     const DeviceVector<KeyType>& getElementSfcCodes() const { return d_elemSfcCodes_; }
 
     MARS_HOST_DEVICE
@@ -983,6 +1055,22 @@ public:
         // If using original coordinates, they're already stored - no need to cache
         if (originalCoords_) return;
         ensureCoordinateCache();
+    }
+
+    // Keys identify nodes; these arrays retain geometry independently of SFC quantization.
+    // The caller supplies every local node in the current key-map order, including deep ghosts.
+    void set_physical_coordinates(DeviceCoordsTuple&& coordinates)
+    {
+        const size_t nodes = getNodeCount();
+        amr::require_collectively(std::get<0>(coordinates).size() == nodes &&
+            std::get<1>(coordinates).size() == nodes && std::get<2>(coordinates).size() == nodes,
+            "Physical coordinate count differs from the node layout", MPI_COMM_WORLD);
+        auto physical = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(0);
+        physical->d_node_x_ = std::move(std::get<0>(coordinates));
+        physical->d_node_y_ = std::move(std::get<1>(coordinates));
+        physical->d_node_z_ = std::move(std::get<2>(coordinates));
+        originalCoords_ = std::move(physical);
+        coordCache_.reset();
     }
 
     // Exchange halo data for DOF vectors (MPI communication to sum shared node contributions)
@@ -1640,9 +1728,8 @@ public:
     //! Returns true if boundary information is available.
     bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
-    // ---- Optional side-set storage (lazy, opt-in via the file ctor) ----
-    // Each named side set is kept as two device vectors: d_keys (SFC keys, the
-    // AMR-stable partition-independent identity) and d_local (the runtime local
+    // ---- Optional side-set storage (distributed during file construction) ----
+    // Each named side set keeps d_keys (SFC keys in the current box) and d_local (the runtime local
     // node ids the hot path uses). Both hold only the nodes this rank actually
     // resolves (hits); misses are dropped. A name present in the mesh but with
     // zero local hits on this rank still has an entry, with empty vectors, so
@@ -1686,11 +1773,74 @@ public:
         return sideSets_.at(name).d_keys;
     }
 
+    bool has_side_set_face_keys(const std::string& name) const
+    {
+        ensureSideSets();
+        return sideSets_.at(name).has_faces;
+    }
+
+    // Three keys per tetrahedron face. Node-only sets cannot define face ancestry.
+    const DeviceVector<KeyType>& side_set_face_keys(const std::string& name) const
+    {
+        ensureSideSets();
+        return sideSets_.at(name).d_face_keys;
+    }
+
+    void set_side_set_from_face_keys(const std::string& name, DeviceVector<KeyType> faces)
+        requires(std::is_same_v<ElementTag, TetTag>)
+    {
+        if (numBlocks_ != 1 || faces.size() % 3)
+            throw std::invalid_argument("Face-key side sets require single-block triangle triples");
+        ensureSfcMap();
+        SideSetEntry entry;
+        entry.has_faces   = true;
+        entry.d_face_keys = std::move(faces);
+        if (entry.d_face_keys.empty())
+        {
+            sideSets_[name] = std::move(entry);
+            storeSideSets_ = sideSetsBuilt_ = true;
+            return;
+        }
+        if (d_localToGlobalSfcMap_.size() > size_t(std::numeric_limits<int>::max()))
+            throw std::overflow_error("Side-set node indices exceed int capacity");
+        entry.d_keys = entry.d_face_keys;
+        auto begin   = thrust::device_pointer_cast(entry.d_keys.data());
+        auto end     = begin + entry.d_keys.size();
+        thrust::sort(thrust::device, begin, end);
+        auto unique_end = thrust::unique(thrust::device, begin, end);
+        entry.d_keys.resize(unique_end - begin);
+        entry.d_local.resize(entry.d_keys.size());
+        auto keys        = entry.d_keys.data();
+        auto local       = entry.d_local.data();
+        auto domain_keys = d_localToGlobalSfcMap_.data();
+        size_t nodes     = d_localToGlobalSfcMap_.size();
+        thrust::for_each_n(thrust::device, thrust::counting_iterator<size_t>(0), entry.d_keys.size(),
+                           [=] __device__(size_t i)
+                           {
+                               size_t lo = 0, hi = nodes;
+                               while (lo < hi)
+                               {
+                                   size_t mid = lo + (hi - lo) / 2;
+                                   if (domain_keys[mid] < keys[i])
+                                       lo = mid + 1;
+                                   else
+                                       hi = mid;
+                               }
+                               local[i] = lo < nodes && domain_keys[lo] == keys[i] ? int(lo) : -1;
+                           });
+        if (mars::countIf(thrust::device_pointer_cast(local), thrust::device_pointer_cast(local) + entry.d_local.size(),
+                          [] __device__(int i) { return i < 0; }))
+            throw std::invalid_argument("Face-key side set contains a node absent from this domain");
+        sideSets_[name] = std::move(entry);
+        storeSideSets_  = true;
+        sideSetsBuilt_  = true;
+    }
+
     //! Re-inject a side set from its SFC keys onto the CURRENT domain. AMR carry-through: adaptMesh
-    //! rebuilds a fresh DEVICE-constructed domain (no Exodus file, so ensureSideSets can't rebuild the
-    //! sets); the SFC key is the AMR-stable node identity, so resolve each key against this domain's SFC
-    //! map -> local id (keep hits; a key not owned here is dropped, exactly like the coord resolver).
-    //! Marks storage built so ensureSideSets() (which reads meshFile_) does not clobber the injected set.
+    //! rebuilds a fresh DEVICE-constructed domain without an Exodus file.
+    //! Keys must already use this domain's current box; a box change requires re-encoding.
+    //! Resolve each key to a local id, dropping misses as in the coordinate resolver.
+    //! Injected sets are ready for local getters without another file read or MPI exchange.
     // block >= 0 (multi-block domain): resolve each key to the node on THAT block by scanning the
     // consecutive (key, block) run in the sorted map (mirrors resolveSideSetNodesToLocalKeepMisses).
     // block < 0 (default) is the original key-only behavior -- byte-identical for single-block domains.
@@ -1734,7 +1884,7 @@ public:
         }
         sideSets_[name] = std::move(e);
         storeSideSets_ = true;
-        sideSetsBuilt_ = true;   // injected -> ensureSideSets() must not re-read Exodus and overwrite this
+        sideSetsBuilt_ = true;
     }
 
 private:
@@ -1749,21 +1899,22 @@ private:
 
     // Opt-in: keep the Exodus side sets as device-resident members so consumers
     // (FEM/FSI/viz) get the local boundary node lists without re-reading the
-    // file. meshFile_ is retained only by the file ctor for the on-demand read;
-    // it is empty for the device/host ctors, which disables the feature there.
+    // file. The file ctor retains meshFile_ for collective reload after resync;
+    // device/host ctors leave it empty and receive boundary sets by injection.
     bool storeSideSets_ = false;
     std::string meshFile_;
 
-    // Per named side set we keep both the SFC keys (the partition-independent,
-    // AMR-stable identity / source of truth) and the derived runtime local node
-    // ids (the hot-path index). Coords are dropped after resolve.
+    // Keys identify nodes in the current box. Face triples preserve tetrahedral
+    // boundary ancestry; AMR re-encodes them when the bounding box changes.
     struct SideSetEntry
     {
         DeviceVector<KeyType> d_keys;
         DeviceVector<int>     d_local;
+        DeviceVector<KeyType> d_face_keys;
+        bool has_faces = false;
     };
-    mutable std::map<std::string, SideSetEntry> sideSets_;
-    mutable bool sideSetsBuilt_ = false;
+    std::map<std::string, SideSetEntry> sideSets_;
+    bool sideSetsBuilt_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -1809,7 +1960,12 @@ private:
     DeviceVector<int> d_elemBlock_;
     DeviceVector<int> d_localToGlobalBlock_;
 
-    // Opt-in gate for the above. Read once; must give the same answer on every rank, because
+    DeviceVector<KeyType> d_refinement_generations_;
+    DeviceVector<KeyType> d_refinement_constraints_;
+    bool refinement_generations_enabled_ = false;
+    RefinementKind refinement_kind_      = RefinementKind::Initial;
+
+    // Read once; every rank must agree on the block-aware identity option because
     // numBlocks_ > 1 selects the block-aware collective sync (one extra co-moved property) -- ranks
     // disagreeing here would mismatch the MPI exchange.
     static bool blockNodeIdentityEnabled()
@@ -1906,6 +2062,7 @@ private:
     void ensureNodeHaloTopo() const;
     void ensureCoordinateCache() const;
     void ensureSideSets() const;
+    void loadSideSets();
 
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
@@ -1913,6 +2070,7 @@ private:
                   int blockSize,
                   int numBlocks)
     {
+        if (elementCount_ == 0) return;
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             auto& d_i0 = std::get<0>(d_conn_);
@@ -2391,6 +2549,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t6 = clk::now();
     syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
 
+    loadSideSets();
+
     if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
                   << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -2514,11 +2674,13 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 // Device-data constructor: no host round-trip
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(DeviceCoordsTuple&& d_coords,
-                                                                              DeviceConnectivityTuple&& d_conn,
-                                                                              int rank,
-                                                                              int numRanks,
-                                                                              int bucketSize,
-                                                                              unsigned bucketSizeFocus)
+                                                                            DeviceConnectivityTuple&& d_conn,
+                                                                            int rank,
+                                                                            int numRanks,
+                                                                            int bucketSize,
+                                                                            unsigned bucketSizeFocus,
+                                                                            const cstone::Box<RealType>* fixedBox,
+                                                                            DeviceVector<KeyType>* generations)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -2535,51 +2697,19 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     nodeCount_    = d_x.size();
     elementCount_ = std::get<0>(d_conn).size();
 
-    // Bounding box on GPU + MPI
-    RealType lxmin, lxmax, lymin, lymax, lzmin, lzmax;
+    if (fixedBox)
     {
-        auto xb = thrust::device_pointer_cast(d_x.data());
-        auto yb = thrust::device_pointer_cast(d_y.data());
-        auto zb = thrust::device_pointer_cast(d_z.data());
-        lxmin = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lxmax = mars::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lymin = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lymax = mars::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-        lzmin = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
-        lzmax = mars::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        RealType lower[3], upper[3];
+        device_mesh_extent(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD, lower, upper);
+        const RealType lo[3] = {fixedBox->xmin(), fixedBox->ymin(), fixedBox->zmin()};
+        const RealType hi[3] = {fixedBox->xmax(), fixedBox->ymax(), fixedBox->zmax()};
+        for (int d = 0; d < 3; ++d)
+            if (lower[d] < lo[d] || upper[d] > hi[d])
+                throw std::runtime_error("ElementDomain: node coordinates lie outside the fixed box");
+        box_ = *fixedBox;
     }
-
-    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
-    RealType gxmin, gxmax, gymin, gymax, gzmin, gzmax;
-    MPI_Allreduce(&lxmin, &gxmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lxmax, &gxmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&lymin, &gymin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lymax, &gymax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&lzmin, &gzmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&lzmax, &gzmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
-
-    RealType pad   = RealType(0.05);
-    RealType rx    = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
-    {
-        using BT = cstone::BoundaryType;
-        const bool px = (periodicAxesMask_ & 1) != 0;
-        const bool py = (periodicAxesMask_ & 2) != 0;
-        const bool pz = (periodicAxesMask_ & 4) != 0;
-        // Preserve the periodic extent across this rebuild. For periodic axes
-        // reuse the box bounds already established by the file ctor (the
-        // periodic period must stay fixed -- it is NOT the coord min/max,
-        // which after collapse excludes the max face). Open axes re-pad.
-        RealType xlo = px ? box_.xmin() : (gxmin - pad * rx);
-        RealType xhi = px ? box_.xmax() : (gxmax + pad * rx);
-        RealType ylo = py ? box_.ymin() : (gymin - pad * ry);
-        RealType yhi = py ? box_.ymax() : (gymax + pad * ry);
-        RealType zlo = pz ? box_.zmin() : (gzmin - pad * rz);
-        RealType zhi = pz ? box_.zmax() : (gzmax + pad * rz);
-        box_ = cstone::Box<RealType>(xlo, xhi, ylo, yhi, zlo, zhi,
-                                     px ? BT::periodic : BT::open,
-                                     py ? BT::periodic : BT::open,
-                                     pz ? BT::periodic : BT::open);
-    }
+    else
+        box_ = device_mesh_box(d_x.data(), d_y.data(), d_z.data(), nodeCount_, MPI_COMM_WORLD);
 
     RealType theta = 0.5;
 
@@ -2587,6 +2717,15 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
                                            globalTreeBucket(bucketSize, bucketSizeFocus),
                                            bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
+
+    if (generations)
+    {
+        int invalid = generations->size() != elementCount_;
+        MPI_Allreduce(MPI_IN_PLACE, &invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (invalid) throw std::runtime_error("AMR generation count differs from input connectivity");
+        d_refinement_generations_       = std::move(*generations);
+        refinement_generations_enabled_ = true;
+    }
 
     // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
     DeviceConnectivityTuple d_conn_local = std::move(d_conn);
@@ -2867,6 +3006,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
     catch (const std::exception& e)
     {
         std::cerr << "Error reading mesh from " << meshFile << ": " << e.what() << std::endl;
+        if (numRanks > 1) MPI_Abort(MPI_COMM_WORLD, 1);
         throw;
     }
 }
@@ -2879,6 +3019,11 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     // Work directly with device data
     auto& d_h = std::get<0>(d_props_);
     d_h.resize(nodeCount_);
+    if (elementCount_ == 0)
+    {
+        thrust::fill(thrust::device, d_h.begin(), d_h.end(), RealType(0));
+        return;
+    }
 
     // Compute per-element h from actual edge lengths for Tet and Hex elements.
     // Cornerstone uses h as an SPH smoothing length (interaction radius = 2*h),
@@ -2995,20 +3140,24 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
         DeviceVector<RealType> d_elemZ(elementCount_);
         DeviceVector<RealType> d_elemH(elementCount_);
         d_elemSfcCodes_.resize(elementCount_);
+        // Cornerstone preserves removal markers; fresh mesh elements must not inherit them from reused memory.
+        thrust::fill(thrust::device, thrust::device_pointer_cast(d_elemSfcCodes_.data()),
+                     thrust::device_pointer_cast(d_elemSfcCodes_.data() + elementCount_), KeyType(0));
 
         // Extract element coordinates
-        extractRepCoordinatesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-            thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_h.data()),
-            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), thrust::raw_pointer_cast(d_elemX.data()),
-            thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
-            thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
+        if (elementCount_)
+            extractRepCoordinatesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+                thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_h.data()),
+                thrust::raw_pointer_cast(d_elemToNodeMap_.data()), thrust::raw_pointer_cast(d_elemX.data()),
+                thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
+                thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
         // With SFC node ownership the star completion adds every element an owner needs, so the distance search
         // only has to find direct neighbours. Search with each element's shortest edge: the mean edge length at
         // the representative node reaches many cells deep across flat or stretched cells.
-        if (sfcOwnership_)
+        if (sfcOwnership_ && elementCount_)
         {
             auto conn = connPtrsOf<KeyType, NodesPerElement>(d_conn_, std::make_index_sequence<NodesPerElement>{});
             shortestEdgeLengths<ElementTag>(conn, thrust::raw_pointer_cast(d_x.data()),
@@ -3039,7 +3188,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
         // meshes take the unchanged syncDomainImpl. Used by the standard hex and tet/tri/quad paths.
         auto syncElem = [&]()
         {
-            if (numBlocks_ > 1)
+            if (refinement_generations_enabled_)
+            {
+                if (numBlocks_ != 1) throw std::runtime_error("AMR generations require a single-block mesh");
+                // The existing extra-property sync carries generations through sorting, redistribution and halos.
+                syncDomainImplBlock(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_,
+                                    d_conn_keys_, d_refinement_generations_, starHaloKeys);
+            }
+            else if (numBlocks_ > 1)
             {
                 DeviceVector<KeyType> d_elemBlockKeys(elementCount_);
                 thrust::copy(thrust::device_pointer_cast(d_elemBlock_.data()),
@@ -3083,21 +3239,22 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 auto& d_i7 = std::get<7>(d_conn_);
 
 
-            extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
-                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
-                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
-                thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
-                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
-                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
-                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
-                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
-                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
-                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
-                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
-                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
-                elementCount_);
+            if (elementCount_)
+                extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
+                    thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                    thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                    thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                    thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                    elementCount_);
             cudaCheckError();
 
             // Package into tuple for sync (direct tie, not std::ref)
@@ -3134,35 +3291,53 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
 
             // Rebuild node arrays using post-sync LOCAL connectivity (d_conn_local_ids_)
             int newNumBlocks = (elementCount_ + blockSize - 1) / blockSize;
-            rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
-                thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
-                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
-                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
-                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
-                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
-                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
-                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
-                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
-                thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
-                elementCount_);
+            if (elementCount_)
+                rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                    thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
+                    thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
+                    elementCount_);
             cudaCheckError();
             } else {
                 // Standard sync with SFC-decoded coordinates (block-aware for multi-block meshes)
                 syncElem();
             }
         } else {
-            // For non-hex elements, always use standard sync (block-aware for multi-block meshes)
             syncElem();
+            if constexpr (std::is_same_v<ElementTag, TetTag>)
+                if (storeOriginalCoords_)
+                {
+                    amr::require_collectively(numBlocks_ == 1 && (numRanks_ == 1 || sfcOwnership_),
+                        "Stored tet coordinates require single-block SFC ownership", MPI_COMM_WORLD);
+                    const auto& keys = getLocalToGlobalSfcMap();
+                    const auto& owned = getNodeOwnershipMap();
+                    auto owner = sfcNodeOwner();
+                    amr::AmrFieldMigration<amr::LeppDeviceExecution, KeyType, RealType> geometry(
+                        d_nodeSfcCodes.data(), d_nodeSfcCodes.size(), nullptr, keys.data(), owned.data(), keys.size(),
+                        amr::AmrNodeOwner<KeyType, decltype(owner)>{owner, numRanks_}, MPI_COMM_WORLD,
+                        false, SIZE_MAX, true);
+                    DeviceCoordsTuple physical;
+                    geometry.apply(d_x.data(), d_x.size(), std::get<0>(physical), true);
+                    geometry.apply(d_y.data(), d_y.size(), std::get<1>(physical), true);
+                    geometry.apply(d_z.data(), d_z.size(), std::get<2>(physical), true);
+                    set_physical_coordinates(std::move(physical));
+                }
         }
     }
 }
@@ -3343,63 +3518,119 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSfcMap(
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSets() const
 {
-    // Only the file ctor sets meshFile_; the device/host ctors leave it empty,
-    // which is how the feature stays off for those paths.
-    if (sideSetsBuilt_ || !storeSideSets_ || meshFile_.empty()) return;
-    ensureSfcMap();
+    // Getters stay local: the file constructor and resync finish distribution first.
+    if (storeSideSets_ && !meshFile_.empty() && !sideSetsBuilt_)
+        throw std::logic_error("File-domain side sets were not prepared collectively");
+}
 
-    // Read the Exodus side sets (host-side, transient). Tag-dispatch the reader.
-    ExodusSideSets ss;
-    if constexpr (std::is_same_v<ElementTag, HexTag>)
-        ss = readExodusSideSetsHex8(meshFile_, rank_);
-    else
-        ss = readExodusSideSetsTet4(meshFile_, rank_);
-
-    // The SFC map is the same sorted host array resolveSideSetNodesToLocalKeepMisses
-    // searches; copy it once here so the key for a hit can be read back for free.
-    std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
-    thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
-                 thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
-                                             + d_localToGlobalSfcMap_.size()),
-                 hostSfc.begin());
-
-    for (auto& kv : ss.nodeCoordsByName)
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::loadSideSets()
+{
+    try
     {
-        const auto& name   = kv.first;
-        const auto& coords = kv.second;
-
-        // KeepMisses keeps 1:1 alignment with coords, so local[i] < 0 means
-        // this rank does not hold that node -- drop it.
-        std::vector<int> localWithMiss = resolveSideSetNodesToLocalKeepMisses(coords);
-
-        std::vector<int>     h_local;
-        std::vector<KeyType> h_keys;
-        h_local.reserve(localWithMiss.size());
-        h_keys.reserve(localWithMiss.size());
-        for (size_t i = 0; i < localWithMiss.size(); ++i)
+        unsigned enabled = storeSideSets_ && !meshFile_.empty() ? 1 : 2, flags = enabled;
+        if (numRanks_ > 1 && MPI_Allreduce(&enabled, &flags, 1, MPI_UNSIGNED, MPI_BOR, MPI_COMM_WORLD) != MPI_SUCCESS)
+            throw std::runtime_error("Side-set setup agreement failed");
+        if (flags == 3) throw std::invalid_argument("Side-set storage must be enabled on every rank or none");
+        if (flags == 2) return;
+        if constexpr (!std::is_same_v<ElementTag, TetTag> && !std::is_same_v<ElementTag, HexTag>)
+            throw std::invalid_argument("Exodus side sets require Tet4 or Hex8 elements");
+        else
         {
-            int loc = localWithMiss[i];
-            if (loc < 0) continue;
-            h_local.push_back(loc);
-            // The key of a resolved node equals d_localToGlobalSfcMap_[loc].
-            h_keys.push_back(hostSfc[loc]);
+            ensureSfcMap();
+            if (d_localToGlobalSfcMap_.size() > size_t(std::numeric_limits<int>::max()))
+                throw std::runtime_error("Side-set local node index exceeds int capacity");
+
+            auto prefix = side_set_prefix<KeyType>(numRanks_);
+            std::vector<uint64_t> prefixes;
+            if (!d_localToGlobalSfcMap_.empty())
+            {
+                // Sorted node keys give sorted prefixes. Download only their compact directory.
+                const size_t capacity =
+                    std::min(d_localToGlobalSfcMap_.size(),
+                             size_t(uint64_t(1) << (std::numeric_limits<KeyType>::digits - prefix.shift)));
+                thrust::device_vector<KeyType> d_prefixes(capacity);
+                auto begin =
+                    thrust::make_transform_iterator(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()), prefix);
+                auto end = thrust::unique_copy(thrust::device, begin, begin + d_localToGlobalSfcMap_.size(),
+                                               d_prefixes.begin());
+                prefixes.resize(end - d_prefixes.begin());
+                thrust::copy(d_prefixes.begin(), end, prefixes.begin());
+            }
+            SideSetDistribution distribution(prefixes, MPI_COMM_WORLD);
+            SideSetNodeKey<RealType, KeyType> encode{box_};
+            SideSetBatchPrefixes batch_prefixes(encode, prefix);
+            SideSetBatchLookup<KeyType, decltype(encode)> batches(
+                {d_localToGlobalSfcMap_.data(), numBlocks_ > 1 ? d_localToGlobalBlock_.data() : nullptr,
+                 d_localToGlobalSfcMap_.size(), encode});
+            using Hit = SideSetHit<KeyType>;
+            std::map<std::string, std::map<std::pair<uint64_t, int>, Hit>> local_sets;
+            std::map<std::string, std::map<uint64_t, std::array<KeyType, 3>>> local_faces;
+            visitExodusSideSets<NodesPerElement>(
+                meshFile_,
+                [&](const std::string& name, const ExodusSideSetBatch& input)
+                {
+                    constexpr int corners = NodesPerElement == 4 ? 3 : 4;
+                    auto& local           = local_sets[name];
+                    auto routing          = batch_prefixes(input);
+                    auto batch            = distribution.route<corners>(input, routing);
+                    auto hits             = batches.resolve(batch, std::is_same_v<ElementTag, TetTag>);
+                    cudaCheckCall(cudaGetLastError());
+                    for (const auto& hit : hits)
+                        if (hit.local >= 0) local.emplace(std::make_pair(hit.id, hit.block), hit);
+                    if constexpr (std::is_same_v<ElementTag, TetTag>)
+                    {
+                        auto& faces = local_faces[name];
+                        for (size_t f = 0; f < batch.face_ids.size(); ++f)
+                        {
+                            const auto& a = hits[batch.face_nodes[f * 3]];
+                            const auto& b = hits[batch.face_nodes[f * 3 + 1]];
+                            const auto& c = hits[batch.face_nodes[f * 3 + 2]];
+                            if (a.local >= 0 && b.local >= 0 && c.local >= 0)
+                                faces.emplace(batch.face_ids[f], std::array<KeyType, 3>{a.key, b.key, c.key});
+                        }
+                    }
+                },
+                rank_, numRanks_);
+
+            std::map<std::string, SideSetEntry> built;
+            for (const auto& [name, local] : local_sets)
+            {
+                std::vector<int> h_local;
+                std::vector<KeyType> h_keys;
+                for (const auto& [identity, hit] : local)
+                {
+                    h_local.push_back(hit.local);
+                    h_keys.push_back(hit.key);
+                }
+                auto& entry = built[name];
+                entry.d_keys.resize(h_keys.size());
+                entry.d_local.resize(h_local.size());
+                if (!h_keys.empty())
+                {
+                    thrust::copy(h_keys.begin(), h_keys.end(), thrust::device_pointer_cast(entry.d_keys.data()));
+                    thrust::copy(h_local.begin(), h_local.end(), thrust::device_pointer_cast(entry.d_local.data()));
+                }
+                if constexpr (std::is_same_v<ElementTag, TetTag>)
+                {
+                    std::vector<KeyType> keys;
+                    for (const auto& [id, face] : local_faces[name])
+                        keys.insert(keys.end(), face.begin(), face.end());
+                    entry.d_face_keys.resize(keys.size());
+                    if (!keys.empty())
+                        thrust::copy(keys.begin(), keys.end(), thrust::device_pointer_cast(entry.d_face_keys.data()));
+                    entry.has_faces = true;
+                }
+            }
+            sideSets_      = std::move(built);
+            sideSetsBuilt_ = true;
         }
-
-        // Always create the entry, even with 0 hits, so the getters return a
-        // valid (empty) reference for a known name this rank holds none of.
-        SideSetEntry entry;
-        entry.d_keys.resize(h_keys.size());
-        entry.d_local.resize(h_local.size());
-        if (!h_keys.empty())
-            thrust::copy(h_keys.begin(), h_keys.end(),
-                         thrust::device_pointer_cast(entry.d_keys.data()));
-        if (!h_local.empty())
-            thrust::copy(h_local.begin(), h_local.end(),
-                         thrust::device_pointer_cast(entry.d_local.data()));
-        sideSets_[name] = std::move(entry);
     }
-
-    sideSetsBuilt_ = true;
+    catch (const std::exception&)
+    {
+        if (numRanks_ > 1) MPI_Abort(MPI_COMM_WORLD, 1);
+        throw;
+    }
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -3448,8 +3679,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureNodeHal
 {
     if (!nodeHaloTopo_)
     {
-        // ensureHalo() builds both halo_ and nodeHaloTopo_ in one shot.
         ensureHalo();
+        // Single-rank ownership needs no halo, but the public accessor still returns an empty topology.
+        if (!nodeHaloTopo_)
+            nodeHaloTopo_ = std::make_unique<NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
 }
 
@@ -3481,6 +3714,7 @@ void AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>::createElement
         if constexpr (NodesPerElement >= 6) std::get<5>(d_conn_local_ids_).resize(elementCount);
         if constexpr (NodesPerElement >= 7) std::get<6>(d_conn_local_ids_).resize(elementCount);
         if constexpr (NodesPerElement >= 8) std::get<7>(d_conn_local_ids_).resize(elementCount);
+        if (elementCount == 0) return;
 
         int blockSize = 256;
         int numBlocks = (elementCount + blockSize - 1) / blockSize;
@@ -3670,6 +3904,7 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
         d_node_x_.resize(nodeCount);
         d_node_y_.resize(nodeCount);
         d_node_z_.resize(nodeCount);
+        if (nodeCount == 0) return;
 
         // Decode all SFC keys to coordinates (parallel kernel)
         int blockSize = 256;
@@ -3738,6 +3973,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
         if (numConnectivityEntries == 0)
         {
             nodeCount_ = 0;
+            d_localToGlobalSfcMap_.resize(0);
+            d_localToGlobalBlock_.resize(0);
             return;
         }
 
@@ -3896,11 +4133,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     coordCache_.reset();
     originalCoords_.reset();
 
-    // Side-set SFC keys are AMR-stable, but the derived LOCAL ids go stale after
-    // re-partition. Simplest correct reset: drop the cache and rebuild lazily on
-    // next access. The rebuild re-reads the file, which is acceptable for now.
-    // TODO: re-resolve LOCAL ids on the GPU directly from the stored d_keys via
-    // lower_bound into the new d_localToGlobalSfcMap_, so AMR avoids the re-read.
+    // Boundary local IDs change with the partition. File domains reload their
+    // distributed boundary slices after sync; device AMR domains receive transferred sets.
     sideSets_.clear();
     sideSetsBuilt_ = false;
 
@@ -3950,6 +4184,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     // a successful first sync, firstCall_=false on entry → converge skipped.
     sync(d_conn_local, d_coords_local);
     logGpuMemAroundSync(rank_, "post-resync");
+    loadSideSets();
 
     if (rank_ == 0)
     {
