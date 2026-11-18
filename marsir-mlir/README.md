@@ -74,6 +74,19 @@ present.
 | `test/dss_gpu_pipeline.py [p]` | the cell-wise DSS -> `dss_p{p}_sm90.ptx` (`--precond`: the four Jacobi variants -> `precond_p{p}_sm90.ptx`; `--bicgstab`: vector updates, partial folding and Krylov steps -> `bicgstab_p{p}_sm90.ptx`, gate `tools/emu_bicg.cpp`; `--pmg`: Chebyshev steps, masked copies, transfers, dots of the V-cycle -> `pmg_sm90.ptx`, gate `tools/emu_pmg.cpp`); `--emulate [--emu-tsan]` runs it on the CPU (`tools/emu_dss.cpp`), bit-exact against the hand kernel's formula on random tables |
 | `make_ptx_warp.sh` | the warp->tensor-core bridge gate -> `warp_mma_sm90.ptx` |
 
+The degree-three node-line residual has an optional schedule for launches over
+interior elements. It uses four warps per block and reads face values directly.
+A null ghost pointer selects the local gather loop. Boundary launches retain
+remote-copy lookups. From this directory, run:
+
+```sh
+python3 test/dss_gpu_pipeline.py 3 --lines --dss-warps=4 --dss-direct-faces --dss-interior
+```
+
+This writes `generated/lines_p3_sm90.ptx`. Run the same command with
+`--emulate` to check local and remote gathers against the CPU reference.
+To regenerate the default PTX, run `python3 test/dss_gpu_pipeline.py 3 --lines`.
+
 ## Gates
 
 **CPU execution** (`python3 test/exec_gate.py`, needs numpy): lowers mir
