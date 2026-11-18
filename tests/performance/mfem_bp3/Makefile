@@ -9,7 +9,7 @@ ifeq ($(MFEM_USE_CUDA),YES)
 MFEM_LIBS += -lcudart
 endif
 
-mfem_bp3: $(SRC_DIR)mfem_bp3.cpp
+mfem_bp3: $(SRC_DIR)mfem_bp3.cpp $(SRC_DIR)h_transfer.hpp $(SRC_DIR)phase_operators.hpp $(SRC_DIR)../bp3_phases/phases.hpp
 	$(MFEM_CXX) $(MFEM_FLAGS) $< -o $@ $(MFEM_LIBS)
 
 clean:

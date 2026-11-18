@@ -136,6 +136,7 @@ struct Emit {
 
 // The operands of one mir.dss, plus the tables and sizes its lowering derives.
 struct Dss {
+  bool specializeInterior = false;
   int P, n, n3, F, Ed;
   Value values, ghost, minus, faceNbr, faceCode, edgeOf, edgeOff, edgeEnt, vertOf, vertOff, vertEnt;
   SmallVector<Value> outs, copies;
@@ -161,6 +162,7 @@ struct Dss {
           Emit y{eb, l};
           eb.create<scf::YieldOp>(l, y.load(ghost, y.sub(i, localValues)));
         });
+    if (specializeInterior) branch->setAttr("mir.local_copy", b.getUnitAttr());
     return branch.getResult(0);
   }
 
@@ -357,7 +359,7 @@ Value dirichletMask(OpBuilder &eb, Location l, Value e, const DirichletTables &d
       })[0];
 }
 
-LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
+LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist, bool directFaces, bool specializeInterior) {
   const int P = (int)op.getDegree();
   if (P < 1 || P > kMaxDegree)
     return op.emitOpError("degree must be in [1, ") << kMaxDegree << "]";
@@ -376,6 +378,10 @@ LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
   d.Ed = P - 1;
   d.values = op.getValues();
   d.ghost = op.getGhost();
+  const auto ghostArg = dyn_cast<BlockArgument>(d.ghost);
+  const auto func = op->getParentOfType<func::FuncOp>();
+  d.specializeInterior = specializeInterior && ghostArg && func &&
+                         ghostArg.getOwner() == &func->getRegion(0).front();
   d.real = cast<MemRefType>(d.values.getType()).getElementType();
   d.minus = op.getMinus();
   d.faceNbr = op.getFaceNbr();
@@ -425,10 +431,22 @@ LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
         if (epilogue)
           dmask = dirichletMask(eb, l, e, {d.faceCode, d.edgeOf, d.vertOf, d.edgeDir, d.vertDir});
 
-        lanes(eb, l, d.n3, [&](OpBuilder &pb, Location pl, Value node) {
-          Emit z{pb, pl};
-          z.store(d.local(pb, pl, z.add(base, node)), stage, d.slot(z, node));
-        });
+        // Stars overwrite their slots. Direct face sums also need no staged own
+        // value, so only volume-interior nodes need this initial copy.
+        const int interior = P - 1;
+        const int initial = directFaces ? interior * interior * interior : d.n3;
+        if (initial > 0)
+          lanes(eb, l, initial, [&](OpBuilder &pb, Location pl, Value pos) {
+            Emit z{pb, pl};
+            Value node = pos;
+            if (directFaces) {
+              const Value i = z.add(z.div(pos, z.idx(interior * interior)), z.idx(1));
+              const Value j = z.add(z.rem(z.div(pos, z.idx(interior)), z.idx(interior)), z.idx(1));
+              const Value k = z.add(z.rem(pos, z.idx(interior)), z.idx(1));
+              node = z.add(z.mul(z.add(z.mul(i, z.idx(d.n)), j), z.idx(d.n)), k);
+            }
+            z.store(d.local(pb, pl, z.add(base, node)), stage, d.slot(z, node));
+          });
 
         // Entity descriptors, three words per entity bit (the hand kernel keeps them on
         // lanes and shuffles). Face: other copy, frame codes. Edge: edge_of entry, star
@@ -503,6 +521,24 @@ LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
             const Value nbr = desc ? word(z, f, 0) : z.load(d.faceNbr, at);
             const Value code =
                 desc ? word(z, f, 1) : pb.create<arith::ExtUIOp>(pl, pb.getI32Type(), z.load(d.faceCode, at)).getResult();
+            if (directFaces) {
+              const Value node = z.toIndex(z.entry(d.faceL, p32));
+              const Value own = d.local(pb, pl, z.add(base, node));
+              const Value hasOther = pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::sge, nbr, z.i32(0));
+              const Value sum = pb.create<scf::IfOp>(
+                  pl, hasOther,
+                  [&](OpBuilder &tb, Location tl) {
+                    Emit t{tb, tl};
+                    const Value q = t.entry(
+                        d.faceMap, t.add(t.mul(t.band(code, t.i32(63)), F), t.sub(p32, t.mul(f, F))));
+                    const Value other = t.entry(d.faceL, t.add(t.mul(t.rem(nbr, t.i32(6)), F), q));
+                    const Value copy = t.add(t.mul(t.toIndex(t.div(nbr, t.i32(6))), t.idx(d.n3)), t.toIndex(other));
+                    tb.create<scf::YieldOp>(tl, t.addf(own, d.value(tb, tl, copy)));
+                  },
+                  [&](OpBuilder &fb, Location fl) { fb.create<scf::YieldOp>(fl, own); }).getResult(0);
+              z.store(sum, stage, d.slot(z, node));
+              return;
+            }
             pb.create<scf::IfOp>(pl, pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::sge, nbr, z.i32(0)),
                                  [&](OpBuilder &tb, Location tl) {
                                    Emit t{tb, tl};
@@ -596,6 +632,8 @@ LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist) {
           y.store(sums[j], d.partials, y.add(y.mul(w[0], y.idx(reductions)), y.idx(j)));
       });
   markElements(b, elementLoop, d.n3);
+  if (d.specializeInterior)
+    elementLoop->setAttr("mir.interior_ghost_arg", b.getI64IntegerAttr(ghostArg.getArgNumber()));
   if (warps > 1 && d.n3 >= 32)
     elementLoop->setAttr("mir.warps_per_block", b.getI64IntegerAttr(warps));
   op.erase();
@@ -1018,6 +1056,13 @@ struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<M
                         llvm::cl::desc("mir.dss: load each face/edge/corner descriptor once per "
                                        "element into scratch instead of once per node"),
                         llvm::cl::init(false)};
+  Option<bool> dssInterior{*this, "dss-interior",
+                           llvm::cl::desc("specialize DSS gathers for a null ghost buffer"),
+                           llvm::cl::init(false)};
+  Option<bool> dssDirectFaces{*this, "dss-direct-faces",
+                              llvm::cl::desc("mir.dss: load own face values in the face phase and "
+                                             "omit overwritten edge/corner staging"),
+                              llvm::cl::init(false)};
 
   StringRef getArgument() const final { return "mir-lower-cellwise"; }
   StringRef getDescription() const final {
@@ -1037,7 +1082,7 @@ struct LowerCellwisePass : public PassWrapper<LowerCellwisePass, OperationPass<M
         ops.push_back(op);
     });
     for (Operation *op : ops)
-      if (failed(isa<mir::DssOp>(op)           ? lowerOne(cast<mir::DssOp>(op), dssWarps, dssHoist)
+      if (failed(isa<mir::DssOp>(op)           ? lowerOne(cast<mir::DssOp>(op), dssWarps, dssHoist, dssDirectFaces, dssInterior)
                  : isa<mir::CellwiseOp>(op)    ? lowerOne(cast<mir::CellwiseOp>(op))
                  : isa<mir::BlockSumOp>(op)    ? lowerOne(cast<mir::BlockSumOp>(op))
                  : isa<mir::BlockSkeletonOp>(op) ? lowerOne(cast<mir::BlockSkeletonOp>(op))
