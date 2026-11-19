@@ -140,6 +140,9 @@ std::unique_ptr<Stepper> make_stepper(const Fixture& f, int rank, int ranks, dou
     return s;
 }
 std::vector<double> matrix(const Stepper& s) { return host(s.Apre.valuesPtr(), size_t(s.nnz)); }
+// The last pressure solve succeeded: solveOneComponent returns -2 on failure, else its iterations,
+// below the cap. (The cap alone accepts -2.)
+bool pressure_solve_succeeded(const Stepper& s) { return s.lastPressureIters >= 0 && s.lastPressureIters < s.maxIter; }
 
 // max |A - b K0| over the rows the projection assembles (owned, not boundary or pin rows), relative
 // to max |K0|.
@@ -196,6 +199,7 @@ void check_baseline(const Fixture& f, int rank, int ranks)
     {
         runNsStep(*a, .001, .1, 1.);
         runNsStep(*b, .001, .1, 1.);
+        require(pressure_solve_succeeded(*a) && pressure_solve_succeeded(*b), "The pressure solve did not converge");
     }
     double err = 0, scale = 0;
     for (auto field : {&Stepper::d_u, &Stepper::d_v, &Stepper::d_w, &Stepper::d_p})
@@ -376,7 +380,7 @@ void check_flow(const Fixture& f, int rank, int ranks)
         runNsStep(*with, .001, .1, 1.);
         runNsStep(*without, .001, .1, 1.);
         // Pressure convergence: the solve stopped below the iteration cap.
-        require(with->lastPressureIters < with->maxIter && without->lastPressureIters < without->maxIter,
+        require(pressure_solve_succeeded(*with) && pressure_solve_succeeded(*without),
                 "The pressure solve did not converge");
     }
     // Continuity: the post-corrector divergence is no worse than without the penalty.
@@ -463,7 +467,7 @@ void check_rejections(const Fixture& f, int rank, int ranks)
     if (inject) s->solverKind = SolverKind::CG;
     rejected_without_mutation(*s, .001);
     s->solverKind = SolverKind::Hypre;
-    for (bool* option : {&s->useFemProjection, &s->useVMSStab, &s->useRcImplicit, &s->useRcOnly})
+    for (bool* option : {&s->useFemProjection, &s->useRhieChow, &s->useVMSStab, &s->useRcImplicit, &s->useRcOnly})
     {
         if (inject) *option = true;
         rejected_without_mutation(*s, .001);
@@ -477,6 +481,23 @@ void check_rejections(const Fixture& f, int rank, int ranks)
     unsetenv("MARS_HYPRE_USE_DDT");
     // And back to a valid state, which steps.
     runNsStep(*s, .001, .1, 1.);
+}
+
+// A deliberately failed pressure solve (one GMRES iteration, an acceptance residual nothing reaches):
+// the solve returns -2, and pressure_solve_succeeded, the flow and baseline checks' test, rejects it.
+void check_failed_solve(const Fixture& f, int rank, int ranks)
+{
+    auto s = make_stepper(f, rank, ranks, 1, false);
+    auto W = proportional_W(*s, 1);
+    setPenalisedProjection(*s, W.data(), 1e3);
+    s->maxIter   = 1;
+    s->tolerance = 1e-300;
+    setenv("MARS_HYPRE_ACCEPT_RES", "1e-300", 1);
+    runNsStep(*s, .001, .1, 1.);
+    unsetenv("MARS_HYPRE_ACCEPT_RES");
+    if (rank == 0) std::cout << "failed: pressure solve returned " << s->lastPressureIters << "\n";
+    require(s->lastPressureIters == -2, "The forced pressure failure did not return -2");
+    require(!pressure_solve_succeeded(*s), "The convergence check accepted a failed pressure solve");
 }
 
 int main(int argc, char** argv)
@@ -511,6 +532,8 @@ int main(int argc, char** argv)
             check_bdf2(fixture, rank, ranks);
         else if (mode == "flow")
             check_flow(fixture, rank, ranks);
+        else if (mode == "failed")
+            check_failed_solve(fixture, rank, ranks);
         else if (mode == "reject")
             check_rejections(fixture, rank, ranks);
         else
