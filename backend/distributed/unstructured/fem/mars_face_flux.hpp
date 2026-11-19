@@ -545,8 +545,8 @@ __global__ void faceFluxOutletFluxKernel(const uint8_t* outlet, const RealType* 
 // momentum flux F+ u_L + F- u_R, implicit (first order, the matrix) plus the deferred correction
 // F+ D_L + F- D_R, explicit (the right-hand side), D_C the limited increment from node C to the face
 // (the edge midpoint, as MARS's own CVFEM advection reconstructs) along G u_C. At an outlet node's
-// boundary face max(F_b, 0) u_i: outflow carries the node's momentum out, inflow brings none (the
-// spike's backflow guard; the energy flux through the face is then outgoing only).
+// boundary face F_b u_i: outflow carries the node's momentum out; inflow brings (1 - beta) of it in,
+// beta the backflow stabilisation (faceFluxOutletConvectionKernel).
 
 // The first-order matrix: all local elements, owned non-Dirichlet rows (as the Galerkin convection
 // kernels), Dirichlet columns kept.
@@ -583,19 +583,26 @@ __global__ void faceFluxConvectionKernel(const KeyType* c0, const KeyType* c1, c
     }
 }
 
-// The outlets' boundary faces: max(u_i . A_b, 0) on the diagonal (non-Dirichlet rows).
+// The opening faces' convective flux, F_b u_b with u_b the node's own value (zero gradient across the
+// opening), implicit on the diagonal. Outflow (F_b > 0) always; inflow (F_b < 0) times 1 - beta, beta
+// the backflow stabilisation (Bazilevs et al. 2009): 1 drops the momentum that enters, which keeps
+// unexpected backflow at an outlet from feeding energy in, but is a momentum sink at an opening the flow
+// is meant to enter; 0 is the consistent conservative form (a pressure-driven duct is then exact). The
+// diagonal stays dominant either way: per control volume the stored flux balances, so the interior
+// outflow covers the inflow through the opening.
 template<typename RealType>
 __global__ void faceFluxOutletConvectionKernel(const uint8_t* outlet, const RealType* u, const RealType* v,
                                                const RealType* w, const RealType* Abx, const RealType* Aby,
                                                const RealType* Abz, const int* nodeToDof, const uint8_t* isBdryDof,
-                                               const int* diagPtr, RealType* values, int numOwnedDofs, size_t n)
+                                               const int* diagPtr, RealType* values, int numOwnedDofs, size_t n,
+                                               RealType backflowBeta)
 {
     const size_t i = blockIdx.x * size_t(blockDim.x) + threadIdx.x;
     if (i >= n || !outlet[i]) return;
     const int r = nodeToDof[i];
     if (r < 0 || r >= numOwnedDofs || isBdryDof[r]) return;
     const RealType fb = u[i] * Abx[i] + v[i] * Aby[i] + w[i] * Abz[i];
-    if (fb > RealType(0)) values[diagPtr[r]] += fb;
+    values[diagPtr[r]] += fb > RealType(0) ? fb : (RealType(1) - backflowBeta) * fb;
 }
 
 // The deferred correction of one velocity component q, as each control volume's net outflow:
