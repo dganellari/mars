@@ -3859,6 +3859,19 @@ struct NSStepper
     // dropped (faceFluxOutletConvectionKernel). 1, the default: all (backflow stabilisation); 0: none (the
     // consistent conservative form, for openings the flow is meant to enter).
     RealType faceFluxBackflowBeta = RealType(1);
+    // The pressure increment's mean, removed after the solve (af88fd3d: the opening-flux source on the
+    // matrix-free DDT path, where a single pin weakly controls the constant mode; periodic boxes).
+    // Removing it shifts p^{n+1} = p^n + phi by a constant each step, so where the pressure already has
+    // a gauge (Dirichlet rows: prescribed opening pressures, or a pin) the stored pressure drifts off it;
+    // the velocity, which sees grad(phi) only, is unchanged either way.
+    //   Auto (default): on the matrix-free DDT path as before (remove); on the assembled paths (Hypre
+    //                   DDT, K) only when no rank has a Dirichlet pressure row (pressureHasGauge; a pin
+    //                   alone fixes an arbitrary level, so pin-only runs keep the removal).
+    //   Always:         remove whenever the periodic or opening-flux condition holds (before 2026-11).
+    //   Never:          remove only when the pressure has neither Dirichlet rows nor a pin.
+    enum class PressureIncrementMean { Auto, Always, Never };
+    PressureIncrementMean pressureIncrementMean = PressureIncrementMean::Auto;
+    int pressureGauged = -1;  // pressureHasGauge's cached answer (-1: not computed yet)
     int faceFluxRcBetaPower   = 1;             // ... times (beta_L beta_R)^m on each face
     cstone::DeviceVector<RealType> d_faceFlux;      // [elementCount * NSCS], all local elements
     cstone::DeviceVector<RealType> d_faceFluxGradW; // G's weights per node, owner-complete
@@ -4695,6 +4708,28 @@ void initFaceFluxFromVelocity(NSStepper<KeyType, RealType, ElementTag>& s)
         s.d_faceFlux.data(), s.elementCount);
     cudaCheckError();
     cudaCheckCall(cudaDeviceSynchronize());
+}
+
+// Whether the pressure has a prescribed level: a Dirichlet pressure row (a prescribed opening pressure,
+// a masked outlet) on some rank. Collective; cached after the first call (the mask is set at setup).
+// A pin is not counted: it fixes an arbitrary level (pressureIncrementMean).
+template<typename KeyType, typename RealType, typename ElementTag>
+bool pressureHasGauge(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (s.pressureGauged < 0)
+    {
+        int local = 0;
+        if (s.numOwnedDofs > 0 && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs))
+            local = thrust::count(thrust::device, thrust::device_pointer_cast(s.d_isPressureBdryDof.data()),
+                                  thrust::device_pointer_cast(s.d_isPressureBdryDof.data() + s.numOwnedDofs),
+                                  uint8_t(1)) > 0
+                        ? 1
+                        : 0;
+        int global = 0;
+        MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        s.pressureGauged = global;
+    }
+    return s.pressureGauged != 0;
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
@@ -11272,11 +11307,26 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     }
 
     // Periodic / opening-flux pump: subtract the global mean so phi is uniquely
-    // defined and the constant mode doesn't drift step over step.
+    // defined and the constant mode doesn't drift step over step -- where the
+    // pressure has no gauge, or (Auto) on the matrix-free DDT path the opening-flux
+    // fix (af88fd3d) was made for. With a gauge (prescribed opening pressures, a
+    // pin) the shift would move the stored pressure off it (pressureIncrementMean).
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         || (s.useOpeningFluxSource && !s.useFaceFlux))
     {
-        mars::fem::removeMean<RealType>(s.domain, s.d_phi, MPI_COMM_WORLD);
+        using Mode = typename NSStepper<KeyType, RealType, ElementTag>::PressureIncrementMean;
+        const bool matrixFree = s.pressureSolve == PressureSolveKind::DDT
+                                && !(s.solverKind == SolverKind::Hypre && s.nnzDDT > 0);
+        const bool gauged = pressureHasGauge(s);
+        bool remove       = true;
+        if (s.pressureIncrementMean == Mode::Auto) remove = matrixFree || !gauged;
+        if (s.pressureIncrementMean == Mode::Never)
+        {
+            int pinned = s.pressurePinDof >= 0 ? 1 : 0;
+            MPI_Allreduce(MPI_IN_PLACE, &pinned, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            remove = !gauged && !pinned;
+        }
+        if (remove) mars::fem::removeMean<RealType>(s.domain, s.d_phi, MPI_COMM_WORLD);
     }
 
     // Sync ghosts of phi -- needed by both the gradient (face donors) and the
