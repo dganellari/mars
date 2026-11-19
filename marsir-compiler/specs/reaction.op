@@ -1,0 +1,2 @@
+# BP1 uses the quadrature-weighted reaction coefficient; BP3 uses the six diffusion metrics.
+operator reaction = bp3 + bp1(g0=sigma_w)

@@ -27,7 +27,9 @@ corners; the outputs then read wdetj and m00..m22 instead of g0..g5 (mir.ir.TRIL
 """
 
 import re
+from pathlib import Path
 
+from .composition import coefficient_name, compose
 from .expr import parse_expr
 from .ir import GALERKIN_OUTPUTS, Operator
 
@@ -41,20 +43,28 @@ def _strip_comment(line: str) -> str:
     return line if h < 0 else line[:h]
 
 
-def parse_spec(text: str) -> Operator:
+def parse_spec(text: str, resolve=None) -> Operator:
+    lines = [_strip_comment(raw).strip() for raw in text.splitlines()]
+    lines = [line for line in lines if line]
+    if len(lines) == 1:
+        match = re.fullmatch(r"operator\s+([A-Za-z_]\w*)\s*=\s*(.+)", lines[0])
+        if match:
+            if resolve is None:
+                raise ValueError("operator references require parse_spec_file or a resolver")
+            return compose(match.group(1), match.group(2), resolve)
+
     name = None
     fields = {}
     in_body = False
     closed = False
 
-    for raw in text.splitlines():
-        line = _strip_comment(raw)
-        if not line.strip():
-            continue
+    for line in lines:
         if not in_body:
+            if closed:
+                raise ValueError("expected only one operator per file")
             m = _HEADER.match(line)
             if not m:
-                raise ValueError(f"expected 'operator <name> {{', got: {raw!r}")
+                raise ValueError(f"expected 'operator <name> {{', got: {line!r}")
             name = m.group(1)
             in_body = True
             continue
@@ -64,7 +74,7 @@ def parse_spec(text: str) -> Operator:
             continue
         m = _KV.match(line)
         if not m:
-            raise ValueError(f"expected 'key = value' or '}}', got: {raw!r}")
+            raise ValueError(f"expected 'key = value' or '}}', got: {line!r}")
         key, val = m.group(1), m.group(2)
         if key in fields:
             raise ValueError(f"duplicate key {key!r}")
@@ -83,7 +93,17 @@ def parse_spec(text: str) -> Operator:
         outputs = [(k, fields[k]) for k in GALERKIN_OUTPUTS if k in fields]
         if not outputs:
             raise ValueError(f"form galerkin needs at least one of {GALERKIN_OUTPUTS}")
-        extra = set(fields) - {"element", "form", "geometry"} - set(GALERKIN_OUTPUTS)
+        coefficients = ()
+        if "fields" in fields:
+            coefficients = tuple(name.strip() for name in fields["fields"].split(","))
+            for name_field in coefficients:
+                if not coefficient_name(name_field):
+                    raise ValueError(f"invalid or reserved quadrature field {name_field!r}")
+            if len(set(coefficients)) != len(coefficients):
+                raise ValueError("duplicate quadrature field")
+            if fields.get("geometry", "stored") != "stored":
+                raise ValueError("named quadrature fields require stored geometry")
+        extra = set(fields) - {"element", "form", "geometry", "fields"} - set(GALERKIN_OUTPUTS)
         if extra:
             raise ValueError(f"unknown key(s) {sorted(extra)} for form galerkin")
         return Operator(
@@ -92,10 +112,13 @@ def parse_spec(text: str) -> Operator:
             form="galerkin",
             flux=None,
             flux_src="; ".join(f"{k} = {v}" for k, v in outputs),
+            coefficients=coefficients,
             outputs=[(k, parse_expr(v)) for k, v in outputs],
             geometry=fields.get("geometry", "stored"),
         )
 
+    if "fields" in fields:
+        raise ValueError("named quadrature fields require a Galerkin form")
     if "flux" not in fields:
         raise ValueError("missing required key 'flux'")
     return Operator(
@@ -108,5 +131,20 @@ def parse_spec(text: str) -> Operator:
 
 
 def parse_spec_file(path: str) -> Operator:
-    with open(path) as f:
-        return parse_spec(f.read())
+    def load(file, parents):
+        if file in parents:
+            chain = " -> ".join(p.stem for p in parents + (file,))
+            raise ValueError(f"cyclic operator reference: {chain}")
+
+        def resolve(source):
+            target = file.with_name(source + ".op")
+            if not target.is_file():
+                raise ValueError(f"{file.name}: missing operator file {target.name}")
+            result = load(target, parents + (file,))
+            if result.name != source:
+                raise ValueError(f"{target.name} declares {result.name!r}, expected {source!r}")
+            return result
+
+        return parse_spec(file.read_text(), resolve)
+
+    return load(Path(path), ())

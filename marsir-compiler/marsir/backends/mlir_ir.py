@@ -371,11 +371,11 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
     args = ["%%u: %s" % ty([n, n, n]), "%%B: %s" % ty([q, n]), "%%Bt: %s" % ty([n, q])]
     if grads:
         args += ["%%D: %s" % ty([q, q]), "%%Dt: %s" % ty([q, q])]
-    if ga.geometry:
-        args.append("%%G: %s" % ty([ga.geometry, q, q, q]))
+    if ga.packed_fields:
+        args.append("%%G: %s" % ty([len(ga.packed_fields), q, q, q]))
     if ga.trilinear:
         args += ["%%gq: %s" % ty([q]), "%%wq: %s" % ty([q]), "%%X: %s" % ty([3, 2, 2, 2])]
-    banner = AUTOGEN_BANNER.format(backend="mlir-galerkin", name=o.name, flux=o.flux_src)
+    banner = AUTOGEN_BANNER.format(backend="mlir", name=o.name, flux=o.flux_src)
     L = [banner.rstrip("\n"), "// RUN: mir-opt %s | mir-opt",
          "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), ty([n, n, n]))]
     v = [0]
@@ -403,11 +403,11 @@ def emit_galerkin(ga, p=7, q=None, real="f64"):
         inputs.append(("u", uq))
     for d in grads:
         inputs.append(("du%d" % d, contract(uq, [q, q, q], "%D", q, d)[0]))
-    for k in range(ga.geometry):
+    for k, field in enumerate(ga.packed_fields):
         g = fresh("g")
         L.append("  %s = tensor.extract_slice %%G[%d, 0, 0, 0] [1, %d, %d, %d] [1, 1, 1, 1] : %s to %s"
-                 % (g, k, q, q, q, ty([ga.geometry, q, q, q]), tq))
-        inputs.append(("g%d" % k, g))
+                 % (g, k, q, q, q, ty([len(ga.packed_fields), q, q, q]), tq))
+        inputs.append((field, g))
     geo_names = sorted(ga.free_vars & ({"wdetj"} | {"m%d%d" % (d, e) for d in range(3) for e in range(d, 3)}))
     dims = [[0, 1, 2] for _ in inputs]   # grid dimensions each flux input varies along
     if ga.trilinear and geo_names:

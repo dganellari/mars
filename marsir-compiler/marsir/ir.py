@@ -43,12 +43,13 @@ TRILINEAR_INPUTS = {"u", "du0", "du1", "du2", "wdetj", "m00", "m01", "m02", "m11
 
 class Operator:
     """What the user authored in the .op spec."""
-    def __init__(self, name, element, form, flux, flux_src, outputs=None, geometry="stored"):
+    def __init__(self, name, element, form, flux, flux_src, outputs=None, geometry="stored", coefficients=()):
         self.name = name
         self.element = element
         self.form = form
         self.flux = flux
         self.flux_src = flux_src  # original text, for the IR dump / provenance
+        self.coefficients = coefficients
         self.outputs = outputs    # form galerkin: [(output name, expr)] in GALERKIN_OUTPUTS order
         self.geometry = geometry  # form galerkin: "stored" (g0..g5 per Gauss point) or "trilinear"
 
@@ -64,6 +65,7 @@ class GalerkinApply:
         self.needs_grad = needs_grad
         self.geometry = geometry      # stored geometry components read (g0 .. g{geometry-1}); 0 when trilinear
         self.free_vars = free_vars
+        self.packed_fields = tuple(f"g{k}" for k in range(geometry)) + op.coefficients
         self.trilinear = trilinear    # geometry from the element's corners (TRILINEAR_INPUTS)
 
 
@@ -147,12 +149,12 @@ def synthesize(op: Operator):
         trilinear = op.geometry == "trilinear"
         if op.geometry not in ("stored", "trilinear"):
             raise ValueError(f"geometry {op.geometry!r}: stored or trilinear")
-        allowed = TRILINEAR_INPUTS if trilinear else GALERKIN_INPUTS
+        allowed = TRILINEAR_INPUTS if trilinear else GALERKIN_INPUTS | set(op.coefficients)
         unknown = fv - allowed
         if unknown:
             raise ValueError(f"galerkin outputs reference unknown name(s) {sorted(unknown)}; "
                              f"available at a Gauss point: {sorted(allowed)}")
-        geometry = 0 if trilinear else 1 + max((int(x[1:]) for x in fv if x.startswith("g")), default=-1)
+        geometry = 0 if trilinear else 1 + max((int(x[1:]) for x in fv & GALERKIN_INPUTS if x.startswith("g")), default=-1)
         return GalerkinApply(op, needs_u="u" in fv, needs_grad=bool(fv & {"du0", "du1", "du2"}),
                              geometry=geometry, free_vars=fv, trilinear=trilinear)
 
@@ -213,6 +215,11 @@ def jacobian_action_flux(op: Operator):
 def dump(ea: ElementApply) -> str:
     """Human-readable IR dump (Stage-1 deliverable: parse -> IR -> text)."""
     o = ea.op
+    if isinstance(ea, GalerkinApply):
+        lines = [f"operator {o.name}", f"  element : {o.element}", "  form    : galerkin",
+                 f"  geometry: {o.geometry}", "  packed fields: " + ", ".join(ea.packed_fields)]
+        lines.extend(f"  {key} = {expr.render({})}" for key, expr in ea.outputs)
+        return "\n".join(lines)
     lines = [
         f"operator {o.name}",
         f"  element : {o.element}",

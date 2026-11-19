@@ -7,7 +7,7 @@
 //   outputs    = the spec's pointwise action (BP1: v = g0 u; BP3: dv = G du, G symmetric)
 //   w          = v + sum_d Dt along axis d of dv_d
 //   y[i,j,k]   = sum_abc Bt[i,a] Bt[j,b] Bt[k,c] w[a,b,c]
-// Defines: BP_NAME (kernel), BP_SPEC_BP1 | BP_SPEC_BP3, BP_Q, BP_K (geometry components),
+// Defines: BP_NAME (kernel), BP_SPEC_BP1 | BP_SPEC_BP3 | BP_SPEC_REACTION, BP_Q, BP_K (geometry components),
 // BP_GRAD (D and Dt are used), MIR_EMU_REAL (float for the f32 kernel).
 // BP_EVEN_ODD (--mir-even-odd): the random matrices are made mirror-symmetric (B[Q-1-a][n-1-i]
 // = B[a][i], D[Q-1-a][Q-1-b] = -D[a][b]) and the kernel gets them folded.
@@ -214,7 +214,10 @@ int main(int argc, char** argv)
         auto g = [&](int comp, long long pt) { return G[(e * K + comp) * q3 + pt]; };
 #if defined(BP_SPEC_BP1)
         for (long long pt = 0; pt < q3; ++pt) wq[pt] = g(0, pt) * uq[pt];
-#elif defined(BP_SPEC_BP3)
+#elif defined(BP_SPEC_BP3) || defined(BP_SPEC_REACTION)
+#ifdef BP_SPEC_REACTION
+        for (long long pt = 0; pt < q3; ++pt) wq[pt] = g(6, pt) * uq[pt];
+#endif
         std::vector<double> d[3], dv[3];
         for (int r = 0; r < 3; ++r) d[r].assign(q3, 0.0), dv[r].assign(q3, 0.0);
         for (int a = 0; a < Q; ++a)
@@ -235,6 +238,8 @@ int main(int argc, char** argv)
                     for (int m = 0; m < Q; ++m)
                         wq[at(a, b2, c)] += Dt[a * Q + m] * dv[0][at(m, b2, c)] + Dt[b2 * Q + m] * dv[1][at(a, m, c)] +
                                             Dt[c * Q + m] * dv[2][at(a, b2, m)];
+#else
+#error "Define an independent quadrature reference for this operator before using --emulate"
 #endif
         for (int i = 0; i < n; ++i)
             for (int j = 0; j < n; ++j)

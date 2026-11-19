@@ -111,6 +111,61 @@ map's derivatives (7 per component; the mixed ones are shared by the three deriv
 and the point flux reads them through `dims`, with a coordinate and weight per axis. Each
 J entry is then 3 FMAs. So no geometry is stored or staged per point.
 
+### Three ways to apply reaction and diffusion
+
+Take a scalar temperature field `u`. Diffusion uses its gradient. Reaction uses its value, multiplied by a material coefficient. In the following example, every version computes the same element contribution. All coefficients include the quadrature weights and geometry needed by their term.
+
+**1. Separate operators.** In the application, launch the two existing kernels and add their output arrays. The following is pseudocode for the three launches in the [benchmark driver](../tests/performance/reaction_diffusion/benchmark.cu).
+
+```text
+diff = apply(bp3, u, diffusion_metric)
+mass = apply(bp1, u, sigma_w)
+y = add(diff, mass)
+```
+
+**2. One manually combined operator.** Write a third specification and call it once. This copies the three diffusion expressions from [BP3](specs/bp3.op) and the mass expression from [BP1](specs/bp1.op).
+
+```text
+operator reaction {
+    element = hex
+    form = galerkin
+    fields = sigma_w
+    v   = sigma_w*u
+    dv0 = g0*du0 + g1*du1 + g2*du2
+    dv1 = g1*du0 + g3*du1 + g4*du2
+    dv2 = g2*du0 + g4*du1 + g5*du2
+}
+```
+
+**3. One operator composed from the two originals.** The complete [reaction.op](specs/reaction.op) definition is now one line. The application calls the same kernel with the same seven packed fields as in version 2.
+
+```text
+operator reaction = bp3 + bp1(g0=sigma_w)
+```
+
+The binding matters on a skew element. BP3's `g0` is the first entry of the diffusion metric. BP1 expects a scalar weight in its own slot zero. Here `sigma_w` supplies the reaction coefficient times the weighted volume. The compiler reads both files, binds that input, and adds contributions to each test-function output before lowering. Interpolation and the final transpose sweeps can then be shared.
+
+```mermaid
+flowchart LR
+  A["Separate calls"] --> B["Diffusion kernel"]
+  A --> C["Mass kernel"]
+  B --> D["Add kernel"]
+  C --> D
+  E["One file with both formulas"] --> F["One fused kernel"]
+  G["BP3 + BP1 with a named weight"] --> F
+```
+
+The composed operands are scalar, stored-geometry Galerkin hex forms compiled at one degree and quadrature rule. References resolve to sibling `.op` files. Named fields with the same name refer to the same supplied array. A positional slot used by two operands needs an explicit binding to resolve its meaning. An unqualified `bp3 + bp1` therefore raises an error.
+
+Run from the MARS repository root to inspect the expanded coefficients and outputs, then check the degree-three kernel against direct quadrature in the host emulator:
+
+```sh
+python3 marsir-compiler/marsir-emit.py marsir-compiler/specs/reaction.op
+(cd marsir-mlir && python3 test/bp_gpu_pipeline.py reaction 3 --emulate)
+```
+
+On one GH200 at degree three, the split and manually combined versions took 148.1 and 123.2 µs, respectively, for one application over 32,769 warped elements with prepacked coefficients. The composed version regenerated the byte-identical SM90 PTX used for the 123.2 µs measurement.
+
 ## Local validation (no GPU)
 
 ```bash
@@ -173,3 +228,15 @@ differences on the nonlinear demo. Host sweeps p=1..8 are bit-identical
 - **Stage 2 (real, alive):** the `mir` MLIR dialect in `marsir-mlir/` — lowering
   passes, FP64 DMMA tensor-core schedule, warp distribution. See
   `marsir-mlir/README.md` and `internal-notes/marsir_full_tutorial.md`.
+
+### Named quadrature fields on stored-geometry hexes
+
+A Galerkin specification can declare a comma-separated list such as
+`fields = sigma_w, density` and read those names in pointwise expressions.
+The caller supplies one scalar per element and quadrature point for each
+declared field. In the existing packed argument `G[element, component, i, j, k]`,
+components through the highest referenced geometry slot come first, followed by
+the declared fields in order. For a form using only named fields, the first
+declared field occupies slot zero. Weights and geometry factors are explicit
+in the supplied values. See `specs/reaction.op` for a combined diffusion and
+weighted reaction operator.

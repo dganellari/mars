@@ -30,6 +30,10 @@ def main(argv=None):
 
     if args.backend == "ir":
         text = dump(ea) + "\n"
+    elif op.form == "galerkin":
+        if args.backend != "mlir":
+            ap.error("Galerkin operators support --backend ir or mlir")
+        text = mlir_ir.emit_galerkin(ea)
     elif args.backend == "cuda":
         text = cuda.emit(ea)
     elif args.backend == "host-jvp":
