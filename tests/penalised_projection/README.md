@@ -38,7 +38,7 @@ with inflow (Hypre error 1), with or without the penalty.
 | `update` | W = w V gives a uniform beta, so K becomes beta K0; after changes of W, eta and dt, and of dt alone |
 | `bdf2` | the first step at dtEff = dt, the following ones at 2 dt / 3 |
 | `flow` | with inflow and beta = 1/2: the pressure solve converges, and continuity is no worse than without the penalty (two separate checks) |
-| `failed` | a deliberately failed pressure solve (one GMRES iteration, an unreachable acceptance residual) returns -2, and the convergence check rejects it |
+| `failed` | a deliberately failed pressure solve returns -2, and the convergence check rejects it (a step of 1e-8, so the velocity solves succeed and the pressure's RHS is the inflow's divergence; at most 5 iterations, Jacobi for the pressure, an unreachable acceptance residual) |
 | `reject` | NaN or negative W, a bad invEta, dt zero, negative or NaN, W changed behind the setter, a wrong size, and unsupported configurations (including `useRhieChow`); each set on one rank only, so the refusal must be collective |
 
 **Convergence** means a nonnegative return below the iteration cap: `solveOneComponent` returns -2
