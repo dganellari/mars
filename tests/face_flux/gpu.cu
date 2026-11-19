@@ -5,16 +5,21 @@
 #endif
 
 // The face-flux projection (useFaceFlux) on public Tet4 and Hex8 boxes, inflow at x0 (Uinf along +x),
-// a do-nothing pressure outlet at x1, no-slip walls; Hypre with assembled DDT and the divT gradient.
-// The first pressure solve runs the operator self-check, which covers the outlet rows (the
-// corrector's own gradient on the outlets' boundary faces) and aborts on a mismatch.
-//   {tet,hex}_scs     the opening flux through the SCS term (useOpeningFluxSource = false, the
-//                     configuration where the outlet flux used to enter twice);
-//   {tet,hex}_source  through the prescribed source (useOpeningFluxSource = true, as ldp_fsi runs);
-//                     every step: each control volume balances (lastFaceFluxDivMax) and the
-//                     openings' fluxes sum to zero, to the pressure solve's tolerance;
-//   reject            K with the legacy gradient, CG, MARS_HYPRE_USE_DDT, and no outlet without a
-//                     pin: std::invalid_argument on every rank, nothing changed.
+// a do-nothing pressure outlet at x1, no-slip walls; Hypre, divT gradient. The first pressure solve
+// runs the operator self-check, which covers the outlet rows (the corrector's own gradient on the
+// outlets' boundary faces) and aborts on a mismatch.
+//   {tet,hex}_{ddt,k}_{scs,source}
+//            assembled DDT or K; the openings' flux through the SCS term (useOpeningFluxSource =
+//            false: where the outlet flux used to enter twice on DDT, and the inlet's not at all on K)
+//            or the prescribed source (true, as ldp_fsi runs). Every step: the pressure solve
+//            succeeds; each control volume balances (lastFaceFluxDivMax, the cached balance); and,
+//            independently of it, the inflow and the outflow measured on the face flux itself (the
+//            net interior flux out of the inlet plane's control volumes, and into the outlet
+//            plane's) and on the solved velocity at the eligible outlets (u . A_b) all equal Uinf
+//            times the inlet's area;
+//   failed   a deliberately failed pressure solve returns -2, and the convergence check rejects it;
+//   reject   K with the legacy gradient, CG, MARS_HYPRE_USE_DDT, and no outlet without a pin:
+//            std::invalid_argument on every rank, nothing changed.
 
 using Key  = uint64_t;
 using Real = double;
@@ -167,6 +172,14 @@ void openings(Stepper& s, const Domain& domain, const Box& box, bool outlet_area
     upload(zero, s.d_outletAreaVecZ);
 }
 
+// The last pressure solve succeeded: solveOneComponent returns -2 on failure, else its iterations,
+// below the cap. (The cap alone accepts -2.)
+template<class Stepper>
+bool pressure_solve_succeeded(const Stepper& s)
+{
+    return s.lastPressureIters >= 0 && s.lastPressureIters < s.maxIter;
+}
+
 template<class Tag>
 struct Case
 {
@@ -175,7 +188,7 @@ struct Case
     Box box{6};
     std::unique_ptr<Domain> domain;
     std::unique_ptr<Stepper> s;
-    Case(int rank, int ranks, bool source, bool outlet_area = true)
+    Case(int rank, int ranks, PressureSolveKind solve, bool source, bool outlet_area = true)
     {
         domain               = make_domain<Tag>(box, rank, ranks);
         s                    = std::make_unique<Stepper>(*domain, SolverKind::Hypre, 256, 2000, 1e-10, rank, ranks);
@@ -183,7 +196,7 @@ struct Case
         s->uinfBase          = 1;
         s->pumpZeroIC        = true;
         s->bcKind            = Stepper::BCKind::Pump;
-        s->pressureSolve     = PressureSolveKind::DDT;
+        s->pressureSolve     = solve;
         s->useLegacyGradient = false;
         s->outletDoNothing   = true;
         s->useDirichletLift  = true;
@@ -213,26 +226,54 @@ struct Case
         MPI_Allreduce(MPI_IN_PLACE, q.data(), 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         return q;
     }
+    // On the face flux itself, independently of the openings' terms and the cached balance: the net
+    // interior flux out of the inlet plane's control volumes (their shared faces cancel), and into the
+    // outlet plane's. faceFluxDivergence is owner-complete.
+    std::array<double, 2> plane_fluxes() const
+    {
+        cstone::DeviceVector<double> d;
+        faceFluxDivergence<Key, Real, Tag>(*s, d);
+        const auto div = host(d);
+        const auto own = host(s->ownershipMap());
+        const auto x   = host(domain->getNodeX());
+        std::array<double, 2> q{0, 0};
+        for (size_t i = 0; i < div.size(); ++i)
+        {
+            if (own[i] != 1) continue;
+            if (std::abs(x[i] - Box::x0) < 1e-5) q[0] += div[i];
+            if (std::abs(x[i] - (Box::x0 + 1)) < 1e-5) q[1] -= div[i];
+        }
+        MPI_Allreduce(MPI_IN_PLACE, q.data(), 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        return q;
+    }
 };
 
 template<class Tag>
-void check_conservation(int rank, int ranks, bool source)
+void check_conservation(int rank, int ranks, PressureSolveKind solve, bool source)
 {
-    Case<Tag> c(rank, ranks, source);
+    Case<Tag> c(rank, ranks, solve, source);
     const double inflow = 1. * Box::ly * Box::lz;  // Uinf times the inlet's area
     for (int step = 0; step < 4; ++step)
     {
         runNsStep(*c.s, .001, .01, 1.);
-        require(c.s->lastPressureIters < c.s->maxIter, "The pressure solve did not converge");
-        const auto q = c.opening_fluxes();
+        require(pressure_solve_succeeded(*c.s), "The pressure solve did not converge");
+        const auto q     = c.opening_fluxes();
+        const auto plane = c.plane_fluxes();
         if (rank == 0)
-            std::cout << "step " << step << ": max |CV balance| " << c.s->lastFaceFluxDivMax << ", sum "
-                      << c.s->lastFaceFluxDivSum << "; inlet flux " << q[0] << ", outlet flux " << q[1] << "\n";
+            std::cout << std::scientific << "step " << step << ": max |CV balance| " << c.s->lastFaceFluxDivMax
+                      << ", sum " << c.s->lastFaceFluxDivSum << "; inflow " << -q[0] << " (prescribed), "
+                      << plane[0] << " (face flux out of the inlet plane); outflow " << q[1] << " (u . A_b), "
+                      << plane[1] << " (face flux into the outlet plane); pressure iterations "
+                      << c.s->lastPressureIters << std::defaultfloat << "\n";
         // Every control volume, openings included, balances to the solve's tolerance.
         require(c.s->lastFaceFluxDivMax <= 1e-7 * inflow, "A control volume does not balance");
         // The inlet carries Uinf times its area in, and the outlets carry it out.
         require(std::abs(q[0] + inflow) <= 1e-12 * inflow, "The inlet flux is not Uinf times its area");
         require(std::abs(q[0] + q[1]) <= 1e-7 * inflow, "The openings' fluxes do not sum to zero");
+        // Independently of the openings' terms: the face flux carries the inflow out of the inlet plane
+        // and into the outlet plane.
+        require(std::abs(plane[0] - inflow) <= 1e-7 * inflow, "The face flux does not carry the inflow off the inlet");
+        require(std::abs(plane[1] - inflow) <= 1e-7 * inflow, "The face flux does not carry the inflow to the outlet");
     }
 }
 
@@ -256,11 +297,25 @@ void rejected_without_mutation(NSStepper<Key, Real, mars::TetTag>& s)
     require(p == host(s.d_p) && u == host(s.d_u) && v == host(s.d_v) && w == host(s.d_w) && s.bdfStep == history,
             "A rejected step changed the state");
 }
+// One GMRES iteration and an acceptance residual nothing reaches: the pressure solve fails.
+void check_failed_solve(int rank, int ranks)
+{
+    Case<mars::TetTag> c(rank, ranks, PressureSolveKind::DDT, true);
+    c.s->maxIter   = 1;
+    c.s->tolerance = 1e-300;
+    setenv("MARS_HYPRE_ACCEPT_RES", "1e-300", 1);
+    runNsStep(*c.s, .001, .01, 1.);
+    unsetenv("MARS_HYPRE_ACCEPT_RES");
+    if (rank == 0) std::cout << "failed: pressure solve returned " << c.s->lastPressureIters << "\n";
+    require(c.s->lastPressureIters == -2, "The forced pressure failure did not return -2");
+    require(!pressure_solve_succeeded(*c.s), "The convergence check accepted a failed pressure solve");
+}
+
 void check_rejections(int rank, int ranks)
 {
     const bool inject = rank == ranks - 1;  // on one rank only: the refusal must be collective
     {
-        Case<mars::TetTag> c(rank, ranks, true);
+        Case<mars::TetTag> c(rank, ranks, PressureSolveKind::DDT, true);
         auto& s = *c.s;
         if (inject)
         {
@@ -276,11 +331,12 @@ void check_rejections(int rank, int ranks)
         if (inject) setenv("MARS_HYPRE_USE_DDT", "1", 1);
         rejected_without_mutation(s);
         unsetenv("MARS_HYPRE_USE_DDT");
-        // K with the divT gradient is supported, and so is the configuration restored: they step.
+        // The restored configuration steps.
         runNsStep(s, .001, .01, 1.);
+        require(pressure_solve_succeeded(s), "The pressure solve did not converge");
     }
     // No eligible outlet (zero outlet areas) and no pin: no pressure gauge.
-    Case<mars::TetTag> c(rank, ranks, true, false);
+    Case<mars::TetTag> c(rank, ranks, PressureSolveKind::DDT, true, false);
     rejected_without_mutation(*c.s);
 }
 
@@ -303,14 +359,25 @@ int main(int argc, char** argv)
         mars::requestFullNodeHaloExchange();
         unsetenv("MARS_HYPRE_USE_DDT");
         const std::string mode(argv[1]);
-        if (mode == "tet_scs")
-            check_conservation<mars::TetTag>(rank, ranks, false);
-        else if (mode == "tet_source")
-            check_conservation<mars::TetTag>(rank, ranks, true);
-        else if (mode == "hex_scs")
-            check_conservation<mars::HexTag>(rank, ranks, false);
-        else if (mode == "hex_source")
-            check_conservation<mars::HexTag>(rank, ranks, true);
+        const auto DDT = PressureSolveKind::DDT, K = PressureSolveKind::K;
+        if (mode == "tet_ddt_scs")
+            check_conservation<mars::TetTag>(rank, ranks, DDT, false);
+        else if (mode == "tet_ddt_source")
+            check_conservation<mars::TetTag>(rank, ranks, DDT, true);
+        else if (mode == "tet_k_scs")
+            check_conservation<mars::TetTag>(rank, ranks, K, false);
+        else if (mode == "tet_k_source")
+            check_conservation<mars::TetTag>(rank, ranks, K, true);
+        else if (mode == "hex_ddt_scs")
+            check_conservation<mars::HexTag>(rank, ranks, DDT, false);
+        else if (mode == "hex_ddt_source")
+            check_conservation<mars::HexTag>(rank, ranks, DDT, true);
+        else if (mode == "hex_k_scs")
+            check_conservation<mars::HexTag>(rank, ranks, K, false);
+        else if (mode == "hex_k_source")
+            check_conservation<mars::HexTag>(rank, ranks, K, true);
+        else if (mode == "failed")
+            check_failed_solve(rank, ranks);
         else if (mode == "reject")
             check_rejections(rank, ranks);
         else

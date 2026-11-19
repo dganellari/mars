@@ -10146,11 +10146,15 @@ void addFemOpeningSurfaceTerm(NSStepper<KeyType, RealType, ElementTag>& s,
 template<typename KeyType, typename RealType, typename ElementTag>
 bool scsOpeningBoundaryActive(const NSStepper<KeyType, RealType, ElementTag>& s)
 {
+    // Assembled DDT; or the face-flux projection on K (divT gradient, validateFaceFlux), whose RHS is
+    // built from the same divAccNode and which would otherwise miss the inlet's flux. The eligible
+    // outlets are skipped inside (their flux is the face flux's).
+    const bool operatorTakesIt = (s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT > 0) ||
+                                 (s.useFaceFlux && s.pressureSolve == PressureSolveKind::K);
     return !s.useFemProjection
         && !s.useOpeningFluxSource
-        && s.pressureSolve == PressureSolveKind::DDT
+        && operatorTakesIt
         && s.solverKind == SolverKind::Hypre
-        && s.nnzDDT > 0
         && std::getenv("MARS_HYPRE_USE_DDT") == nullptr;
 }
 
