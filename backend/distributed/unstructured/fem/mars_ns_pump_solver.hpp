@@ -3845,7 +3845,8 @@ struct NSStepper
     // the projection does not need it (K is compact).
     RealType faceFluxRcScale  = RealType(0);
     // Convection on the stored flux (needs --implicit-advection): upwind F+ u_L + F- u_R with the
-    // smoothed switch |F|_eps (eps 0: the hard switch), the outlets' backflow guard, and with
+    // smoothed switch |F|_eps (eps 0: the hard switch), the outlets' backflow stabilisation
+    // (faceFluxBackflowBeta), and with
     // faceFluxSecondOrder the deferred correction along G u (limiter 0 none, 1 clip,
     // 2 Venkatakrishnan with eps2 = faceFluxVenkatC h^3, 3 Darwish-Moukalled). Replaces the
     // Galerkin convection and its SUPG.
@@ -3854,6 +3855,10 @@ struct NSStepper
     int faceFluxLimiter       = 0;
     RealType faceFluxUpwindEps = RealType(0);
     RealType faceFluxVenkatC  = RealType(0);
+    // Face-flux convection at the eligible outlets: the share of the momentum entering through them that is
+    // dropped (faceFluxOutletConvectionKernel). 1, the default: all (backflow stabilisation); 0: none (the
+    // consistent conservative form, for openings the flow is meant to enter).
+    RealType faceFluxBackflowBeta = RealType(1);
     int faceFluxRcBetaPower   = 1;             // ... times (beta_L beta_R)^m on each face
     cstone::DeviceVector<RealType> d_faceFlux;      // [elementCount * NSCS], all local elements
     cstone::DeviceVector<RealType> d_faceFluxGradW; // G's weights per node, owner-complete
@@ -9977,7 +9982,7 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                     faceFluxOutletConvectionKernel<RealType><<<int((s.nodeCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
                         s.d_faceFluxOutlet.data(), s.d_u.data(), s.d_v.data(), s.d_w.data(), s.d_outletAreaVecX.data(),
                         s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), s.d_node_to_dof.data(), s.d_isBdryDof.data(),
-                        s.d_diagPtr.data(), velVals, s.numOwnedDofs, s.nodeCount);
+                        s.d_diagPtr.data(), velVals, s.numOwnedDofs, s.nodeCount, s.faceFluxBackflowBeta);
             }
             else if (s.elementCount > 0)
             {
