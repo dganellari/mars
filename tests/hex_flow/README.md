@@ -26,7 +26,8 @@ convection, SUPG, and the penalised projection with β = 1/2.
 
 | test | checks |
 |---|---|
-| `hex_flow_{1,2,4}` | six steps; on each, the pressure solve converges below the iteration cap and the fields stay finite; the largest nodal divergence is no worse than twice that of the same stepper without the penalty (two separate checks; the largest divergence sits at the inlet's Dirichlet corners, which no projection changes) |
+| `hex_flow_{1,2,4}` | six steps; on each, both pressure solves converge (a nonnegative return below the iteration cap: the solver returns -2 on failure) and the fields stay finite; the largest nodal divergence is no worse than twice that of the same stepper without the penalty (two separate checks; the largest divergence sits at the inlet's Dirichlet corners, which no projection changes) |
+| `hex_failed_{1,2,4}` | a deliberately failed pressure solve (one GMRES iteration, an unreachable acceptance residual) returns -2, and the convergence check rejects it |
 | `hex_invalid_{1,2,4}` | one inverted hex, on one rank; setup refuses it on every rank |
 | `hex_flow_ranks_{2,4}` | the kinetic energy after six steps equals the 1-rank value to 1e-6 (`tests/release/check_rank_value.py`) |
 

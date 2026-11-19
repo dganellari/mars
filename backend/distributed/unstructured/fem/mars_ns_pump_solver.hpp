@@ -3480,6 +3480,13 @@ struct NSStepper
     // Built once at setup alongside the BDF1 matrix; used from step 1 on.
     cstone::DeviceVector<RealType> d_valuesVel_bdf2;
     Matrix Avel_bdf2;
+    // Free-slip walls (setupSlipWalls): per axis, whether any rank has slip nodes; the owned DOFs and the
+    // local nodes (halo-complete) whose component a is 0; and the velocity matrix with one axis's slip
+    // rows and columns made identity, refilled before that component's solve.
+    bool slipActive[3] = {false, false, false};
+    cstone::DeviceVector<uint8_t> d_isSlipDof[3];
+    cstone::DeviceVector<uint8_t> d_isSlipNode[3];
+    Matrix AvelSlip;
 
     // dt the velocity-diffusion mass diagonals (M/dt and 3M/(2dt)) were baked
     // with. With adaptive CFL dt changes per step but the matrix is assembled
@@ -3790,6 +3797,11 @@ struct NSStepper
     std::vector<int> inletNodes;    // u = Uinf
     std::vector<int> outletNodes;   // Dirichlet p = 0
     std::vector<int> extraNodes;    // top/bottom/side/sym -- u = Uinf (full Dirichlet shortcut)
+    // Free-slip (symmetry) walls on axis-aligned planes: slipNodes[a], the local nodes (owned or ghost)
+    // on a plane normal to axis a, whose velocity component a is 0; the other components stay free
+    // (zero shear, the natural condition). A node with a full Dirichlet condition (wall, inlet, extra)
+    // keeps it; a node on two such planes (an edge) has both components fixed. Pump BCs only.
+    std::vector<int> slipNodes[3];
 
     // Optional. When bcKind == Periodic, must point to a built PeriodicMap.
     // Owned by the driver; NSStepper does not allocate or free it. The map
@@ -4577,6 +4589,107 @@ void faceFluxSelfCheck(NSStepper<KeyType, RealType, ElementTag>& s)
             std::cerr << "ERROR: face flux: the corrector's face form does not reproduce the pressure operator\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
+}
+
+// Free-slip walls, at setup (after the velocity matrices are wrapped): per axis, the slip nodes' mask
+// (the union of every rank's list, halo-complete, without the full Dirichlet nodes) and its owned
+// DOFs. Collective. Throws std::invalid_argument on every rank unless the BCs are the pump's.
+template<typename KeyType, typename RealType, typename ElementTag>
+void setupSlipWalls(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    bool any = false;
+    long long counts[3] = {0, 0, 0};
+    for (int a = 0; a < 3; ++a)
+    {
+        int local = s.slipNodes[a].empty() ? 0 : 1, global = 0;
+        MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        s.slipActive[a] = global != 0;
+        any             = any || s.slipActive[a];
+    }
+    if (!any) return;
+    if (s.bcKind != NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump || s.d_isBdryNode.size() != s.nodeCount)
+        throw std::invalid_argument("slip walls need the pump boundary conditions (BCKind::Pump)");
+    const auto& own = s.ownershipMap();
+    for (int a = 0; a < 3; ++a)
+    {
+        if (!s.slipActive[a]) continue;
+        // The union of the ranks' lists: ghosts add to their owners, owners publish.
+        std::vector<RealType> h(s.nodeCount, RealType(0));
+        for (int li : s.slipNodes[a])
+            if (li >= 0 && size_t(li) < s.nodeCount) h[li] = RealType(1);
+        cstone::DeviceVector<RealType> proxy(s.nodeCount);
+        if (s.nodeCount > 0)
+            cudaCheckCall(cudaMemcpy(proxy.data(), h.data(), s.nodeCount * sizeof(RealType), cudaMemcpyHostToDevice));
+        s.domain.reverseExchangeNodeHaloAdd(proxy);
+        s.domain.exchangeNodeHalo(proxy);
+        s.d_isSlipNode[a].resize(s.nodeCount);
+        s.d_isSlipDof[a].resize(s.numOwnedDofs);
+        if (s.numOwnedDofs > 0)
+            thrust::fill(thrust::device_pointer_cast(s.d_isSlipDof[a].data()),
+                         thrust::device_pointer_cast(s.d_isSlipDof[a].data() + s.numOwnedDofs), uint8_t(0));
+        const RealType* m   = proxy.data();
+        const uint8_t* full = s.d_isBdryNode.data();
+        const uint8_t* o    = own.data();
+        const int* n2d      = s.d_node_to_dof.data();
+        uint8_t* node       = s.d_isSlipNode[a].data();
+        uint8_t* dof        = s.d_isSlipDof[a].data();
+        const int nOwned    = s.numOwnedDofs;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [m, full, o, n2d, node, dof, nOwned] __device__ (size_t i) {
+                             const uint8_t on = (m[i] > RealType(0.5) && !full[i]) ? 1 : 0;
+                             node[i]          = on;
+                             const int d      = n2d[i];
+                             if (on && o[i] == 1 && d >= 0 && d < nOwned) dof[d] = 1;
+                         });
+        cudaCheckError();
+        counts[a] = s.numOwnedDofs > 0
+                        ? thrust::count(thrust::device, thrust::device_pointer_cast(dof),
+                                        thrust::device_pointer_cast(dof + s.numOwnedDofs), uint8_t(1))
+                        : 0;
+    }
+    MPI_Allreduce(MPI_IN_PLACE, counts, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    wrapIntoSparseMatrix<RealType>(s.AvelSlip, s.numOwnedDofs, s.numTotalDofs, s.nnz, s.d_rowPtr.data(),
+                                   s.d_colInd.data(), s.d_valuesVel.data());
+    cudaCheckCall(cudaDeviceSynchronize());
+    if (s.rank == 0)
+        std::cout << "  slip walls: " << counts[0] << " nodes with u = 0, " << counts[1] << " with v = 0, " << counts[2]
+                  << " with w = 0 (the other components free)\n";
+}
+
+// Free-slip walls: the component normal to each slip plane set to 0 on every local node of it.
+template<typename KeyType, typename RealType, typename ElementTag>
+void applySlipWalls(NSStepper<KeyType, RealType, ElementTag>& s, RealType* u, RealType* v, RealType* w)
+{
+    RealType* q[3] = {u, v, w};
+    for (int a = 0; a < 3; ++a)
+    {
+        if (!s.slipActive[a] || s.nodeCount == 0) continue;
+        const uint8_t* m = s.d_isSlipNode[a].data();
+        RealType* c      = q[a];
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                         [m, c] __device__ (size_t i) {
+                             if (m[i]) c[i] = RealType(0);
+                         });
+        cudaCheckError();
+    }
+}
+
+// Face flux: the stored flux F from the current nodal velocity (u . A per sub-control surface, no
+// Rhie-Chow bracket). Setup leaves F = 0, which is right for a fluid at rest; a caller that sets an
+// initial velocity calls this after it, or the first step's face-flux convection sees no flow.
+template<typename KeyType, typename RealType, typename ElementTag>
+void initFaceFluxFromVelocity(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (!s.useFaceFlux || s.elementCount == 0) return;
+    const auto c = faceFluxConn(s);
+    // coefRC = 0: the pressure and its gradient are not used (any valid node arrays).
+    faceFluxPredictKernel<KeyType, RealType, ElementTag><<<int((s.elementCount + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+        c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+        s.domain.getNodeZ().data(), s.d_u.data(), s.d_v.data(), s.d_w.data(), s.d_u.data(), s.d_u.data(), s.d_v.data(),
+        s.d_w.data(), nullptr, s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(), RealType(0), 1,
+        s.d_faceFlux.data(), s.elementCount);
+    cudaCheckError();
+    cudaCheckCall(cudaDeviceSynchronize());
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
@@ -7543,6 +7656,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         wrapIntoSparseMatrix<RealType>(s.Avel_bdf2, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel_bdf2.data());
     }
+    setupSlipWalls(s);
     // Semi-implicit advection snapshots the WRAPPED values, not d_valuesVel:
     // wrapIntoSparseMatrix copies into the matrix's own storage, so Avel is the
     // buffer the solver actually reads and the only one worth restoring.
@@ -9936,7 +10050,8 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                              cstone::DeviceVector<RealType>& qStarStar,
                              cstone::DeviceVector<RealType>& qTarget,
                              const cstone::DeviceVector<RealType>& qLift,
-                             const cstone::DeviceVector<RealType>& qHO) -> int
+                             const cstone::DeviceVector<RealType>& qHO,
+                             int axis) -> int
     {
         // RHS = (mass coef) * mass * qStar; coef = 1/dt for BDF1, 3/(2dt) for BDF2.
         thrust::fill(thrust::device_pointer_cast(b.data()),
@@ -10029,17 +10144,47 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
         // operator, BoomerAMG is not.
         const bool nonSym = s.implicitAdvection
                             && (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>);
+        // Free-slip walls: this component is 0 at the slip nodes of its axis. Their rows (and columns,
+        // which keeps a symmetric matrix symmetric for CG; the value is 0, so no lift) become identity
+        // rows of a copy of the step's matrix, and their RHS 0.
+        auto& Astep = bdf2Active ? s.Avel_bdf2 : s.Avel;
+        const bool slip = s.slipActive[axis];
+        if (slip)
+        {
+            const int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            if (s.nnz > 0)
+                cudaCheckCall(cudaMemcpy(s.AvelSlip.valuesPtr(), Astep.valuesPtr(), size_t(s.nnz) * sizeof(RealType),
+                                         cudaMemcpyDeviceToDevice));
+            if (s.numOwnedDofs > 0)
+            {
+                enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isSlipDof[axis].data(), s.d_rowPtr.data(), s.d_colInd.data(), s.d_diagPtr.data(),
+                    s.AvelSlip.valuesPtr(), s.numOwnedDofs);
+                enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isSlipNode[axis].data(), s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
+                    s.d_rowPtr.data(), s.d_colInd.data(), s.AvelSlip.valuesPtr(), s.numOwnedDofs);
+                const uint8_t* m = s.d_isSlipDof[axis].data();
+                RealType* bb     = b.data();
+                RealType* xx     = xVec.data();
+                thrust::for_each(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(s.numOwnedDofs),
+                                 [m, bb, xx] __device__ (int d) {
+                                     if (m[d]) bb[d] = xx[d] = RealType(0);
+                                 });
+            }
+            cudaCheckError();
+            cudaCheckCall(cudaDeviceSynchronize());
+        }
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
-            bdf2Active ? s.Avel_bdf2 : s.Avel,
+            slip ? s.AvelSlip : Astep,
             nonSym ? KrylovHint::GMRES : KrylovHint::PCG,
             /*forceCG=*/!nonSym, /*unscaleInvSqrt=*/nullptr,
             /*precondMat=*/nullptr, /*forceGmres=*/nonSym);
     };
 
-    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU, hoSrc[0]);
-    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velLiftV, hoSrc[1]);
-    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velLiftW, hoSrc[2]);
+    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU, hoSrc[0], 0);
+    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velLiftV, hoSrc[1], 1);
+    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velLiftW, hoSrc[2], 2);
 
     // Sync ghosts of q** for the divergence scatter (face donors read q** at
     // ghost corners on rank boundaries).
@@ -10146,11 +10291,15 @@ void addFemOpeningSurfaceTerm(NSStepper<KeyType, RealType, ElementTag>& s,
 template<typename KeyType, typename RealType, typename ElementTag>
 bool scsOpeningBoundaryActive(const NSStepper<KeyType, RealType, ElementTag>& s)
 {
+    // Assembled DDT; or the face-flux projection on K (divT gradient, validateFaceFlux), whose RHS is
+    // built from the same divAccNode and which would otherwise miss the inlet's flux. The eligible
+    // outlets are skipped inside (their flux is the face flux's).
+    const bool operatorTakesIt = (s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT > 0) ||
+                                 (s.useFaceFlux && s.pressureSolve == PressureSolveKind::K);
     return !s.useFemProjection
         && !s.useOpeningFluxSource
-        && s.pressureSolve == PressureSolveKind::DDT
+        && operatorTakesIt
         && s.solverKind == SolverKind::Hypre
-        && s.nnzDDT > 0
         && std::getenv("MARS_HYPRE_USE_DDT") == nullptr;
 }
 
@@ -11463,7 +11612,7 @@ bool penalisedProjectionSupported(const NSStepper<KeyType, RealType, ElementTag>
     return (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>) &&
            s.solverKind == SolverKind::Hypre && !(s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT == 0) &&
            std::getenv("MARS_HYPRE_USE_DDT") == nullptr && s.outletBeta < RealType(0) && !s.useFemProjection &&
-           !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly && !s.stabBochevDohrmann;
+           !s.useRhieChow && !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly && !s.stabBochevDohrmann;
 #endif
 }
 
@@ -11926,6 +12075,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.d_isOpenFaceNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
     }
+    // Free-slip walls: the corrector's gradient re-adds a normal component at the slip nodes.
+    applySlipWalls(s, s.d_u.data(), s.d_v.data(), s.d_w.data());
 
     s.domain.exchangeNodeHalo(s.d_u);
     s.domain.exchangeNodeHalo(s.d_v);

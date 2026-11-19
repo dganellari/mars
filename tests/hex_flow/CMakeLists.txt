@@ -19,7 +19,7 @@ if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
     set_target_properties(hex_flow_gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 foreach(ranks IN ITEMS 1 2 4)
-    foreach(mode IN ITEMS flow invalid)
+    foreach(mode IN ITEMS flow failed invalid)
         add_test(NAME hex_${mode}_${ranks}
             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
             $<TARGET_FILE:hex_flow_gpu> ${MPIEXEC_POSTFLAGS} ${mode})

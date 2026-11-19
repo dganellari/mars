@@ -18,7 +18,8 @@ if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
     set_target_properties(face_flux_gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 foreach(ranks IN ITEMS 1 2 4)
-    foreach(mode IN ITEMS tet_scs tet_source hex_scs hex_source reject)
+    foreach(mode IN ITEMS tet_ddt_scs tet_ddt_source tet_k_scs tet_k_source
+                          hex_ddt_scs hex_ddt_source hex_k_scs hex_k_source failed reject)
         add_test(NAME face_flux_${mode}_${ranks}
             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
             $<TARGET_FILE:face_flux_gpu> ${MPIEXEC_POSTFLAGS} ${mode})
