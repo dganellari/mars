@@ -9,6 +9,7 @@
 // (Hypre, assembled DDT, divT gradient, implicit convection, SUPG, the penalised projection).
 //   flow     every step: the pressure solve converges, the fields stay finite, and continuity is
 //            no worse than without the penalty; prints the kinetic energy, KE=, for the rank comparison;
+//   failed   a deliberately failed pressure solve: it returns -2, and the convergence check rejects it;
 //   invalid  one inverted hex: setup refuses it with std::invalid_argument on every rank.
 
 using Key     = uint64_t;
@@ -100,6 +101,10 @@ void boundaries(Stepper& s, const Fixture& f)
             s.wallNodes.push_back(int(i));
     }
 }
+// The last pressure solve succeeded: solveOneComponent returns -2 on failure, else its iterations,
+// below the cap. (The cap alone accepts -2.)
+bool pressure_solve_succeeded(const Stepper& s) { return s.lastPressureIters >= 0 && s.lastPressureIters < s.maxIter; }
+
 std::unique_ptr<Stepper> make_stepper(const Fixture& f, int rank, int ranks)
 {
     auto s               = std::make_unique<Stepper>(*f.domain, SolverKind::Hypre, 256, 2000, 1e-10, rank, ranks);
@@ -136,7 +141,7 @@ void check_flow(const Fixture& f, int rank, int ranks)
         runNsStep(*s, .001, .01, 1.);
         runNsStep(*without, .001, .01, 1.);
         // Pressure convergence: both solves stopped below the iteration cap.
-        require(s->lastPressureIters < s->maxIter && without->lastPressureIters < without->maxIter,
+        require(pressure_solve_succeeded(*s) && pressure_solve_succeeded(*without),
                 "The pressure solve did not converge");
         bool finite = true;
         for (auto* field : {&s->d_u, &s->d_v, &s->d_w, &s->d_p})
@@ -165,6 +170,20 @@ void check_flow(const Fixture& f, int rank, int ranks)
     if (rank == 0)
         std::cout << std::setprecision(12) << "KE=" << ke << "\n";
     require(std::isfinite(ke) && ke > 0, "No flow");
+}
+
+// One GMRES iteration and an acceptance residual nothing reaches: the pressure solve fails.
+void check_failed_solve(const Fixture& f, int rank, int ranks)
+{
+    auto s = make_stepper(f, rank, ranks);
+    s->maxIter   = 1;
+    s->tolerance = 1e-300;
+    setenv("MARS_HYPRE_ACCEPT_RES", "1e-300", 1);
+    runNsStep(*s, .001, .01, 1.);
+    unsetenv("MARS_HYPRE_ACCEPT_RES");
+    if (rank == 0) std::cout << "failed: pressure solve returned " << s->lastPressureIters << "\n";
+    require(s->lastPressureIters == -2, "The forced pressure failure did not return -2");
+    require(!pressure_solve_succeeded(*s), "The convergence check accepted a failed pressure solve");
 }
 
 void check_invalid(int rank, int ranks)
@@ -205,6 +224,11 @@ int main(int argc, char** argv)
         {
             Fixture fixture(rank, ranks, 6, false);
             check_flow(fixture, rank, ranks);
+        }
+        else if (mode == "failed")
+        {
+            Fixture fixture(rank, ranks, 6, false);
+            check_failed_solve(fixture, rank, ranks);
         }
         else if (mode == "invalid")
             check_invalid(rank, ranks);

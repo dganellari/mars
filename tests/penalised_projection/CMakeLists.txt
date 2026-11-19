@@ -18,7 +18,7 @@ if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
     set_target_properties(penalised_projection_gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 foreach(ranks IN ITEMS 1 2 4)
-    foreach(mode IN ITEMS baseline varying update bdf2 flow reject)
+    foreach(mode IN ITEMS baseline varying update bdf2 flow failed reject)
         add_test(NAME penalised_${mode}_${ranks}
             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
             $<TARGET_FILE:penalised_projection_gpu> ${MPIEXEC_POSTFLAGS} ${mode})
