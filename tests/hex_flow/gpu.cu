@@ -172,15 +172,22 @@ void check_flow(const Fixture& f, int rank, int ranks)
     require(std::isfinite(ke) && ke > 0, "No flow");
 }
 
-// One GMRES iteration and an acceptance residual nothing reaches: the pressure solve fails.
+// A pressure solve that fails while the velocity's succeed (so the pressure's RHS, the inflow's
+// divergence, is not 0): a step of 1e-8 (the velocity matrix is then its mass), at most 5
+// iterations, Jacobi in place of BoomerAMG for the pressure, an acceptance residual nothing reaches.
 void check_failed_solve(const Fixture& f, int rank, int ranks)
 {
     auto s = make_stepper(f, rank, ranks);
-    s->maxIter   = 1;
-    s->tolerance = 1e-300;
+    s->maxIter = 5;
+    setenv("MARS_HYPRE_PRECOND", "jacobi", 1);
     setenv("MARS_HYPRE_ACCEPT_RES", "1e-300", 1);
-    runNsStep(*s, .001, .01, 1.);
+    runNsStep(*s, 1e-8, .01, 1.);
+    unsetenv("MARS_HYPRE_PRECOND");
     unsetenv("MARS_HYPRE_ACCEPT_RES");
+    if (rank == 0)
+        std::cout << "failed: velocity iterations " << s->lastUIters << " " << s->lastVIters << " " << s->lastWIters << "\n";
+    require(s->lastUIters >= 0 && s->lastVIters >= 0 && s->lastWIters >= 0,
+            "The forced failure's velocity solves did not succeed");
     if (rank == 0) std::cout << "failed: pressure solve returned " << s->lastPressureIters << "\n";
     require(s->lastPressureIters == -2, "The forced pressure failure did not return -2");
     require(!pressure_solve_succeeded(*s), "The convergence check accepted a failed pressure solve");
