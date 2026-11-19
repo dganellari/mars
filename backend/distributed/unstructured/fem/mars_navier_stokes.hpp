@@ -41,6 +41,7 @@
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
+#include "backend/distributed/unstructured/fem/mars_hex_geometry.hpp"
 #include "backend/distributed/unstructured/fem/mars_dof_space.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 
@@ -162,46 +163,7 @@ struct Components
 // Geometry
 // ---------------------------------------------------------------------------
 
-// det J of the trilinear map of a hex at reference point xi in [-1, 1]^3.
-// Corner order: (-,-,-) (+,-,-) (+,+,-) (-,+,-) (-,-,+) (+,-,+) (+,+,+) (-,+,+).
-template<typename RealType>
-__host__ __device__ inline RealType hexJacobianDeterminant(const RealType x[8][3], const RealType xi[3])
-{
-    const int sign[8][3] = {{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-                            {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}};
-    RealType J[3][3] = {};
-    for (int n = 0; n < 8; ++n)
-    {
-        RealType f[3] = {1 + sign[n][0] * xi[0], 1 + sign[n][1] * xi[1], 1 + sign[n][2] * xi[2]};
-        RealType dN[3] = {sign[n][0] * f[1] * f[2] / 8, sign[n][1] * f[0] * f[2] / 8, sign[n][2] * f[0] * f[1] / 8};
-        for (int a = 0; a < 3; ++a)
-            for (int b = 0; b < 3; ++b)
-                J[a][b] += x[n][a] * dN[b];
-    }
-    return J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1]) - J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0]) +
-           J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
-}
-
-// Volume of the sub-control volume of corner c: the image of the reference
-// octant between the corner and the element centre. det J is quadratic in each
-// reference coordinate, so the 2x2x2 Gauss rule on the octant is exact.
-template<typename RealType>
-__host__ __device__ inline RealType hexSubVolume(const RealType x[8][3], int c)
-{
-    const int sign[8][3] = {{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-                            {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}};
-    const RealType g[2]  = {RealType(0.5) - RealType(0.5) / sqrt(RealType(3)),
-                            RealType(0.5) + RealType(0.5) / sqrt(RealType(3))};
-    RealType volume      = 0;
-    for (int i = 0; i < 2; ++i)
-        for (int j = 0; j < 2; ++j)
-            for (int k = 0; k < 2; ++k)
-            {
-                RealType xi[3] = {sign[c][0] * g[i], sign[c][1] * g[j], sign[c][2] * g[k]};
-                volume += hexJacobianDeterminant(x, xi);
-            }
-    return volume / 8; // octant volume 1, eight points
-}
+// hexJacobianDeterminant, hexSubVolume: mars_hex_geometry.hpp.
 
 template<typename KeyType, typename RealType>
 __global__ void nsMassKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y, const RealType* z,
