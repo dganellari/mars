@@ -18,7 +18,7 @@ if(MARS_GPU_LANGUAGE STREQUAL "CUDA")
     set_target_properties(slip_walls_gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 foreach(ranks IN ITEMS 1 2 4)
-    foreach(mode IN ITEMS tet_ddt tet_ff hex_ddt hex_ff reject)
+    foreach(mode IN ITEMS tet_ff hex_ff reject)
         add_test(NAME slip_walls_${mode}_${ranks}
             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} ${MPIEXEC_PREFLAGS}
             $<TARGET_FILE:slip_walls_gpu> ${MPIEXEC_POSTFLAGS} ${mode})

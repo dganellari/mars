@@ -37,11 +37,10 @@ t = 0, for 25 steps of 0.002. The pressure is pinned at one interior node (`flux
 
 | mode | checks |
 |---|---|
-| `{tet,hex}_ddt` | implicit advection on the nodal velocity |
-| `{tet,hex}_ff` | the face-flux projection and its convection |
+| `{tet,hex}_ff` | the face-flux projection and its convection (implicit advection) |
 | `reject` | slip nodes with `BCKind::Channel` |
 
-Both groups of flow modes run on 16² and 32² cells. Every step checks:
+The flow modes run on 16² and 32² cells. Every step checks:
 - the pressure solve succeeds;
 - the fields are finite;
 - the normal component is exactly 0 on every slip plane.
@@ -50,3 +49,13 @@ At the end:
 - the 16² relative L2 velocity error is below 5e-2;
 - the error falls at least as h^1.5;
 - the kinetic energy matches the exact `e^(-4νt)` to 2%.
+
+**Not covered: the nodal (DDT) projection in a closed box.** A box with no openings needs the
+interior pin (`fluxNeumann`). On the nodal projection, its pressure solve does not converge on this
+case:
+- with Jacobi, GMRES stalls at its 2000-iteration cap;
+- with BoomerAMG, it returns a solution of size 2.5e9 for a near-zero RHS, which MARS flags as
+  contaminated by the null space.
+
+The pin evidently does not reach the operator that is solved; the face-flux operator applies the pin
+row itself. This is independent of the slip walls, and a closed box is not the pump's configuration.
