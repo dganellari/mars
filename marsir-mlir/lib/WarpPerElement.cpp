@@ -749,6 +749,23 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   }
   if (anyScratch)   // the next element must not overwrite scratch a slower lane still reads
     OpBuilder(body->getTerminator()).create<gpu::BarrierOp>(loc);
+  // A launch with no ghost buffer can only read local copies. Branch once
+  // around the scheduled loop so every lane still reaches the same barriers.
+  if (auto ghostArg = elements->getAttrOfType<IntegerAttr>("mir.interior_ghost_arg")) {
+    OpBuilder at(loop);
+    Value address = at.create<memref::ExtractAlignedPointerAsIndexOp>(loc, func.getArgument(ghostArg.getInt()));
+    Value noGhost = at.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, address,
+                                             at.create<arith::ConstantIndexOp>(loc, 0));
+    auto dispatch = at.create<scf::IfOp>(loc, noGhost, /*withElseRegion=*/true);
+    OpBuilder inside = OpBuilder::atBlockBegin(dispatch.thenBlock());
+    Value local = inside.create<arith::ConstantIntOp>(loc, 1, 1);
+    Operation *specialized = inside.clone(*loop);
+    specialized->walk([&](scf::IfOp branch) {
+      if (branch->removeAttr("mir.local_copy")) branch.getConditionMutable().assign(local);
+    });
+    loop.walk([](scf::IfOp branch) { branch->removeAttr("mir.local_copy"); });
+    loop->moveBefore(dispatch.elseBlock()->getTerminator());
+  }
   elements.erase();
   mir::refreshViewTypes(func.getOperation());
   if (!single || L != kWarp) {

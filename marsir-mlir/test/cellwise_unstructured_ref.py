@@ -17,7 +17,11 @@ by 5 elements:
   * every copy of a node holds the same bits, equal to a canonical-order assembly;
   * the entity-centric form equals the per-copy gather bit for bit;
   * splitting the elements over 2, 3 or 5 ranks, each reading only the remote copies a
-    single-phase exchange delivers (copies of nodes it also holds), gives the same bits.
+    single-phase exchange delivers (copies of nodes it also holds), gives the same bits;
+  * the summed exchange of the node-line residual (cellwise::SummedHalo): every rank but
+    the counting one sends the counting rank one value per shared node, the sum of its own
+    copies in canonical order, filed into its first ghost copy with zeros in its others.
+    At counting copies the gather then equals the canonical sum to rounding.
 
 Run: python3 test/cellwise_unstructured_ref.py
 """
@@ -305,6 +309,40 @@ def main():
             same = all(np.array_equal(res[e], y[e]) for e in range(E))
             ok &= same
             print(f"  {P} ranks: bit-identical to one domain {same}; remote reads (with repeats) {sum(sent.values())}")
+        # 5. the summed exchange: only counting copies (canonically first copy of a node) are
+        #    compared; each other holder of the node sends its own copies' sum to that rank.
+        cls = T.node_class()
+        for P in (2, 3, 5):
+            part = rng.integers(P, size=E)
+            sums = {}                                   # (node, rank) -> its copies' sum
+            first = {}                                  # (node, rank) -> its first copy
+            for (e, l), g in sorted(ids.items()):
+                r = part[e]
+                sums[(g, r)] = sums.get((g, r), 0.0) + vals[e, l]
+                first.setdefault((g, r), (e, l))
+            counter = {g: part[min(cps)[0]] for g, cps in copies.items()}
+            worst, sent = 0.0, 0
+            for r in range(P):
+                mine = [e for e in range(E) if part[e] == r]
+                def value(e, l, r=r):
+                    if part[e] == r: return vals[e, l]
+                    g = ids[(e, l)]
+                    if counter[g] != r: return np.nan        # never delivered: must not matter
+                    return sums[(g, part[e])] if first[(g, part[e])] == (e, l) else 0.0
+                got = dss_gather(T, value, mine)
+                for e in mine:
+                    for l in range(n ** 3):
+                        g = ids[(e, l)]
+                        if min(copies[g]) == (e, l):        # the counting copy
+                            d = abs(got[e][l] - y[e][l]) / max(1.0, abs(y[e][l]))
+                            worst = max(worst, d) if np.isfinite(d) else float("inf")
+                            if not np.isfinite(d): break
+            sent = sum(1 for (g, r) in sums if r != counter[g])
+            full = sum(1 for (e, l), g in ids.items() for r in {part[e2] for (e2, l2) in copies[g]}
+                       if r != part[e] and len(copies[g]) > 1 and cls[l][0] != 'I')
+            ok &= bool(np.isfinite(worst)) and worst < 1e-14
+            print(f"  {P} ranks, summed exchange: counting copies within {worst:.1e} of the canonical sum; "
+                  f"{sent} values sent where the full exchange sends {full}")
         yb = dss_entity(T, vals)
         same_b = all(np.array_equal(y[e], yb[e]) for e in range(E))
         ok &= same_b

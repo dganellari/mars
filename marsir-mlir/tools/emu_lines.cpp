@@ -122,11 +122,16 @@ struct Tables {
     }
 };
 
-void residual()
+void residual(bool signed_zero, bool interior)
 {
-    Mesh m = Mesh::random(10, 4, 31 + P);
+    Mesh m = Mesh::random(10, interior ? 0 : 4, 31 + P);
     std::vector<int32_t> list = {6, 0, 9, 2, 4};
-    const std::vector<double> y = random_vector(m.E * n3, 41);
+    std::vector<double> y = random_vector(m.E * n3, 41);
+    if (signed_zero) {
+        // An exterior face must retain its own -0.0 without adding a padded zero.
+        for (auto* v : {&m.values, &m.ghost, &y})
+            for (size_t i = 0; i < v->size(); ++i) (*v)[i] = i % 2 ? 0.0 : -0.0;
+    }
     for (const bool minus : {false, true}) {
         std::vector<double> s(m.E * n3, std::nan("")), ref = s, stage;
         m.minus = minus ? y : std::vector<double>();
@@ -136,9 +141,13 @@ void residual()
         }
         std::vector<double> yy = y;
         DR db = desc(m.values), dg = desc(m.ghost), dy = desc(yy), ds = desc(s);
+        // On a distributed interior launch the descriptor retains the rank's
+        // ghost capacity even though the buffer pointer is null.
+        if (interior) dg = {nullptr, nullptr, 0, {4 * n3}, {1}};
         D32 dl = desc(list);
         Tables t(m);
-        emulate(TH(lines_residual0)(), (long long)list.size(), [&] {
+        const int64_t threads = TH(lines_residual0)(), per_block = threads / 32;
+        emulate(threads, ((long long)list.size() + per_block - 1) / per_block, [&] {
             if (minus)
                 CI(lines_residual)(&db, &dg, &dy, &dl, &t.fn, &t.fc, &t.eo, &t.eoff, &t.eent, &t.vo, &t.voff, &t.vent,
                                    &ds);
@@ -262,7 +271,10 @@ void solve()
 
 int main()
 {
-    residual();
+    for (bool interior : {false, true}) {
+        residual(false, interior);
+        residual(true, interior);
+    }
     update();
     solve();
     printf("  block threads: residual %lld, update %lld, solve %lld\n", (long long)TH(lines_residual0)(),

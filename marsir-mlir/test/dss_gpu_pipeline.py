@@ -49,7 +49,7 @@ update as mir.dss with an epilogue (first0 / first / next), and the banded block
 structured loops, one lane per block; lines_p{p}_sm90.ptx, CPU gate tools/emu_lines.cpp.
 
 Run from marsir-mlir/:  python3 test/dss_gpu_pipeline.py [p] [--precond | --bicgstab | --pmg | --lines] [--emulate [--emu-tsan]]
-                        [--dss-warps=N] [--dss-hoist=0|1]   (the standalone DSS kernel's shape)
+                        [--dss-warps=N] [--dss-hoist=0|1] [--dss-direct-faces]   (override the DSS lowering)
 """
 import os
 import re
@@ -95,6 +95,12 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
     hoist = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--dss-hoist=")), "1" if plain and p == 7 else None)
     shape = [f"dss-warps={warps}"] * (warps is not None) + \
             [f"dss-hoist-entities={'true' if hoist == '1' else 'false'}"] * (hoist is not None)
+    if "--dss-interior" in sys.argv:
+        if not lines:
+            raise ValueError("interior residual experiment requires --lines")
+        shape.append("dss-interior=true")
+    if "--dss-direct-faces" in sys.argv:
+        shape.append("dss-direct-faces=true")
     ir = run([MIROPT, "-", "--mir-lower-cellwise" + ("=" + " ".join(shape) if shape else ""), *early_cleanup,
               "--mir-warp-per-element", "--canonicalize", "--cse",
               "--loop-invariant-code-motion"], src)
