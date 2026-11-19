@@ -10912,7 +10912,7 @@ bool penalisedProjectionSupported(const NSStepper<KeyType, RealType, ElementTag>
     return (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>) &&
            s.solverKind == SolverKind::Hypre && !(s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT == 0) &&
            std::getenv("MARS_HYPRE_USE_DDT") == nullptr && s.outletBeta < RealType(0) && !s.useFemProjection &&
-           !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly && !s.stabBochevDohrmann;
+           !s.useRhieChow && !s.useVMSStab && !s.useRcImplicit && !s.useRcOnly && !s.stabBochevDohrmann;
 #endif
 }
 
