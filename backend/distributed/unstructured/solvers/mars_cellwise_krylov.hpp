@@ -275,7 +275,7 @@ struct Reduction {
         MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
         MARS_CELLWISE_CK(cudaMalloc(&partial, 4 * 32 * sms * sizeof(double)));
         MARS_CELLWISE_CK(cudaMalloc(&scalars, kScalars * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMallocHost(&host, 2 * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMallocHost((void**)&host, 2 * sizeof(double)));
     }
     ~Reduction()
     {
