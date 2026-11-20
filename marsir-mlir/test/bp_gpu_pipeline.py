@@ -68,18 +68,14 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     # and the out-param y (last); the 1D matrices are shared. Bufferization renames the
     # arguments, so they are found by position. u and y are not staged in shared memory:
     # with one thread per 1D line the first sweep reads u once and the last writes y once.
-    m = re.search(rf"(func\.func @{spec}_apply\()(.*?)(\) \{{)", ir, re.S)
-    args = m.group(2).split(", ")
-    args[0] += ' {mir.element}'
-    args[-1] += ' {mir.element}'
-    if "%G:" in src or "%X:" in src:   # stored geometry, or the corners (geometry = trilinear)
-        args[-2] += " {mir.element}"
+    elements = [0, -1] + ([-2] if "%G:" in src or "%X:" in src else [])   # stored geometry, or the corners
     # The 1D matrices B, Bt [, D, Dt] follow u: constant memory, filled by the host. GLL
     # nodes and Gauss points are symmetric, so B and Bt are mirror-symmetric and D, Dt
     # antisymmetric (mir.reflect, for --mir-even-odd).
-    for i in range(1, 5 if "%D:" in src else 3):
-        args[i] += f" {{mir.constant, mir.reflect = {1 if i <= 2 else -1} : i64}}"
-    ir = ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {" + ir[m.end(3):]
+    constants = [1, 2, 3, 4] if "%D:" in src else [1, 2]
+    reflect = [1, 1, -1, -1][:len(constants)]
+    ir = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply elements={','.join(map(str, elements))} "
+                 f"constants={','.join(map(str, constants))} reflect={','.join(map(str, reflect))}"], ir)
 
     # Warps per block: the CVFEM operator's measured default, halved (fewer elements
     # per block) until the static shared memory fits in 48 KB.
@@ -114,8 +110,7 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
                               + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else [])
                               + (["-DBP_EVEN_ODD"] if "__fold" in ir else []))
         suffix = "_f32" if real == "f32" else ""
-        named = ir.replace(f"func.func @{spec}_apply(", f"func.func @{spec}_apply_p{p}{suffix}(").replace(
-            f"@{spec}_apply__m", f"@{spec}_apply_p{p}{suffix}__m")
+        named = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply rename={spec}_apply_p{p}{suffix}"], ir)
         maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")), MAXNREG.get((spec, p), 0))
         status = hl.finish(named, p, suffix, no_chain=True, prefix=spec, maxnreg=maxnreg)
         ptx = open(os.path.join(hl.ROOT, "generated", f"{spec}_p{p}{suffix}_sm90.ptx")).read()

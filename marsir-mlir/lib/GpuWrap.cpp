@@ -33,6 +33,11 @@ constexpr StringLiteral kModuleName = "mir_kernels";
 struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GpuWrapPass)
 
+  GpuWrapPass() = default;
+  GpuWrapPass(const GpuWrapPass &other) : PassWrapper(other) {}
+  Option<int> maxnreg{*this, "maxnreg", llvm::cl::desc("NVVM register cap on each kernel (0: none)"),
+                      llvm::cl::init(0)};
+
   StringRef getArgument() const final { return "mir-gpu-wrap"; }
   StringRef getDescription() const final {
     return "Move each func.func marked {mir.kernel} into a gpu.module as a "
@@ -174,6 +179,8 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
         if (isa<MemRefType>(gfunc.getArgument(i).getType()))
           eb.create<memref::AssumeAlignmentOp>(gfunc.getLoc(),
                                                gfunc.getArgument(i), kAlign);
+      if (maxnreg > 0)
+        gfunc->setAttr("nvvm.maxnreg", b.getI32IntegerAttr(maxnreg));
       f.erase();
     }
   }

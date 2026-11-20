@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
   mir::registerTraceSharedPass();
   mir::registerEvenOddPass();
   mir::registerSetTargetPass();
+  mir::registerMarkKernelPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

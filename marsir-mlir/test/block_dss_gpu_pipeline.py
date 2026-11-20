@@ -44,9 +44,7 @@ sys.stdout.write(mlir_ir.emit_block_dss({p}, {block}))
         return emulate(ir, p, block)
 
     ir = d.run([d.MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = ir.replace("gpu.module @mir_kernels ",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] ', 1)
-    ir = d.run([d.MLIROPT, "-",
+    ir = d.run([d.MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
                 "--convert-scf-to-cf",
                 "--expand-strided-metadata",
                 "--lower-affine",

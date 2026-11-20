@@ -108,9 +108,7 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
         return emulate(ir, p, precond, bicg, pmg, lines)
 
     ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = ir.replace("gpu.module @mir_kernels ",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] ', 1)
-    ir = run([MLIROPT, "-",
+    ir = run([MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
               "--convert-scf-to-cf",
               "--expand-strided-metadata",
               "--lower-affine",

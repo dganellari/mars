@@ -124,15 +124,10 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
               "--buffer-results-to-out-params=hoist-static-allocs=true"], ir)
 
     # The kernel and its per-element arguments, before any pass that keys on them.
-    m = re.search(r"(func\.func @laplacian_apply\()(.*?)(\) \{)", ir, re.S)
-    args = m.group(2).split(", ")
-    marks = PER_ELEMENT | {len(args) - 1}
-    args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
-    if cellwise:   # the element's field is staged into shared memory, its result out of it
-        args[0] = args[0].replace("{mir.element}", '{mir.element, mir.stage = "in"}')
-        args[-1] = args[-1].replace("{mir.element}", '{mir.element, mir.stage = "out"}')
-    ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
-          + ir[m.end(3):])
+    n_args = len(re.search(r"func\.func @laplacian_apply\((.*?)\) \{", ir, re.S).group(1).split(", "))
+    elements = sorted(PER_ELEMENT | {n_args - 1})
+    ir = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply elements={','.join(map(str, elements))}"
+              + (" stage-in=0 stage-out=-1" if cellwise else "")], ir)
     if cellwise:
         # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
         # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
@@ -155,7 +150,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
             if "--emulate" in sys.argv:
                 return emulate(ir, p)
             suffix = "_f32" if real == "f32" else ""
-            named = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}{suffix}(")
+            named = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply rename=laplacian_apply_p{p}{suffix}"], ir)
             tag = suffix + ("" if given is None else f"_w{warps}")
             status = finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
             ptx = open(os.path.join(ROOT, "generated", f"hl_cellwise_p{p}{tag}_sm90.ptx")).read()
@@ -218,13 +213,8 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
 
 def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
     """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
-    ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
-    if maxnreg:   # .maxnreg on the entry; --mir-gpu-wrap emits `kernel {` without attributes
-        m = re.search(r"gpu\.func @\w+\(.*?\) workgroup\(.*?\) kernel(?= \{)|gpu\.func @\w+\(.*?\) kernel(?= \{)", ir, re.S)
-        ir = ir[:m.end()] + f" attributes {{nvvm.maxnreg = {maxnreg} : i32}}" + ir[m.end():]
-    ir = ir.replace("gpu.module @mir_kernels {",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
-    ir = run([MLIROPT, "-",
+    ir = run([MIROPT, "-", f"--mir-gpu-wrap=maxnreg={maxnreg}"], ir)
+    ir = run([MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
               "--convert-vector-to-scf", "--canonicalize",
               "--convert-scf-to-cf",
               "--convert-nvgpu-to-nvvm",

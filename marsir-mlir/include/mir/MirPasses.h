@@ -48,6 +48,8 @@ void registerFusePhasesPass();
 void registerTraceSharedPass();
 // Registers --mir-even-odd (even-odd split of mirror-symmetric 1D sweeps).
 void registerEvenOddPass();
+// Registers --mir-mark-kernel (kernel and argument roles by position; rename).
+void registerMarkKernelPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
