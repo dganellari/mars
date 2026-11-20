@@ -14,8 +14,14 @@ Same gate (`mars_marsir_galerkin_gate`), same source, median of 20 warm applies;
 check against host quadrature. GDoF/s counts element-local values. Jobs: Daint 5410396,
 Beverin 757090.
 
-The NVIDIA numbers are faster because the schedules were tuned on GH200. The leading
-hypothesis for the gap is occupancy (see "Next steps"); it has not been measured yet.
+Both kernels are limited by memory traffic: per element they read the geometry tensor G
+(6 values per quadrature point) and u, and write y, 7,024 B at p=3 and 43,184 B at p=7. That
+gives 2.8 / 2.4 TB/s on GH200 and 1.1 / 0.7 TB/s on MI300A, so MI300A reaches a much smaller
+share of its memory bandwidth.
+
+Occupancy is not the cause. MI300A holds 2 blocks per CU against 6 to 8 per SM on GH200, but
+an AMD ablation at p=3 (Beverin 757093, lanes per element 16 / 32 / 64, each run twice)
+raised it to 4 and 16 blocks per CU and was slower: 1.65 / 2.38 / 1.83 ms.
 
 How to build an AMD kernel:
 
@@ -137,9 +143,8 @@ instruction needs the element on all 64 lanes of a wavefront.
 
 ## Next steps
 
-1. Measure occupancy on both GPUs (blocks resident per compute unit). Hypothesis: each block
-   uses 32 KB (p=3) or 23 KB (p=7) of shared memory, so MI300A's 64 KB per compute unit
-   holds about two blocks, too few wavefronts to hide memory latency.
+1. Find why the loads reach less bandwidth on MI300A: a streaming kernel with the same bytes
+   gives the attainable bandwidth, and hardware counters show whether the loads are coalesced.
 2. Tune for AMD with the same knobs as on GH200, measured as an AMD ablation.
 3. Target layer: wave size and shared-memory budget from the target, instruction layouts as
    data, the four fixes above done properly in MLIR.
