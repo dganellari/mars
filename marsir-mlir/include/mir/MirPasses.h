@@ -52,6 +52,8 @@ void registerEvenOddPass();
 void registerMarkKernelPass();
 // Registers the pipelines (--mir-lower-to-nvvm).
 void registerPipelines();
+// Registers --mir-amdgpu-grid-dim (gpu.grid_dim from the dispatch packet on AMD).
+void registerAmdgpuGridDimPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

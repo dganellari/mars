@@ -61,11 +61,11 @@ function, `__ockl_get_num_groups`. On NVIDIA the same question is a single hardw
 read. Without the library the call is left unresolved, so linking fails: the "undefined
 symbol" error in the second Beverin job.
 
-Workaround: we define that function ourselves inside the kernel. It reads two numbers from
-the *dispatch packet*, a small record the GPU receives with every kernel launch that holds
-the grid size and the block size, and divides them.
-
-Proper fix: lower `gpu.grid_dim` straight to that read in MLIR, with no library call.
+Fix (done in MLIR): `--mir-amdgpu-grid-dim` replaces `gpu.grid_dim` on AMD targets, before
+the ROCDL conversion, by a read of the *dispatch packet*: a small record the GPU receives with
+every kernel launch that holds the grid size and the block size; the block count is their
+ceiling quotient. It first worked as a patch on the LLVM IR text; the pass gives the same
+machine code, byte for byte.
 
 ### 3. Scratch arrays land in the wrong address space ("alloca address space")
 

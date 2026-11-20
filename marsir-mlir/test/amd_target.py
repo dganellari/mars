@@ -9,9 +9,9 @@ Then: llvm-mc -triple=amdgcn-amd-amdhsa -mcpu=gfx942 -filetype=obj x.s -o x.o, a
 target clang++ -target amdgcn-amd-amdhsa -mcpu=gfx942 x.o -o x.hsaco (the ROCm assembler may
 not know LLVM 19's directives, so assemble with this LLVM and only link there).
 The module carries the AMD target (--mir-set-target=target=amd: 64-lane wavefronts, 64 KB
-LDS, MFMA fragments), which the passes read. At the LLVM level, each explained where it is
-applied: private-space allocas, __ockl_get_num_groups from the dispatch packet, and opt -O3
-for gfx942 before llc (as clang runs it), without which global memory is read with flat_load.
+LDS, MFMA fragments), which the passes read; --mir-amdgpu-grid-dim reads the grid size from
+the dispatch packet. At the LLVM level, each explained where it is applied: private-space
+allocas, and opt -O3 for gfx942 before llc (as clang runs it).
 gpu-module-to-binary is not used: it requires the ROCm device bitcode."""
 import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,10 +21,8 @@ import hl_gpu_pipeline as hl
 import importlib
 
 def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
-    ir = hl.run([hl.MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = ir.replace("gpu.module @mir_kernels {",
-                    'gpu.module @mir_kernels [#rocdl.target<chip = "gfx942", O = 3>] {')
-    ir = hl.run([hl.MLIROPT, "-",
+    ir = hl.run([hl.MIROPT, "-", "--mir-gpu-wrap", "--mir-amdgpu-grid-dim"], ir)
+    ir = hl.run([hl.MLIROPT, "-", "--rocdl-attach-target=module=mir_kernels chip=gfx942 O=3",
                  "--convert-vector-to-scf", "--canonicalize", "--convert-scf-to-cf",
                  "--expand-strided-metadata", "--lower-affine",
                  "--convert-amdgpu-to-rocdl=chipset=gfx942",
@@ -60,34 +58,9 @@ def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False,
         return f"{ind}{tmp} = alloca {rest}, addrspace(5)\n{ind}{name} = addrspacecast ptr addrspace(5) {tmp} to ptr"
     ll, nalloca = re.subn(r"^(\s*)(%[\w.]+) = alloca (.*?)$", private, ll, flags=re.M)
     if nalloca: print(f"  {nalloca} allocas moved to address space 5")
-    # MLIR lowers gpu.grid_dim to __ockl_get_num_groups, a ROCm device-library function; define
-    # it here from the HSA dispatch packet (workgroup_size_x/y/z: u16 at 4/6/8, grid_size_x/y/z:
-    # u32 at 12/16/20), valid for code object v4 and v5, so no device library is needed.
-    decl = re.search(r"^declare (\S+) @__ockl_get_num_groups\((\S+)\)(.*)$", ll, re.M)
-    if decl:
-        ret, arg = decl.group(1), decl.group(2)
-        assert (ret, arg) == ("i64", "i32"), (ret, arg)
-        body = """define internal i64 @__ockl_get_num_groups(i32 %dim) alwaysinline {
-  %dp = call ptr addrspace(4) @llvm.amdgcn.dispatch.ptr()
-  %d = zext i32 %dim to i64
-  %goff = shl i64 %d, 2
-  %gaddr = add i64 %goff, 12
-  %woff = shl i64 %d, 1
-  %waddr = add i64 %woff, 4
-  %gp = getelementptr i8, ptr addrspace(4) %dp, i64 %gaddr
-  %wp = getelementptr i8, ptr addrspace(4) %dp, i64 %waddr
-  %grid = load i32, ptr addrspace(4) %gp, align 4
-  %w16 = load i16, ptr addrspace(4) %wp, align 2
-  %w = zext i16 %w16 to i32
-  %sum = add i32 %grid, %w
-  %sum1 = sub i32 %sum, 1
-  %n = udiv i32 %sum1, %w
-  %n64 = zext i32 %n to i64
-  ret i64 %n64
-}
-declare ptr addrspace(4) @llvm.amdgcn.dispatch.ptr()"""
-        ll = ll.replace(decl.group(0), body)
-        print("  __ockl_get_num_groups defined from the dispatch packet")
+    # --mir-amdgpu-grid-dim reads the grid size from the dispatch packet, so no ROCm
+    # device-library function may remain.
+    assert "@__ockl_" not in ll, "a ROCm device-library call survived the lowering"
     out = os.path.join(os.path.dirname(HERE), "generated", f"{prefix}_p{p}{tag}_gfx942.s")
     cov = os.environ.get("AMD_COV")   # code object version, for an older ROCm runtime
     llc = [os.path.join(hl.LLVM, "bin", "llc"), "-march=amdgcn", "-mcpu=gfx942", "-O3"]
