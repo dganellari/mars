@@ -143,7 +143,9 @@ namespace bp3_h = mars::cellwise::h_coarse;
 #endif
 #endif
 
+#if !(defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__))
 #include <cuda_profiler_api.h>
+#endif
 #include <mpi.h>
 #include <thrust/count.h>
 #include <thrust/device_vector.h>
@@ -878,7 +880,7 @@ std::unique_ptr<Bp3Level> bp3_level(const std::string& ptx_dir, long long E, int
     geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, st>>>(c(L->G), E, Q, 6, ne, deform, rule_of(b));
     diagonal_kernel<PL><<<blocks_for(E * n3), cellwise::kThreads, 0, st>>>(c(L->G), c(L->B), c(L->DB), c(L->elem), E, 6);
     MARS_CELLWISE_CK(cudaGetLastError());
-    L->op = std::make_unique<marsir::GalerkinPtx>(ptx_dir + "/bp3_p" + std::to_string(PL) + "_sm90.ptx",
+    L->op = std::make_unique<marsir::GalerkinPtx>(ptx_dir + "/bp3_p" + std::to_string(PL) + MARS_MARSIR_KERNEL_SUFFIX,
                                                   "bp3_apply_p" + std::to_string(PL), PL, Q, true, 6);
     return L;
 }
@@ -1033,7 +1035,7 @@ int run(const Options& o)
     }
 
     const std::string kernel = o.spec + "_apply_p" + std::to_string(P);
-    const std::string path = o.ptx_dir + "/" + o.spec + "_p" + std::to_string(P) + "_sm90.ptx";
+    const std::string path = o.ptx_dir + "/" + o.spec + "_p" + std::to_string(P) + MARS_MARSIR_KERNEL_SUFFIX;
     marsir::GalerkinPtx op(path, kernel, P, Q, bp3, tri ? 0 : K);
     auto apply = [&](const double* in, double* out, cudaStream_t st) {
         if (tri) op.apply_trilinear(in, raw(dB), raw(dBt), raw(dD), raw(dDt), raw(dgq), raw(dwq), raw(X), out, E, st);
@@ -1087,7 +1089,7 @@ int run(const Options& o)
     std::unique_ptr<marsir::DssPtx> dss_gen(o.dss_ptx.empty() ? nullptr : new marsir::DssPtx(o.dss_ptx, P));
     std::unique_ptr<marsir::BlockDssPtx> block_gen(
         o.block_dss == "generated" ? new marsir::BlockDssPtx(o.ptx_dir + "/block_dss_p" + std::to_string(P) + "_b" +
-                                                                 std::to_string(Bk) + "_sm90.ptx",
+                                                                 std::to_string(Bk) + MARS_MARSIR_KERNEL_SUFFIX,
                                                              P, Bk)
                                    : nullptr);
     auto dss = [&topo, &skeleton, &skeleton_topo, gen = dss_gen.get(), bgen = block_gen.get(), E, Bk, h,
@@ -1152,7 +1154,7 @@ int run(const Options& o)
         geometry_kernel<<<blocks_for(E * q3), cellwise::kThreads, 0, stream>>>(raw(G1), E, Q, 1, o.ne, o.deform,
                                                                               rule_of(fine));
         BP_CK(cudaGetLastError());
-        mass.reset(new marsir::GalerkinPtx(o.ptx_dir + "/bp1_p" + std::to_string(P) + "_sm90.ptx",
+        mass.reset(new marsir::GalerkinPtx(o.ptx_dir + "/bp1_p" + std::to_string(P) + MARS_MARSIR_KERNEL_SUFFIX,
                                            "bp1_apply_p" + std::to_string(P), P, Q, false, 1));
         apply_mass(raw(u), raw(b));
         scale_kernel<<<blocks_for(N), cellwise::kThreads, 0, stream>>>(raw(b), N, 3.0 * kPi * kPi);

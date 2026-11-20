@@ -24,6 +24,8 @@
 #define cudaGraphLaunch hipGraphLaunch
 #define cudaGraph_t hipGraph_t
 #define cudaMallocAsync hipMallocAsync
+#define cudaProfilerStart hipProfilerStart
+#define cudaProfilerStop hipProfilerStop
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemsetAsync hipMemsetAsync
 #define cudaStreamBeginCapture hipStreamBeginCapture
