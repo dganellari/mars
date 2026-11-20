@@ -32,6 +32,7 @@
 #define cudaStreamBeginCapture hipStreamBeginCapture
 #define cudaStreamCaptureModeThreadLocal hipStreamCaptureModeThreadLocal
 #define cudaStreamEndCapture hipStreamEndCapture
+#define cudaStreamNonBlocking hipStreamNonBlocking
 
 namespace mars
 {

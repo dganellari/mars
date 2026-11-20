@@ -130,6 +130,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_lines.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_lines.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_thrust.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_domain.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_raw.hpp"
