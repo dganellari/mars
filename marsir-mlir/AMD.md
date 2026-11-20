@@ -195,7 +195,13 @@ on steps 1 and 2.
 1. Find where the time goes inside the kernel on MI300A. A streaming kernel moving the same
    bytes reaches 3.5-3.6 TB/s there (Beverin 757094; 8 B and 16 B loads within 3%). With
    rough edge 5 fixed the operator reaches 1.6 / 0.9 TB/s, still 2.3x / 3.9x above that
-   floor. Hardware counters next, with the image's own rocprof (/usr/bin/rocprofv3 crashed).
+   floor. Hardware counters (Beverin 757110, /opt/rocm-6.3.0/bin/rocprof; the uenv rocprof
+   looks for rocm_agent_enumerator only in its own bin/ and silently runs nothing):
+   - global traffic is ideal: FETCH_SIZE = G + u bytes, WRITE_SIZE = y bytes, no 32 B requests;
+   - LDS bank-conflict cycles are 36% (p=3) / 44% (p=7) of LDS active cycles: the scratch
+     padding follows NVIDIA's bank model (WarpPerElement kBanks), not CDNA3's;
+   - the measured shapes keep one wavefront per SIMD (64 KB / 46 KB of LDS per block).
+   The occupancy ablation (757093) predates the flat_load fix, so it is repeated with opt.
 2. Tune for AMD with the same knobs as on GH200, measured as an AMD ablation.
 3. Target layer: see "Target layer plan" above.
 4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
