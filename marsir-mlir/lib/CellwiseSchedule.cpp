@@ -35,6 +35,7 @@
 // dimension kept in the thread.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 #include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -306,7 +307,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
   CellwiseSchedulePass() = default;
   CellwiseSchedulePass(const CellwiseSchedulePass &other) : PassWrapper(other) {}
   Option<int64_t> lanes{*this, "lanes",
-                        llvm::cl::desc("lanes per element (0: n^2, at most 32; a multiple of 32 spans warps)"),
+                        llvm::cl::desc("lanes per element (0: n^2, at most one warp; a multiple of the wave size spans warps)"),
                         llvm::cl::init(0)};
   Option<int64_t> warps{*this, "warps", llvm::cl::desc("warps per block"), llvm::cl::init(8)};
   Option<int64_t> maxBlock{*this, "max-block", llvm::cl::desc("longest loop dimension kept in a thread"),
@@ -462,7 +463,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
       for (int64_t d : elementTypes[marked[0]].getShape()) nodes *= d;
       const int64_t n = (int64_t)std::llround(std::cbrt((double)nodes));
       L = 1;
-      while (L * 2 <= std::min<int64_t>(n * n, 32)) L *= 2;
+      while (L * 2 <= std::min<int64_t>(n * n, mir::getGpuTarget(func).waveSize)) L *= 2;
     }
 
     // 4. Linalg ops, fills and copies into phases.

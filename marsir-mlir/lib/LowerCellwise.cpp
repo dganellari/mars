@@ -35,6 +35,7 @@
 
 #include "mir/MirOps.h"
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 
@@ -261,12 +262,12 @@ SmallVector<Value> reduceLanes(OpBuilder &ob, Location l, int64_t trips, ValueRa
 Value addf(OpBuilder &rb, Location rl, Value a, Value c) { return rb.create<arith::AddFOp>(rl, a, c); }
 
 // Marks a per-element loop whose phases have `copies` iterations: an element with
-// fewer than 32 copies gets that many lanes (rounded down to a power of two), so
+// fewer copies than a warp has lanes gets that many lanes (rounded down to a power of two), so
 // that --mir-warp-per-element puts several elements in a warp instead of leaving
 // most lanes idle (p = 1: 8 copies, 8 lanes).
 void markElements(OpBuilder &b, scf::ParallelOp loop, int64_t copies) {
   loop->setAttr("mir.elements", b.getUnitAttr());
-  if (copies >= 32)
+  if (copies >= mir::getGpuTarget(loop).waveSize)
     return;
   int64_t lanes = 1;
   while (lanes * 2 <= copies) lanes *= 2;
@@ -634,7 +635,7 @@ LogicalResult lowerOne(mir::DssOp op, int64_t warps, bool hoist, bool directFace
   markElements(b, elementLoop, d.n3);
   if (d.specializeInterior)
     elementLoop->setAttr("mir.interior_ghost_arg", b.getI64IntegerAttr(ghostArg.getArgNumber()));
-  if (warps > 1 && d.n3 >= 32)
+  if (warps > 1 && d.n3 >= mir::getGpuTarget(elementLoop).waveSize)
     elementLoop->setAttr("mir.warps_per_block", b.getI64IntegerAttr(warps));
   op.erase();
   return success();
@@ -850,16 +851,18 @@ Value forBlockCopies(Emit &z, const BlockGeom &g, Value blk, const Value (&x)[3]
   return level(z, 0, l, a, inits);
 }
 
-// Flat loop over `total` items: elements of 32 items, one lane each, item(t) per item.
+// Flat loop over `total` items: elements of one warp's worth of items, one lane each,
+// item(t) per item.
 void flatItems(OpBuilder &b, Location loc, Value total, function_ref<void(Emit &, Value)> item) {
   Emit x{b, loc};
-  const Value chunks = x.div(x.add(total, x.idx(31)), x.idx(32));
+  const int64_t wave = mir::getGpuTarget(b.getInsertionBlock()->getParentOp()).waveSize;
+  const Value chunks = x.div(x.add(total, x.idx(wave - 1)), x.idx(wave));
   auto loop = b.create<scf::ParallelOp>(
       loc, ValueRange{x.idx(0)}, ValueRange{chunks}, ValueRange{x.idx(1)},
       [&](OpBuilder &eb, Location l, ValueRange w) {
-        lanes(eb, l, 32, [&](OpBuilder &pb, Location pl, Value lane) {
+        lanes(eb, l, wave, [&](OpBuilder &pb, Location pl, Value lane) {
           Emit z{pb, pl};
-          const Value t = z.add(z.mul(w[0], z.idx(32)), lane);
+          const Value t = z.add(z.mul(w[0], z.idx(wave)), lane);
           pb.create<scf::IfOp>(pl, z.lt(t, total), [&](OpBuilder &tb, Location tl) {
             Emit u{tb, tl};
             item(u, t);

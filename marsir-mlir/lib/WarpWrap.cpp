@@ -1,12 +1,13 @@
 // --mir-warp-wrap: wrap the body of each innermost scf.parallel (the
 // per-element loop of the batched operator) in vector.warp_execute_on_lane_0,
-// so --mir-warp-distribute can spread its vector ops across the 32 lanes.
+// so --mir-warp-distribute can spread its vector ops across the lanes of a warp.
 // The lane id is materialized with gpu.lane_id (legal pre-outlining; becomes
 // %laneid in PTX). After wrapping, the launch contract changes: blockDim.x
-// becomes the 32 lanes and the element index moves to thread_y -- the payload
+// becomes the warp's lanes and the element index moves to thread_y -- the payload
 // emitter's mapping attributes must match (thread_y for the element loop).
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -25,7 +26,7 @@ struct WarpWrapPass : public PassWrapper<WarpWrapPass, OperationPass<>> {
   StringRef getArgument() const final { return "mir-warp-wrap"; }
   StringRef getDescription() const final {
     return "Wrap innermost scf.parallel bodies in "
-           "vector.warp_execute_on_lane_0 (32 lanes)";
+           "vector.warp_execute_on_lane_0 (one warp: the target's wave size)";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<gpu::GPUDialect, vector::VectorDialect, scf::SCFDialect>();
@@ -54,7 +55,7 @@ struct WarpWrapPass : public PassWrapper<WarpWrapPass, OperationPass<>> {
       Value lane =
           b.create<gpu::LaneIdOp>(loc, b.getIndexType(), /*upperBound=*/nullptr);
       auto warp = b.create<vector::WarpExecuteOnLane0Op>(
-          loc, TypeRange{}, lane, /*warpSize=*/32);
+          loc, TypeRange{}, lane, mir::getGpuTarget(loop).waveSize);
       // The generic builder creates the region with an EMPTY block (or none):
       // ensure a block exists AND that it ends with vector.yield.
       if (warp.getWarpRegion().empty())

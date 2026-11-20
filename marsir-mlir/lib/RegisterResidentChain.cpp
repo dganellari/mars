@@ -41,6 +41,7 @@
 // both hand-offs direct. Gate: test/chain_handoff_gate.py.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -447,8 +448,9 @@ struct ChainContractsPass
   // element a full wavefront. Direct hand-off is NVIDIA-only (its permuted reduction order
   // relies on the m8n8k4 fragment symmetry).
   Option<std::string> target{*this, "target",
-      llvm::cl::desc("nvidia (nvgpu.mma.sync m8n8k4) or amd (amdgpu.mfma 4x4x4, 4 blocks)"),
-      llvm::cl::init("nvidia")};
+      llvm::cl::desc("nvidia (nvgpu.mma.sync m8n8k4) or amd (amdgpu.mfma 4x4x4, 4 blocks); "
+                     "default: the module's target (--mir-set-target), else nvidia"),
+      llvm::cl::init("")};
 
   StringRef getArgument() const final { return "mir-chain-contracts"; }
   StringRef getDescription() const final {
@@ -489,8 +491,9 @@ struct ChainContractsPass
 
     OpBuilder b(ctx);
     b.setInsertionPointToStart(entry);
-    const bool amd = target == "amd";
-    if (!amd && target != "nvidia") {
+    const std::string vendor = target.empty() ? mir::getGpuTarget(root).vendor.str() : target.getValue();
+    const bool amd = vendor == "amd";
+    if (!amd && vendor != "nvidia") {
       root->emitError("mir-chain-contracts: target must be nvidia or amd");
       return signalPassFailure();
     }

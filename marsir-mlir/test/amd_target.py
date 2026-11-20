@@ -8,8 +8,9 @@ lowers through ROCDL instead of NVVM and writes generated/<kernel>_gfx942[_covN]
 Then: llvm-mc -triple=amdgcn-amd-amdhsa -mcpu=gfx942 -filetype=obj x.s -o x.o, and on the
 target clang++ -target amdgcn-amd-amdhsa -mcpu=gfx942 x.o -o x.hsaco (the ROCm assembler may
 not know LLVM 19's directives, so assemble with this LLVM and only link there).
-Three AMD-specific fixes, each explained where it is applied: private-space allocas,
-__ockl_get_num_groups from the dispatch packet, and the tensor-core pass's target=amd.
+The module carries the AMD target (--mir-set-target=target=amd: 64-lane wavefronts, 64 KB
+LDS, MFMA fragments), which the passes read. Two LLVM-level fixes remain here, each explained
+where it is applied: private-space allocas and __ockl_get_num_groups from the dispatch packet.
 gpu-module-to-binary is not used: it requires the ROCm device bitcode."""
 import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -104,12 +105,16 @@ declare ptr addrspace(4) @llvm.amdgcn.dispatch.ptr()"""
 
 _run = hl.run
 def run_amd(cmd, ir):
-    """The tensor-core pass with the AMD fragments; direct hand-off is NVIDIA-only."""
+    """Every mir-opt call first records the AMD target on the module (--mir-set-target), so
+    the passes read a 64-lane wavefront and 64 KB of LDS and the tensor-core pass picks the
+    AMD fragments. Direct hand-off is NVIDIA-only, so it is dropped."""
     cmd = list(cmd)
+    if cmd and cmd[0] == hl.MIROPT and "-" in cmd:
+        cmd.insert(cmd.index("-") + 1, "--mir-set-target=target=amd")
     for n, a in enumerate(cmd):
-        if isinstance(a, str) and a.startswith("--mir-chain-contracts"):
-            opts = [o for o in (a.split("=", 1)[1].split() if "=" in a else []) if not o.startswith("direct-handoff")]
-            cmd[n] = "--mir-chain-contracts=" + " ".join(["target=amd"] + opts)
+        if isinstance(a, str) and a.startswith("--mir-chain-contracts="):
+            opts = [o for o in a.split("=", 1)[1].split() if not o.startswith("direct-handoff")]
+            cmd[n] = "--mir-chain-contracts" + ("=" + " ".join(opts) if opts else "")
     return _run(cmd, ir)
 hl.run = run_amd
 hl.finish = finish_amd

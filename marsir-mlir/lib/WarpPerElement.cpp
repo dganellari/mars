@@ -45,6 +45,7 @@
 // --mir-gpu-wrap turns into shared memory: one copy per group.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 #include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -68,7 +69,9 @@ using namespace mlir;
 
 namespace {
 
-constexpr int kWarp = 32;
+// The bank model below is NVIDIA's (32 banks of 4 bytes); the lanes per warp come from the
+// target (mir::getGpuTarget).
+constexpr int kBanks = 32;
 
 // Moves the body of a one-dimensional scf.parallel in front of `dest`'s
 // terminator, with its induction variable replaced by `iv`.
@@ -286,10 +289,10 @@ std::optional<SmallVector<int64_t>> rootIndices(Value m, SmallVector<int64_t> id
 // wider than 4 bytes served per half (8 bytes) or quarter warp (16), lanes reading
 // the same word sharing it.
 int64_t wavefronts(ArrayRef<std::pair<int64_t, int64_t>> laneBytes, int64_t bytes) {
-  const int64_t span = bytes <= 4 ? kWarp : 128 / bytes, words = std::max<int64_t>(1, bytes / 4);
+  const int64_t span = bytes <= 4 ? kBanks : 128 / bytes, words = std::max<int64_t>(1, bytes / 4);
   std::map<int64_t, std::map<int64_t, std::set<int64_t>>> passes;   // pass -> bank -> words
   for (auto [lane, byte] : laneBytes)
-    for (int64_t w = 0; w < words; ++w) passes[lane % kWarp / span][(byte / 4 + w) % kWarp].insert(byte / 4 + w);
+    for (int64_t w = 0; w < words; ++w) passes[lane % kBanks / span][(byte / 4 + w) % kBanks].insert(byte / 4 + w);
   int64_t total = 0;
   for (auto &[p, banks] : passes) {
     size_t worst = 0;
@@ -344,7 +347,7 @@ Layout chooseLayout(memref::AllocaOp alloca, Block *body, int64_t lanes) {
   SmallVector<Sample> samples;
   for (const Use &u : uses) {
     Sample s;
-    for (int64_t tid = 0; tid < std::min<int64_t>(lanes, kWarp); ++tid) {
+    for (int64_t tid = 0; tid < std::min<int64_t>(lanes, kBanks); ++tid) {
       IndexEval eval(tid);
       SmallVector<int64_t> idx;
       for (Value i : u.indices)
@@ -555,16 +558,17 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     auto a = elements->getAttrOfType<IntegerAttr>(name);
     return a ? a.getInt() : fallback;
   };
-  const int64_t L = attr("mir.lanes_per_element", kWarp);
-  const int64_t W = attr("mir.warps_per_block", L == kWarp ? 1 : 4);
+  const int64_t wave = mir::getGpuTarget(func).waveSize;
+  const int64_t L = attr("mir.lanes_per_element", wave);
+  const int64_t W = attr("mir.warps_per_block", L == wave ? 1 : 4);
   // Several warps per element keep more warps resident when scratch per element limits
   // the blocks per SM (q = 9: four q^3 buffers per BP3 element).
-  const bool multiWarp = L > kWarp;
-  if (L < 1 || (!multiWarp && (L & (L - 1)) != 0) || (multiWarp && L % kWarp != 0) || W < 1 ||
-      (kWarp * W) % L != 0)
-    return elements.emitOpError("lanes per element must be a power of two <= 32 or a multiple of 32 "
-                                "dividing the block, warps per block >= 1");
-  const int64_t G = kWarp * W / L;
+  const bool multiWarp = L > wave;
+  if (L < 1 || (!multiWarp && (L & (L - 1)) != 0) || (multiWarp && L % wave != 0) || W < 1 ||
+      (wave * W) % L != 0)
+    return elements.emitOpError("lanes per element must be a power of two <= the wave size or a multiple "
+                                "of it dividing the block, warps per block >= 1");
+  const int64_t G = wave * W / L;
   const bool single = G == 1;   // one element per block: the original form
   OpBuilder b(elements);
   Location loc = elements.getLoc();
@@ -576,7 +580,7 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
 
   Value tid = b.create<gpu::ThreadIdOp>(loc, gpu::Dimension::x);
   Value glane = tid, group;
-  if (!single || L != kWarp) {
+  if (!single || L != wave) {
     glane = b.create<arith::RemUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
     group = b.create<arith::DivUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
   }
@@ -662,7 +666,7 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     SmallVector<Value> results(loop.getResults());
     for (int64_t offset = L / 2; offset >= 1; offset /= 2)
       for (unsigned i = 0; i < results.size(); ++i) {
-        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], (int32_t)offset, kWarp, gpu::ShuffleMode::XOR)
+        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], (int32_t)offset, (int32_t)wave, gpu::ShuffleMode::XOR)
                           .getShuffleResult();
         results[i] = combine(pb, i, results[i], other);
       }
@@ -768,8 +772,8 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   }
   elements.erase();
   mir::refreshViewTypes(func.getOperation());
-  if (!single || L != kWarp) {
-    func->setAttr("mir.block_threads", b.getI64IntegerAttr(kWarp * W));
+  if (!single || L != wave) {
+    func->setAttr("mir.block_threads", b.getI64IntegerAttr(wave * W));
     func->setAttr("mir.elements_per_block", b.getI64IntegerAttr(G));
   }
   return success();
