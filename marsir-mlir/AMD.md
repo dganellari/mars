@@ -88,13 +88,15 @@ NVIDIA's back end accepts that and sorts it out itself; AMD's instruction select
 with `Cannot select: FrameIndex` ("I don't know where this stack slot lives").
 
 Workaround: after translating to LLVM IR we rewrite each such array: allocate it in space 5
-and convert the pointer to a generic one for its uses. This works, but the conversion stops
-LLVM from turning the small array into registers, so the p=7 tensor-core kernel keeps
-2.5 KB of slow scratch memory per thread.
+and convert the pointer to a generic one for its uses. Since `opt -O3` runs before `llc`
+(rough edge 5), LLVM promotes them to registers through that cast: the p=7 tensor-core kernel
+went from 2,568 B of scratch per thread to none (116 VGPRs, 264 MFMA instructions).
 
-Proper fix: create these arrays in the private space from the start in MLIR
-(`#gpu.address_space<private>`), so LLVM sees private memory and can promote it to registers,
-as it does on NVIDIA.
+Why it stays a patch: these arrays are not ours. Upstream `--convert-vector-to-scf` creates
+them (temporaries of vector transfers) after `--mir-gpu-wrap`, in the default space; a
+MARSIR pass that retypes them would have to fix every view of them. The clean fix belongs
+upstream: allocas created during lowering should take the target's alloca address space
+(the DLTI `alloca_memory_space` entry exists for this).
 
 ### 4. Our newer LLVM and Beverin's ROCm disagree on a directive
 
