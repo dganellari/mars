@@ -2,6 +2,7 @@
 // dialect (and, later, the mir->linalg lowering passes) registered.
 #include "mir/MirDialect.h"
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/InitAllDialects.h"
@@ -37,6 +38,7 @@ int main(int argc, char **argv) {
   mir::registerFusePhasesPass();
   mir::registerTraceSharedPass();
   mir::registerEvenOddPass();
+  mir::registerSetTargetPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

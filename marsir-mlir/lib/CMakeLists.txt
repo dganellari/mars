@@ -24,6 +24,7 @@ add_mlir_dialect_library(MLIRMir
   FusePhases.cpp
   TraceShared.cpp
   EvenOdd.cpp
+  Target.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -50,6 +51,8 @@ add_mlir_dialect_library(MLIRMir
   MLIRNVGPUDialect
   MLIRAMDGPUDialect
   MLIRFuncDialect
+  MLIRDLTIDialect
+  MLIRDataLayoutInterfaces
   )
 
 # LowerCellwise.cpp takes the reference-hex numbering from MARS itself
