@@ -31,6 +31,7 @@
 #define cudaMemsetAsync hipMemsetAsync
 #define cudaStreamBeginCapture hipStreamBeginCapture
 #define cudaStreamCaptureModeThreadLocal hipStreamCaptureModeThreadLocal
+#define cudaStreamCreateWithFlags hipStreamCreateWithFlags
 #define cudaStreamEndCapture hipStreamEndCapture
 #define cudaStreamNonBlocking hipStreamNonBlocking
 
