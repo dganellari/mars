@@ -178,6 +178,11 @@ int main(int argc, char** argv)
     printf("bp3_apply_p%d, %lld elements, kernel %s\n", p, E, file.c_str());
     printf("  vs direct quadrature sums: %.3e of max %.3e\n", err, scale);
     printf("  A 1: max %.3e; symmetry |<v,Au>-<u,Av>|/|<v,Au>|: %.3e\n", null, asym);
+    {
+        const auto r = op.residency();
+        printf("  residency: %d blocks per SM/CU (%d threads, %lld elements each), %d registers/thread, "
+               "%d B shared/block\n", r.blocks, r.threads, r.elements_per_block, r.registers, r.shared_bytes);
+    }
     if (reps > 0) {
         double* du = to_device(u);
         double* dy = nullptr;

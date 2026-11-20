@@ -90,6 +90,21 @@ public:
         launch(u, B, Bt, D, Dt, {make(gq, {q_}), make(wq, {q_}), make(X, {E, 3, 2, 2, 2})}, y, E, stream);
     }
 
+    // What the GPU holds at once: resident thread blocks per SM/CU at this launch shape, and
+    // the kernel's registers per thread and static shared memory per block.
+    struct Residency {
+        int blocks, registers, shared_bytes, threads;
+        long long elements_per_block;
+    };
+    Residency residency() const
+    {
+        Residency r{0, 0, 0, (int)threads_, per_block_};
+        MARS_MARSIR_CU(cuOccupancyMaxActiveBlocksPerMultiprocessor(&r.blocks, fn_, (int)threads_, 0));
+        MARS_MARSIR_CU(cuFuncGetAttribute(&r.registers, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_));
+        MARS_MARSIR_CU(cuFuncGetAttribute(&r.shared_bytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, fn_));
+        return r;
+    }
+
 private:
     // The driver API takes a pointer to every scalar of every descriptor, so each
     // descriptor is built in storage that outlives the launch call.

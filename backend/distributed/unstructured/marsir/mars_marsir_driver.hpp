@@ -23,6 +23,10 @@ using CUresult = hipError_t;
 #define cuLaunchKernel hipModuleLaunchKernel
 #define cuMemcpyDtoH hipMemcpyDtoH
 #define cuMemcpyDtoDAsync hipMemcpyDtoDAsync
+#define cuOccupancyMaxActiveBlocksPerMultiprocessor hipModuleOccupancyMaxActiveBlocksPerMultiprocessor
+#define cuFuncGetAttribute hipFuncGetAttribute
+#define CU_FUNC_ATTRIBUTE_NUM_REGS HIP_FUNC_ATTRIBUTE_NUM_REGS
+#define CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES
 inline hipError_t cuMemAlloc(hipDeviceptr_t* p, size_t bytes) { return hipMalloc(p, bytes); }
 inline hipError_t cuMemFree(hipDeviceptr_t p) { return hipFree(p); }
 inline hipError_t cuGetErrorString(hipError_t e, const char** s)
