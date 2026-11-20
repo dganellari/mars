@@ -9,8 +9,9 @@ Then: llvm-mc -triple=amdgcn-amd-amdhsa -mcpu=gfx942 -filetype=obj x.s -o x.o, a
 target clang++ -target amdgcn-amd-amdhsa -mcpu=gfx942 x.o -o x.hsaco (the ROCm assembler may
 not know LLVM 19's directives, so assemble with this LLVM and only link there).
 The module carries the AMD target (--mir-set-target=target=amd: 64-lane wavefronts, 64 KB
-LDS, MFMA fragments), which the passes read. Two LLVM-level fixes remain here, each explained
-where it is applied: private-space allocas and __ockl_get_num_groups from the dispatch packet.
+LDS, MFMA fragments), which the passes read. At the LLVM level, each explained where it is
+applied: private-space allocas, __ockl_get_num_groups from the dispatch packet, and opt -O3
+for gfx942 before llc (as clang runs it), without which global memory is read with flat_load.
 gpu-module-to-binary is not used: it requires the ROCm device bitcode."""
 import os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -93,6 +94,15 @@ declare ptr addrspace(4) @llvm.amdgcn.dispatch.ptr()"""
     if cov:
         llc.append(f"--amdhsa-code-object-version={cov}")
         out = out.replace("_gfx942.s", f"_gfx942_cov{cov}.s")
+    # Kernel arrays arrive as generic pointers inside MLIR's memref descriptors, and llc alone
+    # keeps loads through them as flat_load (address space resolved per access, and each one
+    # also waits like an LDS access). opt's AMDGPU pipeline, as clang runs it for HIP, proves
+    # them global (global_load). Measured on MI300A (Beverin 757106): BP3 p=3 1.63 -> 1.18 ms,
+    # p=7 2.07 -> 1.56 ms, 15 fewer registers.
+    ll = hl.run([os.path.join(hl.LLVM, "bin", "opt"), "-mtriple=amdgcn-amd-amdhsa", "-mcpu=gfx942",
+                 "-passes=default<O3>", "-S", "-o", "-"], ll)
+    if os.environ.get("AMD_DUMP_LL"):   # the LLVM IR llc receives (for reading)
+        open(os.environ["AMD_DUMP_LL"], "w").write(ll)
     text = hl.run(llc + ["-o", "-"], ll)
     open(out, "w").write(text)
     print(f"wrote {out}: {text.count(chr(10))} lines, "

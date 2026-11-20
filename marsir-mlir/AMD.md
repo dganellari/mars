@@ -7,12 +7,12 @@ the same MARSIR passes as the NVIDIA kernels. It is not yet tuned for AMD.
 
 | Kernel | GH200 (NVIDIA) | MI300A (AMD) |
 |---|---|---|
-| BP3 p=3, 262,144 elements | 0.661 ms, 25.4 GDoF/s | 1.638 ms, 10.2 GDoF/s |
-| BP3 p=7, 32,768 elements | 0.578 ms, 29.0 GDoF/s | 1.986 ms, 8.4 GDoF/s |
+| BP3 p=3, 262,144 elements | 0.661 ms, 25.4 GDoF/s | 1.184 ms, 14.2 GDoF/s |
+| BP3 p=7, 32,768 elements | 0.578 ms, 29.0 GDoF/s | 1.556 ms, 10.8 GDoF/s |
 
 Same gate (`mars_marsir_galerkin_gate`), same source, median of 20 warm applies; both pass the
 check against host quadrature. GDoF/s counts element-local values. Jobs: Daint 5410396,
-Beverin 757090.
+Beverin 757106 (with opt, rough edge 5; before it 1.638 / 1.986 ms, Beverin 757090).
 
 Both kernels are limited by memory traffic: per element they read the geometry tensor G
 (6 values per quadrature point) and u, and write y, 7,024 B at p=3 and 43,184 B at p=7. That
@@ -35,9 +35,9 @@ clang++ -target amdgcn-amd-amdhsa -mcpu=gfx942 bp3_p3.o -o bp3_p3_gfx942.hsaco
 MARS loads the `.hsaco` through `marsir/mars_marsir_driver.hpp`, which maps the CUDA driver
 calls the loaders use to HIP's module API.
 
-## Four rough edges, and what we did about them
+## Five rough edges, and what we did about them
 
-Upstream MLIR (LLVM 19) can target AMD, but in four places the AMD path is less smooth than
+Upstream MLIR (LLVM 19) can target AMD, but in five places the AMD path is less smooth than
 the NVIDIA one. Each workaround lives in `test/amd_target.py`.
 
 ### 1. MLIR's packaging step wants ROCm's device libraries
@@ -107,6 +107,25 @@ versions 5 and 4 work (`AMD_COV=4` builds version 4).
 
 Proper fix: use one LLVM version end to end, or link where the versions match.
 
+### 5. llc alone reads global memory with flat loads
+
+LLVM has two halves: `opt`, the optimizer (LLVM IR to LLVM IR), and `llc`, the code
+generator (LLVM IR to assembly). clang runs both; our first AMD path ran only `llc`. The
+kernel's arrays reach LLVM as generic pointers inside MLIR's memref descriptor structs, and
+`llc` alone cannot prove they point to global memory, so every access became `flat_load`: the
+hardware resolves the address space per access, and each one also counts as an LDS access, so
+waits on shared memory also wait for HBM. NVIDIA's backend treats kernel pointer arguments as
+global by itself, so the PTX was never affected.
+
+Fix: run `opt -O3` for gfx942 before `llc`, as clang does for HIP. AMD's part of that pipeline
+infers the address spaces: all flat accesses become `global_load`/`global_store`, and the
+cleanup saves about 15 registers. Measured on MI300A (Beverin 757106, two rounds, same
+kernels): BP3 p=3 1.63 -> 1.18 ms, p=7 2.07 -> 1.56 ms.
+
+Proper fix in MLIR as well: `--mir-gpu-wrap` should give the kernel's array arguments
+`#gpu.address_space<global>`, as it already does `workgroup` for shared memory, so the IR
+states the address space instead of LLVM inferring it.
+
 ## What to borrow from IREE
 
 IREE is a complete ML compiler with strong AMD support. Its scope differs from MARSIR's, but
@@ -174,9 +193,9 @@ on steps 1 and 2.
 ## Next steps
 
 1. Find where the time goes inside the kernel on MI300A. A streaming kernel moving the same
-   bytes reaches 3.5-3.6 TB/s there (Beverin 757094; 8 B and 16 B loads within 3%), so the
-   operator (1.1 / 0.7 TB/s) loses 3.2x / 5x inside its own schedule, not in the platform.
-   Hardware counters next (rocprofv3 from the image crashed on counter collection).
+   bytes reaches 3.5-3.6 TB/s there (Beverin 757094; 8 B and 16 B loads within 3%). With
+   rough edge 5 fixed the operator reaches 1.6 / 0.9 TB/s, still 2.3x / 3.9x above that
+   floor. Hardware counters next, with the image's own rocprof (/usr/bin/rocprofv3 crashed).
 2. Tune for AMD with the same knobs as on GH200, measured as an AMD ablation.
 3. Target layer: see "Target layer plan" above.
 4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
