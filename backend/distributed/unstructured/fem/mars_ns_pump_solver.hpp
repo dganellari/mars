@@ -3273,6 +3273,14 @@ struct NSStepper
     // it as rhs=target-p^n so the solved pressure clamps to the head. Empty for
     // pumpDp<=0 (cavity/channel/TGV never touch this).
     cstone::DeviceVector<RealType> d_pPhiTargetDof;
+    // Face flux: the outlets' prescribed pressure the stored p was last solved with (p_bar^n, per owned
+    // DOF) and this step's change, p_bar^{n+1} - p_bar^n. The predictor closes its gradient with p_bar^n,
+    // the corrector with the change (faceFluxCloseGradient), so a time-varying target enters through the
+    // projection in the step it changes, the incremental scheme's open boundary condition. Closing the
+    // predictor with p_bar^{n+1} and the increment with 0 lagged the outlets' pressure by about half a
+    // step: Womersley flow (benchmarks/womersley) first order in time, its lag 1.4 deg off at N 32.
+    cstone::DeviceVector<RealType> d_faceFluxTargetPrev;
+    cstone::DeviceVector<RealType> d_faceFluxTargetDelta;
     // Full-strength (unramped) copy of d_pPhiTargetDof. rescalePumpDpTarget
     // writes d_pPhiTargetDof = ramp * base each step so --source-ramp-steps can
     // bring the pressure head 0->full gently (an impulsive full head from rest
@@ -4459,6 +4467,34 @@ void faceFluxCloseGradient(NSStepper<KeyType, RealType, ElementTag>& s, const Re
         s.d_faceFluxOutlet.data(), phi, targetDof, s.d_node_to_dof.data(), s.d_massNode.data(), s.d_outletAreaVecX.data(),
         s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), gx.data(), gy.data(), gz.data(), s.numOwnedDofs, s.nodeCount);
     cudaDeviceSynchronize();
+}
+
+// acc -= scale beta_i |A_b,i|^2 / V_i dp_i at the outlet nodes, dp the target's change this step
+// (d_faceFluxTargetDelta; nothing without one): the known part of the outlet rows' closure.
+template<typename KeyType, typename RealType, typename ElementTag>
+void faceFluxAddOutletTargetChange(NSStepper<KeyType, RealType, ElementTag>& s, const RealType scale,
+                                   cstone::DeviceVector<RealType>& acc)
+{
+    faceFluxEnsureOutlets(s);
+    if (s.nodeCount == 0 || s.d_outletAreaVecX.size() != s.nodeCount || s.d_faceFluxTargetDelta.size() != size_t(s.numOwnedDofs))
+        return;
+    const uint8_t*  outlet = s.d_faceFluxOutlet.data();
+    const RealType* dp     = s.d_faceFluxTargetDelta.data();
+    const RealType* beta   = s.penalisedProjection && s.d_penaltyBeta.size() == s.nodeCount ? s.d_penaltyBeta.data() : nullptr;
+    const RealType* V      = s.d_massNode.data();
+    const RealType *ax = s.d_outletAreaVecX.data(), *ay = s.d_outletAreaVecY.data(), *az = s.d_outletAreaVecZ.data();
+    const int*      n2d    = s.d_node_to_dof.data();
+    const int       nOwned = s.numOwnedDofs;
+    RealType*       a      = acc.data();
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                     [=] __device__(size_t i) {
+                         if (!outlet[i]) return;
+                         const int r = n2d[i];
+                         if (r < 0 || r >= nOwned) return;
+                         const RealType b = beta ? beta[i] : RealType(1);
+                         a[i] -= scale * b * (ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i]) / V[i] * dp[r];
+                     });
+    cudaCheckError();
 }
 
 // acc += u . A_b at the outlet nodes.
@@ -9585,9 +9621,22 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // Face flux: the outlets' pressure enters through the closure (p_bar - p_i) A_b / V_i, not a
         // Dirichlet row (mars_face_flux.hpp).
         if (s.useFaceFlux)
-            faceFluxCloseGradient<KeyType, RealType, ElementTag>(
-                s, s.d_p.data(), s.d_pPhiTargetDof.size() == size_t(s.numOwnedDofs) ? s.d_pPhiTargetDof.data() : nullptr,
-                s.d_gradPx, s.d_gradPy, s.d_gradPz);
+        {
+            const bool target = s.d_pPhiTargetDof.size() == size_t(s.numOwnedDofs);
+            if (target)
+            {
+                // p_bar^n: the target of the last step (the first step: this one's, no change).
+                if (s.d_faceFluxTargetPrev.size() != s.d_pPhiTargetDof.size()) s.d_faceFluxTargetPrev = s.d_pPhiTargetDof;
+                s.d_faceFluxTargetDelta.resize(s.d_pPhiTargetDof.size());
+                if (s.numOwnedDofs > 0)
+                    thrust::transform(thrust::device, thrust::device_pointer_cast(s.d_pPhiTargetDof.data()),
+                                      thrust::device_pointer_cast(s.d_pPhiTargetDof.data() + s.numOwnedDofs),
+                                      thrust::device_pointer_cast(s.d_faceFluxTargetPrev.data()),
+                                      thrust::device_pointer_cast(s.d_faceFluxTargetDelta.data()), thrust::minus<RealType>());
+            }
+            faceFluxCloseGradient<KeyType, RealType, ElementTag>(s, s.d_p.data(), target ? s.d_faceFluxTargetPrev.data() : nullptr,
+                                                                 s.d_gradPx, s.d_gradPy, s.d_gradPz);
+        }
         s.lastGradPRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
@@ -10684,9 +10733,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
     // Face flux: the outlet control volumes' boundary faces, u** . A_b (owned, so after the fold).
     if (s.useFaceFlux)
+    {
         faceFluxAddOutletFlux<KeyType, RealType, ElementTag>(s, uIter ? uIter : s.d_uStarStar.data(),
                                                              vIter ? vIter : s.d_vStarStar.data(),
                                                              wIter ? wIter : s.d_wStarStar.data(), d_divAccNode);
+        // The target's change: phi_b = p_bar^{n+1} - p_bar^n in the outlet rows' closure is known, so its
+        // part of the row moves to the right: the outflow it removes, (dtEff/rho) beta_i |A_b|^2 / V_i dp.
+        faceFluxAddOutletTargetChange<KeyType, RealType, ElementTag>(s, RealType(1) / (invDt * rho), d_divAccNode);
+    }
     // Face flux: what the other openings add below (the SCS term at the inlet and the ineligible outlet
     // nodes, or the prescribed source), kept for the final balance (runCorrectorStep): each opening
     // flux enters the RHS and the balance exactly once.
@@ -11845,8 +11899,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         compute_pressure_increment_gradient<KeyType, RealType, ElementTag>(s);
         if (s.useFaceFlux)
-            faceFluxCloseGradient<KeyType, RealType, ElementTag>(s, s.d_phi.data(), nullptr, s.d_gradPhix, s.d_gradPhiy,
-                                                                 s.d_gradPhiz);
+            faceFluxCloseGradient<KeyType, RealType, ElementTag>(
+                s, s.d_phi.data(),
+                s.d_faceFluxTargetDelta.size() == size_t(s.numOwnedDofs) && s.nCorrectors <= 1 ? s.d_faceFluxTargetDelta.data() : nullptr,
+                s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
         if (s.penalisedProjection && s.nodeCount > 0)
         {
             scaleGradientByBetaKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -11900,6 +11956,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               thrust::device_pointer_cast(s.d_faceFluxOpeningSource.data()),
                               thrust::device_pointer_cast(balance.data()), thrust::plus<RealType>());
         faceFluxFreeRowNorms<KeyType, RealType, ElementTag>(s, balance, s.lastFaceFluxDivMax, s.lastFaceFluxDivSum, true);
+        if (s.d_pPhiTargetDof.size() == size_t(s.numOwnedDofs)) s.d_faceFluxTargetPrev = s.d_pPhiTargetDof;
     }
 
     // ---- PISO inner pressure corrections (--correctors=N, FEM path only) ----
