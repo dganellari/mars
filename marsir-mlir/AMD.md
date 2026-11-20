@@ -1,7 +1,9 @@
 # MARSIR on AMD (MI300A, gfx942)
 
 Status, 20 November 2026. The generated BP3 operator runs correctly on MI300A, built from
-the same MARSIR passes as the NVIDIA kernels. It is not yet tuned for AMD.
+the same MARSIR passes as the NVIDIA kernels, with the GPU's properties read from a target
+description. Every compiler change keeps the committed NVIDIA PTX byte-identical
+(`test/check_generated.py`). It is not yet tuned for AMD.
 
 ## Where things stand
 
@@ -12,33 +14,40 @@ the same MARSIR passes as the NVIDIA kernels. It is not yet tuned for AMD.
 
 Same gate (`mars_marsir_galerkin_gate`), same source, median of 20 warm applies; both pass the
 check against host quadrature. GDoF/s counts element-local values. Jobs: Daint 5410396,
-Beverin 757106 (with opt, rough edge 5; before it 1.638 / 1.986 ms, Beverin 757090).
+Beverin 757106. Before rough edge 5 was fixed MI300A took 1.638 / 1.986 ms (757090).
 
-Both kernels are limited by memory traffic: per element they read the geometry tensor G
-(6 values per quadrature point) and u, and write y, 7,024 B at p=3 and 43,184 B at p=7. That
-gives 2.8 / 2.4 TB/s on GH200 and 1.1 / 0.7 TB/s on MI300A, so MI300A reaches a much smaller
-share of its memory bandwidth.
+The operator moves, per element, the geometry tensor G (6 values per quadrature point) and u
+in, and y out: 7,024 B at p=3, 43,184 B at p=7. GH200 reaches 2.8 / 2.4 TB/s with it. On
+MI300A a streaming kernel moving the same bytes reaches 3.5-3.6 TB/s (757094; 8 B and 16 B
+loads within 3%), and the operator 1.6 / 0.9 TB/s: the time is lost inside the kernel's
+schedule, not in the platform. See "Profiling on Beverin" for what the counters say.
 
-Occupancy is not the cause. MI300A holds 2 blocks per CU against 6 to 8 per SM on GH200, but
-an AMD ablation at p=3 (Beverin 757093, lanes per element 16 / 32 / 64, each run twice)
-raised it to 4 and 16 blocks per CU and was slower: 1.65 / 2.38 / 1.83 ms.
-
-How to build an AMD kernel:
+## How to build an AMD kernel
 
 ```bash
+cd marsir-mlir
 python3 test/amd_target.py bp_gpu_pipeline bp3 3     # -> generated/bp3_p3_gfx942.s
 llvm-mc -triple=amdgcn-amd-amdhsa -mcpu=gfx942 -filetype=obj generated/bp3_p3_gfx942.s -o bp3_p3.o
 # on the AMD machine, with ROCm:
 clang++ -target amdgcn-amd-amdhsa -mcpu=gfx942 bp3_p3.o -o bp3_p3_gfx942.hsaco
 ```
 
+`amd_target.py` runs any pipeline script (hl by default, or a module that calls its finish,
+such as `bp_gpu_pipeline`) with the pipeline's own arguments, for example `--lanes=64
+--warps=1 --no-pad`, and `--emulate` runs the AMD-shaped kernel in the CPU warp emulator. It
+records the AMD target on the module (`--mir-set-target=target=amd`), lowers through ROCDL,
+runs `opt -O3` and `llc` for gfx942. `AMD_COV=4` builds code object version 4,
+`AMD_DUMP=file` keeps the scheduled MLIR, `AMD_DUMP_LL=file` the LLVM IR given to `llc`.
+
 MARS loads the `.hsaco` through `marsir/mars_marsir_driver.hpp`, which maps the CUDA driver
-calls the loaders use to HIP's module API.
+calls the loaders use to HIP's module API (`_sm90.ptx` on NVIDIA, `_gfx942.hsaco` on AMD).
+The gate reports the residency (blocks per SM/CU, registers, shared memory per block) from
+the runtime's occupancy query on both vendors.
 
 ## Five rough edges, and what we did about them
 
 Upstream MLIR (LLVM 19) can target AMD, but in five places the AMD path is less smooth than
-the NVIDIA one. Each workaround lives in `test/amd_target.py`.
+the NVIDIA one.
 
 ### 1. MLIR's packaging step wants ROCm's device libraries
 
@@ -47,22 +56,19 @@ first links ROCm's "device libraries" (`ockl.bc`, `ocml.bc`): small precompiled 
 functions for things like math and kernel queries. It requires them even when the kernel
 uses none. A Mac has no ROCm, so the step stops.
 
-Workaround: skip that step. Translate the kernel to plain LLVM IR and compile it with `llc`
-for gfx942.
-
-Proper fix: build where ROCm is installed and point MLIR at its libraries, or remove the
-only reason we needed them (see 2).
+Workaround: skip that step. Translate the kernel to plain LLVM IR and compile it with `opt`
+and `llc` for gfx942. Since rough edge 2 is fixed no kernel calls a device library, which
+`amd_target.py` asserts.
 
 ### 2. Asking for the grid size calls a ROCm library function
 
 Our kernels loop over elements in steps of the grid size (the total number of thread blocks).
 MLIR lowers "how many blocks are there?" (`gpu.grid_dim`) to a call to a ROCm library
 function, `__ockl_get_num_groups`. On NVIDIA the same question is a single hardware register
-read. Without the library the call is left unresolved, so linking fails: the "undefined
-symbol" error in the second Beverin job.
+read. Without the library the call is left unresolved, so linking fails.
 
-Fix (done in MLIR): `--mir-amdgpu-grid-dim` replaces `gpu.grid_dim` on AMD targets, before
-the ROCDL conversion, by a read of the *dispatch packet*: a small record the GPU receives with
+Fix (in MLIR): `--mir-amdgpu-grid-dim` replaces `gpu.grid_dim` on AMD targets, before the
+ROCDL conversion, by a read of the *dispatch packet*: a small record the GPU receives with
 every kernel launch that holds the grid size and the block size; the block count is their
 ceiling quotient. It first worked as a patch on the LLVM IR text; the pass gives the same
 machine code, byte for byte.
@@ -82,6 +88,9 @@ GPUs have several kinds of memory, each with its own numbered *address space*:
 | 5 | private | one thread (its stack or registers) |
 | 0 | "generic" | a pointer that can point into any of the above |
 
+Address space 5 is a label, not a place: LLVM keeps such an array in registers when it can,
+and otherwise in *scratch*, which is HBM set aside per thread.
+
 On AMD, a thread's own stack must be in address space 5; LLVM's AMD data layout says so
 (`A5`). MLIR's memory lowering creates the scratch arrays in the generic space 0 instead.
 NVIDIA's back end accepts that and sorts it out itself; AMD's instruction selector stops
@@ -93,16 +102,17 @@ and convert the pointer to a generic one for its uses. Since `opt -O3` runs befo
 went from 2,568 B of scratch per thread to none (116 VGPRs, 264 MFMA instructions).
 
 Why it stays a patch: these arrays are not ours. Upstream `--convert-vector-to-scf` creates
-them (temporaries of vector transfers) after `--mir-gpu-wrap`, in the default space; a
-MARSIR pass that retypes them would have to fix every view of them. The clean fix belongs
-upstream: allocas created during lowering should take the target's alloca address space
-(the DLTI `alloca_memory_space` entry exists for this).
+them (temporaries of vector transfers) after `--mir-gpu-wrap`, in the default space;
+retyping them in `--mir-gpu-wrap` was tried and changes nothing, and a later pass would have
+to fix every view of them. The clean fix belongs upstream: allocas created during lowering
+should take the target's alloca address space (the DLTI `alloca_memory_space` entry exists
+for this).
 
 ### 4. Our newer LLVM and Beverin's ROCm disagree on a directive
 
 The kernel's assembly starts with `.amdhsa_code_object_version 5`, which names the format of
 the binary. LLVM 19 writes it; the older assembler in Beverin's ROCm does not recognize it, so
-assembling on Beverin fails. That was the first Beverin job.
+assembling on Beverin fails.
 
 Workaround: assemble on the laptop with LLVM 19, and only link on Beverin. Both code object
 versions 5 and 4 work (`AMD_COV=4` builds version 4).
@@ -119,14 +129,66 @@ hardware resolves the address space per access, and each one also counts as an L
 waits on shared memory also wait for HBM. NVIDIA's backend treats kernel pointer arguments as
 global by itself, so the PTX was never affected.
 
-Fix: run `opt -O3` for gfx942 before `llc`, as clang does for HIP. AMD's part of that pipeline
-infers the address spaces: all flat accesses become `global_load`/`global_store`, and the
-cleanup saves about 15 registers. Measured on MI300A (Beverin 757106, two rounds, same
-kernels): BP3 p=3 1.63 -> 1.18 ms, p=7 2.07 -> 1.56 ms.
+Fix, at both levels:
+- `opt -O3` for gfx942 before `llc`, as clang does for HIP: all flat accesses become
+  `global_load`/`global_store`, and the cleanup saves about 15 registers. Measured on MI300A
+  (Beverin 757106, two rounds, same kernels): BP3 p=3 1.63 -> 1.18 ms, p=7 2.07 -> 1.56 ms.
+- In MLIR, `--mir-gpu-wrap` gives the kernel's array arguments address space 1 (global) on AMD
+  targets, as it already gives `workgroup` to shared memory, so the IR states it instead of
+  LLVM inferring it. Same machine code; the kernel metadata now says `global`. NVIDIA keeps
+  the default space, so its PTX is unchanged.
 
-Proper fix in MLIR as well: `--mir-gpu-wrap` should give the kernel's array arguments
-`#gpu.address_space<global>`, as it already does `workgroup` for shared memory, so the IR
-states the address space instead of LLVM inferring it.
+## Target layer: done and open
+
+Goal: one MARSIR pipeline per kernel family, in C++, reading the GPU's properties from a
+target description, with NVIDIA and AMD one option apart. Every step below was checked with
+`test/check_generated.py --against=<snapshot>`: all 35 committed NVIDIA kernels regenerate
+byte for byte.
+
+| Step | Status | What |
+|---|---|---|
+| 0. Golden check | done | `test/check_generated.py`: the command for each of 35 committed kernels, regenerated and compared with git HEAD or a snapshot (24 s). Files of the older `make_ptx_*.sh` scripts are listed as not covered. |
+| 1. Target description | done | `--mir-set-target=target=nvidia\|amd` records `mir.vendor`, `mir.wave_size`, `mir.max_shared_bytes` as an upstream DLTI target system spec (device "GPU"); passes call `mir::getGpuTarget(op)`, which returns NVIDIA's values when no spec is present. |
+| 2. Wave size from the target | done | WarpWrap, WarpDistribute, WarpPerElement, DistributeFills, CellwiseSchedule, LowerCellwise and EmulateWarp read it; the tensor-core pass's `target` option defaults to the module's. Two 32s stay on purpose: the shared-memory bank model (`kBanks`, NVIDIA's) and LowerCellwise's 32 DSS entity slots (a data-structure size). |
+| 3. Text edits become passes | done | `--mir-mark-kernel` (argument roles by position, rename with the kernel's tables), `--mir-gpu-wrap=maxnreg=N`, upstream `--nvvm-attach-target` / `--rocdl-attach-target`. |
+| 4. Registered pipelines | partly | `--mir-warp-per-element=fit-shared` halves the warps per block until the block fits the target's shared limit (was a Python retry loop that read the size back from the NVIDIA PTX, also when building for AMD). `--mir-lower-to-nvvm{maxnreg,vector,math,noalias}` is the NVIDIA lowering of hl, dss and block_dss in one `mir-opt` call. Open: the scheduling part of each family and the tuning tables (`LANES`, `MAXNREG`, `EVEN_ODD`, ...) as per-target defaults. |
+| 5. AMD lowering in MLIR | partly | Grid size (rough edge 2) and global arrays (rough edge 5) are MLIR passes. The private-alloca patch stays (rough edge 3); lifting the gpu.module and the LLVM tools stay in `amd_target.py`. |
+| 6. Instruction layouts as data | open | See "What to borrow from IREE". |
+
+Pitfalls found on the way:
+- Seven committed PTX files are older than the compiler (hl_cellwise p1/p3, hl_cellwise f32
+  p1/p3/p7, hl_full_p7_nochain, tet_laplacian): later schedule commits regenerated only the
+  BP files. hl_cellwise p1/p3 are the p-multigrid coarse operators MARS loads. Not changed;
+  regenerating them means re-measuring.
+- A kernel that publishes no launch shape is launched by MARS with one warp of 32 threads. On
+  AMD that is half a wavefront, so AMD kernels always publish theirs.
+
+## Profiling on Beverin
+
+What works (user-run job, `/user-environment` mounted by the uenv):
+
+```bash
+echo "pmc: SQ_LDS_BANK_CONFLICT SQ_ACTIVE_INST_LDS SQ_WAVES" > in.txt
+ROCM_PATH=/opt/rocm-6.3.0 /opt/rocm-6.3.0/bin/rocprof -i in.txt -o out.csv <gate> <kernel>.hsaco 3 262144 2
+```
+
+- One counter group per `rocprof` run, each under a `timeout`, and a group counts only if its
+  CSV has rows for the kernel.
+- The uenv's `rocprof` looks for `rocm_agent_enumerator` only next to itself, and without it
+  exits 0 having run nothing (757107, 757108). `/usr/bin/rocprofv3` crashed in counter
+  collection and hung the job (757094); its kernel trace worked.
+
+Findings for BP3 (757110, opt lowering):
+- Global traffic is ideal: `FETCH_SIZE` = G + u bytes, `WRITE_SIZE` = y bytes, no 32 B
+  partial requests. Nothing is read twice.
+- LDS bank-conflict cycles are 36% (p=3) / 44% (p=7) of LDS active cycles. The scratch padding
+  is chosen by NVIDIA's bank model.
+- At the measured shapes there is one wavefront per SIMD (64 KB / 46 KB of LDS per block).
+- L2 hit rate 0.32 / 0.47, as expected for streaming.
+
+The first occupancy ablation (757093: 16 / 32 / 64 lanes per element, 1.65 / 2.38 / 1.83 ms)
+ran before rough edge 5 was fixed, when flat loads tied every wait to HBM; it is repeated
+with opt and with the padding on and off in 757112.
 
 ## What to borrow from IREE
 
@@ -138,14 +200,10 @@ IREE's design, not checked against its current source.
   which lane holds which entry) as an attribute, and generic passes derive the data movement
   from it. Our tensor-core pass writes the lane formulas by hand, separately for NVIDIA and
   AMD. With layouts as data, a new GPU would be a table entry instead of a hand derivation.
-- **A target description.** IREE attaches to each target its wave size, shared-memory limit
-  and available matrix instructions, and the passes read them. Ours hard-code 32 lanes
-  (`WarpPerElement`, `WarpDistribute`), which is what blocks the 64-lane tensor-core mapping
-  on AMD.
-- **Pipelines in C++, chosen by target.** Our pipelines are Python scripts that call
-  `mir-opt` several times, and `amd_target.py` patches them at run time. Registered C++
-  pipelines selected by the `gpu.module` target attribute (`#nvvm.target`, `#rocdl.target`)
-  would replace that.
+- **A target description** (adopted, step 1): wave size, shared-memory limit and matrix
+  instructions per target, read by the passes.
+- **Pipelines in C++, chosen by target** (started, step 4): registered pipelines selected by
+  the target instead of Python scripts calling `mir-opt` several times.
 - **Per-target tuning.** IREE keeps tuning choices per target. Our measured schedule choices
   (lanes per element, elements per block, register caps) were all made on GH200 and need
   their own AMD values.
@@ -159,52 +217,14 @@ comes from AMD's matrix instruction calculator and is checked by
 needs only a swap with lane `L xor 8`; feeding the A operand needs a general shuffle.
 
 The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVIDIA m8n8k4,
-but cannot run yet: the rest of the schedule still assigns 32 lanes per element, and the AMD
-instruction needs the element on all 64 lanes of a wavefront.
-
-## Target layer plan (best practice)
-
-Goal: one MARSIR pipeline per kernel family, written in C++, that reads the GPU's properties
-from a target description; NVIDIA and AMD differ by one option. Every step must leave the
-committed NVIDIA PTX byte-identical, which step 0 checks.
-
-0. **Golden check.** `test/check_generated.py`: a list of every committed kernel file with the
-   command that produces it; regenerate all into a temporary directory and compare bytes. Run
-   before and after each step.
-1. **Target description.** An attribute `#mir.target<wave = 32, shared = 49152, mma = ...>` on
-   the module, set by `--mir-set-target=nvidia|amd`, and one C++ helper the passes call. When
-   the attribute is absent the helper returns today's NVIDIA values, so nothing changes.
-2. **Wave size from the target.** Replace the hard-coded 32 in WarpPerElement, WarpWrap,
-   WarpDistribute, RegisterResidentChain, DistributeFills, LowerCellwise, CellwiseSchedule
-   and EmulateWarp. This unblocks 64 lanes per element for the AMD tensor-core kernels.
-3. **Text edits become passes.** The Python scripts edit the IR as text between passes (for
-   example the `mir.constant` / `mir.reflect` argument attributes); each becomes a small pass.
-4. **Registered C++ pipelines** for bp, hl, dss, block_dss and tet, with typed options. The
-   "halve the warps until shared memory fits" retry becomes arithmetic in the schedule pass
-   against the target's limit; the measured tuning tables become per-target defaults. The
-   Python scripts shrink to one `mir-opt` call plus the gates.
-5. **AMD lowering in MLIR.** Private-space allocas, `gpu.grid_dim` read from the dispatch
-   packet, and the ROCDL tail as the `target=amd` branch of each pipeline; `amd_target.py`
-   and its patches go away. Checked on Beverin: same correctness and timing as today.
-6. **Matrix-instruction layouts as data.** A table per instruction (shape, which lane holds
-   which A/B/C entry); the tensor-core pass derives its shuffles from it for both vendors.
-
-The AMD performance work (the operator is 3.2x to 5x above MI300A's bandwidth floor) builds
-on steps 1 and 2.
+116 VGPRs and no scratch, but cannot run yet: the tensor-core mapping still gives each element
+32 lanes, and the AMD instruction needs the element on all 64 lanes of a wavefront.
 
 ## Next steps
 
-1. Find where the time goes inside the kernel on MI300A. A streaming kernel moving the same
-   bytes reaches 3.5-3.6 TB/s there (Beverin 757094; 8 B and 16 B loads within 3%). With
-   rough edge 5 fixed the operator reaches 1.6 / 0.9 TB/s, still 2.3x / 3.9x above that
-   floor. Hardware counters (Beverin 757110, /opt/rocm-6.3.0/bin/rocprof; the uenv rocprof
-   looks for rocm_agent_enumerator only in its own bin/ and silently runs nothing):
-   - global traffic is ideal: FETCH_SIZE = G + u bytes, WRITE_SIZE = y bytes, no 32 B requests;
-   - LDS bank-conflict cycles are 36% (p=3) / 44% (p=7) of LDS active cycles: the scratch
-     padding follows NVIDIA's bank model (WarpPerElement kBanks), not CDNA3's;
-   - the measured shapes keep one wavefront per SIMD (64 KB / 46 KB of LDS per block).
-   The occupancy ablation (757093) predates the flat_load fix, so it is repeated with opt.
-2. Tune for AMD with the same knobs as on GH200, measured as an AMD ablation.
-3. Target layer: see "Target layer plan" above.
+1. AMD schedule from the ablation (757112): lanes per element, waves per block, padding.
+2. A bank model for CDNA3 in WarpPerElement, read from the target like the wave size, if the
+   ablation shows the padding matters.
+3. Target layer steps 4 to 6 (above).
 4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
 5. 64 lanes per element for the AMD tensor-core kernels.
