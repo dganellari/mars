@@ -4,12 +4,16 @@
 // backend without the rest of the cell-wise solver. Inputs are random: element vectors, and
 // a symmetric geometry tensor with a dominant diagonal (any symmetric G defines the same
 // contractions, so it need not come from a mesh). Also checks A 1 = 0 and the symmetry
-// <v, A u> = <u, A v>.
-// Usage: mars_marsir_galerkin_gate <kernel file> [p = 3] [elements = 512]
+// <v, A u> = <u, A v>. Then times the apply: median of `reps` warm launches, host wall time
+// around a device synchronization (the same measure on CUDA and HIP). For large runs only the
+// first 512 elements are compared on the host.
+// Usage: mars_marsir_galerkin_gate <kernel file> [p = 3] [elements = 512] [reps = 0]
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_spectral_basis.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_galerkin.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -129,6 +133,8 @@ int main(int argc, char** argv)
     const std::string file = argv[1];
     const int p = argc > 2 ? std::atoi(argv[2]) : 3;
     const long long E = argc > 3 ? std::atoll(argv[3]) : 512;
+    const int reps = argc > 4 ? std::atoi(argv[4]) : 0;
+    const long long Echeck = std::min<long long>(E, 512);
     const int n = p + 1, Q = p + 2, n3 = n * n * n, q3 = Q * Q * Q, K = 6;
 
     const Tables t = tables(p);
@@ -156,7 +162,7 @@ int main(int argc, char** argv)
     double err = 0.0, scale = 0.0, null = 0.0, vAu = 0.0, uAv = 0.0;
     bool finite = true;
     std::vector<double> ref(n3);
-    for (long long e = 0; e < E; ++e) {
+    for (long long e = 0; e < Echeck; ++e) {
         reference(t, p, &u[e * n3], &G[e * K * q3], ref.data());
         for (int i = 0; i < n3; ++i) {
             finite = finite && std::isfinite(Au[e * n3 + i]) && std::isfinite(A1[e * n3 + i]);
@@ -172,6 +178,26 @@ int main(int argc, char** argv)
     printf("bp3_apply_p%d, %lld elements, kernel %s\n", p, E, file.c_str());
     printf("  vs direct quadrature sums: %.3e of max %.3e\n", err, scale);
     printf("  A 1: max %.3e; symmetry |<v,Au>-<u,Av>|/|<v,Au>|: %.3e\n", null, asym);
+    if (reps > 0) {
+        double* du = to_device(u);
+        double* dy = nullptr;
+        GATE_CK(cudaMalloc(&dy, u.size() * sizeof(double)));
+        for (int w = 0; w < 3; ++w) op.apply(du, dB, dBt, dD, dDt, dG, dy, E);
+        GATE_CK(cudaDeviceSynchronize());
+        std::vector<double> ms(reps);
+        for (int r = 0; r < reps; ++r) {
+            const auto t0 = std::chrono::steady_clock::now();
+            op.apply(du, dB, dBt, dD, dDt, dG, dy, E);
+            GATE_CK(cudaDeviceSynchronize());
+            ms[r] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        }
+        GATE_CK(cudaGetLastError());
+        std::sort(ms.begin(), ms.end());
+        const double med = ms[reps / 2];
+        printf("  timing: %d warm applies, median %.4f ms (min %.4f, max %.4f), %.3f GDoF/s element-local\n", reps,
+               med, ms.front(), ms.back(), (double)E * n3 / (med * 1e6));
+    }
+    printf("compared %lld of %lld elements on the host\n", Echeck, E);
     printf("%s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }
