@@ -248,5 +248,5 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVI
 1. Less shared memory per element on AMD: keep sweeps register-resident (the cell-wise
    schedule stages each q^3 intermediate in shared memory).
 2. Target layer steps 4 to 6 (above); the per-target tables (`WARPS_AMD`) move with step 4.
-4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
+3. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
 4. 64 lanes per element for the AMD tensor-core kernels.
