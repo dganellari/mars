@@ -141,12 +141,43 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVI
 but cannot run yet: the rest of the schedule still assigns 32 lanes per element, and the AMD
 instruction needs the element on all 64 lanes of a wavefront.
 
+## Target layer plan (best practice)
+
+Goal: one MARSIR pipeline per kernel family, written in C++, that reads the GPU's properties
+from a target description; NVIDIA and AMD differ by one option. Every step must leave the
+committed NVIDIA PTX byte-identical, which step 0 checks.
+
+0. **Golden check.** `test/check_generated.py`: a list of every committed kernel file with the
+   command that produces it; regenerate all into a temporary directory and compare bytes. Run
+   before and after each step.
+1. **Target description.** An attribute `#mir.target<wave = 32, shared = 49152, mma = ...>` on
+   the module, set by `--mir-set-target=nvidia|amd`, and one C++ helper the passes call. When
+   the attribute is absent the helper returns today's NVIDIA values, so nothing changes.
+2. **Wave size from the target.** Replace the hard-coded 32 in WarpPerElement, WarpWrap,
+   WarpDistribute, RegisterResidentChain, DistributeFills, LowerCellwise, CellwiseSchedule
+   and EmulateWarp. This unblocks 64 lanes per element for the AMD tensor-core kernels.
+3. **Text edits become passes.** The Python scripts edit the IR as text between passes (for
+   example the `mir.constant` / `mir.reflect` argument attributes); each becomes a small pass.
+4. **Registered C++ pipelines** for bp, hl, dss, block_dss and tet, with typed options. The
+   "halve the warps until shared memory fits" retry becomes arithmetic in the schedule pass
+   against the target's limit; the measured tuning tables become per-target defaults. The
+   Python scripts shrink to one `mir-opt` call plus the gates.
+5. **AMD lowering in MLIR.** Private-space allocas, `gpu.grid_dim` read from the dispatch
+   packet, and the ROCDL tail as the `target=amd` branch of each pipeline; `amd_target.py`
+   and its patches go away. Checked on Beverin: same correctness and timing as today.
+6. **Matrix-instruction layouts as data.** A table per instruction (shape, which lane holds
+   which A/B/C entry); the tensor-core pass derives its shuffles from it for both vendors.
+
+The AMD performance work (the operator is 3.2x to 5x above MI300A's bandwidth floor) builds
+on steps 1 and 2.
+
 ## Next steps
 
-1. Find why the loads reach less bandwidth on MI300A: a streaming kernel with the same bytes
-   gives the attainable bandwidth, and hardware counters show whether the loads are coalesced.
+1. Find where the time goes inside the kernel on MI300A. A streaming kernel moving the same
+   bytes reaches 3.5-3.6 TB/s there (Beverin 757094; 8 B and 16 B loads within 3%), so the
+   operator (1.1 / 0.7 TB/s) loses 3.2x / 5x inside its own schedule, not in the platform.
+   Hardware counters next (rocprofv3 from the image crashed on counter collection).
 2. Tune for AMD with the same knobs as on GH200, measured as an AMD ablation.
-3. Target layer: wave size and shared-memory budget from the target, instruction layouts as
-   data, the four fixes above done properly in MLIR.
+3. Target layer: see "Target layer plan" above.
 4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
 5. 64 lanes per element for the AMD tensor-core kernels.
