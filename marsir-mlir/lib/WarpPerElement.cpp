@@ -772,7 +772,9 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   }
   elements.erase();
   mir::refreshViewTypes(func.getOperation());
-  if (!single || L != wave) {
+  // The launch shape, unless it is NVIDIA's original form (one warp, one element), which
+  // the loaders assume when none is published; on AMD that default would be half a wave.
+  if (!single || L != wave || mir::getGpuTarget(func).isAmd()) {
     func->setAttr("mir.block_threads", b.getI64IntegerAttr(wave * W));
     func->setAttr("mir.elements_per_block", b.getI64IntegerAttr(G));
   }

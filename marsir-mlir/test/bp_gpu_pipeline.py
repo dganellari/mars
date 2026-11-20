@@ -20,6 +20,7 @@ Specs bp1_tri / bp3_tri (geometry = trilinear) take gq, wq (q: Gauss points and 
 corners X (E x 3 x 2 x 2 x 2) instead of G.
 
 Run from marsir-mlir/:  python3 test/bp_gpu_pipeline.py {bp1|bp3|bp1_tri|bp3_tri} [p] [--emulate] [--lanes=L] [--maxnreg=N]
+                        [--warps=W] [--no-pad]   (--no-pad: no scratch padding against bank conflicts)
 """
 import os
 import re
@@ -95,7 +96,8 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
                  "--mir-fuse-phases", "--canonicalize", "--cse",
                  f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'} "
-                 f"fit-shared={'false' if given is not None else 'true'}",
+                 f"fit-shared={'false' if given is not None else 'true'} "
+                 f"pad-scratch={'false' if '--no-pad' in sys.argv else 'true'}",
                  "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
     if "--emulate" in sys.argv:
         grad = "%D:" in src
