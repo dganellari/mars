@@ -11,8 +11,7 @@
 // argument is passed as an MLIR descriptor (allocated ptr, aligned ptr, offset,
 // sizes, strides) and must be 16-byte aligned, which cudaMalloc guarantees.
 
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/marsir/mars_marsir_driver.hpp"
 
 #include <cstdio>
 #include <cstdlib>
