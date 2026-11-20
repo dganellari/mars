@@ -42,6 +42,7 @@
 
 #include "mir/MirPasses.h"
 
+#include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -58,7 +59,19 @@ using namespace mlir;
 namespace {
 
 // Per-lane index + constant bundle, materialized once at the top of the kernel.
+// target=amd: v_mfma_f64_4x4x4_4b_f64 on a 64-lane wavefront (MI300A). Lane L holds
+// A[i][k] of block b at L = 16k + 4b + i, B[k][j] at 16k + 4b + j and C[i][j] at
+// 16i + 4b + j, one f64 per lane (AMD's matrix instruction calculator, gfx9). An 8x8
+// tile uses the blocks as its quadrants (I, J), b = 2I + J, and two instructions for the
+// K slabs. So A row = 4I + i, B column = 4J + j, k = L >> 4; C row = 4I + (L >> 4), C
+// column = 4J + (L & 3). ../amd/mfma/layout_model.py checks this layout and the
+// relayouts below against numpy.
 struct Lane {
+  bool amd = false;
+  int width = 32;                       // lanes a shuffle spans
+  Value rowA, nB, kk;                   // A row, B column (n), k within a slab
+  Value cRow, cCol;                     // C entry held (amd; nvidia: row i, cols 2k, 2k+1)
+  VectorType fragC;                     // C-fragment: vector<1x2> (nvidia), vector<1x1> (amd)
   Value lane, i, k, li;                 // lane id, L/4, L%4 (index), lane as i32
   Value c2idx, c4idx;                   // 2, 4 : index
   Value f0;                             // 0.0 : f64
@@ -73,8 +86,9 @@ struct Lane {
   }
 };
 
-static Lane makeLane(OpBuilder &b, Location loc) {
+static Lane makeLane(OpBuilder &b, Location loc, bool amd) {
   Lane L;
+  L.amd = amd;
   auto f64 = b.getF64Type();
   L.i32 = b.getIntegerType(32);
   L.frag1 = VectorType::get({1, 1}, f64);
@@ -88,15 +102,38 @@ static Lane makeLane(OpBuilder &b, Location loc) {
   L.i = b.create<arith::DivUIOp>(loc, L.lane, L.c4idx);
   L.k = b.create<arith::RemUIOp>(loc, L.lane, L.c4idx);
   L.li = b.create<arith::IndexCastOp>(loc, L.i32, L.lane);
+  L.fragC = L.frag2;
+  L.rowA = L.nB = L.i;
+  L.kk = L.k;
+  if (amd) {
+    auto c = [&](int v) { return b.create<arith::ConstantIndexOp>(loc, v).getResult(); };
+    Value l = b.create<arith::RemUIOp>(loc, L.lane, c(64));   // lane in the wavefront
+    L.lane = l;
+    L.li = b.create<arith::IndexCastOp>(loc, L.i32, l);
+    auto bit = [&](int s) {   // (l >> s) & 1
+      return b.create<arith::AndIOp>(loc, b.create<arith::ShRUIOp>(loc, l, c(s)), c(1)).getResult();
+    };
+    Value j = b.create<arith::AndIOp>(loc, l, c(3));
+    Value hi = b.create<arith::ShRUIOp>(loc, l, c(4));
+    Value I4 = b.create<arith::MulIOp>(loc, bit(3), c(4));
+    Value J4 = b.create<arith::MulIOp>(loc, bit(2), c(4));
+    L.rowA = b.create<arith::AddIOp>(loc, I4, j);
+    L.nB = b.create<arith::AddIOp>(loc, J4, j);
+    L.kk = hi;
+    L.cRow = b.create<arith::AddIOp>(loc, I4, hi);
+    L.cCol = b.create<arith::AddIOp>(loc, J4, j);
+    L.fragC = L.frag1;
+    L.width = 64;
+  }
   return L;
 }
 
 // col = 4*slab + k (index).
 static Value colOf(OpBuilder &b, Location loc, Lane &L, int slab) {
   if (slab == 0)
-    return L.k;
+    return L.kk;
   Value c = b.create<arith::ConstantIndexOp>(loc, 4 * slab);
-  return b.create<arith::AddIOp>(loc, L.k, c);
+  return b.create<arith::AddIOp>(loc, L.kk, c);
 }
 
 // col = pi(4*slab + k) = 2k + slab: the reduction order of direct hand-offs.
@@ -132,6 +169,17 @@ static Value readFrag1(OpBuilder &b, Location loc, Lane &L, Value mem,
 
 static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
                        ValueRange base, bool rowIB = true, bool colIB = true) {
+  if (L.amd) {   // one entry: C[cRow][8 tile + cCol]
+    Value col = L.cCol;
+    if (tile)
+      col = b.create<arith::AddIOp>(loc, col, b.create<arith::ConstantIndexOp>(loc, 8 * tile));
+    SmallVector<Value> idx = fragIdx(b, loc, base, L.cRow, col);
+    auto rd = b.create<vector::TransferReadOp>(
+        loc, L.frag1, mem, idx, AffineMap::getMinorIdentityMap(idx.size(), 2, b.getContext()),
+        L.f0, Value(), b.getBoolArrayAttr({rowIB, colIB}));
+    rd->setAttr(mir::kLaneOwnedAttr, b.getUnitAttr());
+    return rd;
+  }
   Value col2k = b.create<arith::MulIOp>(loc, L.k, L.c2idx);
   if (tile) {
     Value off = b.create<arith::ConstantIndexOp>(loc, 8 * tile);
@@ -148,12 +196,49 @@ static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
 
 static Value mma(OpBuilder &b, Location loc, Lane &L, Value a, Value bfrag,
                  Value acc) {
+  if (L.amd) {   // one f64 per lane in, one out: the four 4x4 blocks of an 8x8 slab
+    auto scalar = [&](Value v) {
+      return b.create<vector::ExtractOp>(loc, v, ArrayRef<int64_t>{0, 0}).getResult();
+    };
+    Value d = b.create<amdgpu::MFMAOp>(loc, b.getF64Type(), /*m=*/4, /*n=*/4, /*k=*/4, /*blocks=*/4,
+                                       scalar(a), scalar(bfrag), scalar(acc));
+    return b.create<vector::InsertOp>(loc, d, L.zc1, ArrayRef<int64_t>{0, 0});
+  }
   return b.create<nvgpu::MmaSyncOp>(loc, a, bfrag, acc,
                                     b.getDenseI64ArrayAttr({8, 8, 4}));
 }
 
 // Repack a C-fragment (cfrag, vector<1x2>) into an A- or B-fragment for k-slab
 // `slab` via gpu.shuffle. `toB` selects the C->B(std) formula; else C->A.
+// AMD relayouts of a C-fragment (one entry, C[4I + i][4J + j] in lane 16i + 8I + 4J + j)
+// into a slab-s operand, as one index shuffle each:
+//   A        lane needs C[4I + i][4s + k]        from 16 i + 8 I + 4 s + k
+//   B (k,n)  lane needs C[4s + k][4J + j]        from (L & ~8) | 8s: own lane or L ^ 8
+//   B (n,k)  lane needs X[4J + j][4s + k] (B^T)  from 16 j + 8 J + 4 s + k
+enum class Operand { A, B, BT };
+static Value relayoutAmd(OpBuilder &b, Location loc, Lane &L, Value cfrag, int slab,
+                         Operand to) {
+  auto ci = [&](int v) { return L.ci(b, loc, v); };
+  Value li = L.li, src;
+  if (to == Operand::B) {
+    src = b.create<arith::OrIOp>(loc, b.create<arith::AndIOp>(loc, li, ci(~8)), ci(8 * slab));
+  } else {
+    // k = L >> 4, i or j = L & 3, I (A) = bit 3, J (B^T) = bit 2
+    Value k = b.create<arith::ShRUIOp>(loc, li, ci(4));
+    Value low = b.create<arith::AndIOp>(loc, li, ci(3));
+    Value blk = b.create<arith::AndIOp>(
+        loc, b.create<arith::ShRUIOp>(loc, li, ci(to == Operand::A ? 3 : 2)), ci(1));
+    src = b.create<arith::AddIOp>(loc, b.create<arith::MulIOp>(loc, low, ci(16)),
+                                  b.create<arith::MulIOp>(loc, blk, ci(8)));
+    src = b.create<arith::AddIOp>(loc, src, k);
+    if (slab)
+      src = b.create<arith::AddIOp>(loc, src, ci(4 * slab));
+  }
+  Value v = b.create<vector::ExtractOp>(loc, cfrag, ArrayRef<int64_t>{0, 0});
+  auto s = b.create<gpu::ShuffleOp>(loc, v, src, ci(64), gpu::ShuffleMode::IDX);
+  return b.create<vector::InsertOp>(loc, s.getShuffleResult(), L.zc1, ArrayRef<int64_t>{0, 0});
+}
+
 static Value relayout(OpBuilder &b, Location loc, Lane &L, Value cfrag, int slab,
                       bool toB) {
   Value lo = b.create<vector::ExtractOp>(loc, cfrag, ArrayRef<int64_t>{0, 0});
@@ -223,6 +308,19 @@ static bool isThreadPrivate(Value mem) {
 static Value materialize(OpBuilder &b, Location loc, Lane &L,
                          ArrayRef<Value> tiles, VectorType ty) {
   const int64_t R = ty.getDimSize(0), C = ty.getDimSize(1);
+  if (L.amd) {   // element (r, 8t + c) is the one entry of lane 16 (r%4) + 8 (r/4) + 4 (c/4) + c%4
+    Value acc = b.create<arith::ConstantOp>(loc, ty, DenseElementsAttr::get(ty, b.getF64FloatAttr(0.0)));
+    for (int64_t r = 0; r < R; ++r)
+      for (int64_t col = 0; col < C; ++col) {
+        const int t = (int)(col / 8), c = (int)(col % 8);
+        Value v = b.create<vector::ExtractOp>(loc, tiles[t], ArrayRef<int64_t>{0, 0});
+        Value src = L.ci(b, loc, (int)(16 * (r % 4) + 8 * (r / 4) + 4 * (c / 4) + c % 4));
+        Value e = b.create<gpu::ShuffleOp>(loc, v, src, L.ci(b, loc, 64), gpu::ShuffleMode::IDX)
+                      .getShuffleResult();
+        acc = b.create<vector::InsertOp>(loc, e, acc, ArrayRef<int64_t>{r, col});
+      }
+    return acc;
+  }
   Value width = L.ci(b, loc, 32);
   SmallVector<Value> lo, hi;
   for (Value t : tiles) {
@@ -345,14 +443,21 @@ struct ChainContractsPass
                      "shuffles, with permuted reduction order"),
       llvm::cl::init(false)};
 
+  // amd: v_mfma_f64_4x4x4_4b_f64 on a 64-lane wavefront (MI300A); the kernel must give each
+  // element a full wavefront. Direct hand-off is NVIDIA-only (its permuted reduction order
+  // relies on the m8n8k4 fragment symmetry).
+  Option<std::string> target{*this, "target",
+      llvm::cl::desc("nvidia (nvgpu.mma.sync m8n8k4) or amd (amdgpu.mfma 4x4x4, 4 blocks)"),
+      llvm::cl::init("nvidia")};
+
   StringRef getArgument() const final { return "mir-chain-contracts"; }
   StringRef getDescription() const final {
     return "Lower a chain of m8n8k4 vector.contract to register-resident "
            "nvgpu.mma.sync + gpu.shuffle (no shared memory)";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<gpu::GPUDialect, nvgpu::NVGPUDialect, vector::VectorDialect,
-                    arith::ArithDialect>();
+    registry.insert<gpu::GPUDialect, nvgpu::NVGPUDialect, amdgpu::AMDGPUDialect,
+                    vector::VectorDialect, arith::ArithDialect>();
   }
 
   void runOnOperation() override {
@@ -384,7 +489,16 @@ struct ChainContractsPass
 
     OpBuilder b(ctx);
     b.setInsertionPointToStart(entry);
-    Lane L = makeLane(b, root->getLoc());
+    const bool amd = target == "amd";
+    if (!amd && target != "nvidia") {
+      root->emitError("mir-chain-contracts: target must be nvidia or amd");
+      return signalPassFailure();
+    }
+    if (amd && directHandoff) {
+      root->emitError("mir-chain-contracts: direct-handoff is NVIDIA-only");
+      return signalPassFailure();
+    }
+    Lane L = makeLane(b, root->getLoc(), amd);
 
     // A value of type vector<8xN> lives as N/8 per-lane C-fragments, one per
     // column tile, each vector<1x2>. Contract results and pointwise results are
@@ -408,14 +522,15 @@ struct ChainContractsPass
       if (auto it = frag.find(v); it != frag.end()) {
         if (it->second.size() != 1)
           return Value();   // a multi-tile value cannot be an A operand
-        return relayout(b, loc, L, it->second[0], slab, /*toB=*/false);
+        return L.amd ? relayoutAmd(b, loc, L, it->second[0], slab, Operand::A)
+                     : relayout(b, loc, L, it->second[0], slab, /*toB=*/false);
       }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
       if (!rd || !isPlain2D(rd))
         return Value();  // neither a plain leaf read nor a value we lowered
       Value col = colOf(b, loc, L, slab);
-      return readFrag1(b, loc, L, rd.getSource(),                  // A[i,4s+k]
-                       fragIdx(b, loc, rd.getIndices(), L.i, col), rowIB);
+      return readFrag1(b, loc, L, rd.getSource(),                  // A[row,4s+k]
+                       fragIdx(b, loc, rd.getIndices(), L.rowA, col), rowIB);
     };
     // B supplies columns 8t..8t+7 for tile t.
     auto operandFragB = [&](Value v, int slab, bool transp, int tile,
@@ -427,14 +542,16 @@ struct ChainContractsPass
         // A TRANSPOSED B operand X (indexed [n,k]) supplies B[k][n] = X[n][k] to
         // lane L as X[L/4][4s + L%4] -- which is X's A-fragment, not its
         // B-fragment. Only the standard (k,n) form takes the C->B relayout.
+        if (L.amd)
+          return relayoutAmd(b, loc, L, it->second[0], slab, transp ? Operand::BT : Operand::B);
         return relayout(b, loc, L, it->second[0], slab, /*toB=*/!transp);
       }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
       if (!rd || !isPlain2D(rd))
         return Value();
       Value col = colOf(b, loc, L, slab);
-      Value nIdx = addCol(loc, L.i, tile);
-      if (transp)   // B stored [n,k]: read [8t+i, 4s+k]; n is the ROW here
+      Value nIdx = addCol(loc, L.nB, tile);
+      if (transp)   // B stored [n,k]: read [8t+n, 4s+k]; n is the ROW here
         return readFrag1(b, loc, L, rd.getSource(),
                          fragIdx(b, loc, rd.getIndices(), nIdx, col), nIB, true);
       // B stored [k,n]: read [4s+k, 8t+i]; n is the COLUMN here
@@ -497,8 +614,8 @@ struct ChainContractsPass
         if (auto d = dyn_cast<DenseElementsAttr>(cst.getValue()))
           if (d.isSplat())
             return b.create<arith::ConstantOp>(
-                loc, L.frag2,
-                DenseElementsAttr::get(L.frag2, d.getSplatValue<APFloat>()));
+                loc, L.fragC,
+                DenseElementsAttr::get(L.fragC, d.getSplatValue<APFloat>()));
       return Value();
     };
 
@@ -724,8 +841,8 @@ struct ChainContractsPass
             return;
           }
           Value z = b.create<arith::ConstantOp>(
-              c.getLoc(), L.frag2,
-              DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
+              c.getLoc(), L.fragC,
+              DenseElementsAttr::get(L.fragC, b.getF64FloatAttr(0.0)));
           accFrags.assign(nTiles, z);
         }
 
@@ -791,7 +908,7 @@ struct ChainContractsPass
           }
           OperationState st(op->getLoc(), op->getName());
           st.addOperands(fops);
-          st.addTypes({L.frag2});
+          st.addTypes({L.fragC});
           st.addAttributes(op->getAttrs());
           out.push_back(b.create(st)->getResult(0));
         }
@@ -830,14 +947,15 @@ struct ChainContractsPass
           continue;   // the write stays; it now stores the gathered value
         }
         const bool wRowIB = rowsIB(w.getVector()), wColIB = colsIB(w.getVector());
-        Value col2k = b.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx);
+        Value col2k = L.amd ? L.cCol : b.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx).getResult();
+        Value row = L.amd ? L.cRow : L.i;
         for (int t = 0; t < (int)it->second.size(); ++t) {
           Value col = col2k;
           if (t)
             col = b.create<arith::AddIOp>(
                 w.getLoc(), col,
                 b.create<arith::ConstantIndexOp>(w.getLoc(), 8 * t));
-          SmallVector<Value> idx = fragIdx(b, w.getLoc(), w.getIndices(), L.i, col);
+          SmallVector<Value> idx = fragIdx(b, w.getLoc(), w.getIndices(), row, col);
           auto pw = b.create<vector::TransferWriteOp>(
               w.getLoc(), it->second[t], w.getSource(), idx,
               AffineMapAttr::get(AffineMap::getMinorIdentityMap(idx.size(), 2, ctx)),
