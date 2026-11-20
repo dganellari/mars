@@ -131,34 +131,28 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
     if cellwise:
         # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
         # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
-        # A kernel declares its shared memory statically, at most 48 KB: without --warps,
-        # the warps per block are halved from that default until it fits (p = 7 in f32).
+        # A kernel declares its shared memory statically, at most the target's limit (48 KB
+        # on sm_90): without --warps, --mir-warp-per-element=fit-shared halves the warps per
+        # block from that default until it fits (p = 7 in f32).
         default_warps = 4 if p >= 3 else 8
         # Scratch padding against bank conflicts (--mir-warp-per-element): measured on
         # GH200 at 64^3, p = 3 runs 8% (FP64) / 6% (FP32) faster with it, but the p = 7
         # FP32 operator slower (4.16 -> 5.81 ms: ptxas goes from 168 to 254 registers,
         # 6 -> 4 blocks per SM, and it stays slower at equal registers), so p = 7 has none.
         pad = p <= 3 and "--no-pad" not in sys.argv
-        warp_per_element = "--mir-warp-per-element" + ("" if pad else "=pad-scratch=0")
         given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
         warps = given or default_warps
-        bufferized = ir
-        while True:
-            ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
-                      "--mir-fuse-phases", "--canonicalize", "--cse",
-                      warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
-            if "--emulate" in sys.argv:
-                return emulate(ir, p)
-            suffix = "_f32" if real == "f32" else ""
-            named = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply rename=laplacian_apply_p{p}{suffix}"], ir)
-            tag = suffix + ("" if given is None else f"_w{warps}")
-            status = finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
-            ptx = open(os.path.join(ROOT, "generated", f"hl_cellwise_p{p}{tag}_sm90.ptx")).read()
-            shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
-            if shared <= 48 * 1024 or given is not None or warps == 1:
-                return status if shared <= 48 * 1024 else 1
-            warps //= 2
-            print(f"  {shared} B of shared memory > 48 KB: retrying with {warps} warp(s) per block")
+        warp_per_element = (f"--mir-warp-per-element=pad-scratch={int(pad)} "
+                            f"fit-shared={'false' if given is not None else 'true'}")
+        ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+                  "--mir-fuse-phases", "--canonicalize", "--cse",
+                  warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
+        if "--emulate" in sys.argv:
+            return emulate(ir, p)
+        suffix = "_f32" if real == "f32" else ""
+        named = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply rename=laplacian_apply_p{p}{suffix}"], ir)
+        tag = suffix + ("" if given is None else f"_w{warps}")
+        return finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)

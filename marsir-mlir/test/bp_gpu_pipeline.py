@@ -77,52 +77,42 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     ir = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply elements={','.join(map(str, elements))} "
                  f"constants={','.join(map(str, constants))} reflect={','.join(map(str, reflect))}"], ir)
 
-    # Warps per block: the CVFEM operator's measured default, halved (fewer elements
-    # per block) until the static shared memory fits in 48 KB.
+    # Warps per block: the CVFEM operator's measured default, which
+    # --mir-warp-per-element=fit-shared halves (fewer elements per block) until the static
+    # shared memory fits the target's limit; an explicit --warps=W is used as given.
     given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
     # --lanes=L: lanes per element; a multiple of 32 puts L / 32 warps on each element.
     lanes = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--lanes=")), LANES.get((spec, p), 0))
     if lanes > 32 and given is None:
         given = lanes // 32
     warps = given or (4 if p >= 3 else 8)
-    bufferized = ir
-    while True:
-        # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
-        # space steers which dimension a thread keeps, so the CPU gate schedules with it too
-        # and only drops it before the CPU build.
-        sched = (f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
-                 + (f" lanes={lanes}" if lanes else ""))
-        even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if (spec, p) in EVEN_ODD and "--no-even-odd" not in sys.argv else []
-        ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
-                     "--mir-fuse-phases", "--canonicalize", "--cse",
-                     f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'}", "--canonicalize", "--cse", "--loop-invariant-code-motion"],
-                    bufferized)
-        if "--emulate" in sys.argv:
-            grad = "%D:" in src
-            tri = "%X:" in src
-            k = re.search(r"%G: tensor<(\d+)x", src)
-            # The pointwise action of bp1_tri / bp3_tri is that of bp1 / bp3 on the geometry
-            # the harness forms from the corners.
-            ir = re.sub(r"(memref<[0-9x]*f(?:32|64)), 4>", r"\1>", ir)
-            return hl.emulate(ir, p, harness="emu_bp.cpp",
-                              defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.split('_')[0].upper()}",
-                                       f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
-                              + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else [])
-                              + (["-DBP_EVEN_ODD"] if "__fold" in ir else []))
-        suffix = "_f32" if real == "f32" else ""
-        named = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply rename={spec}_apply_p{p}{suffix}"], ir)
-        maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")), MAXNREG.get((spec, p), 0))
-        status = hl.finish(named, p, suffix, no_chain=True, prefix=spec, maxnreg=maxnreg)
-        ptx = open(os.path.join(hl.ROOT, "generated", f"{spec}_p{p}{suffix}_sm90.ptx")).read()
-        shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
-        if shared <= 48 * 1024:
-            return status
-        if given is not None or warps == 1:
-            print(f"  {shared} B of shared memory per block > 48 KB even with {warps} warp(s): FAILED")
-            return 1
-        warps //= 2
-        print(f"  {shared} B of shared memory > 48 KB: retrying with {warps} warp(s) per block")
-
+    # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
+    # space steers which dimension a thread keeps, so the CPU gate schedules with it too
+    # and only drops it before the CPU build.
+    sched = (f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
+             + (f" lanes={lanes}" if lanes else ""))
+    even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if (spec, p) in EVEN_ODD and "--no-even-odd" not in sys.argv else []
+    ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
+                 "--mir-fuse-phases", "--canonicalize", "--cse",
+                 f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'} "
+                 f"fit-shared={'false' if given is not None else 'true'}",
+                 "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
+    if "--emulate" in sys.argv:
+        grad = "%D:" in src
+        tri = "%X:" in src
+        k = re.search(r"%G: tensor<(\d+)x", src)
+        # The pointwise action of bp1_tri / bp3_tri is that of bp1 / bp3 on the geometry
+        # the harness forms from the corners.
+        ir = re.sub(r"(memref<[0-9x]*f(?:32|64)), 4>", r"\1>", ir)
+        return hl.emulate(ir, p, harness="emu_bp.cpp",
+                          defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.split('_')[0].upper()}",
+                                   f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
+                          + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else [])
+                          + (["-DBP_EVEN_ODD"] if "__fold" in ir else []))
+    suffix = "_f32" if real == "f32" else ""
+    named = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply rename={spec}_apply_p{p}{suffix}"], ir)
+    maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")), MAXNREG.get((spec, p), 0))
+    return hl.finish(named, p, suffix, no_chain=True, prefix=spec, maxnreg=maxnreg)
 
 if __name__ == "__main__":
     sys.exit(main())

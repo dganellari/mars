@@ -790,6 +790,10 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   Option<bool> largestFirst{*this, "largest-first",
                             llvm::cl::desc("pack scratch largest first when that needs fewer slots"),
                             llvm::cl::init(true)};
+  Option<bool> fitShared{*this, "fit-shared",
+                         llvm::cl::desc("halve the warps per block until the shared memory fits the "
+                                        "target's limit (for a warp count that is a default, not a choice)"),
+                         llvm::cl::init(false)};
 
   StringRef getArgument() const final { return "mir-warp-per-element"; }
   StringRef getDescription() const final {
@@ -799,6 +803,48 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, gpu::GPUDialect, memref::MemRefDialect, scf::SCFDialect>();
+  }
+
+  // Static shared memory a mapping with the loop's current warps per block declares: map a
+  // copy of the function (in the module, so it sees the target) and sum its buffers.
+  FailureOr<int64_t> sharedBytes(func::FuncOp func, scf::ParallelOp loop) {
+    OpBuilder b(func);
+    b.setInsertionPointAfter(func);
+    IRMapping map;
+    auto copy = cast<func::FuncOp>(b.clone(*func, map));
+    copy.setSymName((func.getSymName() + "__fit").str());
+    auto copyLoop = cast<scf::ParallelOp>(map.lookup(loop.getOperation()));
+    int64_t bytes = 0;
+    const bool ok = succeeded(mapElements(copy, copyLoop, padScratch, largestFirst));
+    for (unsigned i = 0; ok && i < copy.getNumArguments(); ++i)
+      if (copy.getArgAttr(i, "mir.workgroup"))
+        if (auto t = dyn_cast<MemRefType>(copy.getArgument(i).getType()))
+          bytes += t.getNumElements() * t.getElementTypeBitWidth() / 8;
+    copy.erase();
+    if (!ok)
+      return failure();
+    return bytes;
+  }
+
+  // The warps per block, halved until the block's shared memory fits the target's static
+  // limit, or one element per block remains (then the kernel cannot be built: an error).
+  LogicalResult fitWarps(func::FuncOp func, scf::ParallelOp loop) {
+    const mir::GpuTarget target = mir::getGpuTarget(func);
+    auto attr = [&](StringRef name) { return loop->getAttrOfType<IntegerAttr>(name); };
+    const int64_t L = attr("mir.lanes_per_element") ? attr("mir.lanes_per_element").getInt() : target.waveSize;
+    int64_t W = attr("mir.warps_per_block") ? attr("mir.warps_per_block").getInt() : (L == target.waveSize ? 1 : 4);
+    for (;;) {
+      loop->setAttr("mir.warps_per_block", IntegerAttr::get(IntegerType::get(func.getContext(), 64), W));
+      FailureOr<int64_t> bytes = sharedBytes(func, loop);
+      if (failed(bytes))
+        return failure();
+      if (*bytes <= target.maxSharedBytes)
+        return success();
+      if (W == 1 || target.waveSize * W <= L)
+        return func.emitOpError("shared memory ") << *bytes << " B per block exceeds the target's "
+               << target.maxSharedBytes << " B even with " << W << " warp(s) per block";
+      W /= 2;
+    }
   }
 
   void runOnOperation() override {
@@ -812,9 +858,12 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
         func.emitOpError("expects at most one {mir.elements} loop");
         return signalPassFailure();
       }
-      for (scf::ParallelOp p : loops)
+      for (scf::ParallelOp p : loops) {
+        if (fitShared && failed(fitWarps(func, p)))
+          return signalPassFailure();
         if (failed(mapElements(func, p, padScratch, largestFirst)))
           return signalPassFailure();
+      }
     }
   }
 };
