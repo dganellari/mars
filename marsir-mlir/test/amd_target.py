@@ -106,6 +106,8 @@ if len(sys.argv) > 1 and sys.argv[1].endswith("_pipeline"):
     mod = importlib.import_module(sys.argv.pop(1))
     if hasattr(mod, "finish"):
         mod.finish = finish_amd
+    if hasattr(mod, "TARGET"):   # the pipeline's per-target tuning tables
+        mod.TARGET = "amd"
     if hasattr(mod, "run"):
         mod.run = run_amd
     mod.main()

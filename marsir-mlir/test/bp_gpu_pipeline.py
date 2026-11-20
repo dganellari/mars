@@ -45,6 +45,11 @@ EVEN_ODD = {(s, 7) for s in ("bp1", "bp3", "bp1_tri", "bp3_tri")} | {("bp3_tri",
 # register blocking and are 2.4x slower. --lanes=L / --maxnreg=N override.
 LANES = {("bp1", 7): 64, ("bp3", 7): 64}
 MAXNREG = {("bp1", 7): 72}
+# Per target: amd_target.py sets TARGET = "amd". Measured on MI300A (Beverin 757112): BP3 p = 3
+# runs 1.01 ms with one wave per block against 1.18 ms with four (the NVIDIA default). Shared
+# memory per element limits the waves per CU either way; smaller blocks pack it better.
+TARGET = "nvidia"
+WARPS_AMD = {("bp3", 3): 1}
 
 
 def main():
@@ -86,6 +91,8 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     lanes = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--lanes=")), LANES.get((spec, p), 0))
     if lanes > 32 and given is None:
         given = lanes // 32
+    if given is None and TARGET == "amd":
+        given = WARPS_AMD.get((spec, p))
     warps = given or (4 if p >= 3 else 8)
     # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
     # space steers which dimension a thread keeps, so the CPU gate schedules with it too

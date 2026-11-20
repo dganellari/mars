@@ -9,18 +9,19 @@ description. Every compiler change keeps the committed NVIDIA PTX byte-identical
 
 | Kernel | GH200 (NVIDIA) | MI300A (AMD) |
 |---|---|---|
-| BP3 p=3, 262,144 elements | 0.661 ms, 25.4 GDoF/s | 1.184 ms, 14.2 GDoF/s |
+| BP3 p=3, 262,144 elements | 0.661 ms, 25.4 GDoF/s | 1.013 ms, 16.6 GDoF/s |
 | BP3 p=7, 32,768 elements | 0.578 ms, 29.0 GDoF/s | 1.556 ms, 10.8 GDoF/s |
 
 Same gate (`mars_marsir_galerkin_gate`), same source, median of 20 warm applies; both pass the
 check against host quadrature. GDoF/s counts element-local values. Jobs: Daint 5410396,
-Beverin 757106. Before rough edge 5 was fixed MI300A took 1.638 / 1.986 ms (757090).
+Beverin 757112 (median of two rounds). MI300A took 1.638 / 1.986 ms before rough edge 5 was
+fixed (757090), and 1.184 ms at p=3 before the AMD default of one wave per block.
 
 The operator moves, per element, the geometry tensor G (6 values per quadrature point) and u
 in, and y out: 7,024 B at p=3, 43,184 B at p=7. GH200 reaches 2.8 / 2.4 TB/s with it. On
 MI300A a streaming kernel moving the same bytes reaches 3.5-3.6 TB/s (757094; 8 B and 16 B
-loads within 3%), and the operator 1.6 / 0.9 TB/s: the time is lost inside the kernel's
-schedule, not in the platform. See "Profiling on Beverin" for what the counters say.
+loads within 3%), and the operator 1.8 / 0.9 TB/s: the time is lost inside the kernel's
+schedule, not in the platform. The limit is shared memory per element (see "AMD ablation").
 
 ## How to build an AMD kernel
 
@@ -186,9 +187,31 @@ Findings for BP3 (757110, opt lowering):
 - At the measured shapes there is one wavefront per SIMD (64 KB / 46 KB of LDS per block).
 - L2 hit rate 0.32 / 0.47, as expected for streaming.
 
-The first occupancy ablation (757093: 16 / 32 / 64 lanes per element, 1.65 / 2.38 / 1.83 ms)
-ran before rough edge 5 was fixed, when flat loads tied every wait to HBM; it is repeated
-with opt and with the padding on and off in 757112.
+## AMD ablation (Beverin 757112, opt lowering, two rounds in reversed order, all correct)
+
+| BP3 variant | Blocks per CU | Time | Conflict share, padded / not |
+|---|---|---|---|
+| p=3, 16 lanes per element, 1 wave per block | 4 | 1.008-1.022 ms | 0.36 / 0.58 |
+| p=3, 16 lanes, 2 waves | 2 | 1.026-1.038 ms | 0.36 / 0.58 |
+| p=3, 16 lanes, 4 waves (NVIDIA default) | 1 | 1.177-1.186 ms | 0.36 / 0.59 |
+| p=3, 32 lanes, 1 wave | 8 | 1.526-1.537 ms | 0.49 |
+| p=3, 64 lanes, 1 wave | 16 | 1.690-1.702 ms | 0.43 |
+| p=7, 64 lanes, 2 elements per block (default) | 1 | 1.552-1.565 ms | 0.44 / 0.76 |
+| p=7, 64 lanes, 1 element per block | 2 | 1.700-1.727 ms | 0.43 / 0.76 |
+| p=7, 32 lanes | 1 | 2.509 ms | 0.55 |
+
+- One wave per block is the AMD default for BP3 p=3 now (`WARPS_AMD` in
+  `test/bp_gpu_pipeline.py`, used when `amd_target.py` sets `TARGET = "amd"`): 14% faster.
+- Bank conflicts do not cost time: the padding cuts them from 0.58 to 0.36 (p=3) and 0.76 to
+  0.44 (p=7) of LDS cycles and moves the time by about 1%. It stays on; a CDNA3 bank model
+  is not worth building.
+- More lanes per element is slower even with 16 blocks per CU: lanes go idle, and occupancy is
+  not what limits the kernel. Shared memory per element is: 4,000 B at p=3 and 23,328 B at
+  p=7, against 64 KB per CU on MI300A (an H100 SM has 228 KB). Keeping more of each element
+  in registers (MI300A has 512 per lane, the kernels use 66-86) is the schedule work that
+  would close the rest of the gap.
+- The first occupancy ablation (757093) ran before rough edge 5 was fixed, when flat loads
+  tied every wait to HBM; its conclusions are superseded by this one.
 
 ## What to borrow from IREE
 
@@ -222,9 +245,8 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVI
 
 ## Next steps
 
-1. AMD schedule from the ablation (757112): lanes per element, waves per block, padding.
-2. A bank model for CDNA3 in WarpPerElement, read from the target like the wave size, if the
-   ablation shows the padding matters.
-3. Target layer steps 4 to 6 (above).
+1. Less shared memory per element on AMD: keep sweeps register-resident (the cell-wise
+   schedule stages each q^3 intermediate in shared memory).
+2. Target layer steps 4 to 6 (above); the per-target tables (`WARPS_AMD`) move with step 4.
 4. Port MARS's hand-written cell-wise kernels to HIP (32-bit warp masks), for full solves.
-5. 64 lanes per element for the AMD tensor-core kernels.
+4. 64 lanes per element for the AMD tensor-core kernels.
