@@ -26,6 +26,7 @@ add_mlir_dialect_library(MLIRMir
   EvenOdd.cpp
   Target.cpp
   MarkKernel.cpp
+  Pipelines.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir

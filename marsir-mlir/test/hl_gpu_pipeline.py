@@ -207,20 +207,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
 
 def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
     """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
-    ir = run([MIROPT, "-", f"--mir-gpu-wrap=maxnreg={maxnreg}"], ir)
-    ir = run([MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
-              "--convert-vector-to-scf", "--canonicalize",
-              "--convert-scf-to-cf",
-              "--convert-nvgpu-to-nvvm",
-              "--expand-strided-metadata",
-              "--lower-affine",
-              "--convert-vector-to-llvm",
-              "--convert-math-to-llvm",   # math.fma (the cell-wise schedule's contractions) -> fma.rn.f64
-              "--convert-gpu-to-nvvm",
-              "--convert-arith-to-llvm", "--convert-index-to-llvm",
-              "--convert-cf-to-llvm",
-              "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
-    ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
+    ir = run([MIROPT, "-", f"--mir-lower-to-nvvm=maxnreg={maxnreg} vector=true"], ir)
 
     out = os.path.join(ROOT, "generated", f"{prefix}_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())

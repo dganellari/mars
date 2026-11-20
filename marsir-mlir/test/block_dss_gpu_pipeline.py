@@ -43,17 +43,7 @@ sys.stdout.write(mlir_ir.emit_block_dss({p}, {block}))
     if "--emulate" in sys.argv:
         return emulate(ir, p, block)
 
-    ir = d.run([d.MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = d.run([d.MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
-                "--convert-scf-to-cf",
-                "--expand-strided-metadata",
-                "--lower-affine",
-                "--convert-gpu-to-nvvm",
-                "--convert-arith-to-llvm", "--convert-index-to-llvm",
-                "--convert-cf-to-llvm",
-                "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
-    ir = d.run([d.MIROPT, "-", "--mir-noalias-descriptors"], ir)
-    ir = d.run([d.MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
+    ir = d.run([d.MIROPT, "-", "--mir-lower-to-nvvm=math=false noalias=true"], ir)
     out = os.path.join(d.ROOT, "generated", f"block_dss_p{p}_b{block}_sm90.ptx")
     print(d.run([sys.executable, os.path.join(d.HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()

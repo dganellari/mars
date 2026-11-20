@@ -50,6 +50,8 @@ void registerTraceSharedPass();
 void registerEvenOddPass();
 // Registers --mir-mark-kernel (kernel and argument roles by position; rename).
 void registerMarkKernelPass();
+// Registers the pipelines (--mir-lower-to-nvvm).
+void registerPipelines();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

@@ -107,18 +107,7 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
     if "--emulate" in sys.argv:
         return emulate(ir, p, precond, bicg, pmg, lines)
 
-    ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
-    ir = run([MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
-              "--convert-scf-to-cf",
-              "--expand-strided-metadata",
-              "--lower-affine",
-              "--convert-math-to-llvm",   # math.fma -> llvm.intr.fma -> fma.rn.f64
-              "--convert-gpu-to-nvvm",
-              "--convert-arith-to-llvm", "--convert-index-to-llvm",
-              "--convert-cf-to-llvm",
-              "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
-    ir = run([MIROPT, "-", "--mir-noalias-descriptors"], ir)
-    ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
+    ir = run([MIROPT, "-", "--mir-lower-to-nvvm=noalias=true"], ir)
 
     name = ("pmg_f32" if real == "f32" else "pmg") if pmg else f"lines_p{p}" if lines else f"bicgstab_p{p}" if bicg else (
         f"precond_p{p}" if precond else f"dss_p{p}")
