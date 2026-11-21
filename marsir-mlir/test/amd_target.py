@@ -21,6 +21,8 @@ import hl_gpu_pipeline as hl
 import importlib
 
 def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
+    if os.environ.get("AMD_DUMP"):   # the scheduled kernel, before GPU wrapping (for reading)
+        open(os.environ["AMD_DUMP"], "w").write(ir)
     ir = hl.run([hl.MIROPT, "-", "--mir-gpu-wrap", "--mir-amdgpu-grid-dim"], ir)
     ir = hl.run([hl.MLIROPT, "-", "--rocdl-attach-target=module=mir_kernels chip=gfx942 O=3",
                  "--convert-vector-to-scf", "--canonicalize", "--convert-scf-to-cf",

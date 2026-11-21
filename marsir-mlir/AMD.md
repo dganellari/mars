@@ -236,6 +236,20 @@ Findings for BP3 (757110, opt lowering):
 - The first occupancy ablation (757093) ran before rough edge 5 was fixed, when flat loads
   tied every wait to HBM; its conclusions are superseded by this one.
 
+Residency, isolated (Beverin 757263): the same p=3 kernel, only its LDS reservation raised in
+the kernel descriptor, so the code is identical and only the blocks per CU change.
+
+| LDS reserved per block | Blocks per CU | Time (two rounds) |
+|---|---|---|
+| 16,000 B (what it uses) | 4 | 1.016 / 1.018 ms |
+| 32,768 B | 2 | 1.584 / 1.583 ms |
+| 65,536 B | 1 | 2.807 / 2.805 ms |
+
+Half the resident elements costs 1.56x, half again 1.77x: the kernel is latency-bound and
+short of resident work, and shared memory per element is what caps it. Lanes per element
+(above) are not a way out, since more lanes per element leave lanes idle; less shared
+memory per element is.
+
 ## What to borrow from IREE
 
 IREE is a complete ML compiler with strong AMD support. Its scope differs from MARSIR's, but
@@ -268,7 +282,13 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVI
 
 ## Next steps
 
-1. Less shared memory per element on AMD: keep sweeps register-resident (the cell-wise
-   schedule stages each q^3 intermediate in shared memory).
+1. Less shared memory per element on AMD (757263 shows it pays). Today four q^3 buffers are
+   live together: u at the quadrature points and its three derivatives, because each
+   derivative phase keeps its own direction in the thread, so the three land on different
+   lanes and must meet in shared memory before the pointwise step. Keeping one direction
+   for the derivative along it, the pointwise step and the transposed derivative along it
+   lets those values stay in registers, but buffers can only share slots when the packer
+   (WarpPerElement) knows that a phase touches them lane by lane, so that is the change to
+   make.
 2. Target layer steps 4 to 6 (above); the per-target tables (`WARPS_AMD`) move with step 4.
 3. 64 lanes per element for the AMD tensor-core kernels.
