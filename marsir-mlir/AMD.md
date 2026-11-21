@@ -175,9 +175,9 @@ byte for byte.
 | 1. Target description | done | `--mir-set-target=target=nvidia\|amd` records `mir.vendor`, `mir.wave_size`, `mir.max_shared_bytes` as an upstream DLTI target system spec (device "GPU"); passes call `mir::getGpuTarget(op)`, which returns NVIDIA's values when no spec is present. |
 | 2. Wave size from the target | done | WarpWrap, WarpDistribute, WarpPerElement, DistributeFills, CellwiseSchedule, LowerCellwise and EmulateWarp read it; the tensor-core pass's `target` option defaults to the module's. Two 32s stay on purpose: the shared-memory bank model (`kBanks`, NVIDIA's) and LowerCellwise's 32 DSS entity slots (a data-structure size). |
 | 3. Text edits become passes | done | `--mir-mark-kernel` (argument roles by position, rename with the kernel's tables), `--mir-gpu-wrap=maxnreg=N`, upstream `--nvvm-attach-target` / `--rocdl-attach-target`. |
-| 4. Registered pipelines | partly | `--mir-warp-per-element=fit-shared` halves the warps per block until the block fits the target's shared limit (was a Python retry loop that read the size back from the NVIDIA PTX, also when building for AMD). `--mir-lower-to-nvvm{maxnreg,vector,math,noalias}` is the NVIDIA lowering of hl, dss and block_dss in one `mir-opt` call. Open: the scheduling part of each family and the tuning tables (`LANES`, `MAXNREG`, `EVEN_ODD`, ...) as per-target defaults. |
-| 5. AMD lowering in MLIR | partly | Grid size (rough edge 2) and global arrays (rough edge 5) are MLIR passes. The private-alloca patch stays (rough edge 3); lifting the gpu.module and the LLVM tools stay in `amd_target.py`. |
-| 6. Instruction layouts as data | open | See "What to borrow from IREE". |
+| 4. Registered pipelines | done for BP | `--mir-warp-per-element=fit-shared` sizes blocks against the target's shared limit; `--mir-lower-to-nvvm{maxnreg,vector,math,noalias}` is the NVIDIA lowering; `--mir-bp-schedule{spec,p,target,...}` is the BP schedule with its per-target tables in C++ (lanes, warps, even-odd, packing). Two tables stay in the BP driver on purpose: the front end's buffer reuse and the NVIDIA register cap, which belong to steps outside that pipeline. The hl, dss and tet schedules are still assembled by their drivers. |
+| 5. AMD lowering in MLIR | done | `--mir-lower-to-rocdl{chip}` (gpu-wrap, grid size from the dispatch packet, ROCDL target and conversions); global arrays and launch shapes are passes. Outside MLIR remain the LLVM tools (`mlir-translate`, `opt`, `llc`) and the private-alloca patch (rough edge 3). |
+| 6. Instruction layouts as data | done for AMD | `kMfmaF64Quadrants` in RegisterResidentChain gives the entry each lane holds as bit fields of the lane id; the lane coordinates and the relayout sources (inverting the C map) are derived from it. NVIDIA's m8n8k4 keeps its hand formulas (two C entries per lane), so its PTX stays byte-identical. |
 
 Pitfalls found on the way:
 - Seven committed PTX files are older than the compiler (hl_cellwise p1/p3, hl_cellwise f32
@@ -268,7 +268,7 @@ IREE's design, not checked against its current source.
   (lanes per element, elements per block, register caps) were all made on GH200 and need
   their own AMD values.
 
-## Tensor cores on AMD (in progress)
+## Tensor cores on AMD
 
 `--mir-chain-contracts=target=amd` emits `v_mfma_f64_4x4x4_4b_f64`: four 4x4 blocks as the
 quadrants of our 8x8 tiles, two instructions per contraction, as on NVIDIA. The lane layout
@@ -276,9 +276,11 @@ comes from AMD's matrix instruction calculator and is checked by
 `../paper1-work/amd/mfma/layout_model.py`. A result feeding the next contraction's B operand
 needs only a swap with lane `L xor 8`; feeding the A operand needs a general shuffle.
 
-The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVIDIA m8n8k4,
-116 VGPRs and no scratch, but cannot run yet: the tensor-core mapping still gives each element
-32 lanes, and the AMD instruction needs the element on all 64 lanes of a wavefront.
+The production p=7 CVFEM kernel compiles with 264 MFMA instructions (one per NVIDIA m8n8k4),
+112 VGPRs and no scratch, one 64-lane wavefront per element: the passes take the wave size from
+the target, and `--mir-batch-elements` publishes the launch shape (64 threads, 1 element) for
+AMD. It is correct in the CPU warp emulator, which now runs `amdgpu.mfma` and shuffles of the
+instruction's own width (5.3e-15, no race under ThreadSanitizer).
 
 ## Next steps
 
