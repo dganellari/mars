@@ -35,13 +35,19 @@
 // barrier in between, and at the end of the element body when some phase uses
 // scratch (the next element reuses it).
 //
+// Loops of phases: an scf.for in the element body may hold phases (the planes of a
+// z-march schedule) when its trip count is a constant, at least one, and it holds
+// nothing else that touches memory. Barriers inside it follow the same rule; at the
+// end of each trip one goes in when the accesses since the last barrier conflict
+// with any access of the loop, since the next trip's phases may touch those buffers.
+//
 // Why this is correct: iterations of an scf.parallel are independent by
 // definition, so any lane may run any of them, and a lane-cyclic split needs no
 // synchronisation inside a phase. Phases of one element run in order, and the
 // barriers enforce exactly the orders the memory accesses need. Every thread
 // reaches every barrier: the element loop depends only on the block, the phases
-// sit directly in the element body, and out-of-range groups are masked only at
-// their stores. The scratch becomes a {mir.workgroup} argument, which
+// sit in the element body or in a loop of phases whose trip count is the same for
+// every lane, and out-of-range groups are masked only at their stores. The scratch becomes a {mir.workgroup} argument, which
 // --mir-gpu-wrap turns into shared memory: one copy per group.
 
 #include "mir/MirPasses.h"
@@ -587,21 +593,21 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
 
   Accesses pending;   // accesses since the last barrier
   bool anyScratch = false;
-  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
-    auto par = dyn_cast<scf::ParallelOp>(op);
-    if (!par || !par->hasAttr("mir.lanes"))
-      continue;
-    OpBuilder pb(par);
-    Location pl = par.getLoc();
+  // A barrier before a phase that conflicts with what ran since the last one.
+  auto order = [&](scf::ParallelOp par) {
     Accesses mine;
     collect(par, mine);
     for (auto &[root, f] : mine) anyScratch |= scratch.contains(root);
     if (conflict(pending, mine)) {
-      pb.create<gpu::BarrierOp>(pl);
+      OpBuilder(par).create<gpu::BarrierOp>(par.getLoc());
       pending.clear();
     }
     for (auto &[root, f] : mine) pending[root] |= f;
-
+  };
+  // One phase onto the group's lanes.
+  auto mapPhase = [&](scf::ParallelOp par) -> LogicalResult {
+    OpBuilder pb(par);
+    Location pl = par.getLoc();
     // Each lane runs the iterations glane, glane + L, ... (row-major over the
     // phase's dimensions); reductions accumulate in that order per lane, then an
     // xor-shuffle tree combines the group's L lane values in a fixed order.
@@ -672,12 +678,54 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
       }
     par.replaceAllUsesWith(results);
     par.erase();
+    return success();
+  };
+  auto isPhase = [](Operation &op) {
+    auto p = dyn_cast<scf::ParallelOp>(op);
+    return p && p->hasAttr("mir.lanes");
+  };
+  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
+    if (isPhase(op)) {
+      auto par = cast<scf::ParallelOp>(op);
+      order(par);
+      if (failed(mapPhase(par)))
+        return failure();
+      continue;
+    }
+    // A loop of phases (the planes of a z-march). Every lane must reach the same barriers, so
+    // the trip count is a constant, at least one, and the loop holds only phases and pure ops.
+    auto loop = dyn_cast<scf::ForOp>(op);
+    if (!loop || !llvm::any_of(loop.getBody()->getOperations(), isPhase))
+      continue;
+    auto lo = getConstantIntValue(loop.getLowerBound()), hi = getConstantIntValue(loop.getUpperBound()),
+         st = getConstantIntValue(loop.getStep());
+    if (!lo || !hi || !st || *hi <= *lo)
+      return loop.emitOpError("a loop holding {mir.lanes} phases needs constant bounds and at least one trip");
+    SmallVector<scf::ParallelOp> phases;
+    for (Operation &inner : loop.getBody()->without_terminator()) {
+      if (isPhase(inner))
+        phases.push_back(cast<scf::ParallelOp>(inner));
+      else if (!isMemoryEffectFree(&inner))
+        return inner.emitOpError("a loop holding {mir.lanes} phases may hold only phases and pure ops");
+    }
+    Accesses all;
+    collect(loop, all);
+    for (scf::ParallelOp par : phases) {
+      order(par);
+      if (failed(mapPhase(par)))
+        return failure();
+    }
+    // The next trip's phases must not touch a buffer before this trip's last ones are done with it.
+    if (conflict(pending, all)) {
+      OpBuilder(loop.getBody()->getTerminator()).create<gpu::BarrierOp>(loop.getLoc());
+      pending.clear();
+    }
   }
   WalkResult nested = elements.walk([](scf::ParallelOp p) {
     return p->hasAttr("mir.lanes") ? WalkResult::interrupt() : WalkResult::advance();
   });
   if (nested.wasInterrupted())
-    return elements.emitOpError("{mir.lanes} loops must sit directly in the element body");
+    return elements.emitOpError("{mir.lanes} loops must sit in the element body or in a loop of phases there");
 
   // The element loop: one element per block in grid-stride order, or groups of G.
   Value N = elements.getUpperBound()[0];
