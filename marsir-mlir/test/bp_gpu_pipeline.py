@@ -107,7 +107,8 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
                  "--mir-fuse-phases", "--canonicalize", "--cse",
                  f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'} "
                  f"fit-shared={'false' if given is not None else 'true'} "
-                 f"pad-scratch={'false' if '--no-pad' in sys.argv else 'true'}",
+                 f"pad-scratch={'false' if '--no-pad' in sys.argv else 'true'} "
+                 f"lane-owned={'true' if '--lane-owned' in sys.argv else 'false'}",
                  "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
     if "--emulate" in sys.argv:
         grad = "%D:" in src
