@@ -286,8 +286,10 @@ instruction's own width (5.3e-15, no race under ThreadSanitizer).
 
 1. Less shared memory per element on AMD (757263 shows residency is the cap). A z-march
    prototype (docs/design/marsir_zmarch_bp3_2026-11-21.md) cuts it to 3,000 / 14,904 B per
-   element and is correct, but runs 1.7x slower (Beverin 757772): within the phase model the
-   z part rewrites the whole result cube on every plane. Closing the gap needs lane-private
-   state carried across phases (a thread's column in registers), a larger compiler change.
+   element and is correct, but runs 1.7x slower (Beverin 757772). Keeping the result cube in
+   registers (lane-owned scratch, `--mir-warp-per-element=lane-owned`) halves shared memory
+   (2,000 B per element at p=3) and is correct on MI300A, but is 1.9x slower (757797): small
+   plane phases, barriers and register pressure outweigh the doubled residency. Both stay
+   options; the BP3 schedule stays as it is.
 2. Target layer steps 4 to 6 (above); the per-target tables (`WARPS_AMD`) move with step 4.
 3. 64 lanes per element for the AMD tensor-core kernels.

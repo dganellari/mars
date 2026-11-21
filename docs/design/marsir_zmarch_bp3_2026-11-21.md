@@ -126,3 +126,25 @@ the lane-owned columns into a shared `w` cube, in the owner's mapping (phase ove
 k in the thread); the schedule's copy and fill lowering must keep that blocking. Shared memory
 in the march is then `uq` plus the planes; `w` takes a shared slot only for the projection,
 when `uq` is dead.
+
+## Lane-owned result (Beverin 757797): correct, still slower
+
+Implemented as `--mir-warp-per-element=lane-owned` (gate `test/lane_owned_gate.py`), with the
+projection back reordered to run along z first so `w` is touched only lane by lane. Shared
+memory per element at p = 3: 2,000 B (half of today). The first GPU run (757788) failed: the
+private arrays were allocas inside the element loop, i.e. dynamic stack allocations on every
+element, which overrun AMDGPU's private segment (the CPU emulator, 3 elements, cannot see it;
+`test/amd_target.py` now rejects any alloca outside the entry block). With them before the loop
+(all promoted to registers, no scratch), on MI300A, two rounds:
+
+| BP3 | current default | z-march, w shared | z-march, w lane-owned |
+|---|---|---|---|
+| p = 3 | 1.023 / 1.027 ms (4 blocks per CU) | 1.74 ms | 1.937 / 1.939 ms (8 blocks per CU) |
+| p = 7 | 1.554 / 1.559 ms | 2.53 ms | 2.724 / 2.736 ms |
+
+Residency doubled at p = 3 as designed, and the kernel is still 1.9x slower: the march's many
+small plane phases and barriers, the unblocked 2-D derivative phases, and the register cost of
+the lane-owned columns (132 / 274 VGPRs, guarded unrolled slots) outweigh it. Lane-owned
+scratch stays an option; the BP3 schedule stays as it is. The same check found the trilinear BP
+kernels (bp1_tri, bp3_tri) with per-lane scalars inside the element loop on AMD, now moved out
+(their first MI300A run: Beverin 757799).
