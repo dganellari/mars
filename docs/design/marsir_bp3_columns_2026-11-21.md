@@ -62,3 +62,18 @@ gfx942 shared memory and spill).
 
 At p = 7 with 64 threads per element a thread holds two columns: 480 VGPRs, so 128.
 No private-memory spill in either. The timing is the open question (kit `kit-columns`).
+
+## Result (Beverin 757950): correct, residency 4x, still slower
+
+| BP3 on MI300A | today | columns |
+|---|---|---|
+| p = 3, 262,144 elements | 1.027 / 1.019 ms, 4 blocks per CU | 1.892 / 1.877 ms, 16 blocks per CU |
+| p = 7, 32,768 elements | 1.553 / 1.553 ms, 1 block per CU | 1.746 / 1.735 ms, 4 blocks per CU |
+
+Both pass the gate's correctness check. Residency rose 4x at both degrees, as planned, and the
+kernel is 1.84x (p = 3) and 1.12x (p = 7) slower: with shared memory no longer the limit, the
+extra work per element decides. The column form has 39 barriers against 11 (p = 3), the x
+contraction reads u from global memory n^2 times per thread instead of once, and the plane
+contractions compute one point per thread with no register blocking. Not a default; the
+schedule option and the FusePhases fix stay. Which of these costs dominates is not measured
+(next: rocprof counters on col_p3 and col_p7, recipe in marsir-mlir/AMD.md).
