@@ -23,15 +23,7 @@ import importlib
 def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
     if os.environ.get("AMD_DUMP"):   # the scheduled kernel, before GPU wrapping (for reading)
         open(os.environ["AMD_DUMP"], "w").write(ir)
-    ir = hl.run([hl.MIROPT, "-", "--mir-gpu-wrap", "--mir-amdgpu-grid-dim"], ir)
-    ir = hl.run([hl.MLIROPT, "-", "--rocdl-attach-target=module=mir_kernels chip=gfx942 O=3",
-                 "--convert-vector-to-scf", "--canonicalize", "--convert-scf-to-cf",
-                 "--expand-strided-metadata", "--lower-affine",
-                 "--convert-amdgpu-to-rocdl=chipset=gfx942",
-                 "--convert-vector-to-llvm", "--convert-math-to-llvm",
-                 "--convert-gpu-to-rocdl=chipset=gfx942",
-                 "--convert-arith-to-llvm", "--convert-index-to-llvm", "--convert-cf-to-llvm",
-                 "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
+    ir = hl.run([hl.MIROPT, "-", "--mir-lower-to-rocdl=chip=gfx942"], ir)
     # Skip gpu-module-to-binary (it wants ROCm device bitcode): lift the gpu.module body into
     # a plain LLVM-dialect module, translate it, and let llc emit gfx942 assembly.
     start = ir.index("gpu.module @mir_kernels")
