@@ -63,7 +63,7 @@ void export_heat_slice(const std::string& prefix,
     window.corners = corners;
     thrust::device_vector<long long> ids(elements);
     auto first            = thrust::make_counting_iterator<long long>(0);
-    auto end              = thrust::copy_if(thrust::cuda::par.on(stream), first, first + elements, ids.begin(), window);
+    auto end              = thrust::copy_if(mars::gpuPar.on(stream), first, first + elements, ids.begin(), window);
     const long long count = end - ids.begin();
     // Bound temporary storage and host transfers independently of the full mesh size.
     constexpr long long chunk = 8192;

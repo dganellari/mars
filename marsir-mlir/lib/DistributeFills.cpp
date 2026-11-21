@@ -13,6 +13,7 @@
 // per-thread memory keeps the redundant fill (each lane needs its own copy).
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -47,7 +48,7 @@ struct DistributeFillsPass
 
   StringRef getArgument() const final { return "mir-distribute-fills"; }
   StringRef getDescription() const final {
-    return "Spread a splat write into warp-shared memory across the 32 lanes";
+    return "Spread a splat write into warp-shared memory across the lanes of a warp";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, gpu::GPUDialect, memref::MemRefDialect,
@@ -78,7 +79,7 @@ struct DistributeFillsPass
           loc, cast<TypedAttr>(dv.getSplatValue<Attribute>()));
       Value lane = b.create<gpu::ThreadIdOp>(loc, gpu::Dimension::x);
       Value total = b.create<arith::ConstantIndexOp>(loc, vt.getNumElements());
-      Value step = b.create<arith::ConstantIndexOp>(loc, 32);
+      Value step = b.create<arith::ConstantIndexOp>(loc, mir::getGpuTarget(w).waveSize);
       auto loop = b.create<scf::ForOp>(loc, lane, total, step);
       OpBuilder lb = OpBuilder::atBlockBegin(loop.getBody());
 

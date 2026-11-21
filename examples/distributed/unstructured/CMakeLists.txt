@@ -529,6 +529,18 @@ endif()
 # -DMARS_ENABLE_MARSIR=ON; the generated header is committed under
 # backend/distributed/unstructured/marsir/generated/.
 if(MARS_ENABLE_MARSIR)
+    # The MARSIR loaders use the CUDA driver API; HIP's module API comes with the HIP runtime.
+    if(MARS_ENABLE_HIP)
+        set(MARS_MARSIR_DRIVER_LIB "")
+    else()
+        set(MARS_MARSIR_DRIVER_LIB CUDA::cuda_driver)
+    endif()
+
+    # One generated Galerkin operator (PTX or a gfx942 code object) against host quadrature.
+    add_executable(mars_marsir_galerkin_gate mars_marsir_galerkin_gate.cu)
+    target_link_libraries(mars_marsir_galerkin_gate PRIVATE mars ${MARS_MARSIR_DRIVER_LIB})
+    install(TARGETS mars_marsir_galerkin_gate RUNTIME DESTINATION bin/examples)
+
     add_executable(mars_marsir_ho_apply mars_marsir_ho_apply.cu)
     target_link_libraries(mars_marsir_ho_apply PRIVATE mars)
     install(TARGETS mars_marsir_ho_apply RUNTIME DESTINATION bin/examples)
@@ -542,21 +554,21 @@ if(MARS_ENABLE_MARSIR)
     # run time through the driver API) with the hand-written DSS and BiCGStab of
     # solvers/mars_cellwise_krylov.hpp.
     add_executable(mars_marsir_cellwise_solve mars_marsir_cellwise_solve.cu)
-    target_link_libraries(mars_marsir_cellwise_solve PRIVATE mars CUDA::cuda_driver)
+    target_link_libraries(mars_marsir_cellwise_solve PRIVATE mars ${MARS_MARSIR_DRIVER_LIB})
     install(TARGETS mars_marsir_cellwise_solve RUNTIME DESTINATION bin/examples)
 
     # The unstructured element-local DSS (solvers/mars_cellwise_topology.hpp) on a cube
     # with randomly rotated element frames, against an oracle and the structured DSS;
     # with --dss-ptx, also the MARSIR-generated DSS against it.
     add_executable(mars_cellwise_unstructured_dss mars_cellwise_unstructured_dss.cu)
-    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars CUDA::cuda_driver)
+    target_link_libraries(mars_cellwise_unstructured_dss PRIVATE mars ${MARS_MARSIR_DRIVER_LIB})
     install(TARGETS mars_cellwise_unstructured_dss RUNTIME DESTINATION bin/examples)
 
     # CEED BP1 / BP3 from their MARSIR specs (Galerkin form) on element-local vectors,
     # with the unstructured DSS and communication-free flexible CG
     # (solvers/mars_cellwise_fcg.hpp).
     add_executable(mars_marsir_bp mars_marsir_bp.cu)
-    target_link_libraries(mars_marsir_bp PRIVATE mars CUDA::cuda_driver)
+    target_link_libraries(mars_marsir_bp PRIVATE mars ${MARS_MARSIR_DRIVER_LIB})
     if(MARS_BP3_COARSE_REQUESTED)
         include(${CMAKE_SOURCE_DIR}/cmake/MarsBP3Coarse.cmake)
     endif()

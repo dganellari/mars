@@ -159,18 +159,34 @@ int main(int argc, char** argv)
 
     D4 du{ru.data(), ru.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
     D4 dy{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, (int64_t)n * n, n, 1}};
+    // A matrix is folded only when the kernel publishes its {symbol}__fold record
+    // (BP_FOLD_M<k>): --mir-even-odd decides per table, as the MARS loader reads it.
+    auto fill = [](const std::vector<Real>& M, long long r, long long c, Real* out, bool folded) {
 #ifdef BP_EVEN_ODD
-    auto fill = [](const std::vector<Real>& M, long long r, long long c, Real* out) {
-        for (long long k = 0; k < mars::marsir::folded_size(r, c); ++k) out[k] = mars::marsir::folded_entry(M.data(), r, c, k);
-    };
-#else
-    auto fill = [](const std::vector<Real>& M, long long, long long, Real* out) { std::copy(M.begin(), M.end(), out); };
+        if (folded) {
+            for (long long k = 0; k < mars::marsir::folded_size(r, c); ++k) out[k] = mars::marsir::folded_entry(M.data(), r, c, k);
+            return;
+        }
 #endif
-    fill(rB, Q, n, BP_CAT(BP_NAME, __m0));
-    fill(rBt, n, Q, BP_CAT(BP_NAME, __m1));
+        std::copy(M.begin(), M.end(), out);
+    };
+#ifndef BP_FOLD_M0
+#define BP_FOLD_M0 0
+#endif
+#ifndef BP_FOLD_M1
+#define BP_FOLD_M1 0
+#endif
+#ifndef BP_FOLD_M2
+#define BP_FOLD_M2 0
+#endif
+#ifndef BP_FOLD_M3
+#define BP_FOLD_M3 0
+#endif
+    fill(rB, Q, n, BP_CAT(BP_NAME, __m0), BP_FOLD_M0);
+    fill(rBt, n, Q, BP_CAT(BP_NAME, __m1), BP_FOLD_M1);
 #ifdef BP_GRAD
-    fill(rD, Q, Q, BP_CAT(BP_NAME, __m2));
-    fill(rDt, Q, Q, BP_CAT(BP_NAME, __m3));
+    fill(rD, Q, Q, BP_CAT(BP_NAME, __m2), BP_FOLD_M2);
+    fill(rDt, Q, Q, BP_CAT(BP_NAME, __m3), BP_FOLD_M3);
 #endif
     D5 dG{rG.data(), rG.data(), 0, {E, K, Q, Q, Q}, {K * q3, q3, (int64_t)Q * Q, Q, 1}};
     (void)dG;

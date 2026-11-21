@@ -16,6 +16,7 @@
 // 8x8x8 -> (8,4), per-lane vector<1x2x8> ... trailing-major delinearization).
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -44,7 +45,9 @@ static AffineMap distributionMap(Value v) {
   MLIRContext *ctx = v.getContext();
   if (!ty)
     return AffineMap::get(ctx);
-  int64_t lanes = 32;
+  // The enclosing warp region's lanes (one warp of the target).
+  auto warp = v.getParentRegion()->getParentOfType<vector::WarpExecuteOnLane0Op>();
+  int64_t lanes = warp ? (int64_t)warp.getWarpSize() : mir::getGpuTarget(v.getParentRegion()->getParentOp()).waveSize;
   SmallVector<AffineExpr> dims;
   for (int64_t d = 0; d < ty.getRank() && lanes > 1; ++d) {
     int64_t sz = ty.getDimSize(d);
@@ -178,7 +181,7 @@ struct WarpOpContractToMma
     SmallVector<Type> newTypes(warp.getResultTypes());
     newTypes.push_back(fragA);
     auto newWarp = rewriter.create<vector::WarpExecuteOnLane0Op>(
-        loc, newTypes, warp.getLaneid(), 32);
+        loc, newTypes, warp.getLaneid(), warp.getWarpSize());
     newWarp.getWarpRegion().takeBody(warp.getWarpRegion());
 
     // Rewire the yield: slot resIdx now yields the ACC operand; append A.

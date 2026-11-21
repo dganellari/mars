@@ -25,9 +25,10 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cellwise_layout.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_warp.cuh"
 #include "backend/distributed/unstructured/utils/mars_gpu_reduce.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/copy.h>
 #include <thrust/equal.h>
@@ -568,7 +569,6 @@ template <int P, typename Value, typename Visit>
 __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementList& set, const Value& value,
                                          Visit&& visit)
 {
-    constexpr unsigned kAll = 0xffffffffu;
     constexpr int n = P + 1, n3 = n * n * n, F = face_nodes<P>, Ed = edge_nodes<P>;
     constexpr int kFaceSlots = 6 * F, kEdgeSlots = 12 * Ed, kStarSlots = kEdgeSlots + 8;
     __shared__ HexTables<P> h;
@@ -599,7 +599,7 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
             d2 = T.vert_off[g + 1];
             dir = T.vert_dirichlet[g];
         }
-        const unsigned dirichlet = __ballot_sync(kAll, dir != 0);
+        const unsigned dirichlet = ballotGroup(dir != 0);
         const unsigned counting = T.counting[e];
         const long long base = e * n3;
 #pragma unroll
@@ -607,15 +607,15 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
             const int l = it * 32 + lane;
             if (l < n3) stage[stage_slot<P>(l)] = value(base + l);
         }
-        __syncwarp();
+        syncWarp();
         // Shuffles stay outside conditions: every lane must execute each of them.
         if constexpr (P > 1) {
 #pragma unroll
             for (int p0 = 0; p0 < kFaceSlots; p0 += 32) {
                 const int p = p0 + lane;
                 const int f = p < kFaceSlots ? p / F : 0;
-                const int nbr = __shfl_sync(kAll, d0, f);
-                const int code = __shfl_sync(kAll, d1, f);
+                const int nbr = shflGroup(d0, f, 32);
+                const int code = shflGroup(d1, f, 32);
                 if (p < kFaceSlots && nbr >= 0) {
                     const int q = h.face_map[(code & 63) * F + p - f * F];
                     stage[stage_slot<P>(h.face_l[p])] += value((long long)(nbr / 6) * n3 + h.face_l[(nbr % 6) * F + q]);
@@ -626,9 +626,9 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
             const int p = p0 + lane;
             const int k = p < kEdgeSlots ? p / (Ed > 0 ? Ed : 1) : 0;
             const int src = p < kEdgeSlots ? kEdgeBit + k : (p < kStarSlots ? kVertexBit + p - kEdgeSlots : 0);
-            const int n0 = __shfl_sync(kAll, d0, src);
-            const int n1 = __shfl_sync(kAll, d1, src);
-            const int n2 = __shfl_sync(kAll, d2, src);
+            const int n0 = shflGroup(d0, src, 32);
+            const int n1 = shflGroup(d1, src, 32);
+            const int n2 = shflGroup(d2, src, 32);
             if (p < kEdgeSlots) {
                 const int t = 1 + p - k * Ed;
                 const int tc = n0 < 0 ? P - t : t;   // canonical position on the edge
@@ -641,7 +641,7 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
                     value, T.vert_ent, n1, n2, [&](int c) { return (long long)(c / 8) * n3 + h.corner_l[c % 8]; });
             }
         }
-        __syncwarp();
+        syncWarp();
 #pragma unroll
         for (int it = 0; it < (n3 + 31) / 32; ++it) {
             const int l = it * 32 + lane;
@@ -649,7 +649,7 @@ __device__ inline void for_each_copy_sum(const TopologyView& T, const ElementLis
             const int bit = h.bit[l];
             visit(base + l, stage[stage_slot<P>(l)], ((dirichlet >> bit) & 1u) != 0, ((counting >> bit) & 1u) != 0);
         }
-        __syncwarp();   // the next element reuses the stage
+        syncWarp();   // the next element reuses the stage
     }
 }
 

@@ -12,6 +12,7 @@
 // so that wrapping stays something the caller asks for.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 #include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -31,6 +32,11 @@ constexpr StringLiteral kModuleName = "mir_kernels";
 
 struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GpuWrapPass)
+
+  GpuWrapPass() = default;
+  GpuWrapPass(const GpuWrapPass &other) : PassWrapper(other) {}
+  Option<int> maxnreg{*this, "maxnreg", llvm::cl::desc("NVVM register cap on each kernel (0: none)"),
+                      llvm::cl::init(0)};
 
   StringRef getArgument() const final { return "mir-gpu-wrap"; }
   StringRef getDescription() const final {
@@ -141,6 +147,21 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
       }
       for (unsigned i : llvm::reverse(wg))
         gfunc.eraseArgument(i);
+      // The host's arrays are global memory: say so (address space 1), so AMDGPU reads them
+      // with global_load instead of flat_load without having to infer it. NVPTX treats kernel
+      // pointer arguments as global by itself, and the committed PTX keeps the default space.
+      if (mir::getGpuTarget(gfunc).isAmd()) {
+        auto global = b.getI64IntegerAttr(1);
+        // Only the declared inputs: the workgroup attributions follow them as block arguments.
+        SmallVector<Type> inputs;
+        for (unsigned i = 0, n = gfunc.getFunctionType().getNumInputs(); i < n; ++i) {
+          BlockArgument a = gfunc.getArgument(i);
+          if (auto t = dyn_cast<MemRefType>(a.getType()); t && !t.getMemorySpace())
+            a.setType(MemRefType::get(t.getShape(), t.getElementType(), t.getLayout(), global));
+          inputs.push_back(a.getType());
+        }
+        gfunc.setFunctionType(b.getFunctionType(inputs, {}));
+      }
       mir::refreshViewTypes(gfunc);
 
       // The kernel ABI: every memref argument comes from a device allocator
@@ -158,6 +179,8 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
         if (isa<MemRefType>(gfunc.getArgument(i).getType()))
           eb.create<memref::AssumeAlignmentOp>(gfunc.getLoc(),
                                                gfunc.getArgument(i), kAlign);
+      if (maxnreg > 0)
+        gfunc->setAttr("nvvm.maxnreg", b.getI32IntegerAttr(maxnreg));
       f.erase();
     }
   }

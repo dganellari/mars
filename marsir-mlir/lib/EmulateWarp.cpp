@@ -22,6 +22,7 @@
 //                            (Integer buffers get all bits set.)
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -87,6 +88,7 @@ struct EmulateWarpPass
         kernels.push_back(f);
 
     for (func::FuncOp fn : kernels) {
+      const int64_t wave = mir::getGpuTarget(fn).waveSize;
       SmallVector<Operation *> ops;
       fn.walk([&](Operation *op) {
         if (isa<gpu::ThreadIdOp, gpu::BlockIdOp, gpu::GridDimOp, gpu::BlockDimOp, gpu::ShuffleOp, gpu::BarrierOp,
@@ -116,7 +118,7 @@ struct EmulateWarpPass
           t.replaceAllUsesWith(v);
         } else if (auto t = dyn_cast<gpu::BlockDimOp>(op)) {
           t.replaceAllUsesWith(b.create<arith::ConstantIndexOp>(
-                                    loc, t.getDimension() == gpu::Dimension::x ? 32 : 1)
+                                    loc, t.getDimension() == gpu::Dimension::x ? wave : 1)
                                    .getResult());
         } else if (auto s = dyn_cast<gpu::ShuffleOp>(op)) {
           const bool isF64 = s.getValue().getType().isF64();
@@ -223,7 +225,7 @@ struct EmulateWarpPass
                                        tb.getFunctionType({}, {tb.getI64Type()}));
       OpBuilder qb = OpBuilder::atBlockBegin(q.addEntryBlock());
       qb.create<func::ReturnOp>(
-          fn.getLoc(), ValueRange{qb.create<arith::ConstantIntOp>(fn.getLoc(), threadsAttr ? threadsAttr.getInt() : 32, 64)});
+          fn.getLoc(), ValueRange{qb.create<arith::ConstantIntOp>(fn.getLoc(), threadsAttr ? threadsAttr.getInt() : mir::getGpuTarget(fn).waveSize, 64)});
     }
   }
 };

@@ -35,16 +35,23 @@
 // barrier in between, and at the end of the element body when some phase uses
 // scratch (the next element reuses it).
 //
+// Loops of phases: an scf.for in the element body may hold phases (the planes of a
+// z-march schedule) when its trip count is a constant, at least one, and it holds
+// nothing else that touches memory. Barriers inside it follow the same rule; at the
+// end of each trip one goes in when the accesses since the last barrier conflict
+// with any access of the loop, since the next trip's phases may touch those buffers.
+//
 // Why this is correct: iterations of an scf.parallel are independent by
 // definition, so any lane may run any of them, and a lane-cyclic split needs no
 // synchronisation inside a phase. Phases of one element run in order, and the
 // barriers enforce exactly the orders the memory accesses need. Every thread
 // reaches every barrier: the element loop depends only on the block, the phases
-// sit directly in the element body, and out-of-range groups are masked only at
-// their stores. The scratch becomes a {mir.workgroup} argument, which
+// sit in the element body or in a loop of phases whose trip count is the same for
+// every lane, and out-of-range groups are masked only at their stores. The scratch becomes a {mir.workgroup} argument, which
 // --mir-gpu-wrap turns into shared memory: one copy per group.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 #include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -68,7 +75,9 @@ using namespace mlir;
 
 namespace {
 
-constexpr int kWarp = 32;
+// The bank model below is NVIDIA's (32 banks of 4 bytes); the lanes per warp come from the
+// target (mir::getGpuTarget).
+constexpr int kBanks = 32;
 
 // Moves the body of a one-dimensional scf.parallel in front of `dest`'s
 // terminator, with its induction variable replaced by `iv`.
@@ -286,10 +295,10 @@ std::optional<SmallVector<int64_t>> rootIndices(Value m, SmallVector<int64_t> id
 // wider than 4 bytes served per half (8 bytes) or quarter warp (16), lanes reading
 // the same word sharing it.
 int64_t wavefronts(ArrayRef<std::pair<int64_t, int64_t>> laneBytes, int64_t bytes) {
-  const int64_t span = bytes <= 4 ? kWarp : 128 / bytes, words = std::max<int64_t>(1, bytes / 4);
+  const int64_t span = bytes <= 4 ? kBanks : 128 / bytes, words = std::max<int64_t>(1, bytes / 4);
   std::map<int64_t, std::map<int64_t, std::set<int64_t>>> passes;   // pass -> bank -> words
   for (auto [lane, byte] : laneBytes)
-    for (int64_t w = 0; w < words; ++w) passes[lane % kWarp / span][(byte / 4 + w) % kWarp].insert(byte / 4 + w);
+    for (int64_t w = 0; w < words; ++w) passes[lane % kBanks / span][(byte / 4 + w) % kBanks].insert(byte / 4 + w);
   int64_t total = 0;
   for (auto &[p, banks] : passes) {
     size_t worst = 0;
@@ -344,7 +353,7 @@ Layout chooseLayout(memref::AllocaOp alloca, Block *body, int64_t lanes) {
   SmallVector<Sample> samples;
   for (const Use &u : uses) {
     Sample s;
-    for (int64_t tid = 0; tid < std::min<int64_t>(lanes, kWarp); ++tid) {
+    for (int64_t tid = 0; tid < std::min<int64_t>(lanes, kBanks); ++tid) {
       IndexEval eval(tid);
       SmallVector<int64_t> idx;
       for (Value i : u.indices)
@@ -555,16 +564,17 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     auto a = elements->getAttrOfType<IntegerAttr>(name);
     return a ? a.getInt() : fallback;
   };
-  const int64_t L = attr("mir.lanes_per_element", kWarp);
-  const int64_t W = attr("mir.warps_per_block", L == kWarp ? 1 : 4);
+  const int64_t wave = mir::getGpuTarget(func).waveSize;
+  const int64_t L = attr("mir.lanes_per_element", wave);
+  const int64_t W = attr("mir.warps_per_block", L == wave ? 1 : 4);
   // Several warps per element keep more warps resident when scratch per element limits
   // the blocks per SM (q = 9: four q^3 buffers per BP3 element).
-  const bool multiWarp = L > kWarp;
-  if (L < 1 || (!multiWarp && (L & (L - 1)) != 0) || (multiWarp && L % kWarp != 0) || W < 1 ||
-      (kWarp * W) % L != 0)
-    return elements.emitOpError("lanes per element must be a power of two <= 32 or a multiple of 32 "
-                                "dividing the block, warps per block >= 1");
-  const int64_t G = kWarp * W / L;
+  const bool multiWarp = L > wave;
+  if (L < 1 || (!multiWarp && (L & (L - 1)) != 0) || (multiWarp && L % wave != 0) || W < 1 ||
+      (wave * W) % L != 0)
+    return elements.emitOpError("lanes per element must be a power of two <= the wave size or a multiple "
+                                "of it dividing the block, warps per block >= 1");
+  const int64_t G = wave * W / L;
   const bool single = G == 1;   // one element per block: the original form
   OpBuilder b(elements);
   Location loc = elements.getLoc();
@@ -576,28 +586,28 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
 
   Value tid = b.create<gpu::ThreadIdOp>(loc, gpu::Dimension::x);
   Value glane = tid, group;
-  if (!single || L != kWarp) {
+  if (!single || L != wave) {
     glane = b.create<arith::RemUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
     group = b.create<arith::DivUIOp>(loc, tid, b.create<arith::ConstantIndexOp>(loc, L));
   }
 
   Accesses pending;   // accesses since the last barrier
   bool anyScratch = false;
-  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
-    auto par = dyn_cast<scf::ParallelOp>(op);
-    if (!par || !par->hasAttr("mir.lanes"))
-      continue;
-    OpBuilder pb(par);
-    Location pl = par.getLoc();
+  // A barrier before a phase that conflicts with what ran since the last one.
+  auto order = [&](scf::ParallelOp par) {
     Accesses mine;
     collect(par, mine);
     for (auto &[root, f] : mine) anyScratch |= scratch.contains(root);
     if (conflict(pending, mine)) {
-      pb.create<gpu::BarrierOp>(pl);
+      OpBuilder(par).create<gpu::BarrierOp>(par.getLoc());
       pending.clear();
     }
     for (auto &[root, f] : mine) pending[root] |= f;
-
+  };
+  // One phase onto the group's lanes.
+  auto mapPhase = [&](scf::ParallelOp par) -> LogicalResult {
+    OpBuilder pb(par);
+    Location pl = par.getLoc();
     // Each lane runs the iterations glane, glane + L, ... (row-major over the
     // phase's dimensions); reductions accumulate in that order per lane, then an
     // xor-shuffle tree combines the group's L lane values in a fixed order.
@@ -662,18 +672,60 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     SmallVector<Value> results(loop.getResults());
     for (int64_t offset = L / 2; offset >= 1; offset /= 2)
       for (unsigned i = 0; i < results.size(); ++i) {
-        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], (int32_t)offset, kWarp, gpu::ShuffleMode::XOR)
+        Value other = pb.create<gpu::ShuffleOp>(pl, results[i], (int32_t)offset, (int32_t)wave, gpu::ShuffleMode::XOR)
                           .getShuffleResult();
         results[i] = combine(pb, i, results[i], other);
       }
     par.replaceAllUsesWith(results);
     par.erase();
+    return success();
+  };
+  auto isPhase = [](Operation &op) {
+    auto p = dyn_cast<scf::ParallelOp>(op);
+    return p && p->hasAttr("mir.lanes");
+  };
+  for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
+    if (isPhase(op)) {
+      auto par = cast<scf::ParallelOp>(op);
+      order(par);
+      if (failed(mapPhase(par)))
+        return failure();
+      continue;
+    }
+    // A loop of phases (the planes of a z-march). Every lane must reach the same barriers, so
+    // the trip count is a constant, at least one, and the loop holds only phases and pure ops.
+    auto loop = dyn_cast<scf::ForOp>(op);
+    if (!loop || !llvm::any_of(loop.getBody()->getOperations(), isPhase))
+      continue;
+    auto lo = getConstantIntValue(loop.getLowerBound()), hi = getConstantIntValue(loop.getUpperBound()),
+         st = getConstantIntValue(loop.getStep());
+    if (!lo || !hi || !st || *hi <= *lo)
+      return loop.emitOpError("a loop holding {mir.lanes} phases needs constant bounds and at least one trip");
+    SmallVector<scf::ParallelOp> phases;
+    for (Operation &inner : loop.getBody()->without_terminator()) {
+      if (isPhase(inner))
+        phases.push_back(cast<scf::ParallelOp>(inner));
+      else if (!isMemoryEffectFree(&inner))
+        return inner.emitOpError("a loop holding {mir.lanes} phases may hold only phases and pure ops");
+    }
+    Accesses all;
+    collect(loop, all);
+    for (scf::ParallelOp par : phases) {
+      order(par);
+      if (failed(mapPhase(par)))
+        return failure();
+    }
+    // The next trip's phases must not touch a buffer before this trip's last ones are done with it.
+    if (conflict(pending, all)) {
+      OpBuilder(loop.getBody()->getTerminator()).create<gpu::BarrierOp>(loop.getLoc());
+      pending.clear();
+    }
   }
   WalkResult nested = elements.walk([](scf::ParallelOp p) {
     return p->hasAttr("mir.lanes") ? WalkResult::interrupt() : WalkResult::advance();
   });
   if (nested.wasInterrupted())
-    return elements.emitOpError("{mir.lanes} loops must sit directly in the element body");
+    return elements.emitOpError("{mir.lanes} loops must sit in the element body or in a loop of phases there");
 
   // The element loop: one element per block in grid-stride order, or groups of G.
   Value N = elements.getUpperBound()[0];
@@ -768,8 +820,10 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   }
   elements.erase();
   mir::refreshViewTypes(func.getOperation());
-  if (!single || L != kWarp) {
-    func->setAttr("mir.block_threads", b.getI64IntegerAttr(kWarp * W));
+  // The launch shape, unless it is NVIDIA's original form (one warp, one element), which
+  // the loaders assume when none is published; on AMD that default would be half a wave.
+  if (!single || L != wave || mir::getGpuTarget(func).isAmd()) {
+    func->setAttr("mir.block_threads", b.getI64IntegerAttr(wave * W));
     func->setAttr("mir.elements_per_block", b.getI64IntegerAttr(G));
   }
   return success();
@@ -786,6 +840,10 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   Option<bool> largestFirst{*this, "largest-first",
                             llvm::cl::desc("pack scratch largest first when that needs fewer slots"),
                             llvm::cl::init(true)};
+  Option<bool> fitShared{*this, "fit-shared",
+                         llvm::cl::desc("halve the warps per block until the shared memory fits the "
+                                        "target's limit (for a warp count that is a default, not a choice)"),
+                         llvm::cl::init(false)};
 
   StringRef getArgument() const final { return "mir-warp-per-element"; }
   StringRef getDescription() const final {
@@ -795,6 +853,48 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   }
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, gpu::GPUDialect, memref::MemRefDialect, scf::SCFDialect>();
+  }
+
+  // Static shared memory a mapping with the loop's current warps per block declares: map a
+  // copy of the function (in the module, so it sees the target) and sum its buffers.
+  FailureOr<int64_t> sharedBytes(func::FuncOp func, scf::ParallelOp loop) {
+    OpBuilder b(func);
+    b.setInsertionPointAfter(func);
+    IRMapping map;
+    auto copy = cast<func::FuncOp>(b.clone(*func, map));
+    copy.setSymName((func.getSymName() + "__fit").str());
+    auto copyLoop = cast<scf::ParallelOp>(map.lookup(loop.getOperation()));
+    int64_t bytes = 0;
+    const bool ok = succeeded(mapElements(copy, copyLoop, padScratch, largestFirst));
+    for (unsigned i = 0; ok && i < copy.getNumArguments(); ++i)
+      if (copy.getArgAttr(i, "mir.workgroup"))
+        if (auto t = dyn_cast<MemRefType>(copy.getArgument(i).getType()))
+          bytes += t.getNumElements() * t.getElementTypeBitWidth() / 8;
+    copy.erase();
+    if (!ok)
+      return failure();
+    return bytes;
+  }
+
+  // The warps per block, halved until the block's shared memory fits the target's static
+  // limit, or one element per block remains (then the kernel cannot be built: an error).
+  LogicalResult fitWarps(func::FuncOp func, scf::ParallelOp loop) {
+    const mir::GpuTarget target = mir::getGpuTarget(func);
+    auto attr = [&](StringRef name) { return loop->getAttrOfType<IntegerAttr>(name); };
+    const int64_t L = attr("mir.lanes_per_element") ? attr("mir.lanes_per_element").getInt() : target.waveSize;
+    int64_t W = attr("mir.warps_per_block") ? attr("mir.warps_per_block").getInt() : (L == target.waveSize ? 1 : 4);
+    for (;;) {
+      loop->setAttr("mir.warps_per_block", IntegerAttr::get(IntegerType::get(func.getContext(), 64), W));
+      FailureOr<int64_t> bytes = sharedBytes(func, loop);
+      if (failed(bytes))
+        return failure();
+      if (*bytes <= target.maxSharedBytes)
+        return success();
+      if (W == 1 || target.waveSize * W <= L)
+        return func.emitOpError("shared memory ") << *bytes << " B per block exceeds the target's "
+               << target.maxSharedBytes << " B even with " << W << " warp(s) per block";
+      W /= 2;
+    }
   }
 
   void runOnOperation() override {
@@ -808,9 +908,12 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
         func.emitOpError("expects at most one {mir.elements} loop");
         return signalPassFailure();
       }
-      for (scf::ParallelOp p : loops)
+      for (scf::ParallelOp p : loops) {
+        if (fitShared && failed(fitWarps(func, p)))
+          return signalPassFailure();
         if (failed(mapElements(func, p, padScratch, largestFirst)))
           return signalPassFailure();
+      }
     }
   }
 };

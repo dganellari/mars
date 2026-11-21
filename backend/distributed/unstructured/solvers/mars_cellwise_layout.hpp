@@ -23,7 +23,7 @@
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_hex.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <mpi.h>
 
 #include <cstdio>

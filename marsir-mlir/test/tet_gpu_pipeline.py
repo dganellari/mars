@@ -51,17 +51,12 @@ def main():
               "function-boundary-type-conversion=identity-layout-map",
               "--buffer-results-to-out-params", "--convert-linalg-to-loops"], ir)
 
-    m = re.search(r"(func\.func @tet_laplacian\()(.*?)(\) \{)", ir, re.S)
-    args = m.group(2).split(", ")
-    marks = PER_ELEMENT | {len(args) - 1}          # + the appended out-parameter
-    args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
-    ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
-          + ir[m.end(3):])
+    n_args = len(re.search(r"func\.func @tet_laplacian\((.*?)\) \{", ir, re.S).group(1).split(", "))
+    elements = sorted(PER_ELEMENT | {n_args - 1})          # + the appended out-parameter
+    ir = run([MIROPT, "-", f"--mir-mark-kernel=func=tet_laplacian elements={','.join(map(str, elements))}"], ir)
 
     ir = run([MIROPT, "-", "--mir-batch-elements", "--mir-gpu-wrap"], ir)
-    ir = ir.replace("gpu.module @mir_kernels {",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
-    ir = run([MLIROPT, "-",
+    ir = run([MLIROPT, "-", "--nvvm-attach-target=module=mir_kernels chip=sm_90 O=3", 
               "--gpu-lower-to-nvvm-pipeline=cubin-chip=sm_90 cubin-format=isa"], ir)
 
     out = os.path.join(ROOT, "generated", "tet_laplacian_sm90.ptx")

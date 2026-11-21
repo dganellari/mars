@@ -24,6 +24,29 @@ __device__ __forceinline__ T shflGroup(T value, int srcLane, int width)
 #endif
 }
 
+//! value of the lane `delta` above this one within its group of `width` lanes (width a power of 2, at most
+//! laneGroup); a lane whose source falls outside the group keeps its own value
+template<class T>
+__device__ __forceinline__ T shflDownGroup(T value, unsigned delta, int width)
+{
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    return __shfl_down(value, delta, width);
+#else
+    return __shfl_down_sync(0xFFFFFFFFu, value, delta, width);
+#endif
+}
+
+//! The predicate of every lane of this lane's group of laneGroup lanes, bit i for lane i of the group.
+//! AMD's ballot covers the 64-lane wavefront; the group is its lower or upper half.
+__device__ __forceinline__ unsigned ballotGroup(bool predicate)
+{
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+    return (unsigned)(__ballot(predicate) >> (__lane_id() & ~(laneGroup - 1)));
+#else
+    return __ballot_sync(0xFFFFFFFFu, predicate);
+#endif
+}
+
 //! Orders the shared-memory writes of a lane group before the group reads them. A wavefront runs in
 //! lockstep, but the compiler may still move a read above another lane's write without a fence, so
 //! unlike cstone::syncWarp this is not empty on AMD.

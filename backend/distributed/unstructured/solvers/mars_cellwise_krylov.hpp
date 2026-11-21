@@ -33,7 +33,8 @@
 
 #include "backend/distributed/unstructured/solvers/mars_cellwise_layout.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
+#include "backend/distributed/unstructured/utils/mars_gpu_warp.cuh"
 #include <mpi.h>
 
 #include <cmath>
@@ -53,7 +54,7 @@ __device__ inline void block_sum(double (&v)[NV])
     const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
 #pragma unroll
     for (int i = 0; i < NV; ++i) {
-        for (int o = 16; o > 0; o >>= 1) v[i] += __shfl_down_sync(0xffffffffu, v[i], o);
+        for (int o = 16; o > 0; o >>= 1) v[i] += shflDownGroup(v[i], o, 32);
         if (lane == 0) sh[i][warp] = v[i];
     }
     __syncthreads();
@@ -274,7 +275,7 @@ struct Reduction {
         MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
         MARS_CELLWISE_CK(cudaMalloc(&partial, 4 * 32 * sms * sizeof(double)));
         MARS_CELLWISE_CK(cudaMalloc(&scalars, kScalars * sizeof(double)));
-        MARS_CELLWISE_CK(cudaMallocHost(&host, 2 * sizeof(double)));
+        MARS_CELLWISE_CK(cudaMallocHost((void**)&host, 2 * sizeof(double)));
     }
     ~Reduction()
     {

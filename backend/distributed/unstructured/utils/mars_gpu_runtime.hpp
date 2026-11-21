@@ -24,11 +24,16 @@
 #define cudaGraphLaunch hipGraphLaunch
 #define cudaGraph_t hipGraph_t
 #define cudaMallocAsync hipMallocAsync
+#define cudaOccupancyMaxActiveBlocksPerMultiprocessor hipOccupancyMaxActiveBlocksPerMultiprocessor
+#define cudaProfilerStart hipProfilerStart
+#define cudaProfilerStop hipProfilerStop
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemsetAsync hipMemsetAsync
 #define cudaStreamBeginCapture hipStreamBeginCapture
 #define cudaStreamCaptureModeThreadLocal hipStreamCaptureModeThreadLocal
+#define cudaStreamCreateWithFlags hipStreamCreateWithFlags
 #define cudaStreamEndCapture hipStreamEndCapture
+#define cudaStreamNonBlocking hipStreamNonBlocking
 
 namespace mars
 {

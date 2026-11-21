@@ -280,7 +280,7 @@ Sums measure(const cellwise::UnstructuredTopology& T,
 {
     const long long n = T.local * (P + 1) * (P + 1) * (P + 1);
     Sums local        = thrust::transform_reduce(
-        thrust::cuda::par.on(stream), thrust::make_counting_iterator(0LL), thrust::make_counting_iterator(n),
+        mars::gpuPar.on(stream), thrust::make_counting_iterator(0LL), thrust::make_counting_iterator(n),
         Measure<P>{cellwise::view(T), x, lift, action}, Sums{0, 0, 0, 0, 0, 1e300, -1e300, 0, 0}, AddSums{});
     double sum[6]    = {local.hot, local.cold, local.free, local.energy, local.outside, local.nodes},
            maxima[3] = {local.bc, -local.low, local.high};

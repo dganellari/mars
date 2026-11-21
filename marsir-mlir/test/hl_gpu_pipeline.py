@@ -124,46 +124,35 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
               "--buffer-results-to-out-params=hoist-static-allocs=true"], ir)
 
     # The kernel and its per-element arguments, before any pass that keys on them.
-    m = re.search(r"(func\.func @laplacian_apply\()(.*?)(\) \{)", ir, re.S)
-    args = m.group(2).split(", ")
-    marks = PER_ELEMENT | {len(args) - 1}
-    args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
-    if cellwise:   # the element's field is staged into shared memory, its result out of it
-        args[0] = args[0].replace("{mir.element}", '{mir.element, mir.stage = "in"}')
-        args[-1] = args[-1].replace("{mir.element}", '{mir.element, mir.stage = "out"}')
-    ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
-          + ir[m.end(3):])
+    n_args = len(re.search(r"func\.func @laplacian_apply\((.*?)\) \{", ir, re.S).group(1).split(", "))
+    elements = sorted(PER_ELEMENT | {n_args - 1})
+    ir = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply elements={','.join(map(str, elements))}"
+              + (" stage-in=0 stage-out=-1" if cellwise else "")], ir)
     if cellwise:
         # Measured on GH200 at 64^3 (p-multigrid V-cycle): p = 3 runs 11% faster with 4
         # warps per block (30 KB of shared memory) than with 8 (61 KB, half the blocks per SM).
-        # A kernel declares its shared memory statically, at most 48 KB: without --warps,
-        # the warps per block are halved from that default until it fits (p = 7 in f32).
+        # A kernel declares its shared memory statically, at most the target's limit (48 KB
+        # on sm_90): without --warps, --mir-warp-per-element=fit-shared halves the warps per
+        # block from that default until it fits (p = 7 in f32).
         default_warps = 4 if p >= 3 else 8
         # Scratch padding against bank conflicts (--mir-warp-per-element): measured on
         # GH200 at 64^3, p = 3 runs 8% (FP64) / 6% (FP32) faster with it, but the p = 7
         # FP32 operator slower (4.16 -> 5.81 ms: ptxas goes from 168 to 254 registers,
         # 6 -> 4 blocks per SM, and it stays slower at equal registers), so p = 7 has none.
         pad = p <= 3 and "--no-pad" not in sys.argv
-        warp_per_element = "--mir-warp-per-element" + ("" if pad else "=pad-scratch=0")
         given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
         warps = given or default_warps
-        bufferized = ir
-        while True:
-            ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
-                      "--mir-fuse-phases", "--canonicalize", "--cse",
-                      warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], bufferized)
-            if "--emulate" in sys.argv:
-                return emulate(ir, p)
-            suffix = "_f32" if real == "f32" else ""
-            named = ir.replace("func.func @laplacian_apply(", f"func.func @laplacian_apply_p{p}{suffix}(")
-            tag = suffix + ("" if given is None else f"_w{warps}")
-            status = finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
-            ptx = open(os.path.join(ROOT, "generated", f"hl_cellwise_p{p}{tag}_sm90.ptx")).read()
-            shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
-            if shared <= 48 * 1024 or given is not None or warps == 1:
-                return status if shared <= 48 * 1024 else 1
-            warps //= 2
-            print(f"  {shared} B of shared memory > 48 KB: retrying with {warps} warp(s) per block")
+        warp_per_element = (f"--mir-warp-per-element=pad-scratch={int(pad)} "
+                            f"fit-shared={'false' if given is not None else 'true'}")
+        ir = run([MIROPT, "-", f"--mir-cellwise-schedule=warps={warps}", "--canonicalize", "--cse",
+                  "--mir-fuse-phases", "--canonicalize", "--cse",
+                  warp_per_element, "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
+        if "--emulate" in sys.argv:
+            return emulate(ir, p)
+        suffix = "_f32" if real == "f32" else ""
+        named = run([MIROPT, "-", f"--mir-mark-kernel=func=laplacian_apply rename=laplacian_apply_p{p}{suffix}"], ir)
+        tag = suffix + ("" if given is None else f"_w{warps}")
+        return finish(named, p, tag, no_chain=True, prefix="hl_cellwise")
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
@@ -218,25 +207,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True, real={real!r}))
 
 def finish(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
     """The batched kernel (before --mir-gpu-wrap) -> PTX in generated/, and its checks."""
-    ir = run([MIROPT, "-", "--mir-gpu-wrap"], ir)
-    if maxnreg:   # .maxnreg on the entry; --mir-gpu-wrap emits `kernel {` without attributes
-        m = re.search(r"gpu\.func @\w+\(.*?\) workgroup\(.*?\) kernel(?= \{)|gpu\.func @\w+\(.*?\) kernel(?= \{)", ir, re.S)
-        ir = ir[:m.end()] + f" attributes {{nvvm.maxnreg = {maxnreg} : i32}}" + ir[m.end():]
-    ir = ir.replace("gpu.module @mir_kernels {",
-                    'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
-    ir = run([MLIROPT, "-",
-              "--convert-vector-to-scf", "--canonicalize",
-              "--convert-scf-to-cf",
-              "--convert-nvgpu-to-nvvm",
-              "--expand-strided-metadata",
-              "--lower-affine",
-              "--convert-vector-to-llvm",
-              "--convert-math-to-llvm",   # math.fma (the cell-wise schedule's contractions) -> fma.rn.f64
-              "--convert-gpu-to-nvvm",
-              "--convert-arith-to-llvm", "--convert-index-to-llvm",
-              "--convert-cf-to-llvm",
-              "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
-    ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
+    ir = run([MIROPT, "-", f"--mir-lower-to-nvvm=maxnreg={maxnreg} vector=true"], ir)
 
     out = os.path.join(ROOT, "generated", f"{prefix}_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())

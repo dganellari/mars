@@ -19,7 +19,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cellwise_topology.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 
-#include <cuda_runtime.h>
+#include "backend/distributed/unstructured/utils/mars_gpu_runtime.hpp"
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/device_vector.h>

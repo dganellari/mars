@@ -48,6 +48,12 @@ void registerFusePhasesPass();
 void registerTraceSharedPass();
 // Registers --mir-even-odd (even-odd split of mirror-symmetric 1D sweeps).
 void registerEvenOddPass();
+// Registers --mir-mark-kernel (kernel and argument roles by position; rename).
+void registerMarkKernelPass();
+// Registers the pipelines (--mir-lower-to-nvvm).
+void registerPipelines();
+// Registers --mir-amdgpu-grid-dim (gpu.grid_dim from the dispatch packet on AMD).
+void registerAmdgpuGridDimPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
