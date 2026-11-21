@@ -285,7 +285,17 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions (one per NVI
 112 VGPRs and no scratch, one 64-lane wavefront per element: the passes take the wave size from
 the target, and `--mir-batch-elements` publishes the launch shape (64 threads, 1 element) for
 AMD. It is correct in the CPU warp emulator, which now runs `amdgpu.mfma` and shuffles of the
-instruction's own width (5.3e-15, no race under ThreadSanitizer).
+instruction's own width (5.3e-15, no race under ThreadSanitizer), and in MARS's cell-wise CG
+solve on both GPUs (same kit and source; Beverin 757778, Daint 5417237):
+
+| CVFEM p=7 CG solve | GH200 operator | MI300A operator | GH200 solve | MI300A solve |
+|---|---|---|---|---|
+| 8^3 elements | 24.9 ns/elem | 34.4 ns/elem | 3.5 ms, 29 it | 4.6 ms, 29 it |
+| 16^3 elements | 20.5 ns/elem | 25.1 ns/elem | 11.1 ms, 27 it | 18.5 ms, 27 it |
+| 16^3, deformed | 20.1 ns/elem | 26.3 ns/elem | 113 ms, 318 it | 127 ms, 311 it |
+
+On the tensor-core path MI300A is within 1.2-1.3x of GH200 per operator apply (the BP3 cell-wise
+path: 1.5-2.7x).
 
 ## Next steps
 
