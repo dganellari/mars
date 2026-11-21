@@ -77,3 +77,22 @@ contraction reads u from global memory n^2 times per thread instead of once, and
 contractions compute one point per thread with no register blocking. Not a default; the
 schedule option and the FusePhases fix stay. Which of these costs dominates is not measured
 (next: rocprof counters on col_p3 and col_p7, recipe in marsir-mlir/AMD.md).
+
+## Counters (Beverin 757971, rocprof v1, columns / today, same job)
+
+| | p = 3 | p = 7 |
+|---|---|---|
+| bytes read from memory (FETCH_SIZE) | 3.9x | 1.25x |
+| L2 hits (TCC_HIT) | 2.9x | 9.1x |
+| vector instructions (SQ_INSTS_VALU) | 1.13x | 3.0x |
+| waves waiting on a dependency (SQ_WAIT_INST_ANY) | 7x | 37x |
+| shared-memory bank conflicts | 0 (today 9.96e6) | 0.47x |
+
+Table: `paper1-work/amd/colprof_table.py` on the results directory. Two different causes:
+- p = 3 reads 3.9x the bytes. Probably the geometry G: stored with z fastest, a plane phase
+  reads it with stride q across threads, and its lines are evicted before the next plane uses
+  them (G re-read about 4-5 times fits the ratio). Not isolated yet; a G layout with z slowest
+  per element would test it.
+- p = 7 keeps the re-reads in L2, but issues 3x the vector instructions: 81 of 128 threads have
+  a column, and the idle ones issue every instruction too.
+Barriers are not the main cost in either.
