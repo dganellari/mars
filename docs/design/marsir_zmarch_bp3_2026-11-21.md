@@ -72,3 +72,29 @@ last plane), which is why the middle section keeps two cubes.
 - The z-part update writes q values of `w` per point each plane (q^2 extra shared writes
   per plane, lane-local). Keeping a lane's `w` column in registers would remove them, but
   a lane with two columns would index registers by a loop variable; measure first.
+
+## Result (Beverin 757772, 21 November 2026): correct, slower
+
+The prototype (middle section as an `scf.for {mir.planes}` of plane-sized `mir.contract` /
+`mir.flux`; compiler support in commits ac40d416d and 249fd8e2e) passes the CPU emulator at
+p = 3 and 7, with no race under ThreadSanitizer, and lowers shared memory per element from
+4,000 to 3,000 B (p = 3) and from 23,328 to 14,904 B (p = 7). On MI300A, two rounds:
+
+| BP3 | current AMD default | z-march prototype |
+|---|---|---|
+| p = 3, 262,144 elements | 1.025 / 1.029 ms, 4 blocks per CU | 1.739 / 1.737 ms, 5 blocks per CU |
+| p = 7, 32,768 elements | 1.557 / 1.562 ms, 1 block per CU | 2.529 / 2.524 ms, 2 blocks per CU |
+
+Residency rose as planned, and the extra work outweighed it:
+- the z part is a contraction into the whole `w` cube on every plane: q^3 read-modify-writes
+  per plane, q times the traffic of the one sweep it replaces;
+- the plane phases are small (25 points per element at p = 3), so lanes idle, and each plane
+  adds barriers;
+- the 2-D derivative phases are not register-blocked (a plane has fewer rows than lanes), and
+  at p = 7 D and Dt lose the even-odd folding (they are read through row and column views).
+
+Keeping a lane's `w` column in registers across the planes would remove the first cost, but
+that is lane-private state carried across phases, which the phase model (values cross phases
+only through memory) cannot express. So within the current compiler the z-march does not pay
+on MI300A; it is not a default. The compiler support stays (correct, gated, and the unit-
+dimension and per-table-folding fixes found on the way matter on their own).

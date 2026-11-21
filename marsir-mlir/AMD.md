@@ -282,17 +282,10 @@ The production p=7 CVFEM kernel compiles with 264 MFMA instructions, one per NVI
 
 ## Next steps
 
-1. Less shared memory per element on AMD (757263 shows it pays). Today four q^3 buffers are
-   live together: u at the quadrature points and its three derivatives, which meet in shared
-   memory before the pointwise step. Within the current phase model this peak cannot drop:
-   values cross phases only through memory, and the phase that reads u at the quadrature
-   points (other lanes read it too) still writes three buffers; keeping one direction in the
-   thread for every phase changes nothing, and recomputing the gradient from u by separate
-   sweep chains saves 3-5%. What does cut it is a different schedule, a z-march: each thread
-   keeps its z-line in registers and all threads walk the z-planes together (a barrier inside
-   the plane loop is legal, every lane runs it), so only the current plane of u at the
-   quadrature points and of the two cross-lane derivative components is in shared memory:
-   3 q^2 instead of 4 q^3 values, about 600 B instead of 4,000 B per element at p=3 and 2 KB
-   instead of 23 KB at p=7. That is a new MARSIR schedule, not an option of the current one.
+1. Less shared memory per element on AMD (757263 shows residency is the cap). A z-march
+   prototype (docs/design/marsir_zmarch_bp3_2026-11-21.md) cuts it to 3,000 / 14,904 B per
+   element and is correct, but runs 1.7x slower (Beverin 757772): within the phase model the
+   z part rewrites the whole result cube on every plane. Closing the gap needs lane-private
+   state carried across phases (a thread's column in registers), a larger compiler change.
 2. Target layer steps 4 to 6 (above); the per-target tables (`WARPS_AMD`) move with step 4.
 3. 64 lanes per element for the AMD tensor-core kernels.
