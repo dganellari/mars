@@ -781,7 +781,10 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
       if (!lo || !hi || !st || failed(loopUnrollByFactor(f, (uint64_t)((*hi - *lo + *st - 1) / *st))))
         return f.emitOpError("cannot unroll a loop of phases for lane-owned scratch");
     }
-    OpBuilder ab = OpBuilder::atBlockBegin(elements.getBody());
+    // The private arrays go before the element loop: an alloca inside it is a dynamic stack
+    // allocation on every element (on AMDGPU it overruns the private segment, and LLVM keeps
+    // only entry-block allocas in registers). Each element's fill re-initializes them.
+    OpBuilder ab(elements);
     for (Operation &op : *elements.getBody())
       if (auto a = dyn_cast<memref::AllocaOp>(op); a && a->hasAttr("mir.scratch"))
         if (std::optional<Owned> o = laneOwned(a, elements.getBody(), L)) {
@@ -791,6 +794,15 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
           owned[a.getResult()] = std::move(*o);
         }
   }
+
+  // A lane's own buffers (allocas without {mir.scratch}, e.g. the per-element scalars of a
+  // trilinear map) go before the element loop on AMD: inside it they are dynamic stack
+  // allocations on every element, which overrun AMDGPU's private segment. Each element writes
+  // them before reading. (NVIDIA's lowering copes, and its PTX stays as it is.)
+  if (mir::getGpuTarget(func).isAmd())
+    for (Operation &op : llvm::make_early_inc_range(*elements.getBody()))
+      if (auto a = dyn_cast<memref::AllocaOp>(op); a && !a->hasAttr("mir.scratch") && a->getNumOperands() == 0)
+        a->moveBefore(elements);
 
   DenseSet<Value> scratch;
   for (Operation &op : *elements.getBody())
