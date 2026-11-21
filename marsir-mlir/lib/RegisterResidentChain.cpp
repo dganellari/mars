@@ -41,6 +41,7 @@
 // both hand-offs direct. Gate: test/chain_handoff_gate.py.
 
 #include "mir/MirPasses.h"
+#include "llvm/Support/MathExtras.h"
 #include "mir/Target.h"
 
 #include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
@@ -59,14 +60,34 @@ using namespace mlir;
 
 namespace {
 
-// Per-lane index + constant bundle, materialized once at the top of the kernel.
-// target=amd: v_mfma_f64_4x4x4_4b_f64 on a 64-lane wavefront (MI300A). Lane L holds
-// A[i][k] of block b at L = 16k + 4b + i, B[k][j] at 16k + 4b + j and C[i][j] at
-// 16i + 4b + j, one f64 per lane (AMD's matrix instruction calculator, gfx9). An 8x8
-// tile uses the blocks as its quadrants (I, J), b = 2I + J, and two instructions for the
-// K slabs. So A row = 4I + i, B column = 4J + j, k = L >> 4; C row = 4I + (L >> 4), C
-// column = 4J + (L & 3). ../amd/mfma/layout_model.py checks this layout and the
-// relayouts below against numpy.
+// A matrix instruction's fragments as data: the entry (row, col) of the 8x8 tile a lane holds,
+// each coordinate a sum of bit fields of the lane id, ((lane >> shift) & (2^bits - 1)) * scale,
+// one f64 per lane and operand. A is the slab's 8x4 part (col = k within the slab), B its 4x8
+// part (row = k), C the whole 8x8 tile. The relayouts (a C feeding the next contraction) are
+// derived from it: a lane fetches its operand entry from the lane that holds it in C, found by
+// inverting the C map, which is a bijection of the 64 lanes onto the tile.
+struct Field {
+  int shift, bits, scale;
+};
+struct EntryMap {
+  SmallVector<Field, 3> row, col;
+};
+struct MmaLayout {
+  int lanes;
+  EntryMap a, b, c;
+};
+// v_mfma_f64_4x4x4_4b_f64, the four 4x4 blocks as the quadrants (I, J) of the tile, b = 2I + J
+// (AMD's matrix instruction calculator, gfx9: A[i][k] of block b in lane 16k + 4b + i, B[k][j]
+// in 16k + 4b + j, C[i][j] in 16i + 4b + j; checked by ../amd/mfma/layout_model.py).
+static const MmaLayout kMfmaF64Quadrants = {
+    64,
+    /*A*/ {{{3, 1, 4}, {0, 2, 1}}, {{4, 2, 1}}},
+    /*B*/ {{{4, 2, 1}}, {{2, 1, 4}, {0, 2, 1}}},
+    /*C*/ {{{3, 1, 4}, {4, 2, 1}}, {{2, 1, 4}, {0, 2, 1}}}};
+
+// Per-lane index + constant bundle, materialized once at the top of the kernel. target=amd:
+// the rows and columns a lane holds come from kMfmaF64Quadrants (two instructions per 8x8x8
+// contraction, one per K slab).
 struct Lane {
   bool amd = false;
   int width = 32;                       // lanes a shuffle spans
@@ -86,6 +107,39 @@ struct Lane {
     return b.create<arith::ConstantIndexOp>(loc, v);
   }
 };
+
+// sum over `fs` of ((lane >> shift) & (2^bits - 1)) * scale; c(v) makes a constant of lane's type.
+template <typename Const>
+static Value fields(OpBuilder &b, Location loc, Value lane, ArrayRef<Field> fs, Const c) {
+  Value sum;
+  for (const Field &f : fs) {
+    Value v = f.shift ? b.create<arith::ShRUIOp>(loc, lane, c(f.shift)).getResult() : lane;
+    v = b.create<arith::AndIOp>(loc, v, c((1 << f.bits) - 1));
+    if (f.scale != 1)
+      v = b.create<arith::MulIOp>(loc, v, c(f.scale));
+    sum = sum ? b.create<arith::AddIOp>(loc, sum, v).getResult() : v;
+  }
+  return sum;
+}
+
+// The lane that holds C[row][col]: the C map inverted, field by field (a coordinate's bits at
+// scale s, masked, go back to the lane bits at shift).
+template <typename Const>
+static Value holderOf(OpBuilder &b, Location loc, const EntryMap &cmap, Value row, Value col, Const c) {
+  Value lane;
+  auto take = [&](Value coord, const Field &f) {
+    Value v = coord;
+    if (int s = llvm::Log2_32(f.scale))
+      v = b.create<arith::ShRUIOp>(loc, v, c(s));
+    v = b.create<arith::AndIOp>(loc, v, c((1 << f.bits) - 1));
+    if (f.shift)
+      v = b.create<arith::ShLIOp>(loc, v, c(f.shift));
+    lane = lane ? b.create<arith::OrIOp>(loc, lane, v).getResult() : v;
+  };
+  for (const Field &f : cmap.row) take(row, f);
+  for (const Field &f : cmap.col) take(col, f);
+  return lane;
+}
 
 static Lane makeLane(OpBuilder &b, Location loc, bool amd) {
   Lane L;
@@ -107,24 +161,18 @@ static Lane makeLane(OpBuilder &b, Location loc, bool amd) {
   L.rowA = L.nB = L.i;
   L.kk = L.k;
   if (amd) {
+    const MmaLayout &m = kMfmaF64Quadrants;
     auto c = [&](int v) { return b.create<arith::ConstantIndexOp>(loc, v).getResult(); };
-    Value l = b.create<arith::RemUIOp>(loc, L.lane, c(64));   // lane in the wavefront
+    Value l = b.create<arith::RemUIOp>(loc, L.lane, c(m.lanes));   // lane in the wavefront
     L.lane = l;
     L.li = b.create<arith::IndexCastOp>(loc, L.i32, l);
-    auto bit = [&](int s) {   // (l >> s) & 1
-      return b.create<arith::AndIOp>(loc, b.create<arith::ShRUIOp>(loc, l, c(s)), c(1)).getResult();
-    };
-    Value j = b.create<arith::AndIOp>(loc, l, c(3));
-    Value hi = b.create<arith::ShRUIOp>(loc, l, c(4));
-    Value I4 = b.create<arith::MulIOp>(loc, bit(3), c(4));
-    Value J4 = b.create<arith::MulIOp>(loc, bit(2), c(4));
-    L.rowA = b.create<arith::AddIOp>(loc, I4, j);
-    L.nB = b.create<arith::AddIOp>(loc, J4, j);
-    L.kk = hi;
-    L.cRow = b.create<arith::AddIOp>(loc, I4, hi);
-    L.cCol = b.create<arith::AddIOp>(loc, J4, j);
+    L.rowA = fields(b, loc, l, m.a.row, c);
+    L.kk = fields(b, loc, l, m.a.col, c);
+    L.nB = fields(b, loc, l, m.b.col, c);
+    L.cRow = fields(b, loc, l, m.c.row, c);
+    L.cCol = fields(b, loc, l, m.c.col, c);
     L.fragC = L.frag1;
-    L.width = 64;
+    L.width = m.lanes;
   }
   return L;
 }
@@ -219,24 +267,22 @@ static Value mma(OpBuilder &b, Location loc, Lane &L, Value a, Value bfrag,
 enum class Operand { A, B, BT };
 static Value relayoutAmd(OpBuilder &b, Location loc, Lane &L, Value cfrag, int slab,
                          Operand to) {
+  // The C entry this lane needs: as the next A, C[rowA][4 slab + k]; as B, C[4 slab + k][nB];
+  // as B^T, C[nB][4 slab + k]. Fetched from the lane that holds it (holderOf).
+  const MmaLayout &m = kMfmaF64Quadrants;
   auto ci = [&](int v) { return L.ci(b, loc, v); };
-  Value li = L.li, src;
-  if (to == Operand::B) {
-    src = b.create<arith::OrIOp>(loc, b.create<arith::AndIOp>(loc, li, ci(~8)), ci(8 * slab));
-  } else {
-    // k = L >> 4, i or j = L & 3, I (A) = bit 3, J (B^T) = bit 2
-    Value k = b.create<arith::ShRUIOp>(loc, li, ci(4));
-    Value low = b.create<arith::AndIOp>(loc, li, ci(3));
-    Value blk = b.create<arith::AndIOp>(
-        loc, b.create<arith::ShRUIOp>(loc, li, ci(to == Operand::A ? 3 : 2)), ci(1));
-    src = b.create<arith::AddIOp>(loc, b.create<arith::MulIOp>(loc, low, ci(16)),
-                                  b.create<arith::MulIOp>(loc, blk, ci(8)));
-    src = b.create<arith::AddIOp>(loc, src, k);
-    if (slab)
-      src = b.create<arith::AddIOp>(loc, src, ci(4 * slab));
-  }
+  Value li = L.li;
+  Value k = b.create<arith::AddIOp>(loc, fields(b, loc, li, to == Operand::A ? m.a.col : m.b.row, ci), ci(4 * slab));
+  Value row, col;
+  if (to == Operand::A)
+    row = fields(b, loc, li, m.a.row, ci), col = k;
+  else if (to == Operand::B)
+    row = k, col = fields(b, loc, li, m.b.col, ci);
+  else
+    row = fields(b, loc, li, m.b.col, ci), col = k;
+  Value src = holderOf(b, loc, m.c, row, col, ci);
   Value v = b.create<vector::ExtractOp>(loc, cfrag, ArrayRef<int64_t>{0, 0});
-  auto s = b.create<gpu::ShuffleOp>(loc, v, src, ci(64), gpu::ShuffleMode::IDX);
+  auto s = b.create<gpu::ShuffleOp>(loc, v, src, ci(m.lanes), gpu::ShuffleMode::IDX);
   return b.create<vector::InsertOp>(loc, s.getShuffleResult(), L.zc1, ArrayRef<int64_t>{0, 0});
 }
 

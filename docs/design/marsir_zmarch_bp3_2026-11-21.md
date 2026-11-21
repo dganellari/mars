@@ -98,3 +98,53 @@ that is lane-private state carried across phases, which the phase model (values 
 only through memory) cannot express. So within the current compiler the z-march does not pay
 on MI300A; it is not a default. The compiler support stays (correct, gated, and the unit-
 dimension and per-table-folding fixes found on the way matter on their own).
+
+## Next: lane-owned buffers (design, 21 November 2026)
+
+The main cost above is that the z part reads and writes the whole result cube `w` in shared
+memory on every plane. Within the plane loop every access to `w` is at a point the accessing
+lane owns: the z part writes `w[a,b,k]` for the lane's column (a, b), the plane update reads
+and writes `w[a,b,c]`. Such a buffer can live in the lane's registers.
+
+A buffer is lane-owned over a region when every phase in the region that touches it has the
+same iteration space (so point q runs on lane q mod L in all of them) and indexes it with that
+space's induction variables in the same positions, plus constants for dimensions kept in the
+thread. Each lane then holds only its own points: J = ceil(points / L) slots (2 for the BP3
+march at p = 3 and 7) times the constant-indexed extent, e.g. 2 x q doubles.
+
+`--mir-warp-per-element` would:
+1. find lane-owned scratch buffers (the same "same point" rule FusePhases uses, with constant
+   indices allowed in both accesses);
+2. map their phases as `for j in 0..J: q = glane + j L; if (q < points) { ... }` and replace
+   each access by a private array indexed [j, constants...];
+3. fully unroll those lane loops and the loops of phases around them, so every private index
+   is a constant and LLVM keeps the array in registers;
+4. lower a fill of the buffer to a per-lane initialisation of its private entries.
+
+The projection after the march reads `w` across lanes, so the march ends with one copy of
+the lane-owned columns into a shared `w` cube, in the owner's mapping (phase over (a, b),
+k in the thread); the schedule's copy and fill lowering must keep that blocking. Shared memory
+in the march is then `uq` plus the planes; `w` takes a shared slot only for the projection,
+when `uq` is dead.
+
+## Lane-owned result (Beverin 757797): correct, still slower
+
+Implemented as `--mir-warp-per-element=lane-owned` (gate `test/lane_owned_gate.py`), with the
+projection back reordered to run along z first so `w` is touched only lane by lane. Shared
+memory per element at p = 3: 2,000 B (half of today). The first GPU run (757788) failed: the
+private arrays were allocas inside the element loop, i.e. dynamic stack allocations on every
+element, which overrun AMDGPU's private segment (the CPU emulator, 3 elements, cannot see it;
+`test/amd_target.py` now rejects any alloca outside the entry block). With them before the loop
+(all promoted to registers, no scratch), on MI300A, two rounds:
+
+| BP3 | current default | z-march, w shared | z-march, w lane-owned |
+|---|---|---|---|
+| p = 3 | 1.023 / 1.027 ms (4 blocks per CU) | 1.74 ms | 1.937 / 1.939 ms (8 blocks per CU) |
+| p = 7 | 1.554 / 1.559 ms | 2.53 ms | 2.724 / 2.736 ms |
+
+Residency doubled at p = 3 as designed, and the kernel is still 1.9x slower: the march's many
+small plane phases and barriers, the unblocked 2-D derivative phases, and the register cost of
+the lane-owned columns (132 / 274 VGPRs, guarded unrolled slots) outweigh it. Lane-owned
+scratch stays an option; the BP3 schedule stays as it is. The same check found the trilinear BP
+kernels (bp1_tri, bp3_tri) with per-lane scalars inside the element loop on AMD, now moved out
+(their first MI300A run: Beverin 757799).

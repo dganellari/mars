@@ -54,7 +54,12 @@ struct MarkKernelPass : public PassWrapper<MarkKernelPass, OperationPass<ModuleO
     }
     const int64_t n = f.getNumArguments();
     auto at = [&](int64_t i) -> int64_t { return i < 0 ? n + i : i; };
-    for (int64_t i : llvm::concat<int64_t>(elements, constants))
+    SmallVector<int64_t> all(elements.begin(), elements.end());
+    all.append(constants.begin(), constants.end());
+    for (int64_t s : {(int64_t)stageIn, (int64_t)stageOut})
+      if (s != kNone)
+        all.push_back(s);
+    for (int64_t i : all)
       if (at(i) < 0 || at(i) >= n) {
         f.emitError("--mir-mark-kernel: argument ") << i << " out of range";
         return signalPassFailure();

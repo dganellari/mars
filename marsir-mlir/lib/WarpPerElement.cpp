@@ -59,6 +59,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -66,6 +67,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
+
+#include "llvm/ADT/SmallBitVector.h"
 
 #include <map>
 #include <optional>
@@ -555,7 +558,190 @@ LogicalResult packScratch(func::FuncOp func, Block *body, ArrayRef<memref::Alloc
   return success();
 }
 
-LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padScratch, bool largestFirst) {
+
+// Lane-owned scratch (option lane-owned): a buffer every phase touches only at points the
+// accessing lane owns lives in the lane's registers instead of shared memory. It is lane-owned
+// when every access sits in a phase (no reductions) over one common iteration space and indexes
+// the buffer, through its views, with each of the phase's induction variables exactly once, in
+// the same positions in every phase, plus constants (dimensions kept in the thread): point q of
+// the space then runs on lane q mod L in all of them and owns its own elements. A phase that
+// only stores one value at its induction variables over the buffer's whole shape is a fill. Each
+// lane keeps its points in J = ceil(points / L) slots: a private array [J][constant dims...],
+// indexed by constants once the slots are unrolled, which LLVM keeps in registers.
+std::optional<int64_t> staticIndex(Value v, int depth = 0) {
+  if (auto c = getConstantIntValue(v))
+    return *c;
+  Operation *d = v.getDefiningOp();
+  if (!d || depth > 8 || d->getNumOperands() != 2)
+    return std::nullopt;
+  auto a = staticIndex(d->getOperand(0), depth + 1), b = staticIndex(d->getOperand(1), depth + 1);
+  if (!a || !b)
+    return std::nullopt;
+  if (isa<arith::AddIOp>(d)) return *a + *b;
+  if (isa<arith::SubIOp>(d)) return *a - *b;
+  if (isa<arith::MulIOp>(d)) return *a * *b;
+  return std::nullopt;
+}
+
+struct OwnedIndex {
+  bool iv;         // the phase's induction variable at position `value`, else the constant `value`
+  int64_t value;
+};
+
+// Indices of an access through views of `root`, as indices of `root`.
+std::optional<SmallVector<OwnedIndex>> toRoot(Value m, SmallVector<OwnedIndex> idx, Value root) {
+  if (m == root)
+    return idx;
+  Operation *def = m.getDefiningOp();
+  if (auto sv = dyn_cast_or_null<memref::SubViewOp>(def)) {
+    auto src = cast<MemRefType>(sv.getSource().getType());
+    llvm::SmallBitVector dropped = sv.getDroppedDims();
+    SmallVector<OpFoldResult> offs = sv.getMixedOffsets(), strides = sv.getMixedStrides();
+    SmallVector<OwnedIndex> out;
+    unsigned k = 0;
+    for (int64_t d = 0; d < src.getRank(); ++d) {
+      std::optional<int64_t> off = isa<Attribute>(offs[d]) ? getConstantIntValue(offs[d])
+                                                           : staticIndex(cast<Value>(offs[d]));
+      if (!off || getConstantIntValue(strides[d]) != std::optional<int64_t>(1))
+        return std::nullopt;
+      if (dropped.test(d)) {
+        out.push_back({false, *off});
+        continue;
+      }
+      OwnedIndex r = idx[k++];
+      if (r.iv && *off != 0)
+        return std::nullopt;
+      out.push_back(r.iv ? r : OwnedIndex{false, r.value + *off});
+    }
+    return toRoot(sv.getSource(), out, root);
+  }
+  if (auto cs = dyn_cast_or_null<memref::CollapseShapeOp>(def)) {
+    ArrayRef<int64_t> shape = cs.getSrcType().getShape();
+    SmallVector<OwnedIndex> out(shape.size(), OwnedIndex{false, 0});
+    for (auto [g, group] : llvm::enumerate(cs.getReassociationIndices())) {
+      SmallVector<int64_t> wide;
+      for (int64_t d : group) if (shape[d] != 1) wide.push_back(d);
+      if (wide.size() > 1)
+        return std::nullopt;
+      if (wide.size() == 1)
+        out[wide[0]] = idx[g];
+    }
+    return toRoot(cs.getSrc(), out, root);
+  }
+  if (auto es = dyn_cast_or_null<memref::ExpandShapeOp>(def)) {
+    ArrayRef<int64_t> shape = es.getResultType().getShape();
+    SmallVector<OwnedIndex> out;
+    for (const ReassociationIndices &group : es.getReassociationIndices()) {
+      std::optional<OwnedIndex> one;
+      for (int64_t d : group) {
+        if (shape[d] == 1)
+          continue;
+        if (one)
+          return std::nullopt;
+        one = idx[d];
+      }
+      out.push_back(one.value_or(OwnedIndex{false, 0}));
+    }
+    return toRoot(es.getSrc(), out, root);
+  }
+  return std::nullopt;
+}
+
+struct Owned {
+  SmallVector<int64_t> space;             // the common iteration space
+  SmallVector<int64_t> constDims;         // root dimensions indexed by constants
+  DenseMap<Operation *, SmallVector<int64_t>> at;   // access -> its constants, in constDims order
+  DenseMap<Operation *, Value> fills;     // fill phase -> the value it stores
+  int64_t slots = 0;                      // J
+  Value priv;
+};
+
+std::optional<Owned> laneOwned(memref::AllocaOp alloca, Block *body, int64_t L) {
+  MemRefType type = alloca.getType();
+  if (!type.hasStaticShape() || type.getRank() == 0)
+    return std::nullopt;
+  Owned o;
+  std::optional<SmallVector<OwnedIndex>> signature;
+  SmallVector<Value> work{alloca.getResult()};
+  while (!work.empty()) {
+    Value v = work.pop_back_val();
+    for (Operation *user : v.getUsers()) {
+      if (isa<memref::SubViewOp, memref::CollapseShapeOp, memref::ExpandShapeOp>(user)) {
+        work.push_back(user->getResult(0));
+        continue;
+      }
+      Value mem;
+      SmallVector<Value> indices;
+      if (auto ld = dyn_cast<memref::LoadOp>(user)) mem = ld.getMemRef(), indices = ld.getIndices();
+      else if (auto st = dyn_cast<memref::StoreOp>(user)) mem = st.getMemRef(), indices = st.getIndices();
+      else return std::nullopt;
+      auto phase = dyn_cast<scf::ParallelOp>(user->getParentOp());
+      if (!phase || !phase->hasAttr("mir.lanes") || phase->getBlock() != body || !phase.getInitVals().empty())
+        return std::nullopt;
+      SmallVector<int64_t> space;
+      for (unsigned d = 0; d < phase.getNumLoops(); ++d) {
+        auto lb = getConstantIntValue(phase.getLowerBound()[d]), ub = getConstantIntValue(phase.getUpperBound()[d]),
+             st = getConstantIntValue(phase.getStep()[d]);
+        if (lb != std::optional<int64_t>(0) || st != std::optional<int64_t>(1) || !ub)
+          return std::nullopt;
+        space.push_back(*ub);
+      }
+      SmallVector<OwnedIndex> idx;
+      for (Value i : indices) {
+        int pos = -1;
+        for (unsigned d = 0; d < phase.getNumLoops(); ++d)
+          if (phase.getInductionVars()[d] == i) pos = (int)d;
+        if (pos >= 0) {
+          idx.push_back({true, pos});
+        } else if (auto c = staticIndex(i)) {
+          idx.push_back({false, *c});
+        } else {
+          return std::nullopt;
+        }
+      }
+      std::optional<SmallVector<OwnedIndex>> root = toRoot(mem, idx, alloca.getResult());
+      if (!root)
+        return std::nullopt;
+      // A fill: the phase stores one value at its induction variables, over the whole buffer.
+      if (auto st = dyn_cast<memref::StoreOp>(user);
+          st && std::distance(phase.getBody()->begin(), phase.getBody()->end()) == 2 &&
+          st.getValueToStore().getDefiningOp() && !phase->isAncestor(st.getValueToStore().getDefiningOp()) &&
+          llvm::equal(space, type.getShape()) &&
+          llvm::all_of(llvm::enumerate(*root), [](auto e) { return e.value().iv && e.value().value == (int64_t)e.index(); })) {
+        o.fills[phase] = st.getValueToStore();
+        continue;
+      }
+      // Each induction variable exactly once; the same positions and space in every phase.
+      SmallVector<int> seen(phase.getNumLoops(), 0);
+      for (const OwnedIndex &r : *root) if (r.iv) ++seen[r.value];
+      if (llvm::any_of(seen, [](int n) { return n != 1; }))
+        return std::nullopt;
+      if (!signature) {
+        signature = root;
+        o.space = space;
+        for (auto [d, r] : llvm::enumerate(*root)) if (!r.iv) o.constDims.push_back(d);
+      } else {
+        if (space != o.space)
+          return std::nullopt;
+        for (auto [a, b] : llvm::zip(*root, *signature))
+          if (a.iv != b.iv || (a.iv && a.value != b.value))
+            return std::nullopt;
+      }
+      SmallVector<int64_t> consts;
+      for (int64_t d : o.constDims) consts.push_back((*root)[d].value);
+      o.at[user] = consts;
+    }
+  }
+  if (!signature)
+    return std::nullopt;
+  int64_t points = 1;
+  for (int64_t s : o.space) points *= s;
+  o.slots = (points + L - 1) / L;
+  return o;
+}
+
+LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padScratch, bool largestFirst,
+                          bool promoteOwned = false) {
   if (elements.getNumLoops() != 1 || !elements.getInitVals().empty())
     return elements.emitOpError("{mir.elements} must be a one-dimensional loop without reductions");
   if (getConstantIntValue(elements.getLowerBound()[0]) != 0 || getConstantIntValue(elements.getStep()[0]) != 1)
@@ -579,6 +765,45 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   OpBuilder b(elements);
   Location loc = elements.getLoc();
 
+  // Lane-owned scratch into registers: loops of phases are unrolled first, so a plane index
+  // becomes a constant, then each scratch buffer every phase touches lane by lane gets a
+  // private array (laneOwned above).
+  DenseMap<Value, Owned> owned;   // scratch alloca -> its private form
+  if (promoteOwned) {
+    SmallVector<scf::ForOp> loops;
+    for (Operation &op : *elements.getBody())
+      if (auto f = dyn_cast<scf::ForOp>(op);
+          f && llvm::any_of(f.getBody()->getOperations(), [](Operation &o) { return o.hasAttr("mir.lanes"); }))
+        loops.push_back(f);
+    for (scf::ForOp f : loops) {
+      auto lo = getConstantIntValue(f.getLowerBound()), hi = getConstantIntValue(f.getUpperBound()),
+           st = getConstantIntValue(f.getStep());
+      if (!lo || !hi || !st || failed(loopUnrollByFactor(f, (uint64_t)((*hi - *lo + *st - 1) / *st))))
+        return f.emitOpError("cannot unroll a loop of phases for lane-owned scratch");
+    }
+    // The private arrays go before the element loop: an alloca inside it is a dynamic stack
+    // allocation on every element (on AMDGPU it overruns the private segment, and LLVM keeps
+    // only entry-block allocas in registers). Each element's fill re-initializes them.
+    OpBuilder ab(elements);
+    for (Operation &op : *elements.getBody())
+      if (auto a = dyn_cast<memref::AllocaOp>(op); a && a->hasAttr("mir.scratch"))
+        if (std::optional<Owned> o = laneOwned(a, elements.getBody(), L)) {
+          SmallVector<int64_t> shape{o->slots};
+          for (int64_t d : o->constDims) shape.push_back(a.getType().getDimSize(d));
+          o->priv = ab.create<memref::AllocaOp>(a.getLoc(), MemRefType::get(shape, a.getType().getElementType()));
+          owned[a.getResult()] = std::move(*o);
+        }
+  }
+
+  // A lane's own buffers (allocas without {mir.scratch}, e.g. the per-element scalars of a
+  // trilinear map) go before the element loop on AMD: inside it they are dynamic stack
+  // allocations on every element, which overrun AMDGPU's private segment. Each element writes
+  // them before reading. (NVIDIA's lowering copes, and its PTX stays as it is.)
+  if (mir::getGpuTarget(func).isAmd())
+    for (Operation &op : llvm::make_early_inc_range(*elements.getBody()))
+      if (auto a = dyn_cast<memref::AllocaOp>(op); a && !a->hasAttr("mir.scratch") && a->getNumOperands() == 0)
+        a->moveBefore(elements);
+
   DenseSet<Value> scratch;
   for (Operation &op : *elements.getBody())
     if (auto a = dyn_cast<memref::AllocaOp>(op); a && a->hasAttr("mir.scratch"))
@@ -597,6 +822,7 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   auto order = [&](scf::ParallelOp par) {
     Accesses mine;
     collect(par, mine);
+    for (auto &[root, o] : owned) mine.erase(root);   // lane-local by construction
     for (auto &[root, f] : mine) anyScratch |= scratch.contains(root);
     if (conflict(pending, mine)) {
       OpBuilder(par).create<gpu::BarrierOp>(par.getLoc());
@@ -684,11 +910,81 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
     auto p = dyn_cast<scf::ParallelOp>(op);
     return p && p->hasAttr("mir.lanes");
   };
+  // A phase touching lane-owned buffers: its J slots unrolled, slot j running point
+  // q = glane + j L when q is in range, the owned accesses on the private arrays at [j, ...].
+  auto mapOwned = [&](scf::ParallelOp par) -> LogicalResult {
+    OpBuilder pb(par);
+    Location pl = par.getLoc();
+    SmallVector<int64_t> space;
+    for (Value ub : par.getUpperBound()) space.push_back(*getConstantIntValue(ub));
+    int64_t points = 1;
+    for (int64_t s : space) points *= s;
+    const int64_t slots = (points + L - 1) / L;
+    for (int64_t j = 0; j < slots; ++j) {
+      Value q = pb.create<arith::AddIOp>(pl, glane, pb.create<arith::ConstantIndexOp>(pl, j * L));
+      Value in = pb.create<arith::CmpIOp>(pl, arith::CmpIPredicate::ult, q, pb.create<arith::ConstantIndexOp>(pl, points));
+      auto guard = pb.create<scf::IfOp>(pl, in, /*withElseRegion=*/false);
+      OpBuilder gb = guard.getThenBodyBuilder();
+      IRMapping map;
+      Value rest = q;
+      for (int d = (int)space.size() - 1; d >= 0; --d) {   // row-major position of q
+        Value extent = gb.create<arith::ConstantIndexOp>(pl, space[d]);
+        map.map(par.getInductionVars()[d], d == 0 ? rest : gb.create<arith::RemUIOp>(pl, rest, extent).getResult());
+        if (d > 0) rest = gb.create<arith::DivUIOp>(pl, rest, extent);
+      }
+      for (Operation &o : par.getBody()->without_terminator()) {
+        const Owned *own = nullptr;
+        const SmallVector<int64_t> *consts = nullptr;
+        for (auto &[root, ow] : owned)
+          if (auto it = ow.at.find(&o); it != ow.at.end()) own = &ow, consts = &it->second;
+        if (!own) {
+          gb.clone(o, map);
+          continue;
+        }
+        SmallVector<Value> idx{gb.create<arith::ConstantIndexOp>(pl, j)};
+        for (int64_t c : *consts) idx.push_back(gb.create<arith::ConstantIndexOp>(pl, c));
+        if (auto ld = dyn_cast<memref::LoadOp>(o))
+          map.map(ld.getResult(), gb.create<memref::LoadOp>(pl, own->priv, idx).getResult());
+        else
+          gb.create<memref::StoreOp>(pl, map.lookupOrDefault(cast<memref::StoreOp>(o).getValueToStore()), own->priv, idx);
+      }
+    }
+    // The accesses die with the phase: no stale pointer may match a later op.
+    for (Operation &o : par.getBody()->without_terminator())
+      for (auto &[root, ow] : owned) ow.at.erase(&o);
+    par.erase();
+    return success();
+  };
+  // Phases with lane-owned accesses, fixed before any phase is mapped (and erased).
+  DenseSet<Operation *> ownedPhases;
+  for (auto &[root, ow] : owned)
+    for (auto &[access, consts] : ow.at) ownedPhases.insert(access->getParentOp());
   for (Operation &op : llvm::make_early_inc_range(*elements.getBody())) {
     if (isPhase(op)) {
       auto par = cast<scf::ParallelOp>(op);
+      // A fill of a lane-owned buffer: every private entry of every lane.
+      const Owned *filled = nullptr;
+      for (auto &[root, ow] : owned) if (ow.fills.count(par)) filled = &ow;
+      if (filled) {
+        const Value fillValue = filled->fills.lookup(par);
+        for (auto &[root, ow] : owned) ow.fills.erase(par);
+        OpBuilder fb(par);
+        auto pt = cast<MemRefType>(filled->priv.getType());
+        int64_t entries = pt.getNumElements();
+        for (int64_t e = 0; e < entries; ++e) {
+          SmallVector<Value> idx;
+          int64_t rest = e;
+          SmallVector<int64_t> pos(pt.getRank());
+          for (int d = (int)pt.getRank() - 1; d >= 0; --d) pos[d] = rest % pt.getDimSize(d), rest /= pt.getDimSize(d);
+          for (int64_t v : pos) idx.push_back(fb.create<arith::ConstantIndexOp>(par.getLoc(), v));
+          fb.create<memref::StoreOp>(par.getLoc(), fillValue, filled->priv, idx);
+        }
+        par.erase();
+        continue;
+      }
+      const bool touchesOwned = ownedPhases.contains(par.getOperation());
       order(par);
-      if (failed(mapPhase(par)))
+      if (failed(touchesOwned ? mapOwned(par) : mapPhase(par)))
         return failure();
       continue;
     }
@@ -778,6 +1074,18 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
       guard(st, valid);
   }
 
+  // Lane-owned scratch now lives in the private arrays: drop the buffer and its views.
+  for (auto &[root, ow] : owned) {
+    SmallVector<Operation *> views;
+    SmallVector<Value> work{root};
+    while (!work.empty()) {
+      Value v = work.pop_back_val();
+      for (Operation *user : v.getUsers()) { views.push_back(user); work.push_back(user->getResult(0)); }
+    }
+    for (Operation *view : llvm::reverse(views)) view->erase();
+    root.getDefiningOp()->erase();
+  }
+
   // The scratch, in shared memory: one buffer per scratch alloca for one element
   // per block with flat buffers (the DSS kernels), else packed (below).
   SmallVector<memref::AllocaOp> allocas;
@@ -840,6 +1148,10 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
   Option<bool> largestFirst{*this, "largest-first",
                             llvm::cl::desc("pack scratch largest first when that needs fewer slots"),
                             llvm::cl::init(true)};
+  Option<bool> laneOwned{*this, "lane-owned",
+                         llvm::cl::desc("keep scratch every phase touches lane by lane in registers "
+                                        "(loops of phases are unrolled first)"),
+                         llvm::cl::init(false)};
   Option<bool> fitShared{*this, "fit-shared",
                          llvm::cl::desc("halve the warps per block until the shared memory fits the "
                                         "target's limit (for a warp count that is a default, not a choice)"),
@@ -865,7 +1177,7 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
     copy.setSymName((func.getSymName() + "__fit").str());
     auto copyLoop = cast<scf::ParallelOp>(map.lookup(loop.getOperation()));
     int64_t bytes = 0;
-    const bool ok = succeeded(mapElements(copy, copyLoop, padScratch, largestFirst));
+    const bool ok = succeeded(mapElements(copy, copyLoop, padScratch, largestFirst, laneOwned));
     for (unsigned i = 0; ok && i < copy.getNumArguments(); ++i)
       if (copy.getArgAttr(i, "mir.workgroup"))
         if (auto t = dyn_cast<MemRefType>(copy.getArgument(i).getType()))
@@ -911,7 +1223,7 @@ struct WarpPerElementPass : public PassWrapper<WarpPerElementPass, OperationPass
       for (scf::ParallelOp p : loops) {
         if (fitShared && failed(fitWarps(func, p)))
           return signalPassFailure();
-        if (failed(mapElements(func, p, padScratch, largestFirst)))
+        if (failed(mapElements(func, p, padScratch, largestFirst, laneOwned)))
           return signalPassFailure();
       }
     }

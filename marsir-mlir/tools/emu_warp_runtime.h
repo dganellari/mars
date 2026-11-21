@@ -62,6 +62,7 @@ struct Warp {
     double xchg[1024];       // by thread of the block; a shuffle reads within its warp
     int32_t xchg_i32[1024];
     double A[8][4], B[4][8], C[8][8];
+    double mfa[1024], mfb[1024];   // MFMA operands, by thread of the block
 };
 Warp* warp = nullptr;
 thread_local int64_t tlLane = 0, tlBlock = 0, tlGrid = 1;
@@ -103,22 +104,23 @@ int64_t mir_emu_block() { return tlBlock; }
 int64_t mir_emu_grid() { return tlGrid; }
 void mir_emu_barrier() { warp->bar.arrive_and_wait(); }
 
-double mir_emu_shfl(double v, int32_t src)
+// A shuffle within groups of `width` lanes (the instruction's own width: 32, or 64 on AMD).
+double mir_emu_shfl(double v, int32_t src, int32_t width)
 {
     HiddenExchange hidden;
     warp->xchg[tlLane] = v;
     warp->bar.arrive_and_wait();
-    const double r = warp->xchg[(tlLane & ~(int64_t)(kLanes - 1)) | (src & (kLanes - 1))];
+    const double r = warp->xchg[(tlLane & ~(int64_t)(width - 1)) | (src & (width - 1))];
     warp->bar.arrive_and_wait();   // nobody overwrites xchg before all have read
     return r;
 }
 
-int32_t mir_emu_shfl_i32(int32_t v, int32_t src)
+int32_t mir_emu_shfl_i32(int32_t v, int32_t src, int32_t width)
 {
     HiddenExchange hidden;
     warp->xchg_i32[tlLane] = v;
     warp->bar.arrive_and_wait();
-    const int32_t r = warp->xchg_i32[(tlLane & ~(int64_t)(kLanes - 1)) | (src & (kLanes - 1))];
+    const int32_t r = warp->xchg_i32[(tlLane & ~(int64_t)(width - 1)) | (src & (width - 1))];
     warp->bar.arrive_and_wait();
     return r;
 }
@@ -144,6 +146,23 @@ double mir_emu_mma(double a, double b, double c0, double c1)
     return d0;
 }
 double mir_emu_mma_hi() { return tlHi; }
+
+// v_mfma_f64_4x4x4_4b_f64 on a 64-lane wavefront (AMD's matrix instruction calculator, gfx9):
+// four independent 4x4x4 products, block b; A[i][k] in lane 16k + 4b + i, B[k][j] in lane
+// 16k + 4b + j, C/D[i][j] in lane 16i + 4b + j (one f64 per lane each).
+double mir_emu_mfma(double a, double b, double c)
+{
+    HiddenExchange hidden;
+    warp->mfa[tlLane] = a;
+    warp->mfb[tlLane] = b;
+    warp->bar.arrive_and_wait();
+    const int64_t base = tlLane & ~(int64_t)63, l = tlLane & 63;
+    const int64_t i = l >> 4, blk = (l >> 2) & 3, j = l & 3;
+    double d = c;
+    for (int64_t k = 0; k < 4; ++k) d += warp->mfa[base + 16 * k + 4 * blk + i] * warp->mfb[base + 16 * k + 4 * blk + j];
+    warp->bar.arrive_and_wait();
+    return d;
+}
 }  // extern "C"
 
 #ifdef MIR_EMU_TRACE

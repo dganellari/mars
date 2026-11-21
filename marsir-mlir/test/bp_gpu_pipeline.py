@@ -28,28 +28,17 @@ import sys
 
 import hl_gpu_pipeline as hl
 
-# Less scratch is not always faster. Measured on GH200 (docs/design/cellwise_bp_fcg.md,
-# "Scratch reuse"): bp3 p = 1 is 26% slower with any two of the three rewrites at the same
-# launch shape, and bp1 p = 7 5% slower with largest-first packing (4 instead of 2
-# elements per block). Those two keep the forms measured fastest.
+# The schedule and its per-target tables (lanes, warps, even-odd, packing) are the registered
+# pipeline --mir-bp-schedule (lib/Pipelines.cpp). Two tables stay here: the front end's buffer
+# reuse and the NVIDIA register cap, which belong to steps outside that pipeline.
+# Less scratch is not always faster (docs/design/cellwise_bp_fcg.md, "Scratch reuse"): bp3
+# p = 1 is 26% slower with any two of the three rewrites at the same launch shape.
 NO_REUSE = {("bp3", 1)}
-FIRST_FIT = {("bp3", 1), ("bp1", 7)}
-# The even-odd split (--mir-even-odd) is faster at p = 7 (BP3 10%, BP1 32%, BP3 trilinear
-# 12%) and for bp3_tri p = 3 (3%), but bp3 p = 3 is 6% slower with it and p = 1 gains
-# nothing (same doc). bp1_tri is not timed; it follows bp1.
-EVEN_ODD = {(s, 7) for s in ("bp1", "bp3", "bp1_tri", "bp3_tri")} | {("bp3_tri", 3)}
-# At p = 7 (q = 9) scratch per element limits the resident warps (BP3: four q^3 buffers,
-# 8 warps per SM), so two warps share an element: GH200 operator -26% BP3, -16% BP1, and
-# BP1 a further -25% with a 72-register cap (28 B spilled; 40.6% occupancy, the shared-
-# memory limit). BP3 is slower with a cap (it spills more). Three or four warps lose the
-# register blocking and are 2.4x slower. --lanes=L / --maxnreg=N override.
-LANES = {("bp1", 7): 64, ("bp3", 7): 64}
+# BP1 p = 7 runs a further 25% faster on GH200 with a 72-register cap (28 B spilled; 40.6%
+# occupancy, the shared-memory limit); BP3 is slower with a cap (it spills more).
 MAXNREG = {("bp1", 7): 72}
-# Per target: amd_target.py sets TARGET = "amd". Measured on MI300A (Beverin 757112): BP3 p = 3
-# runs 1.01 ms with one wave per block against 1.18 ms with four (the NVIDIA default). Shared
-# memory per element limits the waves per CU either way; smaller blocks pack it better.
+# Per target: amd_target.py sets TARGET = "amd" (--mir-bp-schedule picks that target's tables).
 TARGET = "nvidia"
-WARPS_AMD = {("bp3", 3): 1}
 
 
 def main():
@@ -85,29 +74,14 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     ir = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply elements={','.join(map(str, elements))} "
                  f"constants={','.join(map(str, constants))} reflect={','.join(map(str, reflect))}"], ir)
 
-    # Warps per block: the CVFEM operator's measured default, which
-    # --mir-warp-per-element=fit-shared halves (fewer elements per block) until the static
-    # shared memory fits the target's limit; an explicit --warps=W is used as given.
-    given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
-    # --lanes=L: lanes per element; a multiple of 32 puts L / 32 warps on each element.
-    lanes = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--lanes=")), LANES.get((spec, p), 0))
-    if lanes > 32 and given is None:
-        given = lanes // 32
-    if given is None and TARGET == "amd":
-        given = WARPS_AMD.get((spec, p))
-    warps = given or (4 if p >= 3 else 8)
-    # One thread per 1D line (max-block = q), unrolled. The matrices' constant address
-    # space steers which dimension a thread keeps, so the CPU gate schedules with it too
-    # and only drops it before the CPU build.
-    sched = (f"--mir-cellwise-schedule=warps={warps} max-block={q} unroll-reductions=true const-space=4"
-             + (f" lanes={lanes}" if lanes else ""))
-    even_odd = ["--mir-even-odd", "--canonicalize", "--cse"] if (spec, p) in EVEN_ODD and "--no-even-odd" not in sys.argv else []
-    ir = hl.run([hl.MIROPT, "-", sched, "--canonicalize", "--cse", *even_odd,
-                 "--mir-fuse-phases", "--canonicalize", "--cse",
-                 f"--mir-warp-per-element=largest-first={'false' if (spec, p) in FIRST_FIT else 'true'} "
-                 f"fit-shared={'false' if given is not None else 'true'} "
-                 f"pad-scratch={'false' if '--no-pad' in sys.argv else 'true'}",
-                 "--canonicalize", "--cse", "--loop-invariant-code-motion"], ir)
+    opts = [f"spec={spec}", f"p={p}", f"q={q}", f"target={TARGET}"]
+    for flag, key in (("--lanes=", "lanes"), ("--warps=", "warps")):
+        value = next((a.split("=", 1)[1] for a in sys.argv if a.startswith(flag)), None)
+        if value is not None:
+            opts.append(f"{key}={value}")
+    opts += ["even-odd=false"] * ("--no-even-odd" in sys.argv) + ["pad=false"] * ("--no-pad" in sys.argv)
+    opts += ["lane-owned=true"] * ("--lane-owned" in sys.argv)
+    ir = hl.run([hl.MIROPT, "-", "--mir-bp-schedule=" + " ".join(opts)], ir)
     if "--emulate" in sys.argv:
         grad = "%D:" in src
         tri = "%X:" in src
