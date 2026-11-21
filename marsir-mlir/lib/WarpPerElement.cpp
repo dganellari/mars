@@ -752,7 +752,12 @@ LogicalResult mapElements(func::FuncOp func, scf::ParallelOp elements, bool padS
   };
   const int64_t wave = mir::getGpuTarget(func).waveSize;
   const int64_t L = attr("mir.lanes_per_element", wave);
-  const int64_t W = attr("mir.warps_per_block", L == wave ? 1 : 4);
+  // {mir.threads_per_block}: a block size the data layout fixes (the node-line solve lays out
+  // 128 blocks per thread block), as warps of whatever width the target has.
+  const int64_t threadsPerBlock = attr("mir.threads_per_block", 0);
+  if (threadsPerBlock && threadsPerBlock % wave != 0)
+    return elements.emitOpError("{mir.threads_per_block} must be a multiple of the wave size");
+  const int64_t W = threadsPerBlock ? threadsPerBlock / wave : attr("mir.warps_per_block", L == wave ? 1 : 4);
   // Several warps per element keep more warps resident when scratch per element limits
   // the blocks per SM (q = 9: four q^3 buffers per BP3 element).
   const bool multiWarp = L > wave;

@@ -107,10 +107,15 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
     if "--emulate" in sys.argv:
         return emulate(ir, p, precond, bicg, pmg, lines)
 
-    ir = run([MIROPT, "-", "--mir-lower-to-nvvm=noalias=true"], ir)
-
     name = ("pmg_f32" if real == "f32" else "pmg") if pmg else f"lines_p{p}" if lines else f"bicgstab_p{p}" if bicg else (
         f"precond_p{p}" if precond else f"dss_p{p}")
+    return finish(ir, name, p, real, precond, bicg, pmg, lines)
+
+
+def finish(ir, name, p, real, precond, bicg, pmg, lines):
+    """The scheduled kernels -> generated/<name>_sm90.ptx and its checks (test/amd_target.py
+    replaces this for gfx942)."""
+    ir = run([MIROPT, "-", "--mir-lower-to-nvvm=noalias=true"], ir)
     out = os.path.join(ROOT, "generated", f"{name}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
     ptx = open(out).read()
@@ -133,6 +138,10 @@ sys.stdout.write(mlir_ir.{emitter}({repr(real) if pmg else p}))
     ok = all(g for _, g in checks)
     print("HIGH-LEVEL mir.dss -> PTX: PASS" if ok else "FAILED")
     return 0 if ok else 1
+
+
+# amd_target.py sets TARGET = "amd": the kernels then reduce over 64-thread warps.
+TARGET = "nvidia"
 
 
 def emulate(ir, p, precond, bicg, pmg=False, lines=False):
@@ -166,6 +175,7 @@ def emulate(ir, p, precond, bicg, pmg=False, lines=False):
                        + ("_f32" if f32 else ""))
     run(["/usr/bin/clang++", "-std=c++20", "-ffp-contract=off", *san, f"-DMIR_DSS_P={p}"]
         + (["-DMIR_DSS_PRECOND"] if precond else [])
+        + [f"-DMIR_EMU_WARP={64 if TARGET == 'amd' else 32}"]
         + (["-DMIR_EMU_F32"] if f32 else [])
         + (["-DMIR_EMU_TSAN"] if tsan else []) +
         ["-I", MARS, os.path.join(ROOT, "tools", "emu_pmg.cpp" if pmg else "emu_lines.cpp" if lines else

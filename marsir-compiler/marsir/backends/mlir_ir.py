@@ -1218,7 +1218,7 @@ def _lines_solve(p):
         loop("f", "%r", "%mu", "%m", "%c1", ys, [f"%fu#{d}" for d in range(p)], fwd_rows(1)) +
         loop("gu", "%k", "%c0", "%mu", "%cu", ps, zeros, bwd_rows(unroll)) +
         loop("g", "%k", "%mu", "%m", "%c1", ps, [f"%gu#{d}" for d in range(p)], bwd_rows(1)) +
-        ["    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.warps_per_block = 4 : i64}",
+        ["    scf.reduce", "  } {mir.elements, mir.lanes_per_element = 1 : i64, mir.threads_per_block = 128 : i64}",
          "  return", "}", ""])
 
 

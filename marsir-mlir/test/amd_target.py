@@ -20,10 +20,10 @@ sys.path.insert(0, TEST)
 import hl_gpu_pipeline as hl
 import importlib
 
-def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0):
+def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False, maxnreg=0, out_name=None, noalias=False):
     if os.environ.get("AMD_DUMP"):   # the scheduled kernel, before GPU wrapping (for reading)
         open(os.environ["AMD_DUMP"], "w").write(ir)
-    ir = hl.run([hl.MIROPT, "-", "--mir-lower-to-rocdl=chip=gfx942"], ir)
+    ir = hl.run([hl.MIROPT, "-", "--mir-lower-to-rocdl=chip=gfx942" + (" noalias=true" if noalias else "")], ir)
     # Skip gpu-module-to-binary (it wants ROCm device bitcode): lift the gpu.module body into
     # a plain LLVM-dialect module, translate it, and let llc emit gfx942 assembly.
     start = ir.index("gpu.module @mir_kernels")
@@ -55,7 +55,7 @@ def finish_amd(ir, p, tag, no_chain, prefix="hl_full", stats=None, direct=False,
     # --mir-amdgpu-grid-dim reads the grid size from the dispatch packet, so no ROCm
     # device-library function may remain.
     assert "@__ockl_" not in ll, "a ROCm device-library call survived the lowering"
-    out = os.path.join(os.path.dirname(HERE), "generated", f"{prefix}_p{p}{tag}_gfx942.s")
+    out = os.path.join(os.path.dirname(HERE), "generated", f"{out_name or f'{prefix}_p{p}{tag}'}_gfx942.s")
     cov = os.environ.get("AMD_COV")   # code object version, for an older ROCm runtime
     llc = [os.path.join(hl.LLVM, "bin", "llc"), "-march=amdgcn", "-mcpu=gfx942", "-O3"]
     if cov:
@@ -111,7 +111,10 @@ hl.finish = finish_amd
 # argv[1] may name a pipeline module that calls hl.finish (e.g. bp_gpu_pipeline); default hl.
 if len(sys.argv) > 1 and sys.argv[1].endswith("_pipeline"):
     mod = importlib.import_module(sys.argv.pop(1))
-    if hasattr(mod, "finish"):
+    if hasattr(mod, "finish") and sys.argv and mod.__name__ == "dss_gpu_pipeline":
+        # The DSS driver names its kernels itself (dss_p3, precond_p7, lines_p7, pmg, ...).
+        mod.finish = lambda ir, name, p, *rest: finish_amd(ir, p, "", True, out_name=name, noalias=True)
+    elif hasattr(mod, "finish"):
         mod.finish = finish_amd
     if hasattr(mod, "TARGET"):   # the pipeline's per-target tuning tables
         mod.TARGET = "amd"

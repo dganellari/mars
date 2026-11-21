@@ -18,8 +18,9 @@
 // -DMIR_DSS_PRECOND: the preconditioner kernel (mlir_ir.emit_dss_precond, Jacobi
 // with <a, z> and <z, z>) instead, with random Dirichlet entities and counting
 // bits: z must match unstructured_precondition_kernel's formula bit for bit, and
-// each element's partials the kernel's reduction order (lane L sums the copies
-// L, L + 32, ...; then an xor-shuffle tree over the 32 lanes).
+// each element's partials the kernel's reduction order (thread t of the element's warp sums the
+// copies t, t + W, ...; then an xor-shuffle tree over the W threads; W = MIR_EMU_WARP, the
+// warp width the kernel was built for: 32, or 64 on AMD).
 //
 // Build + run: python3 test/dss_gpu_pipeline.py [p] --emulate [--emu-tsan]
 #include <cmath>
@@ -71,6 +72,11 @@ Desc<T> desc(std::vector<T>& v)
 using Mesh = CellwiseMesh<P>;
 
 // for_each_copy_sum<P>, one element at a time.
+#ifndef MIR_EMU_WARP
+#define MIR_EMU_WARP 32
+#endif
+constexpr int kWarp = MIR_EMU_WARP;
+
 void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<double>& out, std::vector<double>& partials)
 {
     std::vector<long long> position(m.E, -1);   // place of each element in the list
@@ -83,19 +89,19 @@ void reference(const Mesh& m, const std::vector<int32_t>& list, std::vector<doub
         // unstructured_precondition_kernel's visit, in the generated kernel's
         // reduction order.
         const unsigned dmask = m.dirichlet_mask(e);
-        double acc[32][2] = {};
+        double acc[kWarp][2] = {};
         for (int l = 0; l < n3; ++l) {
             const int bit = Mesh::bit(l);
             const bool dir = (dmask >> bit) & 1u, counted = ((uint32_t)m.counting[e] >> bit) & 1u;
             const double v = dir ? 0.0 : stage[l] / m.diag[base + l];
             const double w = counted ? 1.0 : 0.0;
             out[base + l] = v;
-            acc[l % 32][0] += m.a[base + l] * v * w;
-            acc[l % 32][1] += v * v * w;
+            acc[l % kWarp][0] += m.a[base + l] * v * w;
+            acc[l % kWarp][1] += v * v * w;
         }
-        for (int off = 16; off >= 1; off /= 2) {
-            double next[32][2];
-            for (int L = 0; L < 32; ++L)
+        for (int off = kWarp / 2; off >= 1; off /= 2) {
+            double next[kWarp][2];
+            for (int L = 0; L < kWarp; ++L)
                 for (int j = 0; j < 2; ++j) next[L][j] = acc[L][j] + acc[L ^ off][j];
             memcpy(acc, next, sizeof(acc));
         }

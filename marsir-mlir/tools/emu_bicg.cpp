@@ -77,16 +77,21 @@ void emulate(int64_t threads, long long grid, F&& kernel)
     }
 }
 
-// The fixed-order reduction of the generated kernels over values term(i), i in
-// [lo, hi): lane L sums i = lo + L, lo + L + 32, ...; then the xor tree.
+// The fixed-order reduction of the generated kernels over values term(i), i in [lo, hi): thread
+// t of the warp sums i = lo + t, lo + t + W, ...; then the xor tree over the W threads (W =
+// MIR_EMU_WARP, the warp width the kernels were built for: 32, or 64 on AMD).
+#ifndef MIR_EMU_WARP
+#define MIR_EMU_WARP 32
+#endif
+constexpr int kWarp = MIR_EMU_WARP;
 template <typename Term>
 double lane_sum(long long lo, long long hi, Term term)
 {
-    double acc[32] = {};
-    for (long long i = lo; i < hi; ++i) acc[(i - lo) % 32] += term(i);
-    for (int off = 16; off >= 1; off /= 2) {
-        double next[32];
-        for (int L = 0; L < 32; ++L) next[L] = acc[L] + acc[L ^ off];
+    double acc[kWarp] = {};
+    for (long long i = lo; i < hi; ++i) acc[(i - lo) % kWarp] += term(i);
+    for (int off = kWarp / 2; off >= 1; off /= 2) {
+        double next[kWarp];
+        for (int L = 0; L < kWarp; ++L) next[L] = acc[L] + acc[L ^ off];
         memcpy(acc, next, sizeof(acc));
     }
     return acc[0];
@@ -137,8 +142,8 @@ int main()
                 sref[t] = r[t] - sc[kAlpha] * v[t];
             }
         D64 dr = desc(r), dv = desc(v), dp = desc(p), ds = desc(s);
-        emulate(32, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_p_p, MIR_DSS_P)(&dl, &dr, &dv, &dp, &dsc); });
-        emulate(32, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_s_p, MIR_DSS_P)(&dl, &dr, &dv, &ds, &dsc); });
+        emulate(kWarp, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_p_p, MIR_DSS_P)(&dl, &dr, &dv, &dp, &dsc); });
+        emulate(kWarp, (long long)list.size(), [&] { MIR_CAT(_mlir_ciface_bicg_update_s_p, MIR_DSS_P)(&dl, &dr, &dv, &ds, &dsc); });
         report("update_p", differ(p, pref), p.size());
         report("update_s", differ(s, sref), s.size());
     }
@@ -160,7 +165,7 @@ int main()
             pref[2 * w + 1] = lane_sum(0, n3, [&](long long l) { return rh[base + l] * rref[base + l] * counted(l); });
         }
         D64 dx = desc(x), dp = desc(p), ds = desc(s), dt = desc(t), drh = desc(rh), dr = desc(r), dpart = desc(part);
-        emulate(32, (long long)list.size(), [&] {
+        emulate(kWarp, (long long)list.size(), [&] {
             MIR_CAT(_mlir_ciface_bicg_update_xr_p, MIR_DSS_P)(&dl, &dcnt, &dx, &dp, &ds, &dt, &drh, &dr, &dsc, &dpart);
         });
         report("update_xr x", differ(x, xref), x.size());
@@ -184,10 +189,10 @@ int main()
                 swref[t] = sref[t] * weight(e, l);
             }
         D64 dr = desc(r), dv = desc(v), dp = desc(p), dpw = desc(pw), ds = desc(s), dsw = desc(sw);
-        emulate(32, (long long)list.size(), [&] {
+        emulate(kWarp, (long long)list.size(), [&] {
             MIR_CAT(_mlir_ciface_rbicg_update_p_p, MIR_DSS_P)(&dl, &dcnt, &dr, &dv, &dp, &dpw, &dsc);
         });
-        emulate(32, (long long)list.size(), [&] {
+        emulate(kWarp, (long long)list.size(), [&] {
             MIR_CAT(_mlir_ciface_rbicg_update_s_p, MIR_DSS_P)(&dl, &dcnt, &dr, &dv, &ds, &dsw, &dsc);
         });
         report("rbicg_update_p", differ(p, pref) + differ(pw, pwref), p.size() + pw.size());
@@ -207,7 +212,7 @@ int main()
         }
         D64 dx = desc(x), dph = desc(ph), dsh = desc(sh), ds2 = desc(s2), dt = desc(t), drh = desc(rh), dr2 = desc(r2),
             dpart = desc(part);
-        emulate(32, (long long)list.size(), [&] {
+        emulate(kWarp, (long long)list.size(), [&] {
             MIR_CAT(_mlir_ciface_rbicg_update_xr_p, MIR_DSS_P)(&dl, &dcnt, &dx, &dph, &dsh, &ds2, &dt, &drh, &dr2, &dsc,
                                                                &dpart);
         });
@@ -223,7 +228,7 @@ int main()
                 ref[2 * b + j] = lane_sum(b * per, std::min(count, b * per + per),
                                           [&](long long i) { return src[2 * i + j]; });
         D64 dsrc = desc(src), ddst = desc(dst);
-        emulate(32, blocks, [&] { _mlir_ciface_fold_nv2(&dsrc, &ddst, count); });
+        emulate(kWarp, blocks, [&] { _mlir_ciface_fold_nv2(&dsrc, &ddst, count); });
         report("fold_nv2", differ(dst, ref), dst.size());
     }
     {   // finish / totals / step on 37 block partials
@@ -240,7 +245,7 @@ int main()
             std::vector<double> s0 = sc, ref = sc;
             D64 ds0 = desc(s0);
             expect(ref);
-            emulate(32, 1, [&] { kernel(&ds0); });
+            emulate(kWarp, 1, [&] { kernel(&ds0); });
             report(what, differ(s0, ref), s0.size());
         };
         run("finish_start", [&](D64* d) { _mlir_ciface_finish_start(&dsrc1, d, count); }, [&](std::vector<double>& s) {

@@ -16,6 +16,10 @@ ROOT = os.path.dirname(HERE)
 CASES = [(f"{spec} p={p}", ["bp_gpu_pipeline", spec, str(p)])
          for spec in ("bp1", "bp3", "bp1_tri", "bp3_tri") for p in (1, 3, 7)]
 CASES += [("hl full p=7 (MFMA tensor cores)", ["7"])]
+CASES += [(f"dss p={p}", ["dss_gpu_pipeline", str(p)]) for p in (3, 7)]
+CASES += [(f"node lines p={p}", ["dss_gpu_pipeline", str(p), "--lines"]) for p in (3, 7)]
+CASES += [("Jacobi precond p=7", ["dss_gpu_pipeline", "7", "--precond"]),
+          ("BiCGStab kernels p=7", ["dss_gpu_pipeline", "7", "--bicgstab"])]
 
 tsan = ["--emu-tsan"] if "--tsan" in sys.argv else []
 failed = []

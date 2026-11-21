@@ -122,6 +122,8 @@ void buildBpSchedule(OpPassManager &pm, const BpScheduleOptions &o) {
 struct RocdlLoweringOptions : public PassPipelineOptions<RocdlLoweringOptions> {
   Option<std::string> chip{*this, "chip", llvm::cl::desc("AMD architecture"), llvm::cl::init("gfx942")};
   Option<int> optLevel{*this, "O", llvm::cl::desc("AMDGPU optimization level"), llvm::cl::init(3)};
+  Option<bool> noalias{*this, "noalias", llvm::cl::desc("--mir-noalias-descriptors at the end (the DSS kernels)"),
+                       llvm::cl::init(false)};
 };
 
 // The AMD counterpart up to the LLVM dialect; translating and compiling the kernels (llvm-
@@ -136,6 +138,8 @@ void buildRocdlLowering(OpPassManager &pm, const RocdlLoweringOptions &o) {
   p += "gpu.module(convert-gpu-to-rocdl{chipset=" + o.chip + "}),";
   p += "convert-arith-to-llvm,convert-index-to-llvm,convert-cf-to-llvm,finalize-memref-to-llvm,"
        "reconcile-unrealized-casts";
+  if (o.noalias)
+    p += ",mir-noalias-descriptors";
   if (failed(parsePassPipeline(p, pm, llvm::errs())))
     llvm::report_fatal_error("mir-lower-to-rocdl: bad pipeline " + llvm::Twine(p));
 }
