@@ -10,10 +10,11 @@
 //   gpu.block_id x        -> call @mir_emu_block()       (y, z -> 0)
 //   gpu.grid_dim x        -> call @mir_emu_grid()        (y, z -> 1)
 //   gpu.block_dim x       -> 32                          (y, z -> 1)
-//   gpu.shuffle f64/i32   -> call @mir_emu_shfl(v, src) / @mir_emu_shfl_i32(v, src),
+//   gpu.shuffle f64/i32   -> call @mir_emu_shfl(v, src, width) / @mir_emu_shfl_i32(v, src, width),
 //                            src = offset (idx) or lane ^ offset (xor)
 //   gpu.barrier           -> call @mir_emu_barrier()
 //   nvgpu.mma.sync m8n8k4 -> call @mir_emu_mma(a, b, c0, c1), @mir_emu_mma_hi()
+//   amdgpu.mfma f64 4x4x4, 4 blocks -> call @mir_emu_mfma(a, b, c) (a 64-lane wavefront)
 //   {mir.workgroup} arg   -> memref.get_global of one process-wide buffer. The
 //                            harness runs one block at a time, so one copy is
 //                            the block's. It is filled with NaN at entry: GPU
@@ -26,6 +27,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -77,8 +79,9 @@ struct EmulateWarpPass
     declare("mir_emu_block", {}, {idx});
     declare("mir_emu_grid", {}, {idx});
     declare("mir_emu_barrier", {}, {});
-    declare("mir_emu_shfl", {f64, i32}, {f64});
-    declare("mir_emu_shfl_i32", {i32, i32}, {i32});
+    declare("mir_emu_shfl", {f64, i32, i32}, {f64});
+    declare("mir_emu_shfl_i32", {i32, i32, i32}, {i32});
+    declare("mir_emu_mfma", {f64, f64, f64}, {f64});
     declare("mir_emu_mma", {f64, f64, f64, f64}, {f64});
     declare("mir_emu_mma_hi", {}, {f64});
 
@@ -92,7 +95,7 @@ struct EmulateWarpPass
       SmallVector<Operation *> ops;
       fn.walk([&](Operation *op) {
         if (isa<gpu::ThreadIdOp, gpu::BlockIdOp, gpu::GridDimOp, gpu::BlockDimOp, gpu::ShuffleOp, gpu::BarrierOp,
-                nvgpu::MmaSyncOp>(op))
+                nvgpu::MmaSyncOp, amdgpu::MFMAOp>(op))
           ops.push_back(op);
       });
       for (Operation *op : ops) {
@@ -132,8 +135,9 @@ struct EmulateWarpPass
             Value lane = b.create<arith::IndexCastOp>(loc, i32, call("mir_emu_lane", {idx}, {}).getResult(0));
             src = b.create<arith::XOrIOp>(loc, lane, src);
           }
-          Value r = isF64 ? call("mir_emu_shfl", {f64}, {s.getValue(), src}).getResult(0)
-                          : call("mir_emu_shfl_i32", {i32}, {s.getValue(), src}).getResult(0);
+          // The shuffle's own width: 32 lanes in an NVIDIA kernel, 64 in an AMD one.
+          Value r = isF64 ? call("mir_emu_shfl", {f64}, {s.getValue(), src, s.getWidth()}).getResult(0)
+                          : call("mir_emu_shfl_i32", {i32}, {s.getValue(), src, s.getWidth()}).getResult(0);
           s.getShuffleResult().replaceAllUsesWith(r);
           s.getValid().replaceAllUsesWith(
               b.create<arith::ConstantIntOp>(loc, 1, 1).getResult());
@@ -160,6 +164,14 @@ struct EmulateWarpPass
           d = b.create<vector::InsertOp>(loc, d0, d, ArrayRef<int64_t>{0, 0});
           d = b.create<vector::InsertOp>(loc, d1, d, ArrayRef<int64_t>{0, 1});
           m.getResult().replaceAllUsesWith(d);
+        } else if (auto m = dyn_cast<amdgpu::MFMAOp>(op)) {
+          if (m.getM() != 4 || m.getN() != 4 || m.getK() != 4 || m.getBlocks() != 4 ||
+              !m.getSourceA().getType().isF64() || !m.getDestC().getType().isF64()) {
+            m.emitOpError("mir-emulate-warp: only the f64 4x4x4 4-block MFMA is emulated");
+            return signalPassFailure();
+          }
+          m.getDestD().replaceAllUsesWith(
+              call("mir_emu_mfma", {f64}, {m.getSourceA(), m.getSourceB(), m.getDestC()}).getResult(0));
         }
         op->erase();
       }

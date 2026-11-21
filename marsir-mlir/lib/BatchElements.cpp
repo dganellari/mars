@@ -20,6 +20,7 @@
 // warp), which is what --mir-warp-wrap / --mir-warp-distribute assume.
 
 #include "mir/MirPasses.h"
+#include "mir/Target.h"
 #include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -94,6 +95,13 @@ static void batchOne(FuncT func) {
   // Rebasing onto a dynamically-offset element view changes every view below it
   // (offset: 8 becomes offset: ?).
   mir::refreshViewTypes(func.getOperation());
+  // On AMD a warp is a 64-lane wavefront: publish the shape, since the loaders launch 32
+  // threads per element when a kernel publishes none (NVIDIA's warp).
+  if (mir::getGpuTarget(func).isAmd()) {
+    Builder b(func->getContext());
+    func->setAttr("mir.block_threads", b.getI64IntegerAttr(mir::getGpuTarget(func).waveSize));
+    func->setAttr("mir.elements_per_block", b.getI64IntegerAttr(1));
+  }
 }
 
 struct BatchElementsPass
