@@ -31,11 +31,12 @@ mir::GpuTarget mir::getGpuTarget(Operation *op) {
   auto get = [&](const char *key) {
     return layout.getDevicePropertyValue(gpu, StringAttr::get(op->getContext(), key));
   };
-  if (auto v = get(kVendorKey))
+  // An entry of the wrong type keeps the default rather than asserting.
+  if (auto v = get(kVendorKey); v && isa<StringAttr>(*v))
     t.vendor = cast<StringAttr>(*v).getValue();
-  if (auto v = get(kWaveSizeKey))
+  if (auto v = get(kWaveSizeKey); v && isa<IntegerAttr>(*v))
     t.waveSize = cast<IntegerAttr>(*v).getInt();
-  if (auto v = get(kMaxSharedBytesKey))
+  if (auto v = get(kMaxSharedBytesKey); v && isa<IntegerAttr>(*v))
     t.maxSharedBytes = cast<IntegerAttr>(*v).getInt();
   return t;
 }

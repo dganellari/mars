@@ -89,10 +89,11 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
     # --mir-warp-per-element=fit-shared halves (fewer elements per block) until the static
     # shared memory fits the target's limit; an explicit --warps=W is used as given.
     given = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--warps=")), None)
-    # --lanes=L: lanes per element; a multiple of 32 puts L / 32 warps on each element.
+    # --lanes=L: lanes per element; a multiple of the wave size puts L / wave warps on each element.
     lanes = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--lanes=")), LANES.get((spec, p), 0))
-    if lanes > 32 and given is None:
-        given = lanes // 32
+    wave = 64 if TARGET == "amd" else 32
+    if lanes > wave and given is None:
+        given = lanes // wave
     if given is None and TARGET == "amd":
         given = WARPS_AMD.get((spec, p))
     warps = given or (4 if p >= 3 else 8)
