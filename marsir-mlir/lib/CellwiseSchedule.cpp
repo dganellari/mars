@@ -58,7 +58,8 @@ using namespace mlir;
 
 namespace {
 
-constexpr StringLiteral kElementAttr = "mir.element", kStageAttr = "mir.stage", kConstantAttr = "mir.constant";
+constexpr StringLiteral kElementAttr = "mir.element", kStageAttr = "mir.stage", kConstantAttr = "mir.constant",
+                        kPlanesAttr = "mir.planes";
 
 Value rootOf(Value m) {
   while (Operation *def = m.getDefiningOp()) {
@@ -72,17 +73,29 @@ Value rootOf(Value m) {
 
 Value cidx(OpBuilder &b, Location loc, int64_t v) { return b.create<arith::ConstantIndexOp>(loc, v); }
 
-// One phase over `shape`: scf.parallel {mir.lanes}, body(ivs).
+// One phase over `shape`: scf.parallel {mir.lanes}, body(ivs). A dimension of extent 1 is
+// not a loop dimension (its index is 0): canonicalization would fold it away by rebuilding
+// the loop, which drops {mir.lanes}, and every lane would then run every iteration.
 void phase(OpBuilder &b, Location loc, ArrayRef<int64_t> shape,
            function_ref<void(OpBuilder &, Location, ValueRange)> body) {
   SmallVector<Value> lbs, ubs, steps;
-  for (int64_t s : shape) {
+  for (int64_t s : shape)
+    if (s != 1) {
+      lbs.push_back(cidx(b, loc, 0));
+      ubs.push_back(cidx(b, loc, s));
+      steps.push_back(cidx(b, loc, 1));
+    }
+  if (lbs.empty()) {   // a single point: still one phase, over one iteration
     lbs.push_back(cidx(b, loc, 0));
-    ubs.push_back(cidx(b, loc, s));
+    ubs.push_back(cidx(b, loc, 1));
     steps.push_back(cidx(b, loc, 1));
   }
-  auto par = b.create<scf::ParallelOp>(loc, lbs, ubs, steps,
-                                       [&](OpBuilder &pb, Location pl, ValueRange ivs) { body(pb, pl, ivs); });
+  auto par = b.create<scf::ParallelOp>(loc, lbs, ubs, steps, [&](OpBuilder &pb, Location pl, ValueRange loopIvs) {
+    SmallVector<Value> ivs;
+    unsigned k = 0;
+    for (int64_t s : shape) ivs.push_back(s != 1 ? loopIvs[k++] : cidx(pb, pl, 0));
+    body(pb, pl, ivs);
+  });
   par->setAttr("mir.lanes", b.getUnitAttr());
 }
 
@@ -360,6 +373,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
         erase.set(i);
       }
       func.eraseArguments(erase);
+      mir::refreshViewTypes(func.getOperation());   // views of a matrix (a row of D) move with it
     }
 
     SmallVector<unsigned> marked;
@@ -447,6 +461,10 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
            st = getConstantIntValue(f.getStep());
       if (!lb || !ub || !st || f->getParentOfType<scf::ParallelOp>() != loop)
         continue;
+      // A loop over the planes of a z-march ({mir.planes}) stays a loop: its ops become
+      // phases that every trip runs on the same scratch, one plane at a time in shared memory.
+      if (f->hasAttr(kPlanesAttr))
+        continue;
       const int64_t trip = (*ub - *lb + *st - 1) / *st;
       if (trip <= 1) {
         if (failed(f.promoteIfSingleIteration(rewriter)))
@@ -484,7 +502,32 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
           return failure();
       return success();
     };
+    std::function<LogicalResult(ArrayRef<Operation *>)> lowerOps = [&](ArrayRef<Operation *> ops) -> LogicalResult {
     for (Operation *op : ops) {
+      if (auto f = dyn_cast<scf::ForOp>(op); f && f->hasAttr(kPlanesAttr)) {
+        // A loop over planes: a fill pending from before the loop runs before it, not on
+        // every trip; the loop's own ops become phases inside it.
+        LogicalResult inner = success();
+        f.getBody()->walk([&](Operation *nested) {
+          if (failed(touches(nested, materialize)))
+            inner = failure();
+        });
+        if (failed(inner))
+          return failure();
+        SmallVector<Operation *> body;
+        for (Operation &nested : f.getBody()->without_terminator()) body.push_back(&nested);
+        DenseMap<Value, linalg::FillOp> outer = std::move(pendingFill);
+        pendingFill.clear();
+        if (failed(lowerOps(body)))
+          return failure();
+        for (auto &[root, fill] : llvm::make_early_inc_range(pendingFill)) {
+          (void)root;
+          if (failed(lowerFill(fill)))
+            return failure();
+        }
+        pendingFill = std::move(outer);
+        continue;
+      }
       if (auto fill = dyn_cast<linalg::FillOp>(op)) {
         Value out = fill.getOutputs()[0];
         if (failed(materialize(rootOf(out))))
@@ -534,6 +577,10 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
       if (failed(touches(op, materialize)))
         return failure();
     }
+    return success();
+    };
+    if (failed(lowerOps(ops)))
+      return failure();
     for (auto &[root, fill] : llvm::make_early_inc_range(pendingFill)) {
       (void)root;
       if (failed(lowerFill(fill)))
@@ -545,6 +592,8 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
     body->walk([&](memref::AllocOp a) { allocs.push_back(a); });
     for (memref::AllocOp a : allocs) {
       OpBuilder ab(a);
+      if (a->getBlock() != body)   // in a loop of phases: one buffer for every trip
+        ab.setInsertionPointToStart(body);
       auto s = ab.create<memref::AllocaOp>(a.getLoc(), a.getType());
       if (a.getType().getRank() > 0)
         s->setAttr("mir.scratch", ab.getUnitAttr());

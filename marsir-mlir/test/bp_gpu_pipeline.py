@@ -57,7 +57,9 @@ def main():
     p = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 3
     q = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--q=")), p + 2)
     real = "f32" if "--f32" in sys.argv else "f64"
-    src = hl.run([sys.executable, "-c", f"""
+    # --mir-file=F: the operator's mir from F instead of the emitter (schedule experiments).
+    mir_file = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--mir-file=")), None)
+    src = open(mir_file).read() if mir_file else hl.run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(hl.ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
 from marsir.backends import mlir_ir
@@ -112,12 +114,13 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
         k = re.search(r"%G: tensor<(\d+)x", src)
         # The pointwise action of bp1_tri / bp3_tri is that of bp1 / bp3 on the geometry
         # the harness forms from the corners.
-        ir = re.sub(r"(memref<[0-9x]*f(?:32|64)), 4>", r"\1>", ir)
+        ir = re.sub(r"(memref<[0-9x]*f(?:32|64)(?:, strided<\[[^\]]*\](?:, offset: [?\d]+)?>)?), 4>", r"\1>", ir)
         return hl.emulate(ir, p, harness="emu_bp.cpp",
                           defines=[f"-DBP_NAME={spec}_apply", f"-DBP_SPEC_{spec.split('_')[0].upper()}",
                                    f"-DBP_Q={q}", f"-DBP_K={k.group(1) if k else (6 if grad else 1)}"]
                           + (["-DBP_GRAD"] if grad else []) + (["-DBP_TRILINEAR"] if tri else [])
-                          + (["-DBP_EVEN_ODD"] if "__fold" in ir else []))
+                          + (["-DBP_EVEN_ODD"] if "__fold" in ir else [])
+                          + [f"-DBP_FOLD_M{k}=1" for k in range(4) if f"__m{k}__fold" in ir])
     suffix = "_f32" if real == "f32" else ""
     named = hl.run([hl.MIROPT, "-", f"--mir-mark-kernel=func={spec}_apply rename={spec}_apply_p{p}{suffix}"], ir)
     maxnreg = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--maxnreg=")), MAXNREG.get((spec, p), 0))
