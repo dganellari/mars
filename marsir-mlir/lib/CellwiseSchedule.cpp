@@ -139,7 +139,8 @@ bool inConstantSpace(Value v) {
   return space && space.getInt() != 0;
 }
 
-LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes, int64_t maxBlock, bool unrollReductions) {
+LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes, int64_t maxBlock, bool unrollReductions,
+                          bool columns) {
   for (AffineMap m : op.getIndexingMapsArray())
     if (!m.isProjectedPermutation())
       return op->emitOpError("cellwise schedule: indexing maps must be projected permutations");
@@ -182,7 +183,17 @@ LogicalResult lowerLinalg(linalg::LinalgOp op, Value init, int64_t lanes, int64_
   }
 
   int blocked = -1;   // the parallel loop dimension run inside the thread
-  if (!red.empty()) {
+  // columns: a 3-D op keeps the dimension of its output's last index (z) in the thread, so
+  // every 3-D phase runs over the same (x, y) points and its buffers can stay in the
+  // registers of the thread that owns the column (--mir-warp-per-element=lane-owned),
+  // even when the x-y points leave threads idle.
+  if (columns && par.size() >= 3) {
+    AffineMap out = op.getMatchingIndexingMap(outs[0]);
+    const unsigned d = out.getDimPosition(out.getNumResults() - 1);
+    if (ranges[d] >= 2 && ranges[d] <= maxBlock)
+      blocked = (int)d;
+  }
+  if (blocked < 0 && !red.empty()) {
     int best = 0;
     for (unsigned d : par) {
       if (ranges[d] > maxBlock || ranges[d] < 2)
@@ -327,6 +338,9 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
                            llvm::cl::init(8)};
   Option<bool> unrollReductions{*this, "unroll-reductions", llvm::cl::desc("unroll the reduction loops"),
                                 llvm::cl::init(false)};
+  Option<bool> columns{*this, "columns",
+                        llvm::cl::desc("3-D ops keep their last output dimension in the thread (column schedule)"),
+                        llvm::cl::init(false)};
   Option<int64_t> constSpace{*this, "const-space",
                              llvm::cl::desc("address space of the {mir.constant} globals (4: GPU constant memory)"),
                              llvm::cl::init(4)};
@@ -560,7 +574,7 @@ struct CellwiseSchedulePass : public PassWrapper<CellwiseSchedulePass, Operation
             return op->emitOpError("cellwise schedule: cannot generalize");
           lop = cast<linalg::LinalgOp>(g->getOperation());
         }
-        if (failed(lowerLinalg(lop, init, L, maxBlock, unrollReductions)))
+        if (failed(lowerLinalg(lop, init, L, maxBlock, unrollReductions, columns)))
           return failure();
         continue;
       }

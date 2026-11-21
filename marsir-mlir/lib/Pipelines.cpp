@@ -70,6 +70,8 @@ struct BpScheduleOptions : public PassPipelineOptions<BpScheduleOptions> {
   Option<bool> pad{*this, "pad", llvm::cl::desc("scratch padding against bank conflicts"), llvm::cl::init(true)};
   Option<bool> laneOwned{*this, "lane-owned", llvm::cl::desc("lane-owned scratch in registers"),
                          llvm::cl::init(false)};
+  Option<bool> columns{*this, "columns", llvm::cl::desc("3-D phases keep z in the thread (column schedule)"),
+                       llvm::cl::init(false)};
 };
 
 void buildBpSchedule(OpPassManager &pm, const BpScheduleOptions &o) {
@@ -108,6 +110,7 @@ void buildBpSchedule(OpPassManager &pm, const BpScheduleOptions &o) {
   // steers which dimension a thread keeps.
   std::string pl = "mir-cellwise-schedule{warps=" + std::to_string(warps) + " max-block=" + std::to_string(q) +
                    " unroll-reductions=true const-space=4" + (lanes ? " lanes=" + std::to_string(lanes) : "") +
+                   (o.columns ? " columns=true" : "") +
                    "},canonicalize,cse,";
   if (evenOdd)
     pl += "mir-even-odd,canonicalize,cse,";

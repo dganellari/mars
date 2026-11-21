@@ -80,7 +80,7 @@ sys.stdout.write(mlir_ir.emit_galerkin(ga, p={p}, q={q}, real={real!r}))
         if value is not None:
             opts.append(f"{key}={value}")
     opts += ["even-odd=false"] * ("--no-even-odd" in sys.argv) + ["pad=false"] * ("--no-pad" in sys.argv)
-    opts += ["lane-owned=true"] * ("--lane-owned" in sys.argv)
+    opts += ["lane-owned=true"] * ("--lane-owned" in sys.argv) + ["columns=true"] * ("--columns" in sys.argv)
     ir = hl.run([hl.MIROPT, "-", "--mir-bp-schedule=" + " ".join(opts)], ir)
     if "--emulate" in sys.argv:
         grad = "%D:" in src

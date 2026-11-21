@@ -321,8 +321,13 @@ void fuse(scf::ParallelOp elements) {
   SmallVector<scf::ParallelOp> done;   // the phases so far, in order
   for (Operation &op : llvm::make_early_inc_range(*body)) {
     if (!isPhase(&op)) {
-      if (!isMemoryEffectFree(&op) && op.getNumRegions() == 0)
-        done.clear();   // nothing moves past this
+      // Nothing moves past an op that writes memory, a loop of phases included (a phase
+      // after it reading what the loop wrote would otherwise join one before it).
+      const bool writes = op.getNumRegions() == 0
+                              ? !isMemoryEffectFree(&op)
+                              : op.walk([](memref::StoreOp) { return WalkResult::interrupt(); }).wasInterrupted();
+      if (writes)
+        done.clear();
       continue;
     }
     auto cur = cast<scf::ParallelOp>(op);
