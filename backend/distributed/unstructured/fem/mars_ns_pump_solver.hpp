@@ -3167,6 +3167,15 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_valuesPre;
     // Restore bare K before each outlet-operator refresh; derivatives must never accumulate.
     cstone::DeviceVector<RealType> d_outlet_pressure_base;
+    // Penalised projection (setPenalisedProjection): the Brinkman penalty's W per local node and
+    // the nodal coefficient beta = c V / (c V + W / eta), c = 1 / dtEff, that it gives the
+    // pressure operator and the corrector. Empty and off unless a caller sets it.
+    cstone::DeviceVector<RealType> d_penaltyW;
+    cstone::DeviceVector<RealType> d_penaltyBeta;
+    RealType                       penaltyInvEta     = RealType(0);
+    RealType                       penaltyBetaDtEff  = RealType(0);
+    bool                           penalisedProjection = false;
+    bool                           penaltyBetaDirty    = false;
     // CSR assembly visits every outlet facet touching an owned row, including halo tets.
     // The separate opening list remains uniquely owned for continuity's reverse-add.
     cstone::DeviceVector<int> d_pressure_tri_node, d_pressure_tri_element, d_pressure_tri_opposite;
@@ -3725,7 +3734,8 @@ template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
                        const cstone::DeviceVector<int>& /*unused*/,
                        cstone::DeviceVector<RealType>& d_valuesOut,
-                       CvfemKernelVariant kernelVariant)
+                       CvfemKernelVariant kernelVariant,
+                       const RealType* d_gammaNode = nullptr)  // nodal coefficient, null: 1
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
@@ -3750,6 +3760,8 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
     // gamma=1 -> pure Laplacian; all advection inputs zero so assembler doesn't
     // accumulate an advective contribution. RHS unused.
     cstone::DeviceVector<RealType> d_gamma(s.nodeCount, RealType(1));
+    if (d_gammaNode != nullptr && s.nodeCount > 0)
+        cudaCheckCall(cudaMemcpy(d_gamma.data(), d_gammaNode, s.nodeCount * sizeof(RealType), cudaMemcpyDeviceToDevice));
     cstone::DeviceVector<RealType> d_phi(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> d_beta(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> d_gphi_x(s.nodeCount, RealType(0));
@@ -10651,6 +10663,199 @@ void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
 }
 
+// =============================================================================
+// Penalised projection. A Brinkman penalty (W / eta on the velocity diagonal) acts on the implicit
+// velocity solve; for the correction to see it too, the momentum row at u^{n+1} gives
+//
+//   u^{n+1} = u** - (dtEff / rho) beta grad(phi),   beta = c V / (c V + W / eta),   c = 1 / dtEff,
+//
+// and the pressure equation takes the same coefficient, div(beta grad(phi)). beta is 1 where no
+// penalty acts. The Galerkin pressure operator averages it per element (the tet kernel's nodal
+// gamma); the corrector scales the nodal gradient. Hypre's Galerkin Laplacian path only.
+// =============================================================================
+// The inputs are validated before any step (validatePenalisedProjection: W >= 0 and invEta >= 0
+// finite, cEff > 0 finite), so the denominator is >= 0. Only 0 / 0, a node without volume and without
+// penalty, is given beta = 1; nothing else is masked (a NaN would propagate, not vanish).
+template<typename RealType>
+__global__ void computePenaltyBetaKernel(const RealType* W, const RealType* V, RealType cEff, RealType invEta,
+                                         RealType* beta, size_t n)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const RealType cV          = cEff * V[i];
+    const RealType denominator = cV + W[i] * invEta;
+    beta[i] = denominator == RealType(0) ? RealType(1) : cV / denominator;
+}
+
+template<typename RealType>
+__global__ void scaleGradientByBetaKernel(const RealType* beta, RealType* gx, RealType* gy, RealType* gz, size_t n)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    gx[i] *= beta[i];
+    gy[i] *= beta[i];
+    gz[i] *= beta[i];
+}
+
+// Whether the penalty's W (n values, device memory) has a non-finite or negative entry on this rank.
+template<typename RealType>
+int penaltyWeightsInvalid(const RealType* d_W, size_t n)
+{
+    if (n == 0) return 0;
+    if (d_W == nullptr) return 1;
+    return mars::transformReduce(
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+        [d_W] __device__(size_t i) -> int { return !isfinite(d_W[i]) || d_W[i] < RealType(0); }, 0,
+        thrust::maximum<int>());
+}
+
+// Whether the stepper's configuration supports the penalised projection: Hypre's assembled Galerkin
+// pressure operator (DDT assembled into Apre, or K) on tets, without MARS_HYPRE_USE_DDT, an outlet
+// beta, the FEM projection or the Rhie-Chow/VMS options. Matrix-free DDT CG (nnzDDT == 0) never reads
+// the refreshed operator although the corrector would scale its gradient.
+template<typename KeyType, typename RealType, typename ElementTag>
+bool penalisedProjectionSupported(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+#ifndef MARS_ENABLE_HYPRE
+    return false;
+#else
+    return std::is_same_v<ElementTag, TetTag> && s.solverKind == SolverKind::Hypre &&
+           !(s.pressureSolve == PressureSolveKind::DDT && s.nnzDDT == 0) && std::getenv("MARS_HYPRE_USE_DDT") == nullptr &&
+           s.outletBeta < RealType(0) && !s.useFemProjection && !s.useRhieChow && !s.useVMSStab && !s.useRcImplicit &&
+           !s.useRcOnly;
+#endif
+}
+
+// d_W: the penalty's W per local node (owned + ghosts, halo-complete), device memory, finite and
+// nonnegative; invEta = 1 / eta, finite and nonnegative. Collective: every rank calls it, and invalid
+// input throws std::invalid_argument on every rank before anything changes. Call whenever W or eta
+// changes; the operator is rebuilt at the next pressure solve.
+template<typename KeyType, typename RealType, typename ElementTag>
+void setPenalisedProjection(NSStepper<KeyType, RealType, ElementTag>& s, const RealType* d_W, RealType invEta)
+{
+    int bad = !(std::isfinite(double(invEta)) && invEta >= RealType(0));
+    if (!bad) bad = penaltyWeightsInvalid(d_W, s.nodeCount);
+    int global = 0;
+    MPI_Allreduce(&bad, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (global)
+        throw std::invalid_argument("setPenalisedProjection requires finite, nonnegative W on every local node "
+                                    "and a finite, nonnegative invEta");
+    s.d_penaltyW.resize(s.nodeCount);
+    s.d_penaltyBeta.resize(s.nodeCount);
+    if (s.nodeCount > 0)
+        cudaCheckCall(cudaMemcpy(s.d_penaltyW.data(), d_W, s.nodeCount * sizeof(RealType), cudaMemcpyDeviceToDevice));
+    s.penaltyInvEta       = invEta;
+    s.penalisedProjection = true;
+    s.penaltyBetaDirty    = true;
+}
+
+// The projection's effective step: dt, or 2 dt / 3 once BDF2 is active (its first step is BDF1).
+template<typename KeyType, typename RealType, typename ElementTag>
+RealType penaltyEffectiveDt(const NSStepper<KeyType, RealType, ElementTag>& s, RealType dt)
+{
+    const bool bdf2Active = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    return bdf2Active ? (RealType(2) * dt / RealType(3)) : dt;
+}
+
+// Before a step changes anything (runNsStep calls it first): the penalty's inputs and the
+// configuration, collectively. Throws std::invalid_argument on every rank.
+template<typename KeyType, typename RealType, typename ElementTag>
+void validatePenalisedProjection(const NSStepper<KeyType, RealType, ElementTag>& s, RealType dt)
+{
+    if (!s.penalisedProjection) return;
+    const RealType dtEff = penaltyEffectiveDt(s, dt);
+    int bad = !(std::isfinite(double(dtEff)) && dtEff > RealType(0)) ||
+              !(std::isfinite(double(s.penaltyInvEta)) && s.penaltyInvEta >= RealType(0)) ||
+              s.d_penaltyW.size() != size_t(s.nodeCount) || s.d_penaltyBeta.size() != size_t(s.nodeCount) ||
+              !penalisedProjectionSupported(s);
+    if (!bad) bad = penaltyWeightsInvalid(s.d_penaltyW.data(), s.nodeCount);
+    int global = 0;
+    MPI_Allreduce(&bad, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (global)
+        throw std::invalid_argument("the penalised projection requires a finite positive dt, finite nonnegative W "
+                                    "and invEta, and Hypre's assembled Galerkin pressure operator on tets (no "
+                                    "matrix-free DDT CG, MARS_HYPRE_USE_DDT, outlet beta, FEM projection or "
+                                    "Rhie-Chow/VMS options)");
+}
+
+// Rebuild beta and the pressure matrix when W, eta or dtEff changed: the same steps as setup (K with
+// gamma = beta, PSPG, the boundary rows), on the unchanged sparsity. Hypre is set up per solve.
+template<typename KeyType, typename RealType, typename ElementTag>
+void refreshPenalisedPressureOperator(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt)
+{
+    if (!s.penalisedProjection) return;
+    const RealType dtEff = penaltyEffectiveDt(s, dt);
+    if (!s.penaltyBetaDirty && dtEff == s.penaltyBetaDtEff) return;
+
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        // runNsStep validated the inputs and the configuration (validatePenalisedProjection); a direct
+        // caller that did not gets the same refusal.
+        validatePenalisedProjection(s, dt);
+
+        const int nodeBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+        if (s.nodeCount > 0)
+        {
+            computePenaltyBetaKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_penaltyW.data(), s.d_massNode.data(), RealType(1) / dtEff, s.penaltyInvEta,
+                s.d_penaltyBeta.data(), s.nodeCount);
+            cudaCheckError();
+            cudaCheckCall(cudaDeviceSynchronize());
+        }
+
+        assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, CvfemKernelVariant{},
+                                                         s.d_penaltyBeta.data());
+
+        const auto& d_conn          = s.domain.getElementToNodeConnectivity();
+        const auto& d_nodeOwnership = s.ownershipMap();
+        const RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+        if (s.usePSPG && tauL > RealType(0) && s.elementCount > 0)
+        {
+            int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assemblePSPGStiffnessTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                tauL, s.d_valuesPre.data(), s.elementCount);
+            cudaCheckError();
+            cudaCheckCall(cudaDeviceSynchronize());
+        }
+
+        if (s.numOwnedDofs > 0 && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs))
+        {
+            int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_isPressureBdryDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                s.d_diagPtr.data(), s.d_valuesPre.data(), s.numOwnedDofs);
+            cudaCheckError();
+            cudaCheckCall(cudaDeviceSynchronize());
+        }
+        if (s.pressurePinDof >= 0)
+        {
+            enforcePinRowMatrixKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_rowPtr.data(), s.d_colInd.data(),
+                s.d_diagPtr.data(), s.d_valuesPre.data());
+            cudaCheckError();
+            cudaCheckCall(cudaDeviceSynchronize());
+        }
+
+        // Wrapping copied the values at setup: refresh the matrix Hypre is given.
+        if (s.nnz > 0)
+            cudaCheckCall(cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(), size_t(s.nnz) * sizeof(RealType),
+                                     cudaMemcpyDeviceToDevice));
+        cudaCheckCall(cudaDeviceSynchronize());
+        s.penaltyBetaDtEff = dtEff;
+        s.penaltyBetaDirty = false;
+    }
+    else
+    {
+        // Refused before the step by validatePenalisedProjection (tets only).
+        validatePenalisedProjection(s, dt);
+    }
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
 {
@@ -10687,6 +10892,13 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     auto computeGradPhi = [&] ()
     {
         compute_pressure_increment_gradient<KeyType, RealType, ElementTag>(s);
+        if (s.penalisedProjection && s.nodeCount > 0)
+        {
+            scaleGradientByBetaKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_penaltyBeta.data(), s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(), s.nodeCount);
+            cudaCheckError();
+            cudaDeviceSynchronize();
+        }
     };
     computeGradPhi();
 
@@ -12314,6 +12526,7 @@ template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
     validateOutletPressureLift(s);
+    validatePenalisedProjection(s, dt);
     s.nuCached = nu;
     bool dbg = (g_nsDebugStepsLeft > 0);
 
@@ -12473,6 +12686,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         bdf2HistTaken = true;
     }
     if (average_outlet) run_outlet_pressure_correction(s, dt, rho);
+    refreshPenalisedPressureOperator<KeyType, RealType, ElementTag>(s, dt);
     for (int outer = 0; outer < nOuter; ++outer)
     {
         runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
