@@ -49,6 +49,10 @@ struct ExodusSideSets
     // an inlet velocity can be applied along the surface normal, not a global
     // axis. Tet faces are triangles; only the tet reader fills this.
     std::map<std::string, std::vector<uint64_t>> trianglesByName;
+    // The same for a hex mesh: side-set name -> 4 (x,y,z) per face and 4 GLOBAL 0-based node IDs per
+    // face, in Exodus side order (outward normal by the right-hand rule). Only the hex reader fills these.
+    std::map<std::string, std::vector<std::array<double, 3>>> quadCoordsByName;
+    std::map<std::string, std::vector<uint64_t>> quadsByName;
 };
 
 // Batches carry file identity and block provenance until the consumer resolves them.
@@ -539,6 +543,17 @@ ExodusSideSets readExodusSideSets(const std::string& mesh_file, int rank)
                                    {
                                        const auto& node = batch.nodes[i];
                                        triangles.push_back(node.id);
+                                       coords.push_back({node.x, node.y, node.z});
+                                   }
+                               }
+                               else if constexpr (N == 8)
+                               {
+                                   auto& quads  = out.quadsByName[name];
+                                   auto& coords = out.quadCoordsByName[name];
+                                   for (unsigned i : batch.face_nodes)
+                                   {
+                                       const auto& node = batch.nodes[i];
+                                       quads.push_back(node.id);
                                        coords.push_back({node.x, node.y, node.z});
                                    }
                                }

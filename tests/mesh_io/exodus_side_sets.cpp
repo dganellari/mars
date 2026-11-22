@@ -387,6 +387,15 @@ void check(const std::string& path, const Fixture& f, int rank, int ranks)
         for (size_t i = 0; i < triangles.size(); ++i)
             require(global.triangleCoordsByName.at("boundary")[i] == f.coord(triangles[i]),
                     "triangle coordinates misaligned");
+        require(global.quadsByName.empty() && global.quadCoordsByName.empty(), "tet reader filled quads");
+    }
+    else
+    {
+        // The hex reader's quads: 4 corners per face, Exodus winding and order, coordinates aligned.
+        require(global.quadsByName.at("boundary") == triangles, "hex quad winding changed");
+        for (size_t i = 0; i < triangles.size(); ++i)
+            require(global.quadCoordsByName.at("boundary")[i] == f.coord(triangles[i]), "quad coordinates misaligned");
+        require(global.trianglesByName.empty() && global.triangleCoordsByName.empty(), "hex reader filled triangles");
     }
     require(trace::opened == trace::closed, "global API leaked file");
 }

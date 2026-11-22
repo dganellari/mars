@@ -26,8 +26,9 @@ struct ElemTraits<HexTag> {
     static constexpr int ScsPerElem    = 12;   // sub-control surfaces (one per edge)
     static constexpr int FacesPerCorner = 3;   // SCS faces incident to each corner
     // Worst-case SCS faces touching one node across all incident elements,
-    // for the DDT per-node assembly register buffer. Hex: ~8 elems/corner * 3.
-    static constexpr int MaxFacesPerNode = 32;
+    // for the DDT per-node assembly buffer: 3 per incident hex, 16 hexes
+    // (structured meshes have 8, extruded unstructured quad meshes up to 12).
+    static constexpr int MaxFacesPerNode = 48;
 };
 
 template<>
