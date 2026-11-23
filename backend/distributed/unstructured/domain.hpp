@@ -582,6 +582,13 @@ struct HaloData
 // Exchange: pack via thrust::gather; MPI Isend/Irecv on device pointers
 // (CUDA-aware MPI required); scatter via thrust::scatter on receive.
 // ============================================================================
+// The halo exchanges' MPI tags are a fixed base plus a per-topology epoch. MPI only guarantees tags up to
+// MPI_TAG_UB >= 32767 (2^24 - 1 on Cray MPICH), so the epoch wraps: 2^13 distinct epochs keep every
+// base (0x4d4d .. 0x5048) + epoch below 32767. Each exchange completes all its requests before it returns,
+// so the epoch only has to keep back-to-back exchanges apart, not grow without bound. Unwrapped, a long
+// run (~1.7e7 exchanges, ~7000 ldp_fsi coupling intervals) aborted in MPI_Irecv with tag 2^24.
+inline int nextHaloEpoch(int epoch) { return (epoch + 1) & ((1 << 13) - 1); }
+
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 struct NodeHaloTopology
 {
@@ -1208,7 +1215,7 @@ public:
             }
         }
         waitallDiag(reqs, mpiType);
-        ++topo.epoch_;
+        topo.epoch_ = nextHaloEpoch(topo.epoch_);
 
         // Scatter recvBuf into nodeArray[nodeToDof[recvNodeIds]].
         // idx<0 case skipped: the slot was packed by the peer with a placeholder
@@ -1290,7 +1297,7 @@ public:
             }
         }
         if (!reqs.empty()) MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-        ++topo.epoch_;
+        topo.epoch_ = nextHaloEpoch(topo.epoch_);
         const int* rnds = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
         if (recvTotal > 0)
         {
@@ -1393,7 +1400,7 @@ public:
             }
         }
         waitallDiag(reqs, mpiType);
-        ++topo.epoch_;
+        topo.epoch_ = nextHaloEpoch(topo.epoch_);
 
         // Atomic-add received contributions into owner-side slots. atomicAdd is
         // needed: multiple peers may send contributions for the same owned node
@@ -1491,7 +1498,7 @@ public:
             }
         }
         waitallDiag(reqs, mpiType);
-        ++topo.epoch_;
+        topo.epoch_ = nextHaloEpoch(topo.epoch_);
 
         // Combine received contributions into owner slots with min/max via a
         // decoded-double CAS loop (atomicMin/Max for floating point are not

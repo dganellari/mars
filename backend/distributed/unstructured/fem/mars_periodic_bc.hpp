@@ -1090,7 +1090,7 @@ void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     if (recvTotal > 0)
@@ -1157,7 +1157,7 @@ void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     if (sendTotal > 0)
@@ -1230,7 +1230,7 @@ void crossRankPeriodicPairSumDof(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     if (recvTotal > 0)
@@ -1280,7 +1280,7 @@ void crossRankPeriodicPairSumDof(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     if (sendTotal > 0)
@@ -1350,7 +1350,7 @@ void crossRankPeriodicBroadcastDof(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     // Overwrite slave DOFs on the slave-owner rank.
@@ -1460,7 +1460,7 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-        ++xr.epoch_;
+        xr.epoch_ = nextHaloEpoch(xr.epoch_);
     }
 
     // Overwrite owned-slave node slots on the slave-owner rank. Same fieldSize
